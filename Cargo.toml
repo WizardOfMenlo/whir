@@ -1,0 +1,45 @@
+[package]
+name = "whir"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+default-run = "main"
+
+[dependencies]
+ark-std = "0.4"
+ark-ff = { version = "0.4", features = ["asm"] }
+ark-serialize = "0.4"
+ark-crypto-primitives = { version = "0.4", features = ["merkle_tree"] }
+ark-poly = "0.4"
+ark-test-curves = { version = "0.4", features = [ "bls12_381_curve" ] }
+derivative = { version = "2", features = [ "use_core" ] }
+blake3 = "1.5.0"
+blake2 = "0.10"
+sha3 = "0.10"
+rand = "0.8"
+rand_chacha = "0.3"
+rayon = { version = "1.8", optional = true }
+clap = { version = "4.4.17", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+nimue = { git = "https://github.com/arkworks-rs/nimue", features = ["ark"] }
+lazy_static = "1.4"
+poseidon-paramgen = "0.4"
+
+[profile.release]
+debug = true
+
+[features]
+default = []
+fills = []
+parallel = ["rayon", "ark-ff/parallel", "ark-crypto-primitives/parallel"]
+
+[patch.crates-io]
+ark-std = { git = "https://github.com/arkworks-rs/std" }
+ark-crypto-primitives = { git = "https://github.com/intx4/crypto-primitives" }
+ark-test-curves = {  git = "https://github.com/arkworks-rs/algebra" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra" }
