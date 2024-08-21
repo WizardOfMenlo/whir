@@ -60,6 +60,12 @@ impl<F> Display for MultivariateParameters<F> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FoldType {
+    Naive,
+    ProverHelps,
+}
+
 #[derive(Clone)]
 pub struct WhirParameters<MerkleConfig>
 where
@@ -69,7 +75,9 @@ where
     pub folding_factor: usize,
     pub soundness_type: SoundnessType,
     pub security_level: usize,
-    pub protocol_security_level: usize,
+    pub pow_bits: usize,
+
+    pub fold_optimisation: FoldType,
 
     // Merkle tree parameters
     pub leaf_hash_params: LeafParam<MerkleConfig>,
@@ -83,8 +91,8 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Targeting {}-bits of security - protocol running at {}-bits - soundness: {:?}",
-            self.security_level, self.protocol_security_level, self.soundness_type
+            "Targeting {}-bits of security with {}-bits of PoW - soundness: {:?}",
+            self.security_level, self.pow_bits, self.soundness_type
         )?;
         writeln!(
             f,

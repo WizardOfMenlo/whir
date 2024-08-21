@@ -2,9 +2,7 @@ use std::ops::Index;
 
 use ark_ff::Field;
 
-use crate::poly_utils::{eq_poly, hypercube::BinaryHypercube};
-
-use super::MultilinearPoint;
+use super::{sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 
 #[derive(Debug)]
 pub struct EvaluationsList<F> {
@@ -33,8 +31,8 @@ where
         }
 
         let mut sum = F::ZERO;
-        for i in BinaryHypercube::new(self.num_variables) {
-            sum += eq_poly(point, i) * self.evals[i.0]
+        for (b, lag) in LagrangePolynomialIterator::new(point) {
+            sum += lag * self.evals[b.0]
         }
 
         sum

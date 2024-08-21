@@ -43,20 +43,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     res
 }
 
-pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
-    assert!(!v.is_empty());
-    let len = v[0].len();
-    let mut iters: Vec<_> = v.into_iter().map(|n| n.into_iter()).collect();
-    (0..len)
-        .map(|_| {
-            iters
-                .iter_mut()
-                .map(|n| n.next().unwrap())
-                .collect::<Vec<T>>()
-        })
-        .collect()
-}
-
 // Deduplicates AND orders a vector
 pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
     Vec::from_iter(BTreeSet::from_iter(v))

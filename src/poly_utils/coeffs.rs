@@ -1,7 +1,7 @@
 use ark_ff::Field;
-use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 
-use crate::utils::to_binary;
+use crate::poly_utils::streaming_evaluation_helper::TermPolynomialIterator;
 
 use super::{evals::EvaluationsList, MultilinearPoint};
 
@@ -20,17 +20,34 @@ where
 
         let mut sum = F::ZERO;
 
-        for b in 0..(1 << self.num_variables) {
-            let binary_decomp = to_binary(b, self.num_variables);
-            sum += self.coeffs[b]
-                * binary_decomp
-                    .into_iter()
-                    .zip(&point.0)
-                    .map(|(i, val)| if i { *val } else { F::ONE })
-                    .product::<F>();
+        for (b, term) in TermPolynomialIterator::new(point) {
+            sum += self.coeffs[b.0] * term;
         }
 
         sum
+    }
+
+    pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
+        &self,
+        point: &MultilinearPoint<E>,
+    ) -> E {
+        assert_eq!(self.num_variables, point.n_variables());
+
+        let mut sum = E::ZERO;
+
+        for (b, term) in TermPolynomialIterator::new(point) {
+            sum += term.mul_by_base_prime_field(&self.coeffs[b.0]);
+        }
+
+        sum
+    }
+
+    pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
+        let univariate = DensePolynomial::from_coefficients_slice(&self.coeffs);
+        points
+            .iter()
+            .map(|point| univariate.evaluate(point))
+            .collect()
     }
 }
 
@@ -56,6 +73,16 @@ impl<F> CoefficientList<F> {
 
     pub fn num_coeffs(&self) -> usize {
         self.coeffs.len()
+    }
+
+    // Map to the corresponding polynomial in the extension field
+    pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
+        CoefficientList::new(
+            self.coeffs
+                .into_iter()
+                .map(E::from_base_prime_field)
+                .collect(),
+        )
     }
 }
 

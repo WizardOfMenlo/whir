@@ -1,8 +1,8 @@
 use ark_ff::Field;
 
 use crate::poly_utils::{
-    coeffs::CoefficientList, evals::EvaluationsList, lag_poly::LagrangePolynomialIterator,
-    MultilinearPoint,
+    coeffs::CoefficientList, evals::EvaluationsList,
+    sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint,
 };
 
 use super::proof::SumcheckPolynomial;

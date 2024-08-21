@@ -31,7 +31,7 @@ mod tests {
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{MultivariateParameters, SoundnessType, WhirParameters};
+    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::whir_ldt::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
@@ -47,21 +47,22 @@ mod tests {
         folding_factor: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
+        fold_type: FoldType,
     ) {
         let num_coeffs = 1 << num_variables;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            merkle_tree::default_config::<F>(&mut rng, folding_factor);
+        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
 
         let mv_params = MultivariateParameters::<F>::new(num_variables);
 
         let whir_params = WhirParameters::<MerkleConfig> {
-            protocol_security_level: 100,
-            security_level: 100 + pow_bits,
+            security_level: 32,
+            pow_bits,
             folding_factor,
             leaf_hash_params,
             two_to_one_params,
+            fold_optimisation: fold_type,
             soundness_type,
             starting_log_inv_rate: 1,
         };
@@ -92,6 +93,7 @@ mod tests {
     #[test]
     fn test_whir_ldt() {
         let folding_factors = [1, 2, 3, 4];
+        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let soundness_type = [
             SoundnessType::ConjectureList,
             SoundnessType::ProvableList,
@@ -100,11 +102,19 @@ mod tests {
         let pow_bits = [0, 5, 10];
 
         for folding_factor in folding_factors {
-            let num_variables = [folding_factor, 2 * folding_factor, 3 * folding_factor];
+            let num_variables = folding_factor..=3 * folding_factor;
             for num_variables in num_variables {
-                for soundness_type in soundness_type {
-                    for pow_bits in pow_bits {
-                        make_whir_things(num_variables, folding_factor, soundness_type, pow_bits);
+                for fold_type in fold_types {
+                    for soundness_type in soundness_type {
+                        for pow_bits in pow_bits {
+                            make_whir_things(
+                                num_variables,
+                                folding_factor,
+                                soundness_type,
+                                pow_bits,
+                                fold_type,
+                            );
+                        }
                     }
                 }
             }

@@ -11,8 +11,10 @@ use self::hypercube::BinaryHypercubePoint;
 pub mod coeffs;
 pub mod evals;
 pub mod fold;
+pub mod gray_lag_poly;
 pub mod hypercube;
-pub mod lag_poly;
+pub mod sequential_lag_poly;
+pub mod streaming_evaluation_helper;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultilinearPoint<F>(pub Vec<F>);

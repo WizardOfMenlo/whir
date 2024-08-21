@@ -8,6 +8,8 @@ pub struct Domain<F>
 where
     F: FftField,
 {
+    pub base_domain: Option<GeneralEvaluationDomain<F::BasePrimeField>>, // The domain (in the base
+    // field) for the initial FFT
     pub backing_domain: GeneralEvaluationDomain<F>,
 }
 
@@ -17,8 +19,13 @@ where
 {
     pub fn new(degree: usize, log_rho_inv: usize) -> Option<Self> {
         let size = degree * (1 << log_rho_inv);
-        let backing_domain = GeneralEvaluationDomain::new(size)?;
-        Some(Self { backing_domain })
+        let base_domain = GeneralEvaluationDomain::new(size)?;
+        let backing_domain = Self::to_extension_domain(&base_domain);
+
+        Some(Self {
+            backing_domain,
+            base_domain: Some(base_domain),
+        })
     }
 
     pub fn folded_size(&self, folding_factor: usize) -> usize {
@@ -32,6 +39,49 @@ where
     pub fn scale(&self, power: usize) -> Self {
         Self {
             backing_domain: self.scale_generator_by(power),
+            base_domain: None, // Set to zero because we only care for the initial
+        }
+    }
+
+    fn to_extension_domain(
+        domain: &GeneralEvaluationDomain<F::BasePrimeField>,
+    ) -> GeneralEvaluationDomain<F> {
+        let group_gen = F::from_base_prime_field(domain.group_gen());
+        let group_gen_inv = F::from_base_prime_field(domain.group_gen_inv());
+        let size = domain.size() as u64;
+        let log_size_of_group = domain.log_size_of_group() as u32;
+        let size_as_field_element = F::from_base_prime_field(domain.size_as_field_element());
+        let size_inv = F::from_base_prime_field(domain.size_inv());
+        let offset = F::from_base_prime_field(domain.coset_offset());
+        let offset_inv = F::from_base_prime_field(domain.coset_offset_inv());
+        let offset_pow_size = F::from_base_prime_field(domain.coset_offset_pow_size());
+        match domain {
+            GeneralEvaluationDomain::Radix2(_) => {
+                GeneralEvaluationDomain::Radix2(Radix2EvaluationDomain {
+                    size,
+                    log_size_of_group,
+                    size_as_field_element,
+                    size_inv,
+                    group_gen,
+                    group_gen_inv,
+                    offset,
+                    offset_inv,
+                    offset_pow_size,
+                })
+            }
+            GeneralEvaluationDomain::MixedRadix(_) => {
+                GeneralEvaluationDomain::MixedRadix(MixedRadixEvaluationDomain {
+                    size,
+                    log_size_of_group,
+                    size_as_field_element,
+                    size_inv,
+                    group_gen,
+                    group_gen_inv,
+                    offset,
+                    offset_inv,
+                    offset_pow_size,
+                })
+            }
         }
     }
 

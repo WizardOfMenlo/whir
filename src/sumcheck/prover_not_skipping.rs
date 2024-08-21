@@ -1,27 +1,34 @@
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter},
+    plugins::{
+        ark::{FieldChallenges, FieldIOPattern, FieldWriter},
+        pow::PoWChallenge,
+    },
     IOPattern, Merlin, ProofResult,
 };
 
-use crate::poly_utils::{coeffs::CoefficientList, MultilinearPoint};
+use crate::{
+    fs_utils::WhirPoWIOPattern,
+    poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+};
 
 use super::prover_single::SumcheckSingle;
 
 pub trait SumcheckNotSkippingIOPattern<F: Field> {
-    fn add_sumcheck(self, folding_factor: usize) -> Self;
+    fn add_sumcheck(self, folding_factor: usize, pow_bits: usize) -> Self;
 }
 
 impl<F> SumcheckNotSkippingIOPattern<F> for IOPattern
 where
     F: Field,
-    IOPattern: FieldIOPattern<F>,
+    IOPattern: FieldIOPattern<F> + WhirPoWIOPattern,
 {
-    fn add_sumcheck(mut self, folding_factor: usize) -> Self {
+    fn add_sumcheck(mut self, folding_factor: usize, pow_bits: usize) -> Self {
         for _ in 0..folding_factor {
             self = self
                 .add_scalars(3, "sumcheck_poly")
-                .challenge_scalars(1, "folding_randomness");
+                .challenge_scalars(1, "folding_randomness")
+                .pow(pow_bits);
         }
         self
     }
@@ -33,7 +40,7 @@ pub struct SumcheckProverNotSkipping<F> {
 
 impl<F> SumcheckProverNotSkipping<F>
 where
-    F: Field + PrimeField,
+    F: Field,
 {
     // Get the coefficient of polynomial p and a list of points
     // and initialises the table of the initial polynomial
@@ -52,6 +59,7 @@ where
         &mut self,
         merlin: &mut Merlin,
         folding_factor: usize,
+        pow_bits: usize,
     ) -> ProofResult<MultilinearPoint<F>> {
         let mut res = Vec::with_capacity(folding_factor);
 
@@ -60,6 +68,11 @@ where
             merlin.add_scalars(sumcheck_poly.evaluations())?;
             let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
             res.push(folding_randomness);
+
+            // Do PoW if needed
+            if pow_bits > 0 {
+                merlin.challenge_pow(pow_bits)?;
+            }
 
             self.sumcheck_prover
                 .compress(F::ONE, &folding_randomness.into());
@@ -131,7 +144,7 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
@@ -213,10 +226,10 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
         prover.add_new_equality(&[fold_point.clone()], &combination_randomness);
         let folding_randomness_2 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);

@@ -1,9 +1,12 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
-use ark_ff::{FftField, PrimeField};
-use ark_poly::univariate::DensePolynomial;
+use ark_ff::FftField;
+use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
 use nimue::{plugins::ark::FieldChallenges, ByteWriter, Merlin, ProofResult};
 
-use crate::{poly_utils::coeffs::CoefficientList, utils};
+use crate::{
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations},
+    utils,
+};
 
 use super::parameters::WhirConfig;
 
@@ -23,7 +26,7 @@ where
 
 impl<F, MerkleConfig> Committer<F, MerkleConfig>
 where
-    F: FftField + PrimeField,
+    F: FftField,
     MerkleConfig: Config<Leaf = Vec<F>>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
@@ -34,17 +37,26 @@ where
     pub fn commit(
         &self,
         merlin: &mut Merlin,
-        polynomial: CoefficientList<F>,
+        polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
+        let base_domain = self.0.starting_domain.base_domain.unwrap();
         let univariate: DensePolynomial<_> = polynomial.clone().into();
-        let evals = univariate
-            .evaluate_over_domain_by_ref(self.0.starting_domain.backing_domain)
-            .evals;
+        let evals = univariate.evaluate_over_domain_by_ref(base_domain).evals;
 
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        let folded_evals = restructure_evaluations(
+            folded_evals,
+            self.0.fold_optimisation,
+            base_domain.group_gen(),
+            base_domain.group_gen_inv(),
+            self.0.folding_factor,
+        )
+        .into_iter()
+        .map(|x| x.into_iter().map(F::from_base_prime_field).collect()) // Conver to extension
+        .collect();
 
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
@@ -57,6 +69,7 @@ where
 
         merlin.add_bytes(root.as_ref())?;
 
+        let polynomial = polynomial.to_extension();
         Ok(Witness {
             polynomial,
             merkle_tree,

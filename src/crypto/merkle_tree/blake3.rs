@@ -118,7 +118,6 @@ impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
 
 pub fn default_config<F: CanonicalSerialize + Send>(
     rng: &mut impl RngCore,
-    _leaf_arity: usize,
 ) -> (
     <LeafH<F> as CRHScheme>::Parameters,
     <CompressH as TwoToOneCRHScheme>::Parameters,

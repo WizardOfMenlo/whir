@@ -1,12 +1,15 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
-use ark_ff::{FftField, PrimeField};
-use ark_poly::{univariate::DensePolynomial, Polynomial};
+use ark_ff::FftField;
+use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
     ByteWriter, Merlin, ProofResult,
 };
 
-use crate::{poly_utils::coeffs::CoefficientList, utils};
+use crate::{
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    utils,
+};
 
 use super::parameters::WhirConfig;
 
@@ -27,7 +30,7 @@ where
 
 impl<F, MerkleConfig> Committer<F, MerkleConfig>
 where
-    F: FftField + PrimeField,
+    F: FftField,
     MerkleConfig: Config<Leaf = Vec<F>>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
@@ -38,17 +41,28 @@ where
     pub fn commit(
         &self,
         merlin: &mut Merlin,
-        polynomial: CoefficientList<F>,
+        polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
+        let base_domain = self.0.starting_domain.base_domain.unwrap();
         let univariate: DensePolynomial<_> = polynomial.clone().into();
         let evals = univariate
-            .evaluate_over_domain_by_ref(self.0.starting_domain.backing_domain)
+            .evaluate_over_domain_by_ref(self.0.starting_domain.base_domain.unwrap())
             .evals;
 
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        let folded_evals = restructure_evaluations(
+            folded_evals,
+            self.0.fold_optimisation,
+            base_domain.group_gen(),
+            base_domain.group_gen_inv(),
+            self.0.folding_factor,
+        )
+        .into_iter()
+        .map(|x| x.into_iter().map(F::from_base_prime_field).collect()) // Conver to extension
+        .collect();
 
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
@@ -66,13 +80,18 @@ where
             merlin.fill_challenge_scalars(&mut ood_points)?;
             let ood_answers: Vec<_> = ood_points
                 .iter()
-                .map(|ood_point| univariate.evaluate(&ood_point))
+                .map(|ood_point| {
+                    polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
+                        *ood_point,
+                        self.0.mv_parameters.num_variables,
+                    ))
+                })
                 .collect();
             merlin.add_scalars(&ood_answers)?;
         }
 
         Ok(Witness {
-            polynomial,
+            polynomial: polynomial.to_extension(),
             merkle_tree,
             merkle_leaves: folded_evals,
             ood_points,

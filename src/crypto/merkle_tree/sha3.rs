@@ -27,6 +27,18 @@ impl Absorb for SHA3Digest {
     }
 }
 
+impl From<[u8; 32]> for SHA3Digest {
+    fn from(value: [u8; 32]) -> Self {
+        SHA3Digest(value)
+    }
+}
+
+impl AsRef<[u8]> for SHA3Digest {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 pub struct SHA3LeafHash<F>(PhantomData<F>);
 pub struct SHA3TwoToOneCRHScheme;
 
@@ -107,7 +119,6 @@ impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
 
 pub fn default_config<F: CanonicalSerialize + Send>(
     rng: &mut impl RngCore,
-    _leaf_arity: usize,
 ) -> (
     <LeafH<F> as CRHScheme>::Parameters,
     <CompressH as TwoToOneCRHScheme>::Parameters,

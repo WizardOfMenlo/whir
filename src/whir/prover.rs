@@ -1,5 +1,5 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
 use nimue::{
     plugins::{
@@ -12,7 +12,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::{
     domain::Domain,
-    poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
     sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
     utils::{self, expand_randomness},
 };
@@ -26,12 +26,13 @@ where
 
 impl<F, MerkleConfig> Prover<F, MerkleConfig>
 where
-    F: FftField + PrimeField,
+    F: FftField,
     MerkleConfig: Config<Leaf = Vec<F>>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
     fn validate_parameters(&self) -> bool {
-        self.0.mv_parameters.num_variables == (self.0.n_rounds() + 1) * self.0.folding_factor
+        self.0.mv_parameters.num_variables
+            == (self.0.n_rounds() + 1) * self.0.folding_factor + self.0.final_sumcheck_rounds
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
@@ -79,8 +80,11 @@ where
             &combination_randomness,
         );
 
-        let folding_randomness =
-            sumcheck_prover.compute_sumcheck_polynomials(merlin, self.0.folding_factor)?;
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials(
+            merlin,
+            self.0.folding_factor,
+            self.0.starting_folding_pow_bits,
+        )?;
 
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
@@ -138,6 +142,13 @@ where
                 merlin.challenge_pow(self.0.final_pow_bits)?;
             }
 
+            // Final sumcheck
+            round_state.sumcheck_prover.compute_sumcheck_polynomials(
+                merlin,
+                self.0.final_sumcheck_rounds,
+                self.0.final_folding_pow_bits,
+            )?;
+
             return Ok(WhirProof(round_state.merkle_proofs));
         }
 
@@ -151,6 +162,13 @@ where
             .evals;
 
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        let folded_evals = restructure_evaluations(
+            folded_evals,
+            self.0.fold_optimisation,
+            new_domain.backing_domain.group_gen(),
+            new_domain.backing_domain.group_gen_inv(),
+            self.0.folding_factor,
+        );
 
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
@@ -225,9 +243,11 @@ where
             .sumcheck_prover
             .add_new_equality(&stir_challenges, &combination_randomness);
 
-        let folding_randomness = round_state
-            .sumcheck_prover
-            .compute_sumcheck_polynomials(merlin, self.0.folding_factor)?;
+        let folding_randomness = round_state.sumcheck_prover.compute_sumcheck_polynomials(
+            merlin,
+            self.0.folding_factor,
+            round_params.folding_pow_bits,
+        )?;
 
         let round_state = RoundState {
             round: round_state.round + 1,
