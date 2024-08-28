@@ -24,6 +24,7 @@ impl FromStr for WhirType {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum AvailableFields {
+    Goldilocks1, // Just Goldilocks
     Goldilocks2, // Quadratic extension of Goldilocks
     Goldilocks3, // Cubic extension of Goldilocks
     Field128,    // 128-bit prime field
@@ -41,6 +42,8 @@ impl FromStr for AvailableFields {
             Ok(Self::Field192)
         } else if s == "Field256" {
             Ok(Self::Field256)
+        } else if s == "Goldilocks1" {
+            Ok(Self::Goldilocks1)
         } else if s == "Goldilocks2" {
             Ok(Self::Goldilocks2)
         } else if s == "Goldilocks3" {

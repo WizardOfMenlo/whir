@@ -68,6 +68,22 @@ fn main() {
     let mut rng = ark_std::test_rng();
 
     match (field, merkle) {
+        (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
+            use fields::Field64 as F;
+            use merkle_tree::blake3 as mt;
+
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
+
+        (AvailableFields::Goldilocks1, AvailableMerkle::SHA3) => {
+            use fields::Field64 as F;
+            use merkle_tree::sha3 as mt;
+
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
+
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
             use fields::Field64_2 as F;
             use merkle_tree::blake3 as mt;
@@ -348,8 +364,10 @@ fn run_whir_pcs<F, MerkleConfig>(
         .prove(&mut merlin, statement.clone(), witness)
         .unwrap();
 
-    dbg!(whir_prover_time.elapsed());
-    dbg!(whir_proof_size(merlin.transcript(), &proof));
+    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!("Proof size: {:.1} KiB", whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0);
+
+    
 
     // Just not to count that initial inversion (which could be precomputed)
     let verifier = Verifier::new(params);
@@ -360,6 +378,12 @@ fn run_whir_pcs<F, MerkleConfig>(
         let mut arthur = io.to_arthur(merlin.transcript());
         verifier.verify(&mut arthur, &statement, &proof).unwrap();
     }
-    dbg!(whir_verifier_time.elapsed() / reps as u32);
-    dbg!(HashCounter::get() as f64 / reps as f64);
+    println!(
+        "Verifier time: {:.1?}",
+        whir_verifier_time.elapsed() / reps as u32
+    );
+    println!(
+        "Average hashes: {:.1}k",
+        (HashCounter::get() as f64 / reps as f64) / 1000.0
+    );
 }
