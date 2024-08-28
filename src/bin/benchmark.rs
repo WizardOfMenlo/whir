@@ -52,6 +52,9 @@ struct Args {
     #[arg(long = "sec", default_value = "ConjectureList")]
     soundness_type: SoundnessType,
 
+    #[arg(long = "fold_type", default_value = "ProverHelps")]
+    fold_optimisation: FoldType,
+
     #[arg(short = 'f', long = "field", default_value = "Goldilocks2")]
     field: AvailableFields,
 
@@ -99,6 +102,22 @@ fn main() {
     let mut rng = ark_std::test_rng();
 
     match (field, merkle) {
+        (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
+            use fields::Field64 as F;
+            use merkle_tree::blake3 as mt;
+
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
+
+        (AvailableFields::Goldilocks1, AvailableMerkle::SHA3) => {
+            use fields::Field64 as F;
+            use merkle_tree::sha3 as mt;
+
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
+
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
             use fields::Field64_2 as F;
             use merkle_tree::blake3 as mt;
@@ -197,6 +216,7 @@ fn run_whir<F, MerkleConfig>(
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
     let soundness_type = args.soundness_type;
+    let fold_optimisation = args.fold_optimisation;
 
     std::fs::create_dir_all("outputs").unwrap();
 
@@ -211,7 +231,7 @@ fn run_whir<F, MerkleConfig>(
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
-        fold_optimisation: FoldType::ProverHelps,
+        fold_optimisation,
         starting_log_inv_rate: starting_rate,
     };
 

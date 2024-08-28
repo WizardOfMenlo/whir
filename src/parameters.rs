@@ -66,6 +66,32 @@ pub enum FoldType {
     ProverHelps,
 }
 
+impl FromStr for FoldType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "Naive" {
+            Ok(FoldType::Naive)
+        } else if s == "ProverHelps" {
+            Ok(FoldType::ProverHelps)
+        } else {
+            Err(format!("Invalid fold type specification: {}", s))
+        }
+    }
+}
+
+impl Display for FoldType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                FoldType::Naive => "Naive",
+                FoldType::ProverHelps => "ProverHelps",
+            }
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct WhirParameters<MerkleConfig>
 where
@@ -96,8 +122,8 @@ where
         )?;
         writeln!(
             f,
-            "Starting rate: 2^-{}, folding_factor: {}",
-            self.starting_log_inv_rate, self.folding_factor
+            "Starting rate: 2^-{}, folding_factor: {}, fold_opt_type: {}",
+            self.starting_log_inv_rate, self.folding_factor, self.fold_optimisation,
         )
     }
 }

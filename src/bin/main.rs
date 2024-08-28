@@ -49,6 +49,9 @@ struct Args {
     #[arg(long = "sec", default_value = "ConjectureList")]
     soundness_type: SoundnessType,
 
+    #[arg(long = "fold_type", default_value = "ProverHelps")]
+    fold_optimisation: FoldType,
+
     #[arg(short = 'f', long = "field", default_value = "Goldilocks2")]
     field: AvailableFields,
 
@@ -204,6 +207,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
+    let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
 
     if args.num_evaluations > 1 {
@@ -221,7 +225,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
-        fold_optimisation: FoldType::ProverHelps,
+        fold_optimisation,
         starting_log_inv_rate: starting_rate,
     };
 
@@ -295,6 +299,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
+    let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
     let num_evaluations = args.num_evaluations;
 
@@ -313,7 +318,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
-        fold_optimisation: FoldType::ProverHelps,
+        fold_optimisation,
         starting_log_inv_rate: starting_rate,
     };
 
@@ -365,9 +370,10 @@ fn run_whir_pcs<F, MerkleConfig>(
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
-    println!("Proof size: {:.1} KiB", whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0);
-
-    
+    println!(
+        "Proof size: {:.1} KiB",
+        whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
+    );
 
     // Just not to count that initial inversion (which could be precomputed)
     let verifier = Verifier::new(params);
