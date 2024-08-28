@@ -21,6 +21,7 @@ Options:
       --reps <VERIFIER_REPETITIONS>      [default: 1000]
   -k, --fold <FOLDING_FACTOR>            [default: 4]
       --sec <SOUNDNESS_TYPE>             [default: ConjectureList]
+      --fold_type <FOLD_OPTIMISATION>    [default: ProverHelps]
   -f, --field <FIELD>                    [default: Goldilocks2]
       --hash <MERKLE_TREE>               [default: Blake3]
   -h, --help                             Print help
@@ -36,5 +37,6 @@ Options:
 - `-r` sets the log_inv of the rate
 - `-k` sets the number of variables to fold at each iteration. 
 - `--sec` sets the settings used to compute security. Available `UniqueDecoding`, `ProvableList`, `ConjectureList`
+- `--fold_type` sets the settings used to compute folds. Available `Naive`, `ProverHelps`
 - `-f` sets the field used, available are `Goldilocks2, Goldilocks3, Field192, Field256`.
 - `--hash` sets the hash used for the Merkle tree, available are `SHA3` and `Blake3`
