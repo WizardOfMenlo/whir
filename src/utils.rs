@@ -57,7 +57,7 @@ pub fn stack_evaluations<F: Copy>(evals: Vec<F>, folding_factor: usize) -> Vec<V
 
     let mut stacked_evaluations = Vec::with_capacity(size_of_new_domain);
     for i in 0..size_of_new_domain {
-        let mut new_evals = vec![];
+        let mut new_evals = Vec::with_capacity(folding_factor_exp);
         for j in 0..folding_factor_exp {
             new_evals.push(evals[i + j * size_of_new_domain]);
         }
