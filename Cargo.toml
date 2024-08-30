@@ -30,7 +30,7 @@ debug = true
 
 [features]
 default = []
-parallel = ["ark-poly/parallel", "ark-ff/parallel", "ark-crypto-primitives/parallel"] #Buggy 
+parallel = ["ark-poly/parallel", "ark-ff/parallel", "ark-crypto-primitives/parallel"] 
 
 [patch.crates-io]
 ark-std = { git = "https://github.com/arkworks-rs/std" }

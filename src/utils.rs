@@ -55,7 +55,7 @@ pub fn stack_evaluations<F: Copy>(evals: Vec<F>, folding_factor: usize) -> Vec<V
     assert!(evals.len() % folding_factor_exp == 0);
     let size_of_new_domain = evals.len() / folding_factor_exp;
 
-    let mut stacked_evaluations = vec![];
+    let mut stacked_evaluations = Vec::with_capacity(size_of_new_domain);
     for i in 0..size_of_new_domain {
         let mut new_evals = vec![];
         for j in 0..folding_factor_exp {
