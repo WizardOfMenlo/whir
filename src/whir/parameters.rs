@@ -24,17 +24,17 @@ where
     pub(crate) committment_ood_samples: usize,
     pub(crate) starting_domain: Domain<F>,
     pub(crate) starting_log_inv_rate: usize,
-    pub(crate) starting_folding_pow_bits: usize,
+    pub(crate) starting_folding_pow_bits: f64,
 
     pub(crate) folding_factor: usize,
     pub(crate) round_parameters: Vec<RoundConfig>,
     pub(crate) fold_optimisation: FoldType,
 
     pub(crate) final_queries: usize,
-    pub(crate) final_pow_bits: usize,
+    pub(crate) final_pow_bits: f64,
     pub(crate) final_log_inv_rate: usize,
     pub(crate) final_sumcheck_rounds: usize,
-    pub(crate) final_folding_pow_bits: usize,
+    pub(crate) final_folding_pow_bits: f64,
 
     // Merkle tree parameters
     pub(crate) leaf_hash_params: LeafParam<MerkleConfig>,
@@ -43,8 +43,8 @@ where
 
 #[derive(Debug, Clone)]
 pub(crate) struct RoundConfig {
-    pub(crate) pow_bits: usize,
-    pub(crate) folding_pow_bits: usize,
+    pub(crate) pow_bits: f64,
+    pub(crate) folding_pow_bits: f64,
     pub(crate) num_queries: usize,
     pub(crate) ood_samples: usize,
     pub(crate) log_inv_rate: usize,
@@ -142,10 +142,8 @@ where
                 num_queries,
             );
 
-            let pow_bits = 0.max(
-                (whir_parameters.security_level as f64 - (query_error.min(combination_error)))
-                    .ceil() as usize,
-            );
+            let pow_bits = 0_f64
+                .max(whir_parameters.security_level as f64 - (query_error.min(combination_error)));
 
             let folding_pow_bits = Self::folding_pow_bits(
                 whir_parameters.security_level,
@@ -174,13 +172,11 @@ where
             log_inv_rate,
         );
 
-        let final_pow_bits = (whir_parameters.security_level as f64
-            - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries))
-        .ceil() as usize;
+        let final_pow_bits = whir_parameters.security_level as f64
+            - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries);
 
-        let final_folding_pow_bits = (0_f64
-            .max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64))
-            as usize;
+        let final_folding_pow_bits =
+            0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
 
         WhirConfig {
             security_level: whir_parameters.security_level,
@@ -215,11 +211,11 @@ where
             self.final_folding_pow_bits,
         ]
         .into_iter()
-        .all(|x| x <= self.max_pow_bits)
-            && self
-                .round_parameters
-                .iter()
-                .all(|r| r.pow_bits <= self.max_pow_bits && r.folding_pow_bits <= self.max_pow_bits)
+        .all(|x| x <= self.max_pow_bits as f64)
+            && self.round_parameters.iter().all(|r| {
+                r.pow_bits <= self.max_pow_bits as f64
+                    && r.folding_pow_bits <= self.max_pow_bits as f64
+            })
     }
 
     pub fn log_eta(soundness_type: SoundnessType, log_inv_rate: usize) -> f64 {
@@ -334,7 +330,7 @@ where
         num_variables: usize,
         log_inv_rate: usize,
         log_eta: f64,
-    ) -> usize {
+    ) -> f64 {
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
             soundness_type,
             field_size_bits,
@@ -352,7 +348,7 @@ where
 
         let error = prox_gaps_error.min(sumcheck_error);
 
-        0.max((security_level as f64 - error).ceil() as usize)
+        0_f64.max(security_level as f64 - error)
     }
 
     // Used to select the number of queries

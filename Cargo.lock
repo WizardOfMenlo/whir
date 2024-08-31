@@ -295,6 +295,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytemuck"
+version = "1.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773d90827bc3feecfb67fab12e24de0749aad83c74b9504ecde46237b5cd24e2"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -567,16 +573,18 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 [[package]]
 name = "nimue"
 version = "0.1.0"
-source = "git+https://github.com/WizardOfMenlo/nimue?branch=extension_field_ark#4b3f13bc928b682e7f1fd1356a64344f77d036fe"
+source = "git+https://github.com/recmo/nimue?branch=parallel_pow#a6daff414c06031c618f319dab9c564d77aa26e5"
 dependencies = [
  "ark-ec",
  "ark-ff",
  "ark-serialize",
+ "bytemuck",
  "digest",
  "generic-array",
  "keccak",
  "log",
  "rand",
+ "rayon",
  "zeroize",
 ]
 

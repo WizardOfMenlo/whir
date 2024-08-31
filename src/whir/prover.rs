@@ -138,7 +138,7 @@ where
             round_state.merkle_proofs.push((merkle_proof, answers));
 
             // PoW
-            if self.0.final_pow_bits > 0 {
+            if self.0.final_pow_bits > 0. {
                 merlin.challenge_pow(self.0.final_pow_bits)?;
             }
 
@@ -230,7 +230,7 @@ where
         round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW
-        if round_params.pow_bits > 0 {
+        if round_params.pow_bits > 0. {
             merlin.challenge_pow(round_params.pow_bits)?;
         }
 
