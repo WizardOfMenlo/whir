@@ -22,7 +22,7 @@ rand_chacha = "0.3"
 clap = { version = "4.4.17", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-nimue = { git = "https://github.com/WizardOfMenlo/nimue", features = ["ark"], branch = "extension_field_ark" }
+nimue = { git = "https://github.com/recmo/nimue", features = ["ark"], branch = "parallel_pow" }
 lazy_static = "1.4"
 
 [profile.release]

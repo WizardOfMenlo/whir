@@ -24,15 +24,15 @@ where
 }
 
 pub trait WhirPoWIOPattern {
-    fn pow(self, bits: usize) -> Self;
+    fn pow(self, bits: f64) -> Self;
 }
 
 impl WhirPoWIOPattern for IOPattern
 where
     IOPattern: PoWIOPattern,
 {
-    fn pow(self, bits: usize) -> Self {
-        if bits > 0 {
+    fn pow(self, bits: f64) -> Self {
+        if bits > 0. {
             self.challenge_pow("pow_queries")
         } else {
             self

@@ -118,7 +118,7 @@ where
             let [folding_randomness_single] = arthur.challenge_scalars()?;
             sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-            if self.params.starting_folding_pow_bits > 0 {
+            if self.params.starting_folding_pow_bits > 0. {
                 arthur.challenge_pow(self.params.starting_folding_pow_bits)?;
             }
         }
@@ -171,7 +171,7 @@ where
                 return Err(ProofError::InvalidProof);
             }
 
-            if round_params.pow_bits > 0 {
+            if round_params.pow_bits > 0. {
                 arthur.challenge_pow(round_params.pow_bits)?;
             }
 
@@ -188,7 +188,7 @@ where
                 let [folding_randomness_single] = arthur.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-                if round_params.folding_pow_bits > 0 {
+                if round_params.folding_pow_bits > 0. {
                     arthur.challenge_pow(round_params.folding_pow_bits)?;
                 }
             }
@@ -247,7 +247,7 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        if self.params.final_pow_bits > 0 {
+        if self.params.final_pow_bits > 0. {
             arthur.challenge_pow(self.params.final_pow_bits)?;
         }
 
@@ -258,7 +258,7 @@ where
             let [folding_randomness_single] = arthur.challenge_scalars()?;
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-            if self.params.final_folding_pow_bits > 0 {
+            if self.params.final_folding_pow_bits > 0. {
                 arthur.challenge_pow(self.params.final_folding_pow_bits)?;
             }
         }

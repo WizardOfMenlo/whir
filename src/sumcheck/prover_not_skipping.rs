@@ -15,7 +15,7 @@ use crate::{
 use super::prover_single::SumcheckSingle;
 
 pub trait SumcheckNotSkippingIOPattern<F: Field> {
-    fn add_sumcheck(self, folding_factor: usize, pow_bits: usize) -> Self;
+    fn add_sumcheck(self, folding_factor: usize, pow_bits: f64) -> Self;
 }
 
 impl<F> SumcheckNotSkippingIOPattern<F> for IOPattern
@@ -23,7 +23,7 @@ where
     F: Field,
     IOPattern: FieldIOPattern<F> + WhirPoWIOPattern,
 {
-    fn add_sumcheck(mut self, folding_factor: usize, pow_bits: usize) -> Self {
+    fn add_sumcheck(mut self, folding_factor: usize, pow_bits: f64) -> Self {
         for _ in 0..folding_factor {
             self = self
                 .add_scalars(3, "sumcheck_poly")
@@ -59,7 +59,7 @@ where
         &mut self,
         merlin: &mut Merlin,
         folding_factor: usize,
-        pow_bits: usize,
+        pow_bits: f64,
     ) -> ProofResult<MultilinearPoint<F>> {
         let mut res = Vec::with_capacity(folding_factor);
 
@@ -70,7 +70,7 @@ where
             res.push(folding_randomness);
 
             // Do PoW if needed
-            if pow_bits > 0 {
+            if pow_bits > 0. {
                 merlin.challenge_pow(pow_bits)?;
             }
 
@@ -144,7 +144,7 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
@@ -226,10 +226,10 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
         prover.add_new_equality(&[fold_point.clone()], &combination_randomness);
         let folding_randomness_2 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0)?;
+            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
