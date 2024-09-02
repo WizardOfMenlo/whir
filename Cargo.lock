@@ -573,7 +573,7 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 [[package]]
 name = "nimue"
 version = "0.1.0"
-source = "git+https://github.com/recmo/nimue?branch=parallel_pow#a6daff414c06031c618f319dab9c564d77aa26e5"
+source = "git+https://github.com/WizardOfMenlo/nimue?branch=extension_field_ark#938f45e2aa2ecdfb8e6cf73a7426ee0a864d19db"
 dependencies = [
  "ark-ec",
  "ark-ff",
