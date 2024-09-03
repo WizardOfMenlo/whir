@@ -149,6 +149,10 @@ where
             new_domain.backing_domain.group_gen_inv(),
             self.0.folding_factor,
         );
+        let folded_evals = folded_evals
+            .chunks_exact(1 << self.0.folding_factor)
+            .map(|x| x.to_vec())
+            .collect::<Vec<_>>();
 
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,

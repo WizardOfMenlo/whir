@@ -9,6 +9,7 @@ use nimue::{
     ByteChallenges, ByteWriter, Merlin, ProofResult,
 };
 use rand::{Rng, SeedableRng};
+use rayon::slice::ParallelSlice;
 
 use crate::{
     domain::Domain,
@@ -27,7 +28,7 @@ where
 impl<F, MerkleConfig> Prover<F, MerkleConfig>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = Vec<F>>,
+    MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
     fn validate_parameters(&self) -> bool {
@@ -51,7 +52,7 @@ where
         merlin: &mut Merlin,
         statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig>>
+    ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
@@ -104,7 +105,7 @@ where
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig>> {
+    ) -> ProofResult<WhirProof<MerkleConfig, F>> {
         // Fold the coefficients
         let folded_coefficients = round_state
             .coefficients
@@ -130,10 +131,12 @@ where
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
                 .unwrap();
+            let fold_size = 1 << self.0.folding_factor;
             let answers = final_challenge_indexes
                 .into_iter()
-                .map(|i| &round_state.prev_merkle_answers[i])
-                .cloned()
+                .map(|i| {
+                    round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec()
+                })
                 .collect();
             round_state.merkle_proofs.push((merkle_proof, answers));
 
@@ -173,7 +176,7 @@ where
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            &folded_evals,
+            folded_evals.par_chunks_exact(1 << self.0.folding_factor),
         )
         .unwrap();
 
@@ -222,10 +225,10 @@ where
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
+        let fold_size = 1 << self.0.folding_factor;
         let answers = stir_challenges_indexes
             .into_iter()
-            .map(|i| &round_state.prev_merkle_answers[i])
-            .cloned()
+            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
         round_state.merkle_proofs.push((merkle_proof, answers));
 
@@ -275,6 +278,6 @@ where
     folding_randomness: MultilinearPoint<F>,
     coefficients: CoefficientList<F>,
     prev_merkle: MerkleTree<MerkleConfig>,
-    prev_merkle_answers: Vec<Vec<F>>,
+    prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 }

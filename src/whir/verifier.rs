@@ -66,7 +66,7 @@ struct ParsedRound<F> {
 impl<F, MerkleConfig> Verifier<F, MerkleConfig>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = Vec<F>>,
+    MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     pub fn new(params: WhirConfig<F, MerkleConfig>) -> Self {
@@ -101,7 +101,7 @@ where
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>, // Will be needed later
-        whir_proof: &WhirProof<MerkleConfig>,
+        whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>> {
         // Derive combination randomness and first sumcheck polynomial
         let [combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
@@ -163,7 +163,7 @@ where
                     &self.params.leaf_hash_params,
                     &self.params.two_to_one_params,
                     &prev_root,
-                    answers,
+                    answers.iter().map(|a| a.as_ref()),
                 )
                 .unwrap()
                 || merkle_proof.leaf_indexes != stir_challenges_indexes
@@ -239,7 +239,7 @@ where
                 &self.params.leaf_hash_params,
                 &self.params.two_to_one_params,
                 &prev_root,
-                final_randomness_answers,
+                final_randomness_answers.iter().map(|a| a.as_ref()),
             )
             .unwrap()
             || final_merkle_proof.leaf_indexes != final_randomness_indexes
@@ -442,7 +442,7 @@ where
         &self,
         arthur: &mut Arthur,
         statement: &Statement<F>,
-        whir_proof: &WhirProof<MerkleConfig>,
+        whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()> {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)

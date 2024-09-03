@@ -5,6 +5,7 @@ use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
     ByteWriter, Merlin, ProofResult,
 };
+use rayon::prelude::*;
 
 use crate::{
     poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
@@ -19,7 +20,7 @@ where
 {
     pub(crate) polynomial: CoefficientList<F>,
     pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
-    pub(crate) merkle_leaves: Vec<Vec<F>>,
+    pub(crate) merkle_leaves: Vec<F>,
     pub(crate) ood_points: Vec<F>,
 }
 
@@ -31,7 +32,7 @@ where
 impl<F, MerkleConfig> Committer<F, MerkleConfig>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = Vec<F>>,
+    MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
     pub fn new(config: WhirConfig<F, MerkleConfig>) -> Self {
@@ -59,15 +60,23 @@ where
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
             self.0.folding_factor,
-        )
-        .into_iter()
-        .map(|x| x.into_iter().map(F::from_base_prime_field).collect()) // Conver to extension
-        .collect();
+        );
 
+        // Convert to extension field.
+        // This is not necessary for the commit, but in further rounds
+        // we will need the extension field. For symplicity we do it here too.
+        // TODO: Commit to base field directly.
+        let folded_evals = folded_evals
+            .into_iter()
+            .map(F::from_base_prime_field)
+            .collect::<Vec<_>>();
+
+        // Group folds together as a leaf.
+        let fold_size = 1 << self.0.folding_factor;
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            &folded_evals,
+            folded_evals.par_chunks_exact(fold_size),
         )
         .unwrap();
 

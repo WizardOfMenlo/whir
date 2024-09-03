@@ -54,8 +54,13 @@ where
             base_domain.group_gen_inv(),
             self.0.folding_factor,
         )
-        .into_iter()
-        .map(|x| x.into_iter().map(F::from_base_prime_field).collect()) // Conver to extension
+        .chunks_exact(1 << self.0.folding_factor)
+        .map(|x| {
+            x.into_iter()
+                .copied()
+                .map(F::from_base_prime_field)
+                .collect()
+        }) // Conver to extension
         .collect();
 
         let merkle_tree = MerkleTree::<MerkleConfig>::new(

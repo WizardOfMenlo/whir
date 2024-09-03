@@ -43,30 +43,30 @@ pub fn compute_fold<F: Field>(
 }
 
 pub fn restructure_evaluations<F: FftField>(
-    stacked_evaluations: Vec<Vec<F>>,
+    mut stacked_evaluations: Vec<F>,
     fold_type: FoldType,
     domain_gen: F,
     domain_gen_inv: F,
     folding_factor: usize,
-) -> Vec<Vec<F>> {
+) -> Vec<F> {
+    let folding_size = 1_u64 << folding_factor;
+    assert_eq!(stacked_evaluations.len() % (folding_size as usize), 0);
+    eprintln!("{} x {}", stacked_evaluations.len(), folding_size);
     match fold_type {
         FoldType::Naive => stacked_evaluations,
         FoldType::ProverHelps => {
             // Stacked evaluation at i is f(B_l) where B_l = w^i * <w^n/k>
-            let gen_scale = stacked_evaluations.len(); // n/2^k
+            let gen_scale = stacked_evaluations.len() / folding_size as usize; // n/2^k
             let coset_generator = domain_gen.pow(&[gen_scale as u64]);
             let coset_generator_inv = domain_gen_inv.pow(&[gen_scale as u64]);
-            let folding_factor_exp = 1 << folding_factor;
-            let size_as_field_element = F::from(folding_factor_exp);
+            let size_as_field_element = F::from(folding_size);
             let size_inv = size_as_field_element.inverse().unwrap();
-
-            let mut res = Vec::with_capacity(gen_scale);
 
             let mut coset_offset = F::ONE;
             let mut coset_offset_inv = F::ONE;
-            for answers in stacked_evaluations {
+            for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
                 let domain = Radix2EvaluationDomain {
-                    size: folding_factor_exp,
+                    size: folding_size,
                     log_size_of_group: folding_factor as u32,
                     size_as_field_element,
                     group_gen: coset_generator,
@@ -74,19 +74,19 @@ pub fn restructure_evaluations<F: FftField>(
                     offset: coset_offset,
                     offset_inv: coset_offset_inv,
                     size_inv,
-                    offset_pow_size: coset_offset.pow([folding_factor_exp]),
+                    offset_pow_size: coset_offset.pow([folding_size]),
                 };
 
-                let evaluations = Evaluations::from_vec_and_domain(answers, domain);
+                let evaluations = Evaluations::from_vec_and_domain(answers.to_vec(), domain);
                 let mut interp = evaluations.interpolate().coeffs;
-                interp.resize(folding_factor_exp as usize, F::ZERO);
+                interp.resize(folding_size as usize, F::ZERO);
 
-                res.push(interp);
+                answers.copy_from_slice(&interp);
 
                 coset_offset *= domain_gen;
                 coset_offset_inv *= domain_gen_inv;
             }
-            res
+            stacked_evaluations
         }
     }
 }
