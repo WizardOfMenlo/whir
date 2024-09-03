@@ -82,8 +82,10 @@ where
         debug_assert_eq!(out.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = out.split_at_mut(out.len() / 2);
-            Self::eval_eq(tail, low, scalar * (F::ONE - x));
-            Self::eval_eq(tail, high, scalar * x);
+            let s1 = scalar * x;
+            let s0 = scalar - s1;
+            Self::eval_eq(tail, low, s0);
+            Self::eval_eq(tail, high, s1);
         } else {
             out[0] += scalar;
         }
@@ -97,14 +99,19 @@ where
         debug_assert_eq!(out.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = out.split_at_mut(out.len() / 2);
+            // Update scalars using a single mul. Note that this causes a data dependency,
+            // so for small fields it might be better to use two muls.
+            // This data dependency should go away once we implement parallel point evaluation.
+            let s1 = scalar * x;
+            let s0 = scalar - s1;
             if tail.len() > PARALLEL_THRESHOLD {
                 join(
-                    || Self::eval_eq(tail, low, scalar * (F::ONE - x)),
-                    || Self::eval_eq(tail, high, scalar * x),
+                    || Self::eval_eq(tail, low, s0),
+                    || Self::eval_eq(tail, high, s1),
                 );
             } else {
-                Self::eval_eq(tail, low, scalar * (F::ONE - x));
-                Self::eval_eq(tail, high, scalar * x);
+                Self::eval_eq(tail, low, s0);
+                Self::eval_eq(tail, high, s1);
             }
         } else {
             out[0] += scalar;
