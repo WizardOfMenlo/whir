@@ -3,6 +3,10 @@ use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::Serialize;
 
+// Used to select how much PoW is acceptable.
+// To be checked later on after opts are done.
+pub const POW_FACTOR: usize = 1;
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum SoundnessType {
     UniqueDecoding,
