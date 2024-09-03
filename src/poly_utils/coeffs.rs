@@ -27,19 +27,46 @@ where
         sum
     }
 
+    #[cfg(not(feature = "parallel"))]
+    fn eval_extension<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+        debug_assert_eq!(coeff.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = coeff.split_at(coeff.len() / 2);
+            let a = Self::eval_extension(low, tail, scalar);
+            let b = Self::eval_extension(high, tail, scalar * x);
+            a + b
+        } else {
+            scalar.mul_by_base_prime_field(&coeff[0])
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    fn eval_extension<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+        const PARALLEL_THRESHOLD: usize = 10;
+        debug_assert_eq!(coeff.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = coeff.split_at(coeff.len() / 2);
+            if tail.len() > PARALLEL_THRESHOLD {
+                let (a, b) = rayon::join(
+                    || Self::eval_extension(low, tail, scalar),
+                    || Self::eval_extension(high, tail, scalar * x),
+                );
+                a + b
+            } else {
+                Self::eval_extension(low, tail, scalar)
+                    + Self::eval_extension(high, tail, scalar * x)
+            }
+        } else {
+            scalar.mul_by_base_prime_field(&coeff[0])
+        }
+    }
+
     pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
         &self,
         point: &MultilinearPoint<E>,
     ) -> E {
         assert_eq!(self.num_variables, point.n_variables());
-
-        let mut sum = E::ZERO;
-
-        for (b, term) in TermPolynomialIterator::new(point) {
-            sum += term.mul_by_base_prime_field(&self.coeffs[b.0]);
-        }
-
-        sum
+        Self::eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
     pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
