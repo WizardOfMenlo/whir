@@ -65,7 +65,7 @@ fn main() {
     let merkle = args.merkle_tree;
 
     if args.pow_bits.is_none() {
-        args.pow_bits = Some(args.num_variables + POW_FACTOR);
+        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
     }
 
     let mut rng = ark_std::test_rng();

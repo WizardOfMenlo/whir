@@ -5,7 +5,11 @@ use serde::Serialize;
 
 // Used to select how much PoW is acceptable.
 // To be checked later on after opts are done.
-pub const POW_FACTOR: usize = 1;
+const POW_FACTOR: usize = 1;
+
+pub fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
+    num_variables + log_inv_rate + POW_FACTOR
+}
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum SoundnessType {
