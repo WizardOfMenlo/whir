@@ -1,11 +1,11 @@
-use ark_ff::Field;
-
+use super::proof::SumcheckPolynomial;
 use crate::poly_utils::{
     coeffs::CoefficientList, evals::EvaluationsList,
     sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint,
 };
-
-use super::proof::SumcheckPolynomial;
+use ark_ff::Field;
+#[cfg(feature = "parallel")]
+use rayon::join;
 
 pub struct SumcheckSingle<F> {
     // The evaluation of p
@@ -77,12 +77,35 @@ where
 
     // Evaluate the eq function on for a given point on the hypercube, and add
     // the result multiplied by the scalar to the output.
+    #[cfg(not(feature = "parallel"))]
     fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
         debug_assert_eq!(out.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = out.split_at_mut(out.len() / 2);
             Self::eval_eq(tail, low, scalar * (F::ONE - x));
             Self::eval_eq(tail, high, scalar * x);
+        } else {
+            out[0] += scalar;
+        }
+    }
+
+    // Evaluate the eq function on for a given point on the hypercube, and add
+    // the result multiplied by the scalar to the output.
+    #[cfg(feature = "parallel")]
+    fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
+        const PARALLEL_THRESHOLD: usize = 10;
+        debug_assert_eq!(out.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = out.split_at_mut(out.len() / 2);
+            if tail.len() > PARALLEL_THRESHOLD {
+                join(
+                    || Self::eval_eq(tail, low, scalar * (F::ONE - x)),
+                    || Self::eval_eq(tail, high, scalar * x),
+                );
+            } else {
+                Self::eval_eq(tail, low, scalar * (F::ONE - x));
+                Self::eval_eq(tail, high, scalar * x);
+            }
         } else {
             out[0] += scalar;
         }
@@ -95,6 +118,8 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         for (point, rand) in points.iter().zip(combination_randomness) {
+            // TODO: We might want to do all points simultaneously so we
+            // do only a single pass over the data.
             Self::eval_eq(&point.0, self.evaluation_of_equality.evals_mut(), *rand);
         }
     }
