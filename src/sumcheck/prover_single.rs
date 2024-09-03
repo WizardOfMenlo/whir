@@ -1,11 +1,8 @@
-use ark_ff::Field;
-
-use crate::poly_utils::{
-    coeffs::CoefficientList, evals::EvaluationsList,
-    sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint,
-};
-
 use super::proof::SumcheckPolynomial;
+use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
+use ark_ff::Field;
+#[cfg(feature = "parallel")]
+use rayon::join;
 
 pub struct SumcheckSingle<F> {
     // The evaluation of p
@@ -75,6 +72,49 @@ where
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
+    // Evaluate the eq function on for a given point on the hypercube, and add
+    // the result multiplied by the scalar to the output.
+    #[cfg(not(feature = "parallel"))]
+    fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
+        debug_assert_eq!(out.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = out.split_at_mut(out.len() / 2);
+            let s1 = scalar * x;
+            let s0 = scalar - s1;
+            Self::eval_eq(tail, low, s0);
+            Self::eval_eq(tail, high, s1);
+        } else {
+            out[0] += scalar;
+        }
+    }
+
+    // Evaluate the eq function on for a given point on the hypercube, and add
+    // the result multiplied by the scalar to the output.
+    #[cfg(feature = "parallel")]
+    fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
+        const PARALLEL_THRESHOLD: usize = 10;
+        debug_assert_eq!(out.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = out.split_at_mut(out.len() / 2);
+            // Update scalars using a single mul. Note that this causes a data dependency,
+            // so for small fields it might be better to use two muls.
+            // This data dependency should go away once we implement parallel point evaluation.
+            let s1 = scalar * x;
+            let s0 = scalar - s1;
+            if tail.len() > PARALLEL_THRESHOLD {
+                join(
+                    || Self::eval_eq(tail, low, s0),
+                    || Self::eval_eq(tail, high, s1),
+                );
+            } else {
+                Self::eval_eq(tail, low, s0);
+                Self::eval_eq(tail, high, s1);
+            }
+        } else {
+            out[0] += scalar;
+        }
+    }
+
     pub fn add_new_equality(
         &mut self,
         points: &[MultilinearPoint<F>],
@@ -82,9 +122,9 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         for (point, rand) in points.iter().zip(combination_randomness) {
-            for (prefix, lag) in LagrangePolynomialIterator::new(point) {
-                self.evaluation_of_equality.evals_mut()[prefix.0] += *rand * lag;
-            }
+            // TODO: We might want to do all points simultaneously so we
+            // do only a single pass over the data.
+            Self::eval_eq(&point.0, self.evaluation_of_equality.evals_mut(), *rand);
         }
     }
 
@@ -163,4 +203,24 @@ mod tests {
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
+}
+
+#[test]
+fn test_eval_eq() {
+    use crate::crypto::fields::Field64 as F;
+    use ark_ff::AdditiveGroup;
+
+    let eval = vec![F::from(3), F::from(5)];
+    let mut out = vec![F::ZERO; 4];
+    SumcheckSingle::eval_eq(&eval, &mut out, F::ONE);
+    dbg!(&out);
+
+    let point = MultilinearPoint(eval.clone());
+    let mut expected = vec![F::ZERO; 4];
+    for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
+        expected[prefix.0] = lag;
+    }
+    dbg!(&expected);
+
+    assert_eq!(&out, &expected);
 }
