@@ -1,8 +1,5 @@
 use super::proof::SumcheckPolynomial;
-use crate::poly_utils::{
-    coeffs::CoefficientList, evals::EvaluationsList,
-    sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint,
-};
+use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::join;
