@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Switch toolchain
+      run: rustup update nightly && rustup default nightly
     - name: Build
       run: cargo build --release --verbose
     - name: Run tests
