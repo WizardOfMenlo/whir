@@ -181,8 +181,7 @@ fn run_whir<F, MerkleConfig>(
     match args.protocol_type {
         WhirType::PCS => run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params),
         WhirType::LDT => {
-            todo!("LDT not implemented")
-            // run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params)
+            run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params)
         }
     }
 }
@@ -193,7 +192,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
     F: FftField + CanonicalSerialize,
-    MerkleConfig: Config<Leaf = Vec<F>> + Clone,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     use whir::whir_ldt::{

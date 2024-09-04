@@ -62,7 +62,7 @@ struct ParsedRound<F> {
 impl<F, MerkleConfig> Verifier<F, MerkleConfig>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = Vec<F>>,
+    MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     pub fn new(params: WhirConfig<F, MerkleConfig>) -> Self {
@@ -85,7 +85,7 @@ where
         &self,
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
-        whir_proof: &WhirProof<MerkleConfig>,
+        whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>> {
         // Derive initial combination randomness
         let mut folding_randomness = vec![F::ZERO; self.params.folding_factor];
@@ -134,7 +134,7 @@ where
                     &self.params.leaf_hash_params,
                     &self.params.two_to_one_params,
                     &prev_root,
-                    answers,
+                    answers.iter().map(|a| a.as_ref()),
                 )
                 .unwrap()
                 || merkle_proof.leaf_indexes != stir_challenges_indexes
@@ -210,7 +210,7 @@ where
                 &self.params.leaf_hash_params,
                 &self.params.two_to_one_params,
                 &prev_root,
-                final_randomness_answers,
+                final_randomness_answers.iter().map(|a| a.as_ref()),
             )
             .unwrap()
             || final_merkle_proof.leaf_indexes != final_randomness_indexes
@@ -396,7 +396,7 @@ where
     pub fn verify(
         &self,
         arthur: &mut Arthur,
-        whir_proof: &WhirProof<MerkleConfig>,
+        whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()> {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
