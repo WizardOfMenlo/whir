@@ -9,6 +9,7 @@ pub struct SumcheckSingle<F> {
     evaluation_of_p: EvaluationsList<F>,
     evaluation_of_equality: EvaluationsList<F>,
     num_variables: usize,
+    sum: F,
 }
 
 impl<F> SumcheckSingle<F>
@@ -30,6 +31,7 @@ where
             evaluation_of_p: coeffs.into(),
             evaluation_of_equality: EvaluationsList::new(vec![F::ZERO; 1 << num_variables]),
             num_variables,
+            sum: F::ZERO,
         };
 
         prover.add_new_equality(points, combination_randomness);
@@ -73,6 +75,15 @@ where
         let eval_1 = coeff_0 + coeff_1 + coeff_2;
         let eval_2 = coeff_0 + two * coeff_1 + two * two * coeff_2;
 
+        // The sum must equal p(0) + p(1).
+        // TODO: We are just checking this while implementing, with the goal of
+        // using this constraint to avoid computing coeff_1 later.
+        assert_eq!(self.sum, eval_0 + eval_1);
+        eprintln!(
+            "ASSERTION PASSED: sum == eval_0 + eval_1, {}",
+            self.num_variables
+        );
+
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
@@ -92,7 +103,7 @@ where
         }
     }
 
-    // Evaluate the eq function on for a given point on the hypercube, and add
+    // Evaluate the eq function on a given point on the hypercube, and add
     // the result multiplied by the scalar to the output.
     #[cfg(feature = "parallel")]
     fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
@@ -130,6 +141,18 @@ where
             // do only a single pass over the data.
             Self::eval_eq(&point.0, self.evaluation_of_equality.evals_mut(), *rand);
         }
+
+        // Recompute the sum
+        // TODO: Avoid recomputing the sum
+        self.sum = F::ZERO;
+        for (coeff, eq) in self
+            .evaluation_of_p
+            .evals()
+            .iter()
+            .zip(self.evaluation_of_equality.evals())
+        {
+            self.sum += *coeff * eq;
+        }
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
@@ -137,6 +160,7 @@ where
         &mut self,
         combination_randomness: F, // Scale the initial point
         folding_randomness: &MultilinearPoint<F>,
+        sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
         assert_eq!(folding_randomness.n_variables(), 1);
         assert!(self.num_variables >= 1);
@@ -166,6 +190,7 @@ where
         self.num_variables -= 1;
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
         self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
+        self.sum = sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 }
 

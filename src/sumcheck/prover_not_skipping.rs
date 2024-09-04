@@ -75,7 +75,7 @@ where
             }
 
             self.sumcheck_prover
-                .compress(F::ONE, &folding_randomness.into());
+                .compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
         }
 
         res.reverse();
