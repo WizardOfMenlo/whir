@@ -46,7 +46,6 @@ where
 
         // Compute coefficients of the quadratic result polynomial
         let mut coeff_0 = F::ZERO;
-        let mut coeff_1 = F::ZERO;
         let mut coeff_2 = F::ZERO;
 
         for beta_prefix in 0..prefix_len {
@@ -66,23 +65,16 @@ where
 
             // Now we need to add the contribution of p(x) * w(x)
             coeff_0 += p_0 * w_0;
-            coeff_1 += w_1 * p_0 + w_0 * p_1;
             coeff_2 += p_1 * w_1;
         }
+
+        // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
+        let coeff_1 = self.sum - coeff_0 - coeff_0 - coeff_2;
 
         // Evaluate the quadratic polynomial at 0, 1, 2
         let eval_0 = coeff_0;
         let eval_1 = coeff_0 + coeff_1 + coeff_2;
         let eval_2 = coeff_0 + two * coeff_1 + two * two * coeff_2;
-
-        // The sum must equal p(0) + p(1).
-        // TODO: We are just checking this while implementing, with the goal of
-        // using this constraint to avoid computing coeff_1 later.
-        assert_eq!(self.sum, eval_0 + eval_1);
-        eprintln!(
-            "ASSERTION PASSED: sum == eval_0 + eval_1, {}",
-            self.num_variables
-        );
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
