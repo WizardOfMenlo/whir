@@ -47,7 +47,7 @@ pub fn compute_fold<F: Field>(
 pub fn restructure_evaluations<F: FftField>(
     mut stacked_evaluations: Vec<F>,
     fold_type: FoldType,
-    domain_gen: F,
+    _domain_gen: F,
     domain_gen_inv: F,
     folding_factor: usize,
 ) -> Vec<F> {
@@ -203,9 +203,11 @@ mod tests {
 
         for index in 0..num {
             let offset_inv = root_of_unity_inv.pow(&[index]);
+            let span =
+                (index * folding_factor_exp) as usize..((index + 1) * folding_factor_exp) as usize;
 
             let answer_unprocessed = compute_fold(
-                &unprocessed[index as usize],
+                &unprocessed[span.clone()],
                 &folding_randomness,
                 offset_inv,
                 coset_gen_inv,
@@ -213,7 +215,7 @@ mod tests {
                 folding_factor,
             );
 
-            let answer_processed = CoefficientList::new(processed[index as usize].to_vec())
+            let answer_processed = CoefficientList::new(processed[span].to_vec())
                 .evaluate(&MultilinearPoint(folding_randomness.clone()));
 
             assert_eq!(answer_processed, answer_unprocessed);

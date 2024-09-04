@@ -73,16 +73,17 @@ mod tests {
     fn test_evaluations_stack() {
         let num = 256;
         let folding_factor = 3;
+        let fold_size = 1 << folding_factor;
+        assert_eq!(num % fold_size, 0);
         let evals: Vec<_> = (0..num).collect();
 
         let stacked = stack_evaluations(evals, folding_factor);
+        assert_eq!(stacked.len(), num);
 
-        assert_eq!(stacked.len(), num / (1 << folding_factor));
-
-        for i in 0..stacked.len() {
-            assert_eq!(stacked[i].len(), 1 << folding_factor);
-            for j in 0..(1 << folding_factor) {
-                assert_eq!(stacked[i][j], i + j * num / (1 << folding_factor));
+        for (i, fold) in stacked.chunks_exact(fold_size).enumerate() {
+            assert_eq!(fold.len(), fold_size);
+            for j in 0..fold_size {
+                assert_eq!(fold[j], i + j * num / fold_size);
             }
         }
     }

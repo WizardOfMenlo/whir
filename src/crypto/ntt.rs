@@ -1,6 +1,5 @@
 use ark_ff::{FftField, Field};
 use rayon::prelude::*;
-use rayon::slice::ParallelSlice;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard};
