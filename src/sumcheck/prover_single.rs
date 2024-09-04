@@ -190,7 +190,7 @@ where
         self.num_variables -= 1;
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
         self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
-        self.sum = sumcheck_poly.evaluate_at_point(folding_randomness);
+        self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 }
 
@@ -223,7 +223,7 @@ mod tests {
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
 
-        prover.compress(combination_randomness, &folding_randomness);
+        prover.compress(combination_randomness, &folding_randomness, &poly_1);
 
         let poly_2 = prover.compute_sumcheck_polynomial();
 
