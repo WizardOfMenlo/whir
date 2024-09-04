@@ -37,37 +37,41 @@ where
     }
 
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
-        let two = F::ONE + F::ONE; // Enlightening
-
+        let two = F::ONE + F::ONE; // Enlightening (see Whitehead & Russell (1910) Thm. ✱54.43)
         assert!(self.num_variables >= 1);
 
         let prefix_len = 1 << (self.num_variables - 1);
 
-        let mut sum_0 = F::ZERO;
-        let mut sum_1 = F::ZERO;
-        let mut sum_2 = F::ZERO;
+        // Compute coefficients of the quadratic result polynomial
+        let mut coeff_0 = F::ZERO;
+        let mut coeff_1 = F::ZERO;
+        let mut coeff_2 = F::ZERO;
 
         for beta_prefix in 0..prefix_len {
             let eval_of_p_0 = self.evaluation_of_p[2 * beta_prefix];
             let eval_of_p_1 = self.evaluation_of_p[2 * beta_prefix + 1];
 
+            // Coefficients of the linear `evaluation_of_p` polynomial
             let p_0 = eval_of_p_0;
             let p_1 = eval_of_p_1 - eval_of_p_0;
 
             let eval_of_eq_0 = self.evaluation_of_equality[2 * beta_prefix];
             let eval_of_eq_1 = self.evaluation_of_equality[2 * beta_prefix + 1];
 
+            // Coefficients of the linear `evaluation_of_equality` polynomial
             let w_0 = eval_of_eq_0;
             let w_1 = eval_of_eq_1 - eval_of_eq_0;
 
-            sum_0 += p_0 * w_0;
-            sum_1 += w_1 * p_0 + w_0 * p_1;
-            sum_2 += p_1 * w_1;
+            // Now we need to add the contribution of p(x) * w(x)
+            coeff_0 += p_0 * w_0;
+            coeff_1 += w_1 * p_0 + w_0 * p_1;
+            coeff_2 += p_1 * w_1;
         }
 
-        let eval_0 = sum_0;
-        let eval_1 = sum_0 + sum_1 + sum_2;
-        let eval_2 = sum_0 + two * sum_1 + two * two * sum_2;
+        // Evaluate the quadratic polynomial at 0, 1, 2
+        let eval_0 = coeff_0;
+        let eval_1 = coeff_0 + coeff_1 + coeff_2;
+        let eval_2 = coeff_0 + two * coeff_1 + two * two * coeff_2;
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
