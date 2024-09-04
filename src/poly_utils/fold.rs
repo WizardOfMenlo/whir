@@ -1,6 +1,7 @@
 use ark_ff::{FftField, Field};
 use ark_poly::{Evaluations, Radix2EvaluationDomain};
 
+use crate::crypto::ntt::ntt_batch;
 use crate::parameters::FoldType;
 
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
@@ -61,6 +62,8 @@ pub fn restructure_evaluations<F: FftField>(
             let coset_generator_inv = domain_gen_inv.pow(&[gen_scale as u64]);
             let size_as_field_element = F::from(folding_size);
             let size_inv = size_as_field_element.inverse().unwrap();
+
+            ntt_batch(&mut stacked_evaluations, folding_size as usize);
 
             let mut coset_offset = F::ONE;
             let mut coset_offset_inv = F::ONE;
