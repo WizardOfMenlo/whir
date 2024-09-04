@@ -1,4 +1,6 @@
 use ark_ff::{FftField, Field};
+use rayon::prelude::*;
+use rayon::slice::ParallelSlice;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard};
@@ -98,9 +100,19 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
+        const PARALLEL_THRESHOLD: usize = 1 << 14;
         assert!(values.len() % size == 0);
         let roots = self.roots_table(size);
-        self.ntt_dispatch(values, &roots, size);
+
+        if values.len() < PARALLEL_THRESHOLD {
+            self.ntt_dispatch(values, &roots, size);
+        } else {
+            // Work size is next multiple of `size` larger than `PARALLEL_THRESHOLD`.
+            let chunk_size = ((PARALLEL_THRESHOLD + size - 1) / size) * size;
+            values.par_chunks_exact_mut(chunk_size).for_each(|values| {
+                self.ntt_dispatch(values, &roots, size);
+            });
+        }
     }
 
     /// Inverse NTT. Does not aply 1/n scaling factor.
@@ -112,9 +124,9 @@ impl<F: Field> NttEngine<F> {
     /// Inverse batch NTT. Does not aply 1/n scaling factor.
     pub fn intt_batch(&self, values: &mut [F], size: usize) {
         assert!(values.len() % size == 0);
-        for values in values.chunks_exact_mut(size) {
+        values.par_chunks_exact_mut(size).for_each(|values| {
             values[1..].reverse();
-        }
+        });
         self.ntt_batch(values, size);
     }
 
@@ -162,15 +174,18 @@ impl<F: Field> NttEngine<F> {
     }
 
     /// Compute an NTT in place by splititng into two factors.
+    /// Recurses using the sqrt(N) Cooley-Tukey Six step NTT algorithm.
     fn ntt_recurse(&self, values: &mut [F], roots: &[F], size: usize) {
         let n1 = sqrt_factor(size);
         let n2 = size / n1;
         let step = roots.len() / size;
+
         // TODO: Lift recursion out of loop.
         for values in values.chunks_exact_mut(size) {
-            // Cooley-Tukey Six step NTT algorithm.
             transpose(values, n1, n2);
-            self.ntt_dispatch(values, roots, n1);
+        }
+        self.ntt_dispatch(values, roots, n1);
+        for values in values.chunks_exact_mut(size) {
             transpose(values, n2, n1);
 
             // TODO: When (n1, n2) are coprime we can use the
@@ -184,8 +199,9 @@ impl<F: Field> NttEngine<F> {
                     index += step;
                 }
             }
-
-            self.ntt_dispatch(values, roots, n2);
+        }
+        self.ntt_dispatch(values, roots, n2);
+        for values in values.chunks_exact_mut(size) {
             transpose(values, n1, n2);
         }
     }

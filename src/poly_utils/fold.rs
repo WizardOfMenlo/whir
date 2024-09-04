@@ -1,7 +1,9 @@
 use crate::crypto::ntt::intt_batch;
 use crate::parameters::FoldType;
 use ark_ff::{FftField, Field};
-use ark_poly::{Evaluations, Radix2EvaluationDomain};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
 // Compute the fold on that point
@@ -51,7 +53,6 @@ pub fn restructure_evaluations<F: FftField>(
 ) -> Vec<F> {
     let folding_size = 1_u64 << folding_factor;
     assert_eq!(stacked_evaluations.len() % (folding_size as usize), 0);
-    eprintln!("{} x {}", stacked_evaluations.len(), folding_size);
     match fold_type {
         FoldType::Naive => stacked_evaluations,
         FoldType::ProverHelps => {
@@ -61,20 +62,38 @@ pub fn restructure_evaluations<F: FftField>(
             // Batch inverse NTTs
             intt_batch(&mut stacked_evaluations, folding_size as usize);
 
-            // Apply coset and scale corrections
+            // Apply coset and size correction.
             // Stacked evaluation at i is f(B_l) where B_l = w^i * <w^n/k>
             let size_inv = F::from(folding_size).inverse().unwrap();
-            let mut coset_offset = F::ONE;
-            let mut coset_offset_inv = F::ONE;
-            for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
-                let mut scale = size_inv;
-                for v in answers.iter_mut() {
-                    *v *= scale;
-                    scale *= coset_offset_inv;
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut coset_offset_inv = F::ONE;
+                for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
+                    let mut scale = size_inv;
+                    for v in answers.iter_mut() {
+                        *v *= scale;
+                        scale *= coset_offset_inv;
+                    }
+                    coset_offset_inv *= domain_gen_inv;
                 }
-                coset_offset *= domain_gen;
-                coset_offset_inv *= domain_gen_inv;
             }
+            #[cfg(feature = "parallel")]
+            stacked_evaluations
+                .par_chunks_exact_mut(folding_size as usize)
+                .enumerate()
+                .for_each_with(F::ZERO, |offset, (i, answers)| {
+                    if *offset == F::ZERO {
+                        *offset = domain_gen_inv.pow([i as u64]);
+                    } else {
+                        *offset *= domain_gen_inv;
+                    }
+                    let mut scale = size_inv;
+                    for v in answers.iter_mut() {
+                        *v *= scale;
+                        scale *= &*offset;
+                    }
+                });
+
             stacked_evaluations
         }
     }
