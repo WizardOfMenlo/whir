@@ -1,3 +1,10 @@
+use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
+use crate::{
+    domain::Domain,
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
+    utils::{self, expand_randomness},
+};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
@@ -9,16 +16,9 @@ use nimue::{
     ByteChallenges, ByteWriter, Merlin, ProofResult,
 };
 use rand::{Rng, SeedableRng};
-use rayon::slice::ParallelSlice;
 
-use crate::{
-    domain::Domain,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
-    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
-    utils::{self, expand_randomness},
-};
-
-use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub struct Prover<F, MerkleConfig>(pub WhirConfig<F, MerkleConfig>)
 where
@@ -172,11 +172,14 @@ where
             new_domain.backing_domain.group_gen_inv(),
             self.0.folding_factor,
         );
-
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = folded_evals.chunks_exact(1 << self.0.folding_factor);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = folded_evals.par_chunks_exact(1 << self.0.folding_factor);
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            folded_evals.par_chunks_exact(1 << self.0.folding_factor),
+            leafs_iter,
         )
         .unwrap();
 

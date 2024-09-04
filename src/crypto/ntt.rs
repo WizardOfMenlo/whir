@@ -1,8 +1,10 @@
 use ark_ff::{FftField, Field};
-use rayon::prelude::*;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Global cache for NTT engines, indexed by field.
 static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
@@ -98,11 +100,18 @@ impl<F: Field> NttEngine<F> {
         self.ntt_batch(values, values.len())
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub fn ntt_batch(&self, values: &mut [F], size: usize) {
+        assert!(values.len() % size == 0);
+        let roots = self.roots_table(size);
+        self.ntt_dispatch(values, &roots, size);
+    }
+
+    #[cfg(feature = "parallel")]
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
         const PARALLEL_THRESHOLD: usize = 1 << 14;
         assert!(values.len() % size == 0);
         let roots = self.roots_table(size);
-
         if values.len() < PARALLEL_THRESHOLD {
             self.ntt_dispatch(values, &roots, size);
         } else {
@@ -123,9 +132,17 @@ impl<F: Field> NttEngine<F> {
     /// Inverse batch NTT. Does not aply 1/n scaling factor.
     pub fn intt_batch(&self, values: &mut [F], size: usize) {
         assert!(values.len() % size == 0);
+
+        #[cfg(not(feature = "parallel"))]
+        values.chunks_exact_mut(size).for_each(|values| {
+            values[1..].reverse();
+        });
+
+        #[cfg(feature = "parallel")]
         values.par_chunks_exact_mut(size).for_each(|values| {
             values[1..].reverse();
         });
+
         self.ntt_batch(values, size);
     }
 
