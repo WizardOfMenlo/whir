@@ -3,12 +3,8 @@ use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::Serialize;
 
-// Used to select how much PoW is acceptable.
-// To be checked later on after opts are done.
-const POW_FACTOR: usize = 1;
-
 pub fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
-    num_variables + log_inv_rate + POW_FACTOR
+    num_variables + log_inv_rate - 1
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
