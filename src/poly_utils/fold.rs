@@ -1,7 +1,9 @@
-use ark_ff::{FftField, Field};
-use ark_poly::{Evaluations, Radix2EvaluationDomain};
-
+use crate::crypto::ntt::intt_batch;
 use crate::parameters::FoldType;
+use ark_ff::{FftField, Field};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
 // Compute the fold on that point
@@ -43,50 +45,56 @@ pub fn compute_fold<F: Field>(
 }
 
 pub fn restructure_evaluations<F: FftField>(
-    stacked_evaluations: Vec<Vec<F>>,
+    mut stacked_evaluations: Vec<F>,
     fold_type: FoldType,
-    domain_gen: F,
+    _domain_gen: F,
     domain_gen_inv: F,
     folding_factor: usize,
-) -> Vec<Vec<F>> {
+) -> Vec<F> {
+    let folding_size = 1_u64 << folding_factor;
+    assert_eq!(stacked_evaluations.len() % (folding_size as usize), 0);
     match fold_type {
         FoldType::Naive => stacked_evaluations,
         FoldType::ProverHelps => {
+            // TODO: This partially undoes the NTT transform from tne encoding.
+            // Maybe there is a way to not do the full transform in the first place.
+
+            // Batch inverse NTTs
+            intt_batch(&mut stacked_evaluations, folding_size as usize);
+
+            // Apply coset and size correction.
             // Stacked evaluation at i is f(B_l) where B_l = w^i * <w^n/k>
-            let gen_scale = stacked_evaluations.len(); // n/2^k
-            let coset_generator = domain_gen.pow(&[gen_scale as u64]);
-            let coset_generator_inv = domain_gen_inv.pow(&[gen_scale as u64]);
-            let folding_factor_exp = 1 << folding_factor;
-            let size_as_field_element = F::from(folding_factor_exp);
-            let size_inv = size_as_field_element.inverse().unwrap();
-
-            let mut res = Vec::with_capacity(gen_scale);
-
-            let mut coset_offset = F::ONE;
-            let mut coset_offset_inv = F::ONE;
-            for answers in stacked_evaluations {
-                let domain = Radix2EvaluationDomain {
-                    size: folding_factor_exp,
-                    log_size_of_group: folding_factor as u32,
-                    size_as_field_element,
-                    group_gen: coset_generator,
-                    group_gen_inv: coset_generator_inv,
-                    offset: coset_offset,
-                    offset_inv: coset_offset_inv,
-                    size_inv,
-                    offset_pow_size: coset_offset.pow([folding_factor_exp]),
-                };
-
-                let evaluations = Evaluations::from_vec_and_domain(answers, domain);
-                let mut interp = evaluations.interpolate().coeffs;
-                interp.resize(folding_factor_exp as usize, F::ZERO);
-
-                res.push(interp);
-
-                coset_offset *= domain_gen;
-                coset_offset_inv *= domain_gen_inv;
+            let size_inv = F::from(folding_size).inverse().unwrap();
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut coset_offset_inv = F::ONE;
+                for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
+                    let mut scale = size_inv;
+                    for v in answers.iter_mut() {
+                        *v *= scale;
+                        scale *= coset_offset_inv;
+                    }
+                    coset_offset_inv *= domain_gen_inv;
+                }
             }
-            res
+            #[cfg(feature = "parallel")]
+            stacked_evaluations
+                .par_chunks_exact_mut(folding_size as usize)
+                .enumerate()
+                .for_each_with(F::ZERO, |offset, (i, answers)| {
+                    if *offset == F::ZERO {
+                        *offset = domain_gen_inv.pow([i as u64]);
+                    } else {
+                        *offset *= domain_gen_inv;
+                    }
+                    let mut scale = size_inv;
+                    for v in answers.iter_mut() {
+                        *v *= scale;
+                        scale *= &*offset;
+                    }
+                });
+
+            stacked_evaluations
         }
     }
 }
@@ -195,9 +203,11 @@ mod tests {
 
         for index in 0..num {
             let offset_inv = root_of_unity_inv.pow(&[index]);
+            let span =
+                (index * folding_factor_exp) as usize..((index + 1) * folding_factor_exp) as usize;
 
             let answer_unprocessed = compute_fold(
-                &unprocessed[index as usize],
+                &unprocessed[span.clone()],
                 &folding_randomness,
                 offset_inv,
                 coset_gen_inv,
@@ -205,7 +215,7 @@ mod tests {
                 folding_factor,
             );
 
-            let answer_processed = CoefficientList::new(processed[index as usize].to_vec())
+            let answer_processed = CoefficientList::new(processed[span].to_vec())
                 .evaluate(&MultilinearPoint(folding_randomness.clone()));
 
             assert_eq!(answer_processed, answer_unprocessed);

@@ -43,7 +43,7 @@ pub struct SHA3LeafHash<F>(PhantomData<F>);
 pub struct SHA3TwoToOneCRHScheme;
 
 impl<F: CanonicalSerialize + Send> CRHScheme for SHA3LeafHash<F> {
-    type Input = Vec<F>;
+    type Input = [F];
     type Output = SHA3Digest;
     type Parameters = ();
 
@@ -107,7 +107,7 @@ pub type CompressH = SHA3TwoToOneCRHScheme;
 pub struct MerkleTreeParams<F>(PhantomData<F>);
 
 impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
-    type Leaf = Vec<F>;
+    type Leaf = [F];
 
     type LeafDigest = <LeafH<F> as CRHScheme>::Output;
     type LeafInnerDigestConverter = IdentityDigestConverter<SHA3Digest>;

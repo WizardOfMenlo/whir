@@ -42,7 +42,7 @@ pub struct Blake3LeafHash<F>(PhantomData<F>);
 pub struct Blake3TwoToOneCRHScheme;
 
 impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
-    type Input = Vec<F>;
+    type Input = [F];
     type Output = Blake3Digest;
     type Parameters = ();
 
@@ -106,7 +106,7 @@ pub type CompressH = Blake3TwoToOneCRHScheme;
 pub struct MerkleTreeParams<F>(PhantomData<F>);
 
 impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
-    type Leaf = Vec<F>;
+    type Leaf = [F];
 
     type LeafDigest = <LeafH<F> as CRHScheme>::Output;
     type LeafInnerDigestConverter = IdentityDigestConverter<Blake3Digest>;

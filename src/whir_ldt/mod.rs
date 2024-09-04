@@ -9,18 +9,18 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig>(Vec<(MultiPath<MerkleConfig>, Vec<MerkleConfig::Leaf>)>)
+pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
 where
-    MerkleConfig: Config,
-    MerkleConfig::Leaf: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
 
-pub fn whir_proof_size<MerkleConfig>(
+pub fn whir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
-    whir_proof: &WhirProof<MerkleConfig>,
+    whir_proof: &WhirProof<MerkleConfig, F>,
 ) -> usize
 where
-    MerkleConfig: Config,
-    MerkleConfig::Leaf: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }

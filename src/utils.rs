@@ -50,18 +50,16 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
 
 // Takes the vector of evaluations (assume that evals[i] = f(omega^i))
 // and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
-pub fn stack_evaluations<F: Copy>(evals: Vec<F>, folding_factor: usize) -> Vec<Vec<F>> {
+pub fn stack_evaluations<F: Copy>(evals: Vec<F>, folding_factor: usize) -> Vec<F> {
     let folding_factor_exp = 1 << folding_factor;
     assert!(evals.len() % folding_factor_exp == 0);
     let size_of_new_domain = evals.len() / folding_factor_exp;
 
-    let mut stacked_evaluations = Vec::with_capacity(size_of_new_domain);
+    let mut stacked_evaluations = Vec::with_capacity(evals.len());
     for i in 0..size_of_new_domain {
-        let mut new_evals = Vec::with_capacity(folding_factor_exp);
         for j in 0..folding_factor_exp {
-            new_evals.push(evals[i + j * size_of_new_domain]);
+            stacked_evaluations.push(evals[i + j * size_of_new_domain]);
         }
-        stacked_evaluations.push(new_evals);
     }
 
     stacked_evaluations
@@ -75,16 +73,17 @@ mod tests {
     fn test_evaluations_stack() {
         let num = 256;
         let folding_factor = 3;
+        let fold_size = 1 << folding_factor;
+        assert_eq!(num % fold_size, 0);
         let evals: Vec<_> = (0..num).collect();
 
         let stacked = stack_evaluations(evals, folding_factor);
+        assert_eq!(stacked.len(), num);
 
-        assert_eq!(stacked.len(), num / (1 << folding_factor));
-
-        for i in 0..stacked.len() {
-            assert_eq!(stacked[i].len(), 1 << folding_factor);
-            for j in 0..(1 << folding_factor) {
-                assert_eq!(stacked[i][j], i + j * num / (1 << folding_factor));
+        for (i, fold) in stacked.chunks_exact(fold_size).enumerate() {
+            assert_eq!(fold.len(), fold_size);
+            for j in 0..fold_size {
+                assert_eq!(fold[j], i + j * num / fold_size);
             }
         }
     }

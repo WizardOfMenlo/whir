@@ -1,3 +1,10 @@
+use super::{committer::Witness, parameters::WhirConfig, WhirProof};
+use crate::{
+    domain::Domain,
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
+    utils::{self, expand_randomness},
+};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
@@ -10,14 +17,8 @@ use nimue::{
 };
 use rand::{Rng, SeedableRng};
 
-use crate::{
-    domain::Domain,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
-    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
-    utils::{self, expand_randomness},
-};
-
-use super::{committer::Witness, parameters::WhirConfig, WhirProof};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub struct Prover<F, MerkleConfig>(pub WhirConfig<F, MerkleConfig>)
 where
@@ -27,7 +28,7 @@ where
 impl<F, MerkleConfig> Prover<F, MerkleConfig>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = Vec<F>>,
+    MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
     fn validate_parameters(&self) -> bool {
@@ -43,7 +44,7 @@ where
         &self,
         merlin: &mut Merlin,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig>>
+    ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
@@ -77,7 +78,7 @@ where
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig>> {
+    ) -> ProofResult<WhirProof<MerkleConfig, F>> {
         // Fold the coefficients
         let folded_coefficients = round_state
             .coefficients
@@ -103,10 +104,12 @@ where
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
                 .unwrap();
+            let fold_size = 1 << self.0.folding_factor;
             let answers = final_challenge_indexes
                 .into_iter()
-                .map(|i| &round_state.prev_merkle_answers[i])
-                .cloned()
+                .map(|i| {
+                    round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec()
+                })
                 .collect();
             round_state.merkle_proofs.push((merkle_proof, answers));
 
@@ -150,10 +153,16 @@ where
             self.0.folding_factor,
         );
 
+        #[cfg(not(feature = "parallel"))]
+        let leaf_iter = folded_evals.chunks_exact(1 << self.0.folding_factor);
+
+        #[cfg(feature = "parallel")]
+        let leaf_iter = folded_evals.par_chunks_exact(1 << self.0.folding_factor);
+
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            &folded_evals,
+            leaf_iter,
         )
         .unwrap();
 
@@ -202,10 +211,10 @@ where
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
+        let fold_size = 1 << self.0.folding_factor;
         let answers = stir_challenges_indexes
             .into_iter()
-            .map(|i| &round_state.prev_merkle_answers[i])
-            .cloned()
+            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
         round_state.merkle_proofs.push((merkle_proof, answers));
 
@@ -266,6 +275,6 @@ where
     folding_randomness: MultilinearPoint<F>,
     coefficients: CoefficientList<F>,
     prev_merkle: MerkleTree<MerkleConfig>,
-    prev_merkle_answers: Vec<Vec<F>>,
+    prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 }

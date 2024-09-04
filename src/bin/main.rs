@@ -175,7 +175,7 @@ fn run_whir<F, MerkleConfig>(
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
     F: FftField + CanonicalSerialize,
-    MerkleConfig: Config<Leaf = Vec<F>> + Clone,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     match args.protocol_type {
@@ -192,7 +192,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
     F: FftField + CanonicalSerialize,
-    MerkleConfig: Config<Leaf = Vec<F>> + Clone,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     use whir::whir_ldt::{
@@ -284,7 +284,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
     F: FftField + CanonicalSerialize,
-    MerkleConfig: Config<Leaf = Vec<F>> + Clone,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     use whir::whir::{
