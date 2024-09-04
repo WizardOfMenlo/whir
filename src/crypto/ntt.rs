@@ -24,12 +24,22 @@ pub struct NttEngine<F: Field> {
     roots: RwLock<Vec<F>>,
 }
 
+// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
     NttEngine::new_from_cache().ntt(values);
 }
 
+// Compute the many NTTs of size `size` using a cached engine.
 pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::new_from_cache().ntt_batch(values, size);
+}
+
+pub fn intt<F: FftField>(values: &mut [F]) {
+    NttEngine::new_from_cache().intt(values);
+}
+
+pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
+    NttEngine::new_from_cache().intt_batch(values, size);
 }
 
 impl<F: FftField> NttEngine<F> {
@@ -47,14 +57,16 @@ impl<F: FftField> NttEngine<F> {
 
     fn new_from_fftfield() -> Self {
         // TODO: Support SMALL_SUBGROUP
-        Self::new(F::TWO_ADICITY as usize, F::TWO_ADIC_ROOT_OF_UNITY)
+        Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
     }
 }
 
 impl<F: Field> NttEngine<F> {
     pub fn new(order: usize, omega_order: F) -> Self {
-        debug_assert_eq!(omega_order.pow(&[order as u64]), F::ONE);
+        assert!(order.trailing_zeros() > 0, "Order must be a power of 2.");
         // TODO: Assert that omega_order factors into 2s and 3s.
+        assert_eq!(omega_order.pow([order as u64]), F::ONE);
+        assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
         let mut res = NttEngine {
             order,
             omega_order,
@@ -66,10 +78,6 @@ impl<F: Field> NttEngine<F> {
             roots: RwLock::new(Vec::new()),
         };
         if order % 3 == 0 {
-            assert!(
-                order % 2 == 0,
-                "Order 3 without order 2 is not implemented."
-            );
             let omega_3_1 = res.root(3);
             let omega_3_2 = omega_3_1 * omega_3_1;
             res.half_omega_3_1_min_2 = (omega_3_1 - omega_3_2) / F::from(2u64);
@@ -95,11 +103,19 @@ impl<F: Field> NttEngine<F> {
         self.ntt_dispatch(values, &roots, size);
     }
 
+    /// Inverse NTT. Does not aply 1/n scaling factor.
     pub fn intt(&self, values: &mut [F]) {
-        let s = F::from(values.len() as u64).inverse().unwrap();
-        values.iter_mut().for_each(|v| *v *= s);
         values[1..].reverse();
         self.ntt(values);
+    }
+
+    /// Inverse batch NTT. Does not aply 1/n scaling factor.
+    pub fn intt_batch(&self, values: &mut [F], size: usize) {
+        assert!(values.len() % size == 0);
+        for values in values.chunks_exact_mut(size) {
+            values[1..].reverse();
+        }
+        self.ntt_batch(values, size);
     }
 
     pub fn root(&self, order: usize) -> F {
@@ -107,7 +123,7 @@ impl<F: Field> NttEngine<F> {
             self.order % order == 0,
             "Subgroup of requested order does not exist."
         );
-        self.omega_order.pow(&[self.order as u64 / order as u64])
+        self.omega_order.pow([(self.order / order) as u64])
     }
 
     /// Returns a cached table of roots of unity of the given order.

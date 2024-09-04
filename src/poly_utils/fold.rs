@@ -1,8 +1,7 @@
+use crate::crypto::ntt::intt_batch;
+use crate::parameters::FoldType;
 use ark_ff::{FftField, Field};
 use ark_poly::{Evaluations, Radix2EvaluationDomain};
-
-use crate::crypto::ntt::ntt_batch;
-use crate::parameters::FoldType;
 
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
 // Compute the fold on that point
@@ -56,36 +55,23 @@ pub fn restructure_evaluations<F: FftField>(
     match fold_type {
         FoldType::Naive => stacked_evaluations,
         FoldType::ProverHelps => {
+            // TODO: This partially undoes the NTT transform from tne encoding.
+            // Maybe there is a way to not do the full transform in the first place.
+
+            // Batch inverse NTTs
+            intt_batch(&mut stacked_evaluations, folding_size as usize);
+
+            // Apply coset and scale corrections
             // Stacked evaluation at i is f(B_l) where B_l = w^i * <w^n/k>
-            let gen_scale = stacked_evaluations.len() / folding_size as usize; // n/2^k
-            let coset_generator = domain_gen.pow(&[gen_scale as u64]);
-            let coset_generator_inv = domain_gen_inv.pow(&[gen_scale as u64]);
-            let size_as_field_element = F::from(folding_size);
-            let size_inv = size_as_field_element.inverse().unwrap();
-
-            ntt_batch(&mut stacked_evaluations, folding_size as usize);
-
+            let size_inv = F::from(folding_size).inverse().unwrap();
             let mut coset_offset = F::ONE;
             let mut coset_offset_inv = F::ONE;
             for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
-                let domain = Radix2EvaluationDomain {
-                    size: folding_size,
-                    log_size_of_group: folding_factor as u32,
-                    size_as_field_element,
-                    group_gen: coset_generator,
-                    group_gen_inv: coset_generator_inv,
-                    offset: coset_offset,
-                    offset_inv: coset_offset_inv,
-                    size_inv,
-                    offset_pow_size: coset_offset.pow([folding_size]),
-                };
-
-                let evaluations = Evaluations::from_vec_and_domain(answers.to_vec(), domain);
-                let mut interp = evaluations.interpolate().coeffs;
-                interp.resize(folding_size as usize, F::ZERO);
-
-                answers.copy_from_slice(&interp);
-
+                let mut scale = size_inv;
+                for v in answers.iter_mut() {
+                    *v *= scale;
+                    scale *= coset_offset_inv;
+                }
                 coset_offset *= domain_gen;
                 coset_offset_inv *= domain_gen_inv;
             }
