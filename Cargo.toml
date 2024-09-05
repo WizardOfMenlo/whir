@@ -31,6 +31,7 @@ debug = true
 
 [features]
 default = ["parallel", "dep:rayon"]
+#default = []
 parallel = [
     "ark-poly/parallel",
     "ark-ff/parallel",
