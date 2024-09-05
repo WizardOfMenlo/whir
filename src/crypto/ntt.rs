@@ -7,7 +7,9 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard};
 use rayon::prelude::*;
 
 /// Global cache for NTT engines, indexed by field.
-static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+// TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
+// see https://github.com/rust-lang/rust/issues/102575
+static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Enginge for computing NTTs over arbitrary fields.
@@ -27,12 +29,12 @@ pub struct NttEngine<F: Field> {
     roots: RwLock<Vec<F>>,
 }
 
-// Compute the NTT of a slice of field elements using a cached engine.
+/// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
     NttEngine::new_from_cache().ntt(values);
 }
 
-// Compute the many NTTs of size `size` using a cached engine.
+/// Compute the many NTTs of size `size` using a cached engine.
 pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::new_from_cache().ntt_batch(values, size);
 }
@@ -46,21 +48,30 @@ pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
 }
 
 impl<F: FftField> NttEngine<F> {
+    /// Get or create a cached engine for the field `F`.
     pub fn new_from_cache() -> Arc<Self> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
         if let Some(engine) = cache.get(&type_id) {
-            engine.downcast_ref::<Arc<NttEngine<F>>>().unwrap().clone()
+            engine.clone().downcast::<NttEngine<F>>().unwrap()
         } else {
             let engine = Arc::new(NttEngine::new_from_fftfield());
-            cache.insert(type_id, Box::new(engine.clone()));
+            cache.insert(type_id, engine.clone());
             engine
         }
     }
 
     fn new_from_fftfield() -> Self {
         // TODO: Support SMALL_SUBGROUP
-        Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
+        if F::TWO_ADICITY <= 63 {
+            Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
+        } else {
+            let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
+            for _ in 0..(63 - F::TWO_ADICITY) {
+                generator = generator.square();
+            }
+            Self::new(1 << 63, generator)
+        }
     }
 }
 
