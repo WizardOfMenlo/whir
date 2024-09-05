@@ -360,6 +360,7 @@ where
             let coset_generator_inv = round
                 .domain_gen_inv
                 .pow([(domain_size / coset_domain_size) as u64]);
+
             let evaluations: Vec<_> = round
                 .stir_challenges_indexes
                 .iter()

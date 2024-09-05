@@ -1,7 +1,12 @@
 use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
 use crate::{
     domain::Domain,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    parameters::FoldType,
+    poly_utils::{
+        coeffs::CoefficientList,
+        fold::{compute_fold, restructure_evaluations},
+        MultilinearPoint,
+    },
     sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
     utils::{self, expand_randomness},
 };
@@ -227,21 +232,48 @@ where
             )
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
-        // TODO: Stir evals by folding ood_answers
-        let stir_evals = stir_challenges
-            .iter()
-            .map(|point| folded_coefficients.evaluate(point))
-            .collect::<Vec<_>>();
 
         let merkle_proof = round_state
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
         let fold_size = 1 << self.0.folding_factor;
-        let answers = stir_challenges_indexes
-            .into_iter()
+        let answers: Vec<_> = stir_challenges_indexes
+            .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+        // Evaluate answers in the folding randomness.
+        let mut stir_evaluations = ood_answers.clone();
+        match self.0.fold_optimisation {
+            FoldType::Naive => {
+                // See `Verifier::compute_folds_full`
+                let domain_size = round_state.domain.backing_domain.size();
+                let domain_gen = round_state.domain.backing_domain.element(1);
+                let domain_gen_inv = domain_gen.inverse().unwrap();
+                let coset_domain_size = 1 << self.0.folding_factor;
+                let coset_generator_inv =
+                    domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
+                stir_evaluations.extend(stir_challenges_indexes.iter().zip(&answers).map(
+                    |(index, answers)| {
+                        // The coset is w^index * <w_coset_generator>
+                        //let _coset_offset = domain_gen.pow(&[*index as u64]);
+                        let coset_offset_inv = domain_gen_inv.pow([*index as u64]);
+
+                        compute_fold(
+                            answers,
+                            &round_state.folding_randomness.0,
+                            coset_offset_inv,
+                            coset_generator_inv,
+                            F::from(2).inverse().unwrap(),
+                            self.0.folding_factor,
+                        )
+                    },
+                ))
+            }
+            FoldType::ProverHelps => stir_evaluations.extend(answers.iter().map(|answers| {
+                CoefficientList::new(answers.to_vec()).evaluate(&round_state.folding_randomness)
+            })),
+        }
         round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW
@@ -257,7 +289,7 @@ where
         round_state.sumcheck_prover.add_new_equality(
             &stir_challenges,
             &combination_randomness,
-            &stir_evals,
+            &stir_evaluations,
         );
 
         let folding_randomness = round_state.sumcheck_prover.compute_sumcheck_polynomials(
