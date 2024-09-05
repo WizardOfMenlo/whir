@@ -23,8 +23,10 @@ where
         coeffs: CoefficientList<F>,
         points: &[MultilinearPoint<F>],
         combination_randomness: &[F],
+        evaluations: &[F],
     ) -> Self {
         assert_eq!(points.len(), combination_randomness.len());
+        assert_eq!(points.len(), evaluations.len());
         let num_variables = coeffs.num_variables();
 
         let mut prover = SumcheckSingle {
@@ -34,7 +36,7 @@ where
             sum: F::ZERO,
         };
 
-        prover.add_new_equality(points, combination_randomness);
+        prover.add_new_equality(points, combination_randomness, evaluations);
         prover
     }
 
@@ -126,25 +128,31 @@ where
         &mut self,
         points: &[MultilinearPoint<F>],
         combination_randomness: &[F],
+        evaluations: &[F],
     ) {
         assert_eq!(combination_randomness.len(), points.len());
+        assert_eq!(combination_randomness.len(), evaluations.len());
         for (point, rand) in points.iter().zip(combination_randomness) {
             // TODO: We might want to do all points simultaneously so we
             // do only a single pass over the data.
             Self::eval_eq(&point.0, self.evaluation_of_equality.evals_mut(), *rand);
         }
 
-        // Recompute the sum
-        // TODO: Avoid recomputing the sum
-        self.sum = F::ZERO;
-        for (coeff, eq) in self
-            .evaluation_of_p
-            .evals()
-            .iter()
-            .zip(self.evaluation_of_equality.evals())
-        {
-            self.sum += *coeff * eq;
+        // Update the sum
+        for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
+            self.sum += *rand * eval;
         }
+
+        // Check sum invariant
+        debug_assert_eq!(
+            self.sum,
+            self.evaluation_of_p
+                .evals()
+                .iter()
+                .zip(self.evaluation_of_equality.evals().iter())
+                .map(|(p, eq)| *p * eq)
+                .sum()
+        );
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
@@ -205,7 +213,8 @@ mod tests {
 
         let claimed_value = polynomial.evaluate(&eval_point);
 
-        let mut prover = SumcheckSingle::new(polynomial, &[eval_point], &[F::from(1)]);
+        let eval = polynomial.evaluate(&eval_point);
+        let mut prover = SumcheckSingle::new(polynomial, &[eval_point], &[F::from(1)], &[eval]);
 
         let poly_1 = prover.compute_sumcheck_polynomial();
 

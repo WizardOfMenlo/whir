@@ -74,11 +74,17 @@ where
             .collect();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, initial_claims.len());
+        let initial_answers: Vec<_> = witness
+            .ood_answers
+            .into_iter()
+            .chain(statement.evaluations)
+            .collect();
 
         let mut sumcheck_prover = SumcheckProverNotSkipping::new(
             witness.polynomial.clone(),
             &initial_claims,
             &combination_randomness,
+            &initial_answers,
         );
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials(
@@ -188,17 +194,15 @@ where
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples];
+        let mut ood_answers = Vec::with_capacity(round_params.ood_samples);
         if round_params.ood_samples > 0 {
             merlin.fill_challenge_scalars(&mut ood_points)?;
-            let ood_answers: Vec<_> = ood_points
-                .iter()
-                .map(|ood_point| {
-                    folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
-                        *ood_point,
-                        num_variables,
-                    ))
-                })
-                .collect();
+            ood_answers.extend(ood_points.iter().map(|ood_point| {
+                folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
+                    *ood_point,
+                    num_variables,
+                ))
+            }));
             merlin.add_scalars(&ood_answers)?;
         }
 
@@ -223,6 +227,11 @@ where
             )
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
+        // TODO: Stir evals by folding ood_answers
+        let stir_evals = stir_challenges
+            .iter()
+            .map(|point| folded_coefficients.evaluate(point))
+            .collect::<Vec<_>>();
 
         let merkle_proof = round_state
             .prev_merkle
@@ -245,9 +254,11 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
-        round_state
-            .sumcheck_prover
-            .add_new_equality(&stir_challenges, &combination_randomness);
+        round_state.sumcheck_prover.add_new_equality(
+            &stir_challenges,
+            &combination_randomness,
+            &stir_evals,
+        );
 
         let folding_randomness = round_state.sumcheck_prover.compute_sumcheck_polynomials(
             merlin,
@@ -260,7 +271,7 @@ where
             domain: new_domain,
             sumcheck_prover: round_state.sumcheck_prover,
             folding_randomness,
-            coefficients: folded_coefficients,
+            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
             prev_merkle: merkle_tree,
             prev_merkle_answers: folded_evals,
             merkle_proofs: round_state.merkle_proofs,

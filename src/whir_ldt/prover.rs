@@ -123,7 +123,7 @@ where
                 round_state
                     .sumcheck_prover
                     .unwrap_or_else(|| {
-                        SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[])
+                        SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[], &[])
                     })
                     .compute_sumcheck_polynomials(
                         merlin,
@@ -206,6 +206,11 @@ where
             )
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
+        // TODO: Stir evals by folding ood_answers
+        let stir_evals = stir_challenges
+            .iter()
+            .map(|point| folded_coefficients.evaluate(point))
+            .collect::<Vec<_>>();
 
         let merkle_proof = round_state
             .prev_merkle
@@ -232,7 +237,11 @@ where
             .sumcheck_prover
             .take()
             .map(|mut sumcheck_prover| {
-                sumcheck_prover.add_new_equality(&stir_challenges, &combination_randomness);
+                sumcheck_prover.add_new_equality(
+                    &stir_challenges,
+                    &combination_randomness,
+                    &stir_evals,
+                );
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
@@ -240,6 +249,7 @@ where
                     folded_coefficients.clone(),
                     &stir_challenges,
                     &combination_randomness,
+                    &stir_evals,
                 )
             });
 
