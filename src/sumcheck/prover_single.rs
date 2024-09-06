@@ -179,25 +179,20 @@ where
         assert!(self.num_variables >= 1);
 
         let randomness = folding_randomness.0[0];
-        let randomness_bar = F::ONE - randomness;
-
-        let prefix_len = 1 << (self.num_variables - 1);
-        let mut evaluations_of_p = Vec::with_capacity(prefix_len);
-        let mut evaluations_of_eq = Vec::with_capacity(prefix_len);
-
-        // Compress the table
-        for beta_prefix in 0..prefix_len {
-            let eval_of_p_0 = self.evaluation_of_p[2 * beta_prefix];
-            let eval_of_p_1 = self.evaluation_of_p[2 * beta_prefix + 1];
-            let eval_of_p = eval_of_p_0 * randomness_bar + eval_of_p_1 * randomness;
-
-            let eval_of_eq_0 = self.evaluation_of_equality[2 * beta_prefix];
-            let eval_of_eq_1 = self.evaluation_of_equality[2 * beta_prefix + 1];
-            let eval_of_eq = eval_of_eq_0 * randomness_bar + eval_of_eq_1 * randomness;
-
-            evaluations_of_p.push(eval_of_p);
-            evaluations_of_eq.push(combination_randomness * eval_of_eq);
-        }
+        let evaluations_of_p = self
+            .evaluation_of_p
+            .evals()
+            .iter()
+            .tuples()
+            .map(|(at_0, at_1)| (*at_1 - at_0) * randomness + at_0)
+            .collect::<Vec<_>>();
+        let evaluations_of_eq = self
+            .evaluation_of_equality
+            .evals()
+            .iter()
+            .tuples()
+            .map(|(at_0, at_1)| (*at_1 - at_0) * randomness + at_0)
+            .collect::<Vec<_>>();
 
         // Update
         self.num_variables -= 1;
