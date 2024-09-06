@@ -1,6 +1,5 @@
-use std::ops::AddAssign;
-
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
+use crate::crypto::ntt::wavelet_transform;
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]
@@ -230,22 +229,6 @@ where
         let mut evals = value.coeffs;
         wavelet_transform(&mut evals);
         EvaluationsList::new(evals)
-    }
-}
-
-fn wavelet_transform<F>(values: &mut [F])
-where
-    F: for<'a> AddAssign<&'a F>,
-{
-    debug_assert!(values.len().is_power_of_two());
-    eprintln!("wavelet_transform {}", values.len().trailing_zeros());
-    for r in 0..values.len().trailing_zeros() {
-        for coeffs in values.chunks_mut(1 << (r + 1)) {
-            let (left, right) = coeffs.split_at_mut(1 << r);
-            for (left, right) in left.iter().zip(right.iter_mut()) {
-                *right += left;
-            }
-        }
     }
 }
 
