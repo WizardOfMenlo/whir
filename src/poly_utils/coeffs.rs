@@ -123,6 +123,7 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     debug_assert_eq!(coeffs.len(), 1 << point.len());
     match point {
         [] => coeffs[0],
+        [x] => coeffs[0] + coeffs[1] * x,
         [x0, x1] => {
             let b0 = coeffs[0] + coeffs[1] * x1;
             let b1 = coeffs[2] + coeffs[3] * x1;
