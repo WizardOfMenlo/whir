@@ -1,6 +1,11 @@
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
+#[cfg(feature = "parallel")]
+use {
+    rayon::{join, prelude::*},
+    std::mem::size_of,
+};
 
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
@@ -24,28 +29,7 @@ where
 
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.n_variables());
-
-        /*
-        use crate::poly_utils::streaming_evaluation_helper::TermPolynomialIterator;
-        let mut sum = F::ZERO;
-        for (b, term) in TermPolynomialIterator::new(point) {
-            sum += self.coeffs[b.0] * term;
-        }
-        */
-
-        Self::eval(self.coeffs(), &point.0, F::ONE)
-    }
-
-    fn eval(coeff: &[F], eval: &[F], scalar: F) -> F {
-        debug_assert_eq!(coeff.len(), 1 << eval.len());
-        if let Some((&x, tail)) = eval.split_first() {
-            let (low, high) = coeff.split_at(coeff.len() / 2);
-            let a = Self::eval(low, tail, scalar);
-            let b = Self::eval(high, tail, scalar * x);
-            a + b
-        } else {
-            scalar * coeff[0]
-        }
+        eval_multivariate(&self.coeffs, &point.0)
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -134,30 +118,86 @@ impl<F> CoefficientList<F> {
     }
 }
 
+// Multivariate evaluation in coefficient form.
+fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
+    debug_assert_eq!(coeffs.len(), 1 << point.len());
+    match point {
+        [] => coeffs[0],
+        [x] => coeffs[0] + coeffs[1] * x,
+        [x0, x1] => {
+            let b0 = coeffs[0] + coeffs[1] * x1;
+            let b1 = coeffs[2] + coeffs[3] * x1;
+            b0 + b1 * x0
+        }
+        [x0, x1, x2] => {
+            let b00 = coeffs[0] + coeffs[1] * x2;
+            let b01 = coeffs[2] + coeffs[3] * x2;
+            let b10 = coeffs[4] + coeffs[5] * x2;
+            let b11 = coeffs[6] + coeffs[7] * x2;
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x0, x1, x2, x3] => {
+            let b000 = coeffs[0] + coeffs[1] * x3;
+            let b001 = coeffs[2] + coeffs[3] * x3;
+            let b010 = coeffs[4] + coeffs[5] * x3;
+            let b011 = coeffs[6] + coeffs[7] * x3;
+            let b100 = coeffs[8] + coeffs[9] * x3;
+            let b101 = coeffs[10] + coeffs[11] * x3;
+            let b110 = coeffs[12] + coeffs[13] * x3;
+            let b111 = coeffs[14] + coeffs[15] * x3;
+            let b00 = b000 + b001 * x2;
+            let b01 = b010 + b011 * x2;
+            let b10 = b100 + b101 * x2;
+            let b11 = b110 + b111 * x2;
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x, tail @ ..] => {
+            let (b0t, b1t) = coeffs.split_at(coeffs.len() / 2);
+            #[cfg(not(feature = "parallel"))]
+            let (b0t, b1t) = (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail));
+            #[cfg(feature = "parallel")]
+            let (b0t, b1t) = {
+                let work_size: usize = (1 << 15) / size_of::<F>();
+                if coeffs.len() > work_size {
+                    join(
+                        || eval_multivariate(b0t, tail),
+                        || eval_multivariate(b1t, tail),
+                    )
+                } else {
+                    (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail))
+                }
+            };
+            b0t + b1t * x
+        }
+    }
+}
+
 impl<F> CoefficientList<F>
 where
     F: Field,
 {
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.n_variables();
-        let new_vars = self.num_variables() - folding_factor;
-        let prefix_len = 1 << new_vars;
-        let suffix_len = 1 << folding_factor;
-
-        let mut res = Vec::with_capacity(prefix_len);
-
-        for prefix in 0..prefix_len {
-            let coeffs = (0..suffix_len)
-                .map(|suffix| prefix * suffix_len + suffix)
-                .map(|i| self.coeffs[i])
-                .collect();
-
-            res.push(Self::new(coeffs).evaluate(folding_randomness));
-        }
+        #[cfg(not(feature = "parallel"))]
+        let coeffs = self
+            .coeffs
+            .chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
+        #[cfg(feature = "parallel")]
+        let coeffs = self
+            .coeffs
+            .par_chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
 
         CoefficientList {
-            coeffs: res,
-            num_variables: new_vars,
+            coeffs,
+            num_variables: self.num_variables() - folding_factor,
         }
     }
 }
