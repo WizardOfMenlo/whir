@@ -893,6 +893,7 @@ dependencies = [
  "blake3",
  "clap",
  "derivative",
+ "itertools",
  "lazy_static",
  "nimue",
  "rand",

@@ -25,6 +25,7 @@ serde_json = "1.0"
 nimue = { git = "https://github.com/arkworks-rs/nimue", features = [ "ark"] }
 lazy_static = "1.4"
 rayon = { version = "1.10.0", optional = true }
+itertools = "0.13.0"
 
 [profile.release]
 debug = true
