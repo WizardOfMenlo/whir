@@ -1,6 +1,7 @@
 use super::proof::SumcheckPolynomial;
 use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
+use itertools::Itertools;
 #[cfg(feature = "parallel")]
 use rayon::join;
 
@@ -41,33 +42,22 @@ where
     }
 
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
-        let two = F::ONE + F::ONE; // Enlightening (see Whitehead & Russell (1910) Thm. ✱54.43)
         assert!(self.num_variables >= 1);
-
-        let prefix_len = 1 << (self.num_variables - 1);
 
         // Compute coefficients of the quadratic result polynomial
         let mut coeff_0 = F::ZERO;
         let mut coeff_2 = F::ZERO;
+        // TODO: Replace with slice::ara_chunks when it stabilizes.
+        let eval_p_iter = self.evaluation_of_p.evals().iter().tuples();
+        let eval_eq_iter = self.evaluation_of_equality.evals().iter().tuples();
+        for ((p_at_0, p_at_1), (eq_at_0, eq_at_1)) in eval_p_iter.zip(eval_eq_iter) {
+            // Convert evaluations to coefficients for the linear fns p and eq.
+            let (p_0, p_1) = (*p_at_0, *p_at_1 - p_at_0);
+            let (eq_0, eq_1) = (*eq_at_0, *eq_at_1 - eq_at_0);
 
-        for beta_prefix in 0..prefix_len {
-            let eval_of_p_0 = self.evaluation_of_p[2 * beta_prefix];
-            let eval_of_p_1 = self.evaluation_of_p[2 * beta_prefix + 1];
-
-            // Coefficients of the linear `evaluation_of_p` polynomial
-            let p_0 = eval_of_p_0;
-            let p_1 = eval_of_p_1 - eval_of_p_0;
-
-            let eval_of_eq_0 = self.evaluation_of_equality[2 * beta_prefix];
-            let eval_of_eq_1 = self.evaluation_of_equality[2 * beta_prefix + 1];
-
-            // Coefficients of the linear `evaluation_of_equality` polynomial
-            let w_0 = eval_of_eq_0;
-            let w_1 = eval_of_eq_1 - eval_of_eq_0;
-
-            // Now we need to add the contribution of p(x) * w(x)
-            coeff_0 += p_0 * w_0;
-            coeff_2 += p_1 * w_1;
+            // Now we need to add the contribution of p(x) * eq(x)
+            coeff_0 += p_0 * eq_0;
+            coeff_2 += p_1 * eq_1;
         }
 
         // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
@@ -76,7 +66,7 @@ where
         // Evaluate the quadratic polynomial at 0, 1, 2
         let eval_0 = coeff_0;
         let eval_1 = coeff_0 + coeff_1 + coeff_2;
-        let eval_2 = coeff_0 + two * coeff_1 + two * two * coeff_2;
+        let eval_2 = eval_1 + coeff_1 + coeff_2 + coeff_2 + coeff_2;
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
