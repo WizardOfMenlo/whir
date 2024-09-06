@@ -1,7 +1,11 @@
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
-use rayon::join;
+#[cfg(feature = "parallel")]
+use {
+    rayon::{join, prelude::*},
+    std::mem::size_of,
+};
 
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
@@ -25,28 +29,7 @@ where
 
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.n_variables());
-
-        /*
-        use crate::poly_utils::streaming_evaluation_helper::TermPolynomialIterator;
-        let mut sum = F::ZERO;
-        for (b, term) in TermPolynomialIterator::new(point) {
-            sum += self.coeffs[b.0] * term;
-        }
-        */
-
-        Self::eval(self.coeffs(), &point.0, F::ONE)
-    }
-
-    fn eval(coeff: &[F], eval: &[F], scalar: F) -> F {
-        debug_assert_eq!(coeff.len(), 1 << eval.len());
-        if let Some((&x, tail)) = eval.split_first() {
-            let (low, high) = coeff.split_at(coeff.len() / 2);
-            let a = Self::eval(low, tail, scalar);
-            let b = Self::eval(high, tail, scalar * x);
-            a + b
-        } else {
-            scalar * coeff[0]
-        }
+        eval_multivariate(&self.coeffs, &point.0)
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -198,9 +181,16 @@ where
 {
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.n_variables();
+        #[cfg(not(feature = "parallel"))]
         let coeffs = self
             .coeffs
             .chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
+        #[cfg(feature = "parallel")]
+        let coeffs = self
+            .coeffs
+            .par_chunks_exact(1 << folding_factor)
             .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
             .collect();
 
