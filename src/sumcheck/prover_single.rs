@@ -1,7 +1,6 @@
 use super::proof::SumcheckPolynomial;
 use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
-use itertools::Itertools;
 #[cfg(feature = "parallel")]
 use rayon::{join, prelude::*};
 
@@ -46,28 +45,28 @@ where
         assert!(self.num_variables >= 1);
 
         // Compute coefficients of the quadratic result polynomial
-        let mut coeff_0 = F::ZERO;
-        let mut coeff_2 = F::ZERO;
-        // TODO: Replace with slice::aray_chunks when it stabilizes.
-        let eval_p_iter = self.evaluation_of_p.evals().iter().tuples();
-        let eval_eq_iter = self.evaluation_of_equality.evals().iter().tuples();
-        for ((p_at_0, p_at_1), (eq_at_0, eq_at_1)) in eval_p_iter.zip(eval_eq_iter) {
-            // Convert evaluations to coefficients for the linear fns p and eq.
-            let (p_0, p_1) = (*p_at_0, *p_at_1 - p_at_0);
-            let (eq_0, eq_1) = (*eq_at_0, *eq_at_1 - eq_at_0);
+        let eval_p_iter = self.evaluation_of_p.evals().chunks_exact(2);
+        let eval_eq_iter = self.evaluation_of_equality.evals().chunks_exact(2);
+        let (c0, c2) = eval_p_iter
+            .zip(eval_eq_iter)
+            .map(|(p_at, eq_at)| {
+                // Convert evaluations to coefficients for the linear fns p and eq.
+                let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
+                let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
 
-            // Now we need to add the contribution of p(x) * eq(x)
-            coeff_0 += p_0 * eq_0;
-            coeff_2 += p_1 * eq_1;
-        }
+                // Now we need to add the contribution of p(x) * eq(x)
+                (p_0 * eq_0, p_1 * eq_1)
+            })
+            .reduce(|(a0, a2), (b0, b2)| (a0 + b0, a2 + b2))
+            .unwrap_or((F::ZERO, F::ZERO));
 
-        // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
-        let coeff_1 = self.sum - coeff_0 - coeff_0 - coeff_2;
+        // Use the fact that self.sum = p(0) + p(1) = 2 * c0 + c1 + c2
+        let c1 = self.sum - c0.double() - c2;
 
         // Evaluate the quadratic polynomial at 0, 1, 2
-        let eval_0 = coeff_0;
-        let eval_1 = coeff_0 + coeff_1 + coeff_2;
-        let eval_2 = eval_1 + coeff_1 + coeff_2 + coeff_2 + coeff_2;
+        let eval_0 = c0;
+        let eval_1 = c0 + c1 + c2;
+        let eval_2 = eval_1 + c1 + c2 + c2.double();
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
@@ -95,12 +94,12 @@ where
             );
 
         // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
-        let c1 = self.sum - c0 - c0 - c2;
+        let c1 = self.sum - c0.double() - c2;
 
         // Evaluate the quadratic polynomial at 0, 1, 2
         let eval_0 = c0;
         let eval_1 = c0 + c1 + c2;
-        let eval_2 = eval_1 + c1 + c2 + c2 + c2;
+        let eval_2 = eval_1 + c1 + c2 + c2.double();
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
@@ -183,16 +182,14 @@ where
         let evaluations_of_p = self
             .evaluation_of_p
             .evals()
-            .iter()
-            .tuples()
-            .map(|(at_0, at_1)| (*at_1 - at_0) * randomness + at_0)
+            .chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
             .collect::<Vec<_>>();
         let evaluations_of_eq = self
             .evaluation_of_equality
             .evals()
-            .iter()
-            .tuples()
-            .map(|(at_0, at_1)| (*at_1 - at_0) * randomness + at_0)
+            .chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
             .collect::<Vec<_>>();
 
         // Update
