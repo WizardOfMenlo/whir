@@ -1,6 +1,7 @@
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
+use rayon::join;
 
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
@@ -134,15 +135,60 @@ impl<F> CoefficientList<F> {
     }
 }
 
+// Multivariate evaluation in coefficient form.
 fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     debug_assert_eq!(coeffs.len(), 1 << point.len());
-    if let Some((x, tail)) = point.split_first() {
-        let (low, hi) = coeffs.split_at(coeffs.len() / 2);
-        let a = eval_multivariate(low, tail);
-        let b = eval_multivariate(hi, tail);
-        a + b * x
-    } else {
-        coeffs[0]
+    match point {
+        [] => coeffs[0],
+        [x0, x1] => {
+            let b0 = coeffs[0] + coeffs[1] * x1;
+            let b1 = coeffs[2] + coeffs[3] * x1;
+            b0 + b1 * x0
+        }
+        [x0, x1, x2] => {
+            let b00 = coeffs[0] + coeffs[1] * x2;
+            let b01 = coeffs[2] + coeffs[3] * x2;
+            let b10 = coeffs[4] + coeffs[5] * x2;
+            let b11 = coeffs[6] + coeffs[7] * x2;
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x0, x1, x2, x3] => {
+            let b000 = coeffs[0] + coeffs[1] * x3;
+            let b001 = coeffs[2] + coeffs[3] * x3;
+            let b010 = coeffs[4] + coeffs[5] * x3;
+            let b011 = coeffs[6] + coeffs[7] * x3;
+            let b100 = coeffs[8] + coeffs[9] * x3;
+            let b101 = coeffs[10] + coeffs[11] * x3;
+            let b110 = coeffs[12] + coeffs[13] * x3;
+            let b111 = coeffs[14] + coeffs[15] * x3;
+            let b00 = b000 + b001 * x2;
+            let b01 = b010 + b011 * x2;
+            let b10 = b100 + b101 * x2;
+            let b11 = b110 + b111 * x2;
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x, tail @ ..] => {
+            let (b0t, b1t) = coeffs.split_at(coeffs.len() / 2);
+            #[cfg(not(feature = "parallel"))]
+            let (b0t, b1t) = (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail));
+            #[cfg(feature = "parallel")]
+            let (b0t, b1t) = {
+                let work_size: usize = (1 << 15) / size_of::<F>();
+                if coeffs.len() > work_size {
+                    join(
+                        || eval_multivariate(b0t, tail),
+                        || eval_multivariate(b1t, tail),
+                    )
+                } else {
+                    (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail))
+                }
+            };
+            b0t + b1t * x
+        }
     }
 }
 
