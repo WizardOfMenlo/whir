@@ -184,13 +184,13 @@ where
             .evals()
             .chunks_exact(2)
             .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect::<Vec<_>>();
+            .collect();
         let evaluations_of_eq = self
             .evaluation_of_equality
             .evals()
             .chunks_exact(2)
             .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect::<Vec<_>>();
+            .collect();
 
         // Update
         self.num_variables -= 1;
@@ -215,13 +215,13 @@ where
             .evals()
             .par_chunks_exact(2)
             .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect::<Vec<_>>();
+            .collect();
         let evaluations_of_eq = self
             .evaluation_of_equality
             .evals()
             .par_chunks_exact(2)
             .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect::<Vec<_>>();
+            .collect();
 
         // Update
         self.num_variables -= 1;
