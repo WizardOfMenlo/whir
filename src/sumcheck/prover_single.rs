@@ -169,6 +169,7 @@ where
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
+    #[cfg(not(feature = "parallel"))]
     pub fn compress(
         &mut self,
         combination_randomness: F, // Scale the initial point
@@ -192,6 +193,37 @@ where
             .iter()
             .tuples()
             .map(|(at_0, at_1)| (*at_1 - at_0) * randomness + at_0)
+            .collect::<Vec<_>>();
+
+        // Update
+        self.num_variables -= 1;
+        self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
+        self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
+        self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
+    }
+
+    #[cfg(feature = "parallel")]
+    pub fn compress(
+        &mut self,
+        combination_randomness: F, // Scale the initial point
+        folding_randomness: &MultilinearPoint<F>,
+        sumcheck_poly: &SumcheckPolynomial<F>,
+    ) {
+        assert_eq!(folding_randomness.n_variables(), 1);
+        assert!(self.num_variables >= 1);
+
+        let randomness = folding_randomness.0[0];
+        let evaluations_of_p = self
+            .evaluation_of_p
+            .evals()
+            .par_chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
+            .collect::<Vec<_>>();
+        let evaluations_of_eq = self
+            .evaluation_of_equality
+            .evals()
+            .par_chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
             .collect::<Vec<_>>();
 
         // Update
