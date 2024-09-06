@@ -49,9 +49,15 @@ where
         coeffs: CoefficientList<F>,
         points: &[MultilinearPoint<F>],
         combination_randomness: &[F],
+        evaluations: &[F],
     ) -> Self {
         Self {
-            sumcheck_prover: SumcheckSingle::new(coeffs, points, combination_randomness),
+            sumcheck_prover: SumcheckSingle::new(
+                coeffs,
+                points,
+                combination_randomness,
+                evaluations,
+            ),
         }
     }
 
@@ -75,7 +81,7 @@ where
             }
 
             self.sumcheck_prover
-                .compress(F::ONE, &folding_randomness.into());
+                .compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
         }
 
         res.reverse();
@@ -86,9 +92,10 @@ where
         &mut self,
         points: &[MultilinearPoint<F>],
         combination_randomness: &[F],
+        evaluations: &[F],
     ) {
         self.sumcheck_prover
-            .add_new_equality(points, combination_randomness)
+            .add_new_equality(points, combination_randomness, evaluations)
     }
 }
 
@@ -141,6 +148,10 @@ mod tests {
             polynomial.clone(),
             &[ood_point.clone(), statement_point.clone()],
             &[epsilon_1, epsilon_2],
+            &[
+                polynomial.evaluate_at_extension(&ood_point),
+                polynomial.evaluate_at_extension(&statement_point),
+            ],
         );
 
         let folding_randomness_1 =
@@ -223,11 +234,19 @@ mod tests {
             polynomial.clone(),
             &[ood_point.clone(), statement_point.clone()],
             &[epsilon_1, epsilon_2],
+            &[
+                polynomial.evaluate_at_extension(&ood_point),
+                polynomial.evaluate_at_extension(&statement_point),
+            ],
         );
 
         let folding_randomness_1 =
             prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
-        prover.add_new_equality(&[fold_point.clone()], &combination_randomness);
+
+        let folded_poly_1 = polynomial.fold(&folding_randomness_1);
+        let fold_eval = folded_poly_1.evaluate_at_extension(&fold_point);
+        prover.add_new_equality(&[fold_point.clone()], &combination_randomness, &[fold_eval]);
+
         let folding_randomness_2 =
             prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
 

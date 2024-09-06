@@ -1,7 +1,6 @@
+use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
-
-use super::{evals::EvaluationsList, MultilinearPoint};
 
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
@@ -13,6 +12,16 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    pub fn evaluate_hypercube(&self, point: BinaryHypercubePoint) -> F {
+        assert_eq!(self.coeffs.len(), 1 << self.num_variables);
+        assert!(point.0 < (1 << self.num_variables));
+        // TODO: Optimized implementation
+        self.evaluate(&MultilinearPoint::from_binary_hypercube_point(
+            point,
+            self.num_variables,
+        ))
+    }
+
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.n_variables());
 

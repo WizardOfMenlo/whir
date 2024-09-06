@@ -1,7 +1,12 @@
 use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
 use crate::{
     domain::Domain,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    parameters::FoldType,
+    poly_utils::{
+        coeffs::CoefficientList,
+        fold::{compute_fold, restructure_evaluations},
+        MultilinearPoint,
+    },
     sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
     utils::{self, expand_randomness},
 };
@@ -74,11 +79,17 @@ where
             .collect();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, initial_claims.len());
+        let initial_answers: Vec<_> = witness
+            .ood_answers
+            .into_iter()
+            .chain(statement.evaluations)
+            .collect();
 
         let mut sumcheck_prover = SumcheckProverNotSkipping::new(
             witness.polynomial.clone(),
             &initial_claims,
             &combination_randomness,
+            &initial_answers,
         );
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials(
@@ -188,17 +199,15 @@ where
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples];
+        let mut ood_answers = Vec::with_capacity(round_params.ood_samples);
         if round_params.ood_samples > 0 {
             merlin.fill_challenge_scalars(&mut ood_points)?;
-            let ood_answers: Vec<_> = ood_points
-                .iter()
-                .map(|ood_point| {
-                    folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
-                        *ood_point,
-                        num_variables,
-                    ))
-                })
-                .collect();
+            ood_answers.extend(ood_points.iter().map(|ood_point| {
+                folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
+                    *ood_point,
+                    num_variables,
+                ))
+            }));
             merlin.add_scalars(&ood_answers)?;
         }
 
@@ -229,10 +238,42 @@ where
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
         let fold_size = 1 << self.0.folding_factor;
-        let answers = stir_challenges_indexes
-            .into_iter()
+        let answers: Vec<_> = stir_challenges_indexes
+            .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+        // Evaluate answers in the folding randomness.
+        let mut stir_evaluations = ood_answers.clone();
+        match self.0.fold_optimisation {
+            FoldType::Naive => {
+                // See `Verifier::compute_folds_full`
+                let domain_size = round_state.domain.backing_domain.size();
+                let domain_gen = round_state.domain.backing_domain.element(1);
+                let domain_gen_inv = domain_gen.inverse().unwrap();
+                let coset_domain_size = 1 << self.0.folding_factor;
+                let coset_generator_inv =
+                    domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
+                stir_evaluations.extend(stir_challenges_indexes.iter().zip(&answers).map(
+                    |(index, answers)| {
+                        // The coset is w^index * <w_coset_generator>
+                        //let _coset_offset = domain_gen.pow(&[*index as u64]);
+                        let coset_offset_inv = domain_gen_inv.pow([*index as u64]);
+
+                        compute_fold(
+                            answers,
+                            &round_state.folding_randomness.0,
+                            coset_offset_inv,
+                            coset_generator_inv,
+                            F::from(2).inverse().unwrap(),
+                            self.0.folding_factor,
+                        )
+                    },
+                ))
+            }
+            FoldType::ProverHelps => stir_evaluations.extend(answers.iter().map(|answers| {
+                CoefficientList::new(answers.to_vec()).evaluate(&round_state.folding_randomness)
+            })),
+        }
         round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW
@@ -245,9 +286,11 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
-        round_state
-            .sumcheck_prover
-            .add_new_equality(&stir_challenges, &combination_randomness);
+        round_state.sumcheck_prover.add_new_equality(
+            &stir_challenges,
+            &combination_randomness,
+            &stir_evaluations,
+        );
 
         let folding_randomness = round_state.sumcheck_prover.compute_sumcheck_polynomials(
             merlin,
@@ -260,7 +303,7 @@ where
             domain: new_domain,
             sumcheck_prover: round_state.sumcheck_prover,
             folding_randomness,
-            coefficients: folded_coefficients,
+            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
             prev_merkle: merkle_tree,
             prev_merkle_answers: folded_evals,
             merkle_proofs: round_state.merkle_proofs,

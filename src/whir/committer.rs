@@ -22,6 +22,7 @@ where
     pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
     pub(crate) merkle_leaves: Vec<F>,
     pub(crate) ood_points: Vec<F>,
+    pub(crate) ood_answers: Vec<F>,
 }
 
 pub struct Committer<F, MerkleConfig>(WhirConfig<F, MerkleConfig>)
@@ -90,17 +91,15 @@ where
         merlin.add_bytes(root.as_ref())?;
 
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
+        let mut ood_answers = Vec::with_capacity(self.0.committment_ood_samples);
         if self.0.committment_ood_samples > 0 {
             merlin.fill_challenge_scalars(&mut ood_points)?;
-            let ood_answers: Vec<_> = ood_points
-                .iter()
-                .map(|ood_point| {
-                    polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
-                        *ood_point,
-                        self.0.mv_parameters.num_variables,
-                    ))
-                })
-                .collect();
+            ood_answers.extend(ood_points.iter().map(|ood_point| {
+                polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
+                    *ood_point,
+                    self.0.mv_parameters.num_variables,
+                ))
+            }));
             merlin.add_scalars(&ood_answers)?;
         }
 
@@ -109,6 +108,7 @@ where
             merkle_tree,
             merkle_leaves: folded_evals,
             ood_points,
+            ood_answers,
         })
     }
 }

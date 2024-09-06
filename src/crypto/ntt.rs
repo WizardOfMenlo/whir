@@ -1,13 +1,29 @@
+//! Number-theoretic transforms (NTTs) over fields with high two-adicity.
+//!
+//! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
+//! A global cache is used for twiddle factors.
+
 use ark_ff::{FftField, Field};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard};
 
 #[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use {
+    rayon::prelude::*,
+    std::{cmp::max, mem::size_of},
+};
+
+/// Target thread workload size for parallel NTTs in bytes.
+/// Should ideally be a multiple of a cache line (64 bytes)
+/// and close to the L1 cache size (32 KB).
+#[cfg(feature = "parallel")]
+const WORKLOAD_SIZE: usize = 1 << 15; // 32 KB
 
 /// Global cache for NTT engines, indexed by field.
-static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+// TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
+// see https://github.com/rust-lang/rust/issues/102575
+static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Enginge for computing NTTs over arbitrary fields.
@@ -16,23 +32,26 @@ pub struct NttEngine<F: Field> {
     order: usize,
     omega_order: F,
 
-    // Small roots (Zero if unavailable)
+    // Small roots (zero if unavailable)
     half_omega_3_1_plus_2: F, // ½(ω₃ + ω₃²)
     half_omega_3_1_min_2: F,  // ½(ω₃ - ω₃²)
     omega_4_1: F,
     omega_8_1: F,
     omega_8_3: F,
+    omega_16_1: F,
+    omega_16_3: F,
+    omega_16_9: F,
 
     // Root lookup table (extended on demand)
     roots: RwLock<Vec<F>>,
 }
 
-// Compute the NTT of a slice of field elements using a cached engine.
+/// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
     NttEngine::new_from_cache().ntt(values);
 }
 
-// Compute the many NTTs of size `size` using a cached engine.
+/// Compute the many NTTs of size `size` using a cached engine.
 pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::new_from_cache().ntt_batch(values, size);
 }
@@ -46,25 +65,38 @@ pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
 }
 
 impl<F: FftField> NttEngine<F> {
+    /// Get or create a cached engine for the field `F`.
     pub fn new_from_cache() -> Arc<Self> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
         if let Some(engine) = cache.get(&type_id) {
-            engine.downcast_ref::<Arc<NttEngine<F>>>().unwrap().clone()
+            engine.clone().downcast::<NttEngine<F>>().unwrap()
         } else {
             let engine = Arc::new(NttEngine::new_from_fftfield());
-            cache.insert(type_id, Box::new(engine.clone()));
+            cache.insert(type_id, engine.clone());
             engine
         }
     }
 
+    /// Construct a new engine from the field's `FftField` trait.
     fn new_from_fftfield() -> Self {
         // TODO: Support SMALL_SUBGROUP
-        Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
+        if F::TWO_ADICITY <= 63 {
+            Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
+        } else {
+            let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
+            for _ in 0..(63 - F::TWO_ADICITY) {
+                generator = generator.square();
+            }
+            Self::new(1 << 63, generator)
+        }
     }
 }
 
 impl<F: Field> NttEngine<F> {
+    #[cfg(feature = "parallel")]
+    const WORKLOAD_SIZE: usize = WORKLOAD_SIZE / (2 * size_of::<F>());
+
     pub fn new(order: usize, omega_order: F) -> Self {
         assert!(order.trailing_zeros() > 0, "Order must be a power of 2.");
         // TODO: Assert that omega_order factors into 2s and 3s.
@@ -78,6 +110,9 @@ impl<F: Field> NttEngine<F> {
             omega_4_1: F::ZERO,
             omega_8_1: F::ZERO,
             omega_8_3: F::ZERO,
+            omega_16_1: F::ZERO,
+            omega_16_3: F::ZERO,
+            omega_16_9: F::ZERO,
             roots: RwLock::new(Vec::new()),
         };
         if order % 3 == 0 {
@@ -91,7 +126,12 @@ impl<F: Field> NttEngine<F> {
         }
         if order % 8 == 0 {
             res.omega_8_1 = res.root(8);
-            res.omega_8_3 = res.omega_8_1.pow(&[3]);
+            res.omega_8_3 = res.omega_8_1.pow([3]);
+        }
+        if order % 16 == 0 {
+            res.omega_16_1 = res.root(16);
+            res.omega_16_3 = res.omega_16_1.pow([3]);
+            res.omega_16_9 = res.omega_16_1.pow([9]);
         }
         res
     }
@@ -100,27 +140,10 @@ impl<F: Field> NttEngine<F> {
         self.ntt_batch(values, values.len())
     }
 
-    #[cfg(not(feature = "parallel"))]
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
         assert!(values.len() % size == 0);
         let roots = self.roots_table(size);
         self.ntt_dispatch(values, &roots, size);
-    }
-
-    #[cfg(feature = "parallel")]
-    pub fn ntt_batch(&self, values: &mut [F], size: usize) {
-        const PARALLEL_THRESHOLD: usize = 1 << 14;
-        assert!(values.len() % size == 0);
-        let roots = self.roots_table(size);
-        if values.len() < PARALLEL_THRESHOLD {
-            self.ntt_dispatch(values, &roots, size);
-        } else {
-            // Work size is next multiple of `size` larger than `PARALLEL_THRESHOLD`.
-            let chunk_size = ((PARALLEL_THRESHOLD + size - 1) / size) * size;
-            values.par_chunks_exact_mut(chunk_size).for_each(|values| {
-                self.ntt_dispatch(values, &roots, size);
-            });
-        }
     }
 
     /// Inverse NTT. Does not aply 1/n scaling factor.
@@ -189,23 +212,20 @@ impl<F: Field> NttEngine<F> {
         }
     }
 
-    /// Compute an NTT in place by splititng into two factors.
+    /// Compute NTTs in place by splititng into two factors.
     /// Recurses using the sqrt(N) Cooley-Tukey Six step NTT algorithm.
     fn ntt_recurse(&self, values: &mut [F], roots: &[F], size: usize) {
         let n1 = sqrt_factor(size);
         let n2 = size / n1;
         let step = roots.len() / size;
 
-        // TODO: Lift recursion out of loop.
-        for values in values.chunks_exact_mut(size) {
-            transpose(values, n1, n2);
-        }
+        transpose(values, n1, n2);
         self.ntt_dispatch(values, roots, n1);
+        transpose(values, n2, n1);
+        // TODO: When (n1, n2) are coprime we can use the
+        // Good-Thomas NTT algorithm and avoid the twiddle loop.
+        // TODO: Parallelize the twiddle loop when values.len() is large.
         for values in values.chunks_exact_mut(size) {
-            transpose(values, n2, n1);
-
-            // TODO: When (n1, n2) are coprime we can use the
-            // Good-Thomas NTT algorithm and avoid the twiddle loop.
             for i in 1..n1 {
                 let step = (i * step) % roots.len();
                 let mut index = step;
@@ -217,13 +237,21 @@ impl<F: Field> NttEngine<F> {
             }
         }
         self.ntt_dispatch(values, roots, n2);
-        for values in values.chunks_exact_mut(size) {
-            transpose(values, n1, n2);
-        }
+        transpose(values, n1, n2);
     }
 
     fn ntt_dispatch(&self, values: &mut [F], roots: &[F], size: usize) {
         debug_assert_eq!(values.len() % size, 0);
+        debug_assert_eq!(roots.len() % size, 0);
+        #[cfg(feature = "parallel")]
+        if values.len() > Self::WORKLOAD_SIZE && values.len() != size {
+            // Multiple NTTs, compute in parallel.
+            // Work size is largest multiple of `size` smaller than `WORKLOAD_SIZE`.
+            let workload_size = size * max(1, Self::WORKLOAD_SIZE / size);
+            return values.par_chunks_mut(workload_size).for_each(|values| {
+                self.ntt_dispatch(values, roots, size);
+            });
+        }
         match size {
             0 | 1 => {}
             2 => {
@@ -255,6 +283,7 @@ impl<F: Field> NttEngine<F> {
             }
             8 => {
                 for v in values.chunks_exact_mut(8) {
+                    // Cooley-Tukey with v as 2x4 matrix.
                     (v[0], v[4]) = (v[0] + v[4], v[0] - v[4]);
                     (v[1], v[5]) = (v[1] + v[5], v[1] - v[5]);
                     (v[2], v[6]) = (v[2] + v[6], v[2] - v[6]);
@@ -275,26 +304,73 @@ impl<F: Field> NttEngine<F> {
                     (v[1], v[4]) = (v[4], v[1]);
                     (v[3], v[6]) = (v[6], v[3]);
                 }
-            } // TODO: 16
+            }
+            16 => {
+                for v in values.chunks_exact_mut(16) {
+                    // Cooley-Tukey with v as 4x4 matrix.
+                    for i in 0..4 {
+                        let v = &mut v[i..];
+                        (v[0], v[8]) = (v[0] + v[8], v[0] - v[8]);
+                        (v[4], v[12]) = (v[4] + v[12], v[4] - v[12]);
+                        v[12] *= self.omega_4_1;
+                        (v[0], v[4]) = (v[0] + v[4], v[0] - v[4]);
+                        (v[8], v[12]) = (v[8] + v[12], v[8] - v[12]);
+                        (v[4], v[8]) = (v[8], v[4]);
+                    }
+                    v[5] *= self.omega_16_1;
+                    v[6] *= self.omega_8_1;
+                    v[7] *= self.omega_16_3;
+                    v[9] *= self.omega_8_1;
+                    v[10] *= self.omega_4_1;
+                    v[11] *= self.omega_8_3;
+                    v[13] *= self.omega_16_3;
+                    v[14] *= self.omega_8_3;
+                    v[15] *= self.omega_16_9;
+                    for i in 0..4 {
+                        let v = &mut v[i * 4..];
+                        (v[0], v[2]) = (v[0] + v[2], v[0] - v[2]);
+                        (v[1], v[3]) = (v[1] + v[3], v[1] - v[3]);
+                        v[3] *= self.omega_4_1;
+                        (v[0], v[1]) = (v[0] + v[1], v[0] - v[1]);
+                        (v[2], v[3]) = (v[2] + v[3], v[2] - v[3]);
+                        (v[1], v[2]) = (v[2], v[1]);
+                    }
+                    (v[1], v[4]) = (v[4], v[1]);
+                    (v[2], v[8]) = (v[8], v[2]);
+                    (v[3], v[12]) = (v[12], v[3]);
+                    (v[6], v[9]) = (v[9], v[6]);
+                    (v[7], v[13]) = (v[13], v[7]);
+                    (v[11], v[14]) = (v[14], v[11]);
+                }
+            }
             size => self.ntt_recurse(values, roots, size),
         }
     }
 }
 
 /// Transpose a matrix in-place.
+/// Will batch transpose multiple matrices if the length of the slice is a multiple of rows * cols.
 pub fn transpose<T: Copy>(matrix: &mut [T], rows: usize, cols: usize) {
-    debug_assert_eq!(matrix.len(), rows * cols);
+    debug_assert_eq!(matrix.len() % rows * cols, 0);
     if rows == cols {
-        for i in 0..rows {
-            for j in (i + 1)..cols {
-                matrix.swap(i * cols + j, j * rows + i);
+        // TODO: Cache-oblivious recursive parallel algorithm.
+        for matrix in matrix.chunks_exact_mut(rows * cols) {
+            for i in 0..rows {
+                for j in (i + 1)..cols {
+                    matrix.swap(i * cols + j, j * rows + i);
+                }
             }
         }
     } else {
-        let copy = matrix.to_vec();
-        for i in 0..rows {
-            for j in 0..cols {
-                matrix[j * rows + i] = copy[i * cols + j];
+        // TODO: Re-use scratch space.
+        // TODO: Cache-oblivious recursive parallel algorithm.
+        // TODO: Special case for rows = 2 * cols and cols = 2 * rows.
+        for matrix in matrix.chunks_exact_mut(rows * cols) {
+            let copy = matrix.to_vec();
+            for i in 0..rows {
+                for j in 0..cols {
+                    matrix[j * rows + i] = copy[i * cols + j];
+                }
             }
         }
     }
