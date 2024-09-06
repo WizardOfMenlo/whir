@@ -134,30 +134,33 @@ impl<F> CoefficientList<F> {
     }
 }
 
+fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
+    debug_assert_eq!(coeffs.len(), 1 << point.len());
+    if let Some((x, tail)) = point.split_first() {
+        let (low, hi) = coeffs.split_at(coeffs.len() / 2);
+        let a = eval_multivariate(low, tail);
+        let b = eval_multivariate(hi, tail);
+        a + b * x
+    } else {
+        coeffs[0]
+    }
+}
+
 impl<F> CoefficientList<F>
 where
     F: Field,
 {
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.n_variables();
-        let new_vars = self.num_variables() - folding_factor;
-        let prefix_len = 1 << new_vars;
-        let suffix_len = 1 << folding_factor;
-
-        let mut res = Vec::with_capacity(prefix_len);
-
-        for prefix in 0..prefix_len {
-            let coeffs = (0..suffix_len)
-                .map(|suffix| prefix * suffix_len + suffix)
-                .map(|i| self.coeffs[i])
-                .collect();
-
-            res.push(Self::new(coeffs).evaluate(folding_randomness));
-        }
+        let coeffs = self
+            .coeffs
+            .chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
 
         CoefficientList {
-            coeffs: res,
-            num_variables: new_vars,
+            coeffs,
+            num_variables: self.num_variables() - folding_factor,
         }
     }
 }
