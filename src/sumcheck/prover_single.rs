@@ -2,7 +2,7 @@ use super::proof::SumcheckPolynomial;
 use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
-use rayon::join;
+use rayon::{join, prelude::*};
 
 pub struct SumcheckSingle<F> {
     // The evaluation of p
@@ -40,43 +40,66 @@ where
         prover
     }
 
+    #[cfg(not(feature = "parallel"))]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
-        let two = F::ONE + F::ONE; // Enlightening (see Whitehead & Russell (1910) Thm. ✱54.43)
         assert!(self.num_variables >= 1);
 
-        let prefix_len = 1 << (self.num_variables - 1);
-
         // Compute coefficients of the quadratic result polynomial
-        let mut coeff_0 = F::ZERO;
-        let mut coeff_2 = F::ZERO;
+        let eval_p_iter = self.evaluation_of_p.evals().chunks_exact(2);
+        let eval_eq_iter = self.evaluation_of_equality.evals().chunks_exact(2);
+        let (c0, c2) = eval_p_iter
+            .zip(eval_eq_iter)
+            .map(|(p_at, eq_at)| {
+                // Convert evaluations to coefficients for the linear fns p and eq.
+                let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
+                let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
 
-        for beta_prefix in 0..prefix_len {
-            let eval_of_p_0 = self.evaluation_of_p[2 * beta_prefix];
-            let eval_of_p_1 = self.evaluation_of_p[2 * beta_prefix + 1];
+                // Now we need to add the contribution of p(x) * eq(x)
+                (p_0 * eq_0, p_1 * eq_1)
+            })
+            .reduce(|(a0, a2), (b0, b2)| (a0 + b0, a2 + b2))
+            .unwrap_or((F::ZERO, F::ZERO));
 
-            // Coefficients of the linear `evaluation_of_p` polynomial
-            let p_0 = eval_of_p_0;
-            let p_1 = eval_of_p_1 - eval_of_p_0;
-
-            let eval_of_eq_0 = self.evaluation_of_equality[2 * beta_prefix];
-            let eval_of_eq_1 = self.evaluation_of_equality[2 * beta_prefix + 1];
-
-            // Coefficients of the linear `evaluation_of_equality` polynomial
-            let w_0 = eval_of_eq_0;
-            let w_1 = eval_of_eq_1 - eval_of_eq_0;
-
-            // Now we need to add the contribution of p(x) * w(x)
-            coeff_0 += p_0 * w_0;
-            coeff_2 += p_1 * w_1;
-        }
-
-        // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
-        let coeff_1 = self.sum - coeff_0 - coeff_0 - coeff_2;
+        // Use the fact that self.sum = p(0) + p(1) = 2 * c0 + c1 + c2
+        let c1 = self.sum - c0.double() - c2;
 
         // Evaluate the quadratic polynomial at 0, 1, 2
-        let eval_0 = coeff_0;
-        let eval_1 = coeff_0 + coeff_1 + coeff_2;
-        let eval_2 = coeff_0 + two * coeff_1 + two * two * coeff_2;
+        let eval_0 = c0;
+        let eval_1 = c0 + c1 + c2;
+        let eval_2 = eval_1 + c1 + c2 + c2.double();
+
+        SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
+    }
+
+    #[cfg(feature = "parallel")]
+    pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
+        assert!(self.num_variables >= 1);
+
+        // Compute coefficients of the quadratic result polynomial
+        let eval_p_iter = self.evaluation_of_p.evals().par_chunks_exact(2);
+        let eval_eq_iter = self.evaluation_of_equality.evals().par_chunks_exact(2);
+        let (c0, c2) = eval_p_iter
+            .zip(eval_eq_iter)
+            .map(|(p_at, eq_at)| {
+                // Convert evaluations to coefficients for the linear fns p and eq.
+                let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
+                let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
+
+                // Now we need to add the contribution of p(x) * eq(x)
+                (p_0 * eq_0, p_1 * eq_1)
+            })
+            .reduce(
+                || (F::ZERO, F::ZERO),
+                |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
+            );
+
+        // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
+        let c1 = self.sum - c0.double() - c2;
+
+        // Evaluate the quadratic polynomial at 0, 1, 2
+        let eval_0 = c0;
+        let eval_1 = c0 + c1 + c2;
+        let eval_2 = eval_1 + c1 + c2 + c2.double();
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
@@ -145,6 +168,7 @@ where
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
+    #[cfg(not(feature = "parallel"))]
     pub fn compress(
         &mut self,
         combination_randomness: F, // Scale the initial point
@@ -155,25 +179,53 @@ where
         assert!(self.num_variables >= 1);
 
         let randomness = folding_randomness.0[0];
-        let randomness_bar = F::ONE - randomness;
+        let evaluations_of_p = self
+            .evaluation_of_p
+            .evals()
+            .chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
+            .collect();
+        let evaluations_of_eq = self
+            .evaluation_of_equality
+            .evals()
+            .chunks_exact(2)
+            .map(|at| (at[1] - at[0]) * randomness + at[0])
+            .collect();
 
-        let prefix_len = 1 << (self.num_variables - 1);
-        let mut evaluations_of_p = Vec::with_capacity(prefix_len);
-        let mut evaluations_of_eq = Vec::with_capacity(prefix_len);
+        // Update
+        self.num_variables -= 1;
+        self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
+        self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
+        self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
+    }
 
-        // Compress the table
-        for beta_prefix in 0..prefix_len {
-            let eval_of_p_0 = self.evaluation_of_p[2 * beta_prefix];
-            let eval_of_p_1 = self.evaluation_of_p[2 * beta_prefix + 1];
-            let eval_of_p = eval_of_p_0 * randomness_bar + eval_of_p_1 * randomness;
+    #[cfg(feature = "parallel")]
+    pub fn compress(
+        &mut self,
+        combination_randomness: F, // Scale the initial point
+        folding_randomness: &MultilinearPoint<F>,
+        sumcheck_poly: &SumcheckPolynomial<F>,
+    ) {
+        assert_eq!(folding_randomness.n_variables(), 1);
+        assert!(self.num_variables >= 1);
 
-            let eval_of_eq_0 = self.evaluation_of_equality[2 * beta_prefix];
-            let eval_of_eq_1 = self.evaluation_of_equality[2 * beta_prefix + 1];
-            let eval_of_eq = eval_of_eq_0 * randomness_bar + eval_of_eq_1 * randomness;
-
-            evaluations_of_p.push(eval_of_p);
-            evaluations_of_eq.push(combination_randomness * eval_of_eq);
-        }
+        let randomness = folding_randomness.0[0];
+        let (evaluations_of_p, evaluations_of_eq) = join(
+            || {
+                self.evaluation_of_p
+                    .evals()
+                    .par_chunks_exact(2)
+                    .map(|at| (at[1] - at[0]) * randomness + at[0])
+                    .collect()
+            },
+            || {
+                self.evaluation_of_equality
+                    .evals()
+                    .par_chunks_exact(2)
+                    .map(|at| (at[1] - at[0]) * randomness + at[0])
+                    .collect()
+            },
+        );
 
         // Update
         self.num_variables -= 1;
