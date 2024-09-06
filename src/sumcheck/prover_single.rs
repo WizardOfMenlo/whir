@@ -210,18 +210,22 @@ where
         assert!(self.num_variables >= 1);
 
         let randomness = folding_randomness.0[0];
-        let evaluations_of_p = self
-            .evaluation_of_p
-            .evals()
-            .par_chunks_exact(2)
-            .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect();
-        let evaluations_of_eq = self
-            .evaluation_of_equality
-            .evals()
-            .par_chunks_exact(2)
-            .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect();
+        let (evaluations_of_p, evaluations_of_eq) = join(
+            || {
+                self.evaluation_of_p
+                    .evals()
+                    .par_chunks_exact(2)
+                    .map(|at| (at[1] - at[0]) * randomness + at[0])
+                    .collect()
+            },
+            || {
+                self.evaluation_of_equality
+                    .evals()
+                    .par_chunks_exact(2)
+                    .map(|at| (at[1] - at[0]) * randomness + at[0])
+                    .collect()
+            },
+        );
 
         // Update
         self.num_variables -= 1;
