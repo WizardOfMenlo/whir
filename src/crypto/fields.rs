@@ -19,7 +19,7 @@ where
 pub type Field256 = ark_test_curves::bls12_381::Fr;
 
 #[derive(MontConfig)]
-#[modulus = "4787605948707450321761805915146316350821882368518086721537"]
+#[modulus = "3801539170989320091464968600173246866371124347557388484609"]
 #[generator = "3"]
 pub struct FConfig192;
 pub type Field192 = Fp192<MontBackend<FConfig192, 3>>;

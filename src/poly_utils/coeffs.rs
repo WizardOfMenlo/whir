@@ -1,9 +1,6 @@
+use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
-
-use crate::poly_utils::streaming_evaluation_helper::TermPolynomialIterator;
-
-use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
@@ -28,13 +25,27 @@ where
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.n_variables());
 
+        /*
+        use crate::poly_utils::streaming_evaluation_helper::TermPolynomialIterator;
         let mut sum = F::ZERO;
-
         for (b, term) in TermPolynomialIterator::new(point) {
             sum += self.coeffs[b.0] * term;
         }
+        */
 
-        sum
+        Self::eval(self.coeffs(), &point.0, F::ONE)
+    }
+
+    fn eval(coeff: &[F], eval: &[F], scalar: F) -> F {
+        debug_assert_eq!(coeff.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = coeff.split_at(coeff.len() / 2);
+            let a = Self::eval(low, tail, scalar);
+            let b = Self::eval(high, tail, scalar * x);
+            a + b
+        } else {
+            scalar * coeff[0]
+        }
     }
 
     #[cfg(not(feature = "parallel"))]

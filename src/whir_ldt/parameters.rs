@@ -156,8 +156,10 @@ where
             log_inv_rate,
         );
 
-        let final_pow_bits = whir_parameters.security_level as f64
-            - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries);
+        let final_pow_bits = 0_f64.max(
+            whir_parameters.security_level as f64
+                - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries),
+        );
 
         let final_folding_pow_bits =
             0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
