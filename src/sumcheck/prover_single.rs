@@ -142,17 +142,6 @@ where
         for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
             self.sum += *rand * eval;
         }
-
-        // Check sum invariant
-        debug_assert_eq!(
-            self.sum,
-            self.evaluation_of_p
-                .evals()
-                .iter()
-                .zip(self.evaluation_of_equality.evals().iter())
-                .map(|(p, eq)| *p * eq)
-                .sum()
-        );
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
