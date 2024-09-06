@@ -1,3 +1,5 @@
+use std::ops::AddAssign;
+
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
@@ -226,22 +228,24 @@ where
 {
     fn from(value: CoefficientList<F>) -> Self {
         let mut evals = value.coeffs;
-        let num_coeffs = evals.len();
-        let num_variables = value.num_variables;
+        wavelet_transform(&mut evals);
+        EvaluationsList::new(evals)
+    }
+}
 
-        for var in 0..num_variables {
-            let step = 1 << var;
-            for i in (0..num_coeffs).step_by(step * 2) {
-                for j in 0..step {
-                    if i + j + step < num_coeffs {
-                        let sum = evals[i + j] + evals[i + j + step];
-                        evals[i + j + step] = sum;
-                    }
-                }
+fn wavelet_transform<F>(values: &mut [F])
+where
+    F: for<'a> AddAssign<&'a F>,
+{
+    debug_assert!(values.len().is_power_of_two());
+    eprintln!("wavelet_transform {}", values.len().trailing_zeros());
+    for r in 0..values.len().trailing_zeros() {
+        for coeffs in values.chunks_mut(1 << (r + 1)) {
+            let (left, right) = coeffs.split_at_mut(1 << r);
+            for (left, right) in left.iter().zip(right.iter_mut()) {
+                *right += left;
             }
         }
-
-        EvaluationsList::new(evals)
     }
 }
 
