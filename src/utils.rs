@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
-
+use crate::ntt::transpose;
 use ark_ff::Field;
-
-use crate::crypto::ntt::transpose;
+use std::collections::BTreeSet;
 
 pub fn is_power_of_two(n: usize) -> bool {
     n & (n - 1) == 0

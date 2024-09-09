@@ -3,25 +3,19 @@
 //! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
 //! A global cache is used for twiddle factors.
 
+use super::{
+    transpose,
+    utils::{lcm, sqrt_factor, workload_size},
+};
 use ark_ff::{FftField, Field};
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
-    mem::swap,
     sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard},
 };
 
 #[cfg(feature = "parallel")]
-use {
-    rayon::prelude::*,
-    std::{cmp::max, mem::size_of},
-};
-
-/// Target thread workload size for parallel NTTs in bytes.
-/// Should ideally be a multiple of a cache line (64 bytes)
-/// and close to the L1 cache size (32 KB).
-#[cfg(feature = "parallel")]
-const WORKLOAD_SIZE: usize = 1 << 15; // 32 KB
+use {rayon::prelude::*, std::cmp::max};
 
 /// Global cache for NTT engines, indexed by field.
 // TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
@@ -97,9 +91,6 @@ impl<F: FftField> NttEngine<F> {
 }
 
 impl<F: Field> NttEngine<F> {
-    #[cfg(feature = "parallel")]
-    const WORKLOAD_SIZE: usize = WORKLOAD_SIZE / (2 * size_of::<F>());
-
     pub fn new(order: usize, omega_order: F) -> Self {
         assert!(order.trailing_zeros() > 0, "Order must be a power of 2.");
         // TODO: Assert that omega_order factors into 2s and 3s.
@@ -247,10 +238,10 @@ impl<F: Field> NttEngine<F> {
         debug_assert_eq!(values.len() % size, 0);
         debug_assert_eq!(roots.len() % size, 0);
         #[cfg(feature = "parallel")]
-        if values.len() > Self::WORKLOAD_SIZE && values.len() != size {
+        if values.len() > workload_size::<F>() && values.len() != size {
             // Multiple NTTs, compute in parallel.
             // Work size is largest multiple of `size` smaller than `WORKLOAD_SIZE`.
-            let workload_size = size * max(1, Self::WORKLOAD_SIZE / size);
+            let workload_size = size * max(1, workload_size::<F>() / size);
             return values.par_chunks_mut(workload_size).for_each(|values| {
                 self.ntt_dispatch(values, roots, size);
             });
@@ -349,185 +340,4 @@ impl<F: Field> NttEngine<F> {
             size => self.ntt_recurse(values, roots, size),
         }
     }
-}
-
-/// Fast Wavelet Transform.
-///
-/// The input slice must have a length that is a power of two.
-/// Recursively applies the kernel
-///   [1 0]
-///   [1 1]
-pub fn wavelet_transform<F: Field>(values: &mut [F]) {
-    debug_assert!(values.len().is_power_of_two());
-    wavelet_transform_batch(values, values.len())
-}
-
-pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
-    debug_assert_eq!(values.len() % size, 0);
-    debug_assert!(size.is_power_of_two());
-    #[cfg(feature = "parallel")]
-    if values.len() > NttEngine::<F>::WORKLOAD_SIZE && values.len() != size {
-        // Multiple wavelet transforms, compute in parallel.
-        // Work size is largest multiple of `size` smaller than `WORKLOAD_SIZE`.
-        let workload_size = size * max(1, NttEngine::<F>::WORKLOAD_SIZE / size);
-        return values.par_chunks_mut(workload_size).for_each(|values| {
-            wavelet_transform_batch(values, size);
-        });
-    }
-    match size {
-        0 | 1 => {}
-        2 => {
-            for v in values.chunks_exact_mut(2) {
-                v[1] += v[0]
-            }
-        }
-        4 => {
-            for v in values.chunks_exact_mut(4) {
-                v[1] += v[0];
-                v[3] += v[2];
-                v[2] += v[0];
-                v[3] += v[1];
-            }
-        }
-        8 => {
-            for v in values.chunks_exact_mut(8) {
-                v[1] += v[0];
-                v[3] += v[2];
-                v[2] += v[0];
-                v[3] += v[1];
-                v[5] += v[4];
-                v[7] += v[6];
-                v[6] += v[4];
-                v[7] += v[5];
-                v[4] += v[0];
-                v[5] += v[1];
-                v[6] += v[2];
-                v[7] += v[3];
-            }
-        }
-        16 => {
-            for v in values.chunks_exact_mut(16) {
-                for v in v.chunks_exact_mut(4) {
-                    v[1] += v[0];
-                    v[3] += v[2];
-                    v[2] += v[0];
-                    v[3] += v[1];
-                }
-                let (a, v) = v.split_at_mut(4);
-                let (b, v) = v.split_at_mut(4);
-                let (c, d) = v.split_at_mut(4);
-                for i in 0..4 {
-                    b[i] += a[i];
-                    d[i] += c[i];
-                    c[i] += a[i];
-                    d[i] += b[i];
-                }
-            }
-        }
-        n => {
-            let n1 = 1 << (n.trailing_zeros() / 2);
-            let n2 = n / n1;
-            wavelet_transform_batch(values, n1);
-            transpose(values, n2, n1);
-            wavelet_transform_batch(values, n2);
-            transpose(values, n1, n2);
-        }
-    }
-}
-
-/// Transpose a matrix in-place.
-/// Will batch transpose multiple matrices if the length of the slice is a multiple of rows * cols.
-pub fn transpose<F: Field>(matrix: &mut [F], rows: usize, cols: usize) {
-    debug_assert_eq!(matrix.len() % rows * cols, 0);
-    if rows == cols {
-        for matrix in matrix.chunks_exact_mut(rows * cols) {
-            transpose_square(matrix, rows, cols);
-        }
-    } else {
-        // TODO: Special case for rows = 2 * cols and cols = 2 * rows.
-        let mut scratch = vec![F::ZERO; rows * cols];
-        for matrix in matrix.chunks_exact_mut(rows * cols) {
-            scratch.copy_from_slice(matrix);
-            for i in 0..rows {
-                for j in 0..cols {
-                    matrix[j * rows + i] = scratch[i * cols + j];
-                }
-            }
-        }
-    }
-}
-
-// Transpose a square power-of-two matrix in-place.
-fn transpose_square<F: Field>(matrix: &mut [F], size: usize, stride: usize) {
-    debug_assert!(matrix.len() >= (size - 1) * stride + size);
-    debug_assert!(size.is_power_of_two());
-    if size * size > NttEngine::<F>::WORKLOAD_SIZE {
-        // Recurse into quadrants.
-        // This results in a cache-oblivious algorithm.
-        let n = size / 2;
-        let (upper, lower) = matrix.split_at_mut(n * stride);
-        // Ideally we'd parallelize this, but its not possible to
-        // express the strided matrices without unsafe code.
-        transpose_square(upper, n, stride);
-        transpose_square_swap(&mut upper[n..], lower, n, stride);
-        transpose_square(&mut lower[n..], n, stride);
-    } else {
-        for i in 0..size {
-            for j in (i + 1)..size {
-                matrix.swap(i * stride + j, j * stride + i);
-            }
-        }
-    }
-}
-
-/// Transpose and swap two square power-of-two size matrices.
-fn transpose_square_swap<F: Field>(a: &mut [F], b: &mut [F], size: usize, stride: usize) {
-    debug_assert!(a.len() >= (size - 1) * stride + size);
-    debug_assert!(b.len() >= (size - 1) * stride + size);
-    debug_assert!(size.is_power_of_two());
-    if size * size > NttEngine::<F>::WORKLOAD_SIZE {
-        // Recurse into quadrants.
-        // This results in a cache-oblivious algorithm.
-        let n = size / 2;
-        let (a_upper, a_lower) = a.split_at_mut(n * stride);
-        let (b_upper, b_lower) = b.split_at_mut(n * stride);
-        // Ideally we'd parallelize this, but its not possible to
-        // express the strided matrices without unsafe code.
-        transpose_square_swap(a_upper, b_upper, n, stride);
-        transpose_square_swap(&mut a_upper[n..], b_lower, n, stride);
-        transpose_square_swap(a_lower, &mut b_upper[n..], n, stride);
-        transpose_square_swap(&mut a_lower[n..], &mut b_lower[n..], n, stride);
-    } else {
-        for i in 0..size {
-            for j in 0..size {
-                // The compiler does not eliminate the bounds checks here,
-                // but this doesn't matter as it is bottlenecked by memory bandwidth.
-                swap(&mut a[i * stride + j], &mut b[j * stride + i]);
-            }
-        }
-    }
-}
-
-/// Compute the largest factor of n that is <= sqrt(n).
-/// Assumes n is of the form 2^k * {1,3,9}.
-fn sqrt_factor(n: usize) -> usize {
-    let twos = n.trailing_zeros();
-    match n >> twos {
-        1 => 1 << (twos / 2),
-        3 | 9 => 3 << (twos / 2),
-        _ => panic!(),
-    }
-}
-
-/// Least common multiple.
-fn lcm(a: usize, b: usize) -> usize {
-    a * b / gcd(a, b)
-}
-
-// Greatest common divisor.
-fn gcd(mut a: usize, mut b: usize) -> usize {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
 }

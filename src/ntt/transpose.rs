@@ -1,4 +1,4 @@
-use super::{workload_size, MatrixMut};
+use super::{utils::workload_size, MatrixMut};
 use ark_ff::Field;
 use std::mem::swap;
 
