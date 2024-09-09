@@ -1,4 +1,5 @@
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
+use crate::crypto::ntt::wavelet_transform;
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]
@@ -226,21 +227,7 @@ where
 {
     fn from(value: CoefficientList<F>) -> Self {
         let mut evals = value.coeffs;
-        let num_coeffs = evals.len();
-        let num_variables = value.num_variables;
-
-        for var in 0..num_variables {
-            let step = 1 << var;
-            for i in (0..num_coeffs).step_by(step * 2) {
-                for j in 0..step {
-                    if i + j + step < num_coeffs {
-                        let sum = evals[i + j] + evals[i + j + step];
-                        evals[i + j + step] = sum;
-                    }
-                }
-            }
-        }
-
+        wavelet_transform(&mut evals);
         EvaluationsList::new(evals)
     }
 }
