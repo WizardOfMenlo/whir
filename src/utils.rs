@@ -64,11 +64,13 @@ mod tests {
 
     #[test]
     fn test_evaluations_stack() {
+        use crate::crypto::fields::Field64 as F;
+
         let num = 256;
         let folding_factor = 3;
         let fold_size = 1 << folding_factor;
         assert_eq!(num % fold_size, 0);
-        let evals: Vec<_> = (0..num).collect();
+        let evals: Vec<_> = (0..num as u64).map(F::from).collect();
 
         let stacked = stack_evaluations(evals, folding_factor);
         assert_eq!(stacked.len(), num);
@@ -76,7 +78,7 @@ mod tests {
         for (i, fold) in stacked.chunks_exact(fold_size).enumerate() {
             assert_eq!(fold.len(), fold_size);
             for j in 0..fold_size {
-                assert_eq!(fold[j], i + j * num / fold_size);
+                assert_eq!(fold[j], F::from((i + j * num / fold_size) as u64));
             }
         }
     }
