@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use ark_ff::Field;
 
+use crate::crypto::ntt::transpose;
+
 pub fn is_power_of_two(n: usize) -> bool {
     n & (n - 1) == 0
 }
@@ -50,19 +52,12 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
 
 // Takes the vector of evaluations (assume that evals[i] = f(omega^i))
 // and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
-pub fn stack_evaluations<F: Copy>(evals: Vec<F>, folding_factor: usize) -> Vec<F> {
+pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> Vec<F> {
     let folding_factor_exp = 1 << folding_factor;
     assert!(evals.len() % folding_factor_exp == 0);
     let size_of_new_domain = evals.len() / folding_factor_exp;
-
-    let mut stacked_evaluations = Vec::with_capacity(evals.len());
-    for i in 0..size_of_new_domain {
-        for j in 0..folding_factor_exp {
-            stacked_evaluations.push(evals[i + j * size_of_new_domain]);
-        }
-    }
-
-    stacked_evaluations
+    transpose(&mut evals, folding_factor_exp, size_of_new_domain);
+    evals
 }
 
 #[cfg(test)]

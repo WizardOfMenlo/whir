@@ -54,6 +54,8 @@ where
             .evaluate_over_domain_by_ref(self.0.starting_domain.base_domain.unwrap())
             .evals;
 
+        // TODO: Combine NTT, Stack and Restructuring into one operation, as a lot of
+        // it will cancel eachother out.
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
         let folded_evals = restructure_evaluations(
             folded_evals,
