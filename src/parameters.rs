@@ -4,7 +4,7 @@ use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::Serialize;
 
 pub fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
-    num_variables + log_inv_rate - 1
+    num_variables + log_inv_rate - 3
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
