@@ -9,7 +9,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
-use nimue::{DefaultHash, IOPattern};
+use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{
@@ -89,6 +89,8 @@ struct BenchmarkOutput {
     whir_ldt_verifier_time: Duration,
     whir_ldt_verifier_hashes: usize,
 }
+
+type PowStrategy = Blake3PoW;
 
 fn main() {
     let mut args = Args::parse();
@@ -224,7 +226,7 @@ fn run_whir<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig> {
+    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
         security_level,
         pow_bits,
         folding_factor,
@@ -232,6 +234,7 @@ fn run_whir<F, MerkleConfig>(
         two_to_one_params,
         soundness_type,
         fold_optimisation,
+        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
     };
 
@@ -254,7 +257,8 @@ fn run_whir<F, MerkleConfig>(
             verifier::Verifier, whir_proof_size,
         };
 
-        let params = WhirConfig::<F, MerkleConfig>::new(mv_params, whir_params.clone());
+        let params =
+            WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -317,7 +321,7 @@ fn run_whir<F, MerkleConfig>(
             verifier::Verifier, whir_proof_size,
         };
 
-        let params = WhirConfig::<F, MerkleConfig>::new(mv_params, whir_params);
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }

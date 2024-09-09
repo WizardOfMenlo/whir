@@ -27,7 +27,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nimue::{DefaultHash, IOPattern};
+    use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
@@ -39,7 +39,7 @@ mod tests {
     };
 
     type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
-
+    type PowStrategy = Blake3PoW;
     type F = Field64;
 
     fn make_whir_things(
@@ -56,7 +56,7 @@ mod tests {
 
         let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-        let whir_params = WhirParameters::<MerkleConfig> {
+        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
             security_level: 32,
             pow_bits,
             folding_factor,
@@ -65,9 +65,10 @@ mod tests {
             fold_optimisation: fold_type,
             soundness_type,
             starting_log_inv_rate: 1,
+            _pow_parameters: Default::default(),
         };
 
-        let params = WhirConfig::<F, MerkleConfig>::new(mv_params, whir_params);
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
         let polynomial = CoefficientList::new(vec![F::from(1); num_coeffs]);
 

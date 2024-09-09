@@ -1,5 +1,5 @@
 use core::panic;
-use std::{f64::consts::LOG2_10, fmt::Display};
+use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct WhirConfig<F, MerkleConfig, PoWStrategy>
+pub struct WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,
@@ -35,6 +35,9 @@ where
     pub(crate) final_sumcheck_rounds: usize,
     pub(crate) final_folding_pow_bits: f64,
 
+    // PoW parameters
+    pub(crate) pow_strategy: PhantomData<PowStrategy>,
+
     // Merkle tree parameters
     pub(crate) leaf_hash_params: LeafParam<MerkleConfig>,
     pub(crate) two_to_one_params: TwoToOneParam<MerkleConfig>,
@@ -49,14 +52,14 @@ pub(crate) struct RoundConfig {
     pub(crate) log_inv_rate: usize,
 }
 
-impl<F, MerkleConfig> WhirConfig<F, MerkleConfig>
+impl<F, MerkleConfig, PowStrategy> WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField + FieldWithSize,
     MerkleConfig: Config,
 {
     pub fn new(
         mv_parameters: MultivariateParameters<F>,
-        whir_parameters: WhirParameters<MerkleConfig>,
+        whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
         // We need to fold at least some time
         assert!(
@@ -178,6 +181,7 @@ where
             final_pow_bits,
             final_sumcheck_rounds,
             final_folding_pow_bits,
+            pow_strategy: PhantomData::default(),
             fold_optimisation: whir_parameters.fold_optimisation,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
@@ -390,7 +394,7 @@ where
     }
 }
 
-impl<F, MerkleConfig> Display for WhirConfig<F, MerkleConfig>
+impl<F, MerkleConfig, PowStrategy> Display for WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,

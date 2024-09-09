@@ -245,14 +245,14 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
 
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
         let fold_eval = folded_poly_1.evaluate_at_extension(&fold_point);
         prover.add_new_equality(&[fold_point.clone()], &combination_randomness, &[fold_eval]);
 
         let folding_randomness_2 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);

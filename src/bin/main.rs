@@ -17,6 +17,8 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, MultilinearPoint},
 };
 
+use nimue::plugins::pow::blake3::Blake3PoW;
+
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -58,6 +60,8 @@ struct Args {
     #[arg(long = "hash", default_value = "Blake3")]
     merkle_tree: AvailableMerkle,
 }
+
+type PowStrategy = Blake3PoW;
 
 fn main() {
     let mut args = Args::parse();
@@ -218,7 +222,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig> {
+    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
         security_level,
         pow_bits,
         folding_factor,
@@ -226,10 +230,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         two_to_one_params,
         soundness_type,
         fold_optimisation,
+        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = WhirConfig::<F, MerkleConfig>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)
@@ -311,7 +316,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig> {
+    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
         security_level,
         pow_bits,
         folding_factor,
@@ -319,10 +324,11 @@ fn run_whir_pcs<F, MerkleConfig>(
         two_to_one_params,
         soundness_type,
         fold_optimisation,
+        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = WhirConfig::<F, MerkleConfig>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)

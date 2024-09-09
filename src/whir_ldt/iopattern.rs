@@ -10,8 +10,14 @@ use crate::{
 use super::parameters::WhirConfig;
 
 pub trait WhirIOPattern<F: FftField> {
-    fn commit_statement<MerkleConfig: Config>(self, params: &WhirConfig<F, MerkleConfig>) -> Self;
-    fn add_whir_proof<MerkleConfig: Config>(self, params: &WhirConfig<F, MerkleConfig>) -> Self;
+    fn commit_statement<MerkleConfig: Config, PowStrategy>(
+        self,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self;
+    fn add_whir_proof<MerkleConfig: Config, PowStrategy>(
+        self,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self;
 }
 
 impl<F> WhirIOPattern<F> for IOPattern
@@ -23,13 +29,16 @@ where
         + WhirPoWIOPattern
         + OODIOPattern<F>,
 {
-    fn commit_statement<MerkleConfig: Config>(self, _params: &WhirConfig<F, MerkleConfig>) -> Self {
+    fn commit_statement<MerkleConfig: Config, PowStrategy>(
+        self,
+        _params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self {
         self.add_bytes(32, "merkle_digest")
     }
 
-    fn add_whir_proof<MerkleConfig: Config>(
+    fn add_whir_proof<MerkleConfig: Config, PowStrategy>(
         mut self,
-        params: &WhirConfig<F, MerkleConfig>,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
         // TODO: Add statement
         self = self

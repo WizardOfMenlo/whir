@@ -4,8 +4,10 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldReader},
-    plugins::pow::PoWChallenge,
+    plugins::{
+        ark::{FieldChallenges, FieldReader},
+        pow::{self, PoWChallenge},
+    },
     Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
 };
 use rand::{Rng, SeedableRng};
@@ -19,12 +21,12 @@ use crate::{
 
 use super::{parameters::WhirConfig, WhirProof};
 
-pub struct Verifier<F, MerkleConfig>
+pub struct Verifier<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    params: WhirConfig<F, MerkleConfig>,
+    params: WhirConfig<F, MerkleConfig, PowStrategy>,
     two_inv: F,
 }
 
@@ -59,13 +61,14 @@ struct ParsedRound<F> {
     domain_gen_inv: F,
 }
 
-impl<F, MerkleConfig> Verifier<F, MerkleConfig>
+impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    PowStrategy: pow::PowStrategy,
 {
-    pub fn new(params: WhirConfig<F, MerkleConfig>) -> Self {
+    pub fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Verifier {
             params,
             two_inv: F::from(2).inverse().unwrap(), // The only inverse in the entire code :)
@@ -94,7 +97,7 @@ where
 
         // PoW
         if self.params.starting_folding_pow_bits > 0. {
-            arthur.challenge_pow(self.params.starting_folding_pow_bits)?;
+            arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
         }
 
         let mut prev_root = parsed_commitment.root.clone();
@@ -143,7 +146,7 @@ where
             }
 
             if round_params.pow_bits > 0. {
-                arthur.challenge_pow(round_params.pow_bits)?;
+                arthur.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
             }
 
             let [combination_randomness_gen] = arthur.challenge_scalars()?;
@@ -160,7 +163,7 @@ where
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
                 if round_params.folding_pow_bits > 0. {
-                    arthur.challenge_pow(round_params.folding_pow_bits)?;
+                    arthur.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
                 }
             }
 
@@ -219,7 +222,7 @@ where
         }
 
         if self.params.final_pow_bits > 0. {
-            arthur.challenge_pow(self.params.final_pow_bits)?;
+            arthur.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
         }
 
         let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
@@ -230,7 +233,7 @@ where
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
             if self.params.final_folding_pow_bits > 0. {
-                arthur.challenge_pow(self.params.final_folding_pow_bits)?;
+                arthur.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
             }
         }
         let final_sumcheck_randomness = MultilinearPoint(
