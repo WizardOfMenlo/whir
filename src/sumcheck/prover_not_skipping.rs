@@ -2,7 +2,7 @@ use ark_ff::Field;
 use nimue::{
     plugins::{
         ark::{FieldChallenges, FieldIOPattern, FieldWriter},
-        pow::PoWChallenge,
+        pow::{PoWChallenge, PowStrategy},
     },
     IOPattern, Merlin, ProofResult,
 };
@@ -61,12 +61,15 @@ where
         }
     }
 
-    pub fn compute_sumcheck_polynomials(
+    pub fn compute_sumcheck_polynomials<S>(
         &mut self,
         merlin: &mut Merlin,
         folding_factor: usize,
         pow_bits: f64,
-    ) -> ProofResult<MultilinearPoint<F>> {
+    ) -> ProofResult<MultilinearPoint<F>>
+    where
+        S: PowStrategy,
+    {
         let mut res = Vec::with_capacity(folding_factor);
 
         for _ in 0..folding_factor {
@@ -77,7 +80,7 @@ where
 
             // Do PoW if needed
             if pow_bits > 0. {
-                merlin.challenge_pow(pow_bits)?;
+                merlin.challenge_pow::<S>(pow_bits)?;
             }
 
             self.sumcheck_prover
@@ -104,6 +107,7 @@ mod tests {
     use ark_ff::Field;
     use nimue::{
         plugins::ark::{FieldChallenges, FieldIOPattern, FieldReader},
+        plugins::pow::blake3::Blake3PoW,
         IOPattern, ProofResult,
     };
 
@@ -155,7 +159,7 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);

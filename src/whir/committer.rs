@@ -25,18 +25,18 @@ where
     pub(crate) ood_answers: Vec<F>,
 }
 
-pub struct Committer<F, MerkleConfig>(WhirConfig<F, MerkleConfig>)
+pub struct Committer<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
 where
     F: FftField,
     MerkleConfig: Config;
 
-impl<F, MerkleConfig> Committer<F, MerkleConfig>
+impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
-    pub fn new(config: WhirConfig<F, MerkleConfig>) -> Self {
+    pub fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
 

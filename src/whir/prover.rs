@@ -16,7 +16,7 @@ use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
 use nimue::{
     plugins::{
         ark::{FieldChallenges, FieldWriter},
-        pow::PoWChallenge,
+        pow::{self, PoWChallenge},
     },
     ByteChallenges, ByteWriter, Merlin, ProofResult,
 };
@@ -25,16 +25,17 @@ use rand::{Rng, SeedableRng};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Prover<F, MerkleConfig>(pub WhirConfig<F, MerkleConfig>)
+pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
     F: FftField,
     MerkleConfig: Config;
 
-impl<F, MerkleConfig> Prover<F, MerkleConfig>
+impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
+    PowStrategy: pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
         self.0.mv_parameters.num_variables
@@ -92,7 +93,7 @@ where
             &initial_answers,
         );
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials(
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy>(
             merlin,
             self.0.folding_factor,
             self.0.starting_folding_pow_bits,
@@ -153,15 +154,17 @@ where
 
             // PoW
             if self.0.final_pow_bits > 0. {
-                merlin.challenge_pow(self.0.final_pow_bits)?;
+                merlin.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
             }
 
             // Final sumcheck
-            round_state.sumcheck_prover.compute_sumcheck_polynomials(
-                merlin,
-                self.0.final_sumcheck_rounds,
-                self.0.final_folding_pow_bits,
-            )?;
+            round_state
+                .sumcheck_prover
+                .compute_sumcheck_polynomials::<PowStrategy>(
+                    merlin,
+                    self.0.final_sumcheck_rounds,
+                    self.0.final_folding_pow_bits,
+                )?;
 
             return Ok(WhirProof(round_state.merkle_proofs));
         }
@@ -278,7 +281,7 @@ where
 
         // PoW
         if round_params.pow_bits > 0. {
-            merlin.challenge_pow(round_params.pow_bits)?;
+            merlin.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
         }
 
         // Randomness for combination
@@ -292,11 +295,13 @@ where
             &stir_evaluations,
         );
 
-        let folding_randomness = round_state.sumcheck_prover.compute_sumcheck_polynomials(
-            merlin,
-            self.0.folding_factor,
-            round_params.folding_pow_bits,
-        )?;
+        let folding_randomness = round_state
+            .sumcheck_prover
+            .compute_sumcheck_polynomials::<PowStrategy>(
+                merlin,
+                self.0.folding_factor,
+                round_params.folding_pow_bits,
+            )?;
 
         let round_state = RoundState {
             round: round_state.round + 1,

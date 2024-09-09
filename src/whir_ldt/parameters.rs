@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct WhirConfig<F, MerkleConfig>
+pub struct WhirConfig<F, MerkleConfig, PoWStrategy>
 where
     F: FftField,
     MerkleConfig: Config,

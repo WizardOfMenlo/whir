@@ -97,7 +97,7 @@ impl Display for FoldType {
 }
 
 #[derive(Clone)]
-pub struct WhirParameters<MerkleConfig>
+pub struct WhirParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
@@ -109,12 +109,15 @@ where
 
     pub fold_optimisation: FoldType,
 
+    // PoW parameters
+    pub _pow_parameters: PhantomData<PowStrategy>,
+
     // Merkle tree parameters
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-impl<MerkleConfig> Display for WhirParameters<MerkleConfig>
+impl<MerkleConfig, PowStrategy> Display for WhirParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
