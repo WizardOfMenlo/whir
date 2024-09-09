@@ -56,7 +56,7 @@ impl FromStr for AvailableFields {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum AvailableMerkle {
-    SHA3,
+    Keccak256,
     Blake3,
 }
 
@@ -64,8 +64,8 @@ impl FromStr for AvailableMerkle {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "SHA3" {
-            Ok(Self::SHA3)
+        if s == "Keccak" {
+            Ok(Self::Keccak256)
         } else if s == "Blake3" {
             Ok(Self::Blake3)
         } else {

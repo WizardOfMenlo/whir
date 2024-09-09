@@ -112,9 +112,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Goldilocks1, AvailableMerkle::SHA3) => {
+        (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
             use fields::Field64 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
@@ -128,9 +128,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Goldilocks2, AvailableMerkle::SHA3) => {
+        (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
             use fields::Field64_2 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
@@ -144,9 +144,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Goldilocks3, AvailableMerkle::SHA3) => {
+        (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
             use fields::Field64_3 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
@@ -160,9 +160,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Field128, AvailableMerkle::SHA3) => {
+        (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
             use fields::Field128 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
@@ -176,9 +176,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Field192, AvailableMerkle::SHA3) => {
+        (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
             use fields::Field192 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
@@ -192,9 +192,9 @@ fn main() {
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
         }
 
-        (AvailableFields::Field256, AvailableMerkle::SHA3) => {
+        (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
             use fields::Field256 as F;
-            use merkle_tree::sha3 as mt;
+            use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
