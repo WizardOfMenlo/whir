@@ -1,7 +1,4 @@
-use super::{
-    utils::{as_chunks_exact_mut, workload_size},
-    MatrixMut,
-};
+use super::{utils::workload_size, MatrixMut};
 use std::mem::swap;
 
 #[cfg(feature = "parallel")]
