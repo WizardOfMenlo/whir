@@ -1,6 +1,7 @@
 use super::{committer::Witness, parameters::WhirConfig, WhirProof};
 use crate::{
     domain::Domain,
+    ntt::expand_from_coeff,
     parameters::FoldType,
     poly_utils::{
         coeffs::CoefficientList,
@@ -12,7 +13,7 @@ use crate::{
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
-use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
+use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::{
         ark::{FieldChallenges, FieldWriter},
@@ -144,11 +145,10 @@ where
 
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
-        let univariate: DensePolynomial<_> = folded_coefficients.clone().into();
-        let evals = univariate
-            .evaluate_over_domain_by_ref(new_domain.backing_domain)
-            .evals;
-
+        let expansion = new_domain.size() / folded_coefficients.num_coeffs();
+        let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
+        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
+        // They also partially overlap and undo one another. We should merge them.
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
         let folded_evals = restructure_evaluations(
             folded_evals,

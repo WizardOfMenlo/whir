@@ -1,11 +1,12 @@
 use super::parameters::WhirConfig;
 use crate::{
+    ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations},
     utils,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
-use ark_poly::{univariate::DensePolynomial, EvaluationDomain};
+use ark_poly::EvaluationDomain;
 use nimue::{plugins::ark::FieldChallenges, ByteWriter, Merlin, ProofResult};
 
 #[cfg(feature = "parallel")]
@@ -44,9 +45,10 @@ where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
         let base_domain = self.0.starting_domain.base_domain.unwrap();
-        let univariate: DensePolynomial<_> = polynomial.clone().into();
-        let evals = univariate.evaluate_over_domain_by_ref(base_domain).evals;
-
+        let expansion = base_domain.size() / polynomial.num_coeffs();
+        let evals = expand_from_coeff(polynomial.coeffs(), expansion);
+        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
+        // They also partially overlap and undo one another. We should merge them.
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
         let folded_evals = restructure_evaluations(
             folded_evals,
