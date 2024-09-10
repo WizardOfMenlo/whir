@@ -182,6 +182,7 @@ impl<F: Field> NttEngine<F> {
             // Race condition: check if another thread updated the cache.
             if roots.is_empty() || roots.len() % order != 0 {
                 // Compute minimal size to support all sizes seen so far.
+                // TODO: Do we really need all of these? Can we leverage omege_2 = -1?
                 let size = if roots.is_empty() {
                     order
                 } else {
@@ -192,11 +193,23 @@ impl<F: Field> NttEngine<F> {
 
                 // Compute powers of roots of unity.
                 let root = self.root(size);
-                let mut root_i = F::ONE;
-                while roots.len() < size {
-                    roots.push(root_i);
-                    root_i *= root;
+                #[cfg(not(feature = "parallel"))]
+                {
+                    let mut root_i = F::ONE;
+                    for _ in 0..size {
+                        roots.push(root_i);
+                        root_i *= root;
+                    }
                 }
+                #[cfg(feature = "parallel")]
+                roots.par_extend((0..size).into_par_iter().map_with(F::ZERO, |root_i, i| {
+                    if root_i.is_zero() {
+                        *root_i = root.pow([i as u64]);
+                    } else {
+                        *root_i *= root;
+                    }
+                    *root_i
+                }));
             }
             // Back to read lock.
             drop(roots);
