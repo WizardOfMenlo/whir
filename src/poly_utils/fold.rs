@@ -1,4 +1,4 @@
-use crate::crypto::ntt::intt_batch;
+use crate::ntt::intt_batch;
 use crate::parameters::FoldType;
 use ark_ff::{FftField, Field};
 

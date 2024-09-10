@@ -1,5 +1,5 @@
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
-use crate::crypto::ntt::wavelet_transform;
+use crate::ntt::wavelet_transform;
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]

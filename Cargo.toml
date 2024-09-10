@@ -30,9 +30,10 @@ rayon = { version = "1.10.0", optional = true }
 debug = true
 
 [features]
-default = ["parallel", "dep:rayon"]
+default = ["parallel"]
 #default = []
 parallel = [
+    "dep:rayon",
     "ark-poly/parallel",
     "ark-ff/parallel",
     "ark-crypto-primitives/parallel",
