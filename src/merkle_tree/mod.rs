@@ -1,14 +1,15 @@
 mod hasher;
 
-use std::mem::swap;
+use std::{
+    iter::{self, zip},
+    mem::swap,
+};
 
 pub use hasher::{Hash, Hasher, Hashers, HASH_ZERO};
 
 pub struct MerkleTreeHasher {
     depth: usize,
-
-    // TODO: Different hashers at different depths.
-    hasher: Box<dyn Hasher>,
+    hasher: Vec<Box<dyn Hasher>>,
 }
 
 pub enum Error {
@@ -20,63 +21,113 @@ pub enum Error {
 }
 
 impl MerkleTreeHasher {
+    /// Construct a Merkle tree hasher with a given depth and hasher type.
     pub fn new(depth: usize, hasher: Hashers) -> Self {
+        assert!(depth <= 48, "Depth too large");
         Self {
             depth,
-            hasher: hasher.construct(),
+            hasher: iter::repeat_with(|| hasher.construct())
+                .take(depth)
+                .collect(),
         }
     }
 
-    pub fn size_at_depth(depth: usize) -> usize {
+    /// Construct a Merkle tree hasher from a list of hashers for each level.
+    pub fn from_hashers(hashers: &[Hashers]) -> Self {
+        let depth = hashers.len();
+        Self {
+            depth,
+            hasher: hashers.iter().map(|h| h.construct()).collect(),
+        }
+    }
+
+    pub fn size_at_depth(&self, depth: usize) -> usize {
+        assert!(depth <= self.depth, "Depth too large");
         1 << depth
     }
 
-    pub fn hasher_at_depth(&self, _depth: usize) -> &dyn Hasher {
-        &*self.hasher
+    pub fn hasher_at_depth(&self, depth: usize) -> &dyn Hasher {
+        &*self.hasher[depth]
+    }
+
+    /// Produce a Merkle proof for the set of indices.
+    pub fn proof<F>(&self, indices: &[usize], mut leaves_lookup: F) -> Vec<Hash>
+    where
+        F: FnMut(usize, usize) -> Hash,
+    {
+        let mut proof: Vec<Hash> = Vec::with_capacity(indices.len());
+        let mut leaves = Vec::with_capacity(indices.len());
+        for &i in indices {
+            leaves.push(leaves_lookup(i, self.depth));
+        }
+        todo!()
+    }
+
+    /// Verify a Merkle tree proof.
+    pub fn verify_single(
+        &self,
+        root: Hash,
+        leaf_index: usize,
+        leaf_hash: Hash,
+        proof: &[Hash],
+    ) -> Result<(), Error> {
+        self.verify_inner(root, &[leaf_index], &[leaf_hash], proof, false)?;
+        Ok(())
     }
 
     /// Verify a Merkle tree multi-proof with path merging.
     ///
     /// Can also verify a single proof by passing a single leaf and index, or a
     /// non-merging proof as repeated single leaf proofs.
-    pub fn verify(
+    ///
+    pub fn verify_multi(
         &self,
         root: Hash,
-        indices: &[usize],
-        leaves: &[Hash],
+        leaf_indices: &[usize],
+        leaf_hashes: &[Hash],
         proof: &[Hash],
     ) -> Result<(), Error> {
-        // Ensure indices are in-bounds
-        let index_bound = Self::size_at_depth(self.depth);
-        if indices.iter().any(|&i| i >= index_bound) {
-            return Err(Error::IndexOutOfBounds);
-        }
+        self.verify_inner(root, leaf_indices, leaf_hashes, proof, false)?;
+        Ok(())
+    }
 
-        // Sort leaves by indices
-        let mut combined = indices
-            .iter()
-            .copied()
-            .zip(leaves.iter().copied())
-            .collect::<Vec<_>>();
-        combined.sort_by_key(|&(i, _)| i);
+    /// Expand a multi-proof to individual proofs.
+    ///
+    /// This can aid arithmatized verification where the control flow of
+    /// multi-proof verification is hard to implement.
+    pub fn expand_proof(
+        &self,
+        root: Hash,
+        leaf_indices: &[usize],
+        leaf_hashes: &[Hash],
+        proof: &[Hash],
+    ) -> Result<Vec<Vec<Hash>>, Error> {
+        self.verify_inner(root, leaf_indices, leaf_hashes, proof, true)
+    }
 
-        // Deduplicate leaves
-        let mut indices = Vec::with_capacity(combined.len());
-        let mut leaves = Vec::with_capacity(combined.len());
-        for (i, leaf) in combined {
-            if indices.last().copied() == Some(i) {
-                if leaves.last() != Some(&leaf) {
-                    return Err(Error::LeafMismatch);
-                }
-            } else {
-                indices.push(i);
-                leaves.push(leaf);
-            }
-        }
+    /// Verify a Merkle tree multi-proof with path merging, optionally producing
+    /// single proofs.
+    pub fn verify_inner(
+        &self,
+        root: Hash,
+        leaf_indices: &[usize],
+        leaf_hashes: &[Hash],
+        proof: &[Hash],
+        produce_single_proofs: bool,
+    ) -> Result<Vec<Vec<Hash>>, Error> {
+        // Sort and deduplicate the indices and leaves.
+        let (mut indices, mut leaves) = self.sort_indices(leaf_indices, leaf_hashes)?;
 
         // The proof is a list of sibblings in the order they are required
         // to merge with the leaves and compute the root.
         let mut siblings = proof.iter().copied();
+
+        // Allocate for single proofs if requrested.
+        let mut single_proofs = if produce_single_proofs {
+            vec![Vec::with_capacity(self.depth); indices.len()]
+        } else {
+            Vec::new()
+        };
 
         // Repeatedly compute the next layer hashes and indices.
         let mut depth = self.depth;
@@ -109,13 +160,22 @@ impl MerkleTreeHasher {
                 next_indices.push(index / 2);
             }
 
+            // Store siblings for single proofs
+            if produce_single_proofs {
+                for (&index, proof) in zip(leaf_indices.iter(), single_proofs.iter_mut()) {
+                    let index = index >> (self.depth - depth);
+                    let position = next_indices.iter().position(|&i| i == index >> 1).unwrap();
+                    proof.push(layer[position * 2 + (index & 1)]);
+                }
+            }
+
             // Compute the next layer hashes
             assert_eq!(layer.len() % 2, 0);
             next_layer.resize(layer.len() / 2, HASH_ZERO);
             self.hasher_at_depth(depth)
                 .hash_pairs(&layer, &mut next_layer);
 
-            // Repeat, re-using vecs
+            // Repeat loop, re-using vecs
             depth -= 1;
             swap(&mut indices, &mut next_indices);
             swap(&mut leaves, &mut next_layer);
@@ -134,6 +194,43 @@ impl MerkleTreeHasher {
             return Err(Error::RootMismatch);
         }
 
-        Ok(())
+        Ok(single_proofs)
+    }
+
+    /// Sort and deduplicate indices and leaves.
+    fn sort_indices(
+        &self,
+        indices: &[usize],
+        leaves: &[Hash],
+    ) -> Result<(Vec<usize>, Vec<Hash>), Error> {
+        // Ensure indices are in-bounds
+        let index_bound = self.size_at_depth(self.depth);
+        if indices.iter().any(|&i| i >= index_bound) {
+            return Err(Error::IndexOutOfBounds);
+        }
+
+        // Sort leaves by indices
+        let mut combined = indices
+            .iter()
+            .copied()
+            .zip(leaves.iter().copied())
+            .collect::<Vec<_>>();
+        combined.sort_by_key(|&(i, _)| i);
+
+        // Deduplicate leaves
+        let mut indices = Vec::with_capacity(combined.len());
+        let mut leaves = Vec::with_capacity(combined.len());
+        for (i, leaf) in combined {
+            if indices.last().copied() == Some(i) {
+                if leaves.last() != Some(&leaf) {
+                    return Err(Error::LeafMismatch);
+                }
+            } else {
+                indices.push(i);
+                leaves.push(leaf);
+            }
+        }
+
+        Ok((indices, leaves))
     }
 }

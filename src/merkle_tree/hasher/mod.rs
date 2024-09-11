@@ -10,6 +10,7 @@ pub const HASH_ZERO: Hash = [0; 32];
 
 pub type Hash = [u8; 32];
 
+#[derive(Clone, Copy, Debug)]
 pub enum Hashers {
     Blake3,
     Keccak,
