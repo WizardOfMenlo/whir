@@ -31,6 +31,7 @@ impl Hashers {
     /// Construct a hasher of the requisted type.
     ///
     /// Using `dyn Trait` here to avoid generics/monomorphization of the caller.
+    /// The indirection is negligible compared to the hashing itself.
     pub fn construct(self) -> Box<dyn Hasher> {
         match self {
             Hashers::Blake3 => Box::new(Blake3Hasher::new()),
