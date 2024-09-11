@@ -49,6 +49,9 @@ where
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
+        // TODO: Maybe even smaller expansions than 2?
+        // TODO: Evaluate on coset so that we are not committing to witness values
+        // directly, once we implement ZK.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / polynomial.num_coeffs();
         let evals = expand_from_coeff(polynomial.coeffs(), expansion);
@@ -86,8 +89,9 @@ where
         )
         .unwrap();
 
+        /// TODO: We keep `folded_evals` in memory, really all we need is the root and upper levels.
+        /// We can recompute specific leafs from the polynomial quite efficiently.
         let root = merkle_tree.root();
-
         merlin.add_bytes(root.as_ref())?;
 
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
