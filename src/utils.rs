@@ -2,6 +2,14 @@ use crate::ntt::transpose;
 use ark_ff::Field;
 use std::collections::BTreeSet;
 
+/// Target single-thread workload size for `T`.
+/// Should ideally be a multiple of a cache line (64 bytes)
+/// and close to the L1 cache size (32 KB).
+pub const fn workload_size<T: Sized>() -> usize {
+    const CACHE_SIZE: usize = 1 << 15;
+    CACHE_SIZE / size_of::<T>()
+}
+
 pub fn is_power_of_two(n: usize) -> bool {
     n & (n - 1) == 0
 }

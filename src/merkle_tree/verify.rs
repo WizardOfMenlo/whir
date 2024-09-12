@@ -1,9 +1,6 @@
 use {
     super::*,
-    std::{
-        iter::{self, zip},
-        mem::swap,
-    },
+    std::{iter::zip, mem::swap},
 };
 
 impl MerkleTreeHasher {

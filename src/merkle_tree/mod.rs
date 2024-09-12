@@ -3,6 +3,7 @@ mod hasher;
 mod prove;
 mod verify;
 
+use std::iter;
 pub use hasher::{Hash, Hasher, Hashers, HASH_ZERO};
 
 pub struct MerkleTreeHasher {
@@ -32,9 +33,8 @@ impl MerkleTreeHasher {
 
     /// Construct a Merkle tree hasher from a list of hashers for each level.
     pub fn from_hashers(hashers: &[Hashers]) -> Self {
-        let depth = hashers.len();
         Self {
-            depth,
+            depth: hashers.len(),
             hasher: hashers.iter().map(|h| h.construct()).collect(),
         }
     }

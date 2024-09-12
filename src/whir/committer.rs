@@ -89,8 +89,8 @@ where
         )
         .unwrap();
 
-        /// TODO: We keep `folded_evals` in memory, really all we need is the root and upper levels.
-        /// We can recompute specific leafs from the polynomial quite efficiently.
+        // TODO: We keep `folded_evals` in memory, really all we need is the root and upper levels.
+        // We can recompute specific leafs from the polynomial quite efficiently.
         let root = merkle_tree.root();
         merlin.add_bytes(root.as_ref())?;
 
