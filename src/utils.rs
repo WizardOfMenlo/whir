@@ -1,6 +1,6 @@
 use crate::ntt::transpose;
 use ark_ff::Field;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, slice};
 
 /// Target single-thread workload size for `T`.
 /// Should ideally be a multiple of a cache line (64 bytes)
@@ -8,6 +8,40 @@ use std::collections::BTreeSet;
 pub const fn workload_size<T: Sized>() -> usize {
     const CACHE_SIZE: usize = 1 << 15;
     CACHE_SIZE / size_of::<T>()
+}
+
+/// Cast a mutable slice into chunks of size N.
+///
+/// TODO: Replace with `slice::as_chunks` when stable.
+pub fn as_chunks_exact<T, const N: usize>(slice: &[T]) -> &[[T; N]] {
+    assert!(N != 0, "chunk size must be non-zero");
+    assert_eq!(
+        slice.len() % N,
+        0,
+        "slice length must be a multiple of chunk size"
+    );
+    // SAFETY: Caller must guarantee that `N` is nonzero and exactly divides the slice length
+    let new_len = slice.len() / N;
+    // SAFETY: We cast a slice of `new_len * N` elements into
+    // a slice of `new_len` many `N` elements chunks.
+    unsafe { slice::from_raw_parts(slice.as_ptr().cast(), new_len) }
+}
+
+/// Cast a mutable slice into chunks of size N.
+///
+/// TODO: Replace with `slice::as_chunks_mut` when stable.
+pub fn as_chunks_exact_mut<T, const N: usize>(slice: &mut [T]) -> &mut [[T; N]] {
+    assert!(N != 0, "chunk size must be non-zero");
+    assert_eq!(
+        slice.len() % N,
+        0,
+        "slice length must be a multiple of chunk size"
+    );
+    // SAFETY: Caller must guarantee that `N` is nonzero and exactly divides the slice length
+    let new_len = slice.len() / N;
+    // SAFETY: We cast a slice of `new_len * N` elements into
+    // a slice of `new_len` many `N` elements chunks.
+    unsafe { slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), new_len) }
 }
 
 pub fn is_power_of_two(n: usize) -> bool {

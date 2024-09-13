@@ -1,6 +1,5 @@
 use {
     super::{Hash, Hasher},
-    bytemuck::checked::cast_slice,
     digest::Digest,
     std::marker::PhantomData,
 };
@@ -23,10 +22,16 @@ impl<T: Digest + Send + Sync> DigestHasher<T> {
 }
 
 impl<T: Digest + Send + Sync> Hasher for DigestHasher<T> {
-    fn hash_pairs(&self, blocks: &[Hash], out: &mut [Hash]) {
-        assert_eq!(blocks.len(), 2 * out.len());
-        for (input, output) in blocks.chunks_exact(2).zip(out.iter_mut()) {
-            let hash = T::digest(&cast_slice(input));
+    fn hash_many(&self, size: usize, input: &[u8], output: &mut [Hash]) {
+        assert_eq!(
+            input.len() % size,
+            0,
+            "Input length not a multiple of message size."
+        );
+        assert_eq!(input.len(), size * output.len(), "Output length mismatch.");
+
+        for (input, output) in input.chunks_exact(size).zip(output.iter_mut()) {
+            let hash = T::digest(input);
             output.copy_from_slice(hash.as_ref());
         }
     }

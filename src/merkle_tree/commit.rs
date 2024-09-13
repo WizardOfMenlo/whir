@@ -14,6 +14,7 @@ impl MerkleTreeHasher {
         );
 
         // Allocate space for all the nodes
+        // TODO: MaybeUninit?
         let mut nodes = vec![HASH_ZERO; leaves.len() - 1];
 
         // Create a list of layer slices
@@ -31,8 +32,8 @@ impl MerkleTreeHasher {
             // Small tree
             self.commit_inner(0, leaves, &mut layers);
         } else {
-            // Large tree, skip the first few layers (so we have minimum 64 leaves per layer)
-            let first_layer_skip = 6; // 64 leaves
+            // Large tree, skip the first few layers (so we have minimum 64 nodes per layer)
+            let first_layer_skip = 6; // 64 nodes
             assert!(layers.len() > first_layer_skip, "Depth too small");
             self.commit_inner(first_layer_skip, leaves, &mut layers[first_layer_skip..]);
 
@@ -43,13 +44,14 @@ impl MerkleTreeHasher {
         nodes
     }
 
-    fn commit_inner(&self, mut depth: usize, leaves: &[Hash], nodes: &mut [&mut [Hash]]) {
+    fn commit_inner(&self, mut depth: usize, leaves: &[Hash], mut nodes: &mut [&mut [Hash]]) {
         if 2 * leaves.len() <= workload_size::<Hash>() {
             // Base case
-            assert_eq!(depth + nodes.len(), self.depth, "Incorrect depth");
-            self.hasher_at_depth(depth + nodes.len())
+            depth += nodes.len();
+            self.hasher_at_depth(depth)
                 .hash_pairs(leaves, nodes.last_mut().unwrap());
-            while let Some((leaves, nodes)) = nodes.split_last_mut() {
+            while let Some((leaves, tail)) = nodes.split_last_mut() {
+                nodes = tail;
                 depth -= 1;
                 if let Some(layer) = nodes.last_mut() {
                     self.hasher_at_depth(depth).hash_pairs(leaves, layer);

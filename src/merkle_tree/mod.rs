@@ -3,8 +3,8 @@ mod hasher;
 mod prove;
 mod verify;
 
-use std::iter;
 pub use hasher::{Hash, Hasher, Hashers, HASH_ZERO};
+use std::iter;
 
 pub struct MerkleTreeHasher {
     depth: usize,
@@ -22,11 +22,11 @@ pub enum Error {
 impl MerkleTreeHasher {
     /// Construct a Merkle tree hasher with a given depth and hasher type.
     pub fn new(depth: usize, hasher: Hashers) -> Self {
-        assert!(depth <= 48, "Depth too large");
+        assert!(depth <= 48, "Depth too large"); // Arbitrary limit
         Self {
             depth,
             hasher: iter::repeat_with(|| hasher.construct())
-                .take(depth)
+                .take(depth + 1)
                 .collect(),
         }
     }

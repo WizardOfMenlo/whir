@@ -1,11 +1,13 @@
 use {
     super::{Hash, Hasher},
+    crate::utils::as_chunks_exact,
+    arrayvec::ArrayVec,
     blake3::{
-        guts::BLOCK_LEN,
+        guts::{BLOCK_LEN, CHUNK_LEN},
         platform::{Platform, MAX_SIMD_DEGREE},
         IncrementCounter, OUT_LEN,
     },
-    bytemuck::{cast_mut, cast_ref, cast_slice, cast_slice_mut},
+    bytemuck::cast_slice_mut,
     std::{iter::zip, mem::size_of},
 };
 
@@ -18,6 +20,10 @@ const _: () = assert!(
     BLOCK_LEN == 2 * size_of::<Hash>(),
     "Blake3 compression input does not equal a pair of hashes."
 );
+const _: () = assert!(
+    CHUNK_LEN == 16 * BLOCK_LEN,
+    "Blake3 chunk len is not 16 blocks."
+);
 
 /// Default Blake3 initialization vector. Copied here because it is not publicly exported.
 const BLAKE3_IV: [u32; 8] = [
@@ -25,10 +31,9 @@ const BLAKE3_IV: [u32; 8] = [
 ];
 
 /// Flags for a single block message. Copied here because it is not publicly exported.
-const BLAKE3_FLAGS: u8 = 0x0B; // CHUNK_START | CHUNK_END | ROOT
-
-const SIMD_INPUT_SIZE: usize = MAX_SIMD_DEGREE * BLOCK_LEN;
-const SIMD_OUTPUT_SIZE: usize = MAX_SIMD_DEGREE * OUT_LEN;
+const FLAGS_START: u8 = 1 << 0; // CHUNK_START
+const FLAGS_END: u8 = 1 << 1; // CHUNK_END
+const FLAGS: u8 = 1 << 3; // ROOT
 
 pub struct Blake3Hasher {
     platform: Platform,
@@ -41,63 +46,84 @@ impl Blake3Hasher {
         }
     }
 
-    fn hash_pairs_simd(&self, input: &[u8; SIMD_INPUT_SIZE], output: &mut [u8; SIMD_OUTPUT_SIZE]) {
-        // `hash_many` requires an array of references to input messages, instead
-        // of a contiguous slice. This is not useful in our case, but there is no
-        // alternative API.
-        let inputs: [&[u8; BLOCK_LEN]; MAX_SIMD_DEGREE] = std::array::from_fn(|i| {
-            input[(i * BLOCK_LEN)..((i + 1) * BLOCK_LEN)]
-                .try_into()
-                .unwrap()
-        });
-        self.platform.hash_many::<BLOCK_LEN>(
-            &inputs,
-            &BLAKE3_IV,
-            0,
-            IncrementCounter::No,
-            BLAKE3_FLAGS,
-            0,
-            0,
-            output,
-        );
+    fn hash_many_const<const N: usize>(&self, inputs: &[u8], output: &mut [u8]) {
+        // Cast the input to a slice of N-sized arrays.
+        let inputs = as_chunks_exact::<u8, N>(inputs);
+
+        // Process up to MAX_SIMD_DEGREE messages in parallel.
+        for (inputs, out) in zip(
+            inputs.chunks(MAX_SIMD_DEGREE),
+            output.chunks_mut(OUT_LEN * MAX_SIMD_DEGREE),
+        ) {
+            // Construct an array of references to input messages.
+            let inputs = inputs
+                .iter()
+                .collect::<ArrayVec<&[u8; N], MAX_SIMD_DEGREE>>();
+
+            // Hash the messages in parallel.
+            self.platform.hash_many::<N>(
+                &inputs,
+                &BLAKE3_IV,
+                0,
+                IncrementCounter::No,
+                FLAGS,
+                FLAGS_START,
+                FLAGS_END,
+                out,
+            );
+        }
     }
 }
 
 impl Hasher for Blake3Hasher {
-    fn hash_pairs(&self, blocks: &[Hash], out: &mut [Hash]) {
-        assert_eq!(blocks.len(), 2 * out.len());
-        let simd_len = (out.len() / MAX_SIMD_DEGREE) * MAX_SIMD_DEGREE;
-        let (input_simd, input) = blocks.split_at(2 * simd_len);
-        let (output_simd, output) = out.split_at_mut(simd_len);
-        for (input, output) in zip(
-            input_simd.chunks_exact(2 * MAX_SIMD_DEGREE),
-            output_simd.chunks_exact_mut(MAX_SIMD_DEGREE),
-        ) {
-            // Full SIMD blocks
-            let input: &[Hash; 2 * MAX_SIMD_DEGREE] = input.try_into().unwrap();
-            let input: &[u8; SIMD_INPUT_SIZE] = cast_ref(input);
-            let output: &mut [Hash; MAX_SIMD_DEGREE] = output.try_into().unwrap();
-            let output: &mut [u8; SIMD_OUTPUT_SIZE] = cast_mut(output);
-            self.hash_pairs_simd(input, output);
-        }
-        if !input.is_empty() {
-            // Remaining partial block (if any)
-            let input: &[u8] = cast_slice(input);
-            let output: &mut [u8] = cast_slice_mut(output);
-            let mut input_block = [0; SIMD_INPUT_SIZE];
-            let mut output_block = [0; SIMD_OUTPUT_SIZE];
-            input_block[..input.len()].copy_from_slice(input);
-            self.hash_pairs_simd(&input_block, &mut output_block);
-            output.copy_from_slice(&output_block[..output.len()]);
+    /// Hash many short block-alligned messages in parallel.
+    /// Messages must be padded to full block lengths and can not exceed one chunk.
+    fn hash_many(&self, size: usize, inputs: &[u8], output: &mut [Hash]) {
+        assert!(
+            size % BLOCK_LEN == 0,
+            "Message size must be a multiple of the block length."
+        );
+        assert!(
+            size <= CHUNK_LEN,
+            "Message size must not exceed a single chunk."
+        );
+        assert!(
+            inputs.len() % size == 0,
+            "Input size must be a multiple of the message size."
+        );
+        assert_eq!(output.len(), inputs.len() / size, "Output size mismatch.");
+        let blocks = size / BLOCK_LEN;
+        let output = cast_slice_mut::<Hash, u8>(output);
+
+        // Undo the monomorphization that Blake3 has in their API.
+        match blocks {
+            0 => {}
+            1 => self.hash_many_const::<{ BLOCK_LEN }>(inputs, output),
+            2 => self.hash_many_const::<{ 2 * BLOCK_LEN }>(inputs, output),
+            3 => self.hash_many_const::<{ 3 * BLOCK_LEN }>(inputs, output),
+            4 => self.hash_many_const::<{ 4 * BLOCK_LEN }>(inputs, output),
+            5 => self.hash_many_const::<{ 5 * BLOCK_LEN }>(inputs, output),
+            6 => self.hash_many_const::<{ 6 * BLOCK_LEN }>(inputs, output),
+            7 => self.hash_many_const::<{ 7 * BLOCK_LEN }>(inputs, output),
+            8 => self.hash_many_const::<{ 8 * BLOCK_LEN }>(inputs, output),
+            9 => self.hash_many_const::<{ 9 * BLOCK_LEN }>(inputs, output),
+            10 => self.hash_many_const::<{ 10 * BLOCK_LEN }>(inputs, output),
+            11 => self.hash_many_const::<{ 11 * BLOCK_LEN }>(inputs, output),
+            12 => self.hash_many_const::<{ 12 * BLOCK_LEN }>(inputs, output),
+            13 => self.hash_many_const::<{ 13 * BLOCK_LEN }>(inputs, output),
+            14 => self.hash_many_const::<{ 14 * BLOCK_LEN }>(inputs, output),
+            15 => self.hash_many_const::<{ 15 * BLOCK_LEN }>(inputs, output),
+            16 => self.hash_many_const::<{ 16 * BLOCK_LEN }>(inputs, output),
+            _ => unreachable!("Invalid block count."),
         }
     }
 }
 
 #[test]
-fn test_digest_equivalent() {
+fn test_digest_pairs_equivalent() {
     use {
-        super::{test_equivalent, DigestHasher},
+        super::{test_pairs_equivalent, DigestHasher},
         blake3::Hasher,
     };
-    test_equivalent(&DigestHasher::<Hasher>::new(), &Blake3Hasher::new());
+    test_pairs_equivalent(&DigestHasher::<Hasher>::new(), &Blake3Hasher::new());
 }

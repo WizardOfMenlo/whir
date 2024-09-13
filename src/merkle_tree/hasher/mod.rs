@@ -3,6 +3,7 @@ mod digest;
 
 use {
     self::{blake3::Blake3Hasher, digest::DigestHasher},
+    bytemuck::cast_slice,
     sha3::{Keccak256, Sha3_256},
 };
 
@@ -20,11 +21,17 @@ pub enum Hashers {
 }
 
 pub trait Hasher: Send + Sync {
-    /// Hash pairs of hashes, i.e. construct the next layer of a Merkle tree.
+    fn hash_many(&self, size: usize, input: &[u8], out: &mut [Hash]);
+
+    /// Hash pairs of hashes, e.g. construct the next layer of a Merkle tree.
     ///
     /// Note: Implementation should be single-threaded. Parallelization is taken
     /// care of by the caller.
-    fn hash_pairs(&self, blocks: &[Hash], out: &mut [Hash]);
+    fn hash_pairs(&self, blocks: &[Hash], out: &mut [Hash]) {
+        assert_eq!(blocks.len() % 2, 0);
+        assert_eq!(blocks.len(), 2 * out.len());
+        self.hash_many(2 * size_of::<Hash>(), cast_slice(blocks), out);
+    }
 }
 
 impl Hashers {
@@ -45,7 +52,7 @@ impl Hashers {
 /// Test if two implementations are equivalent.
 /// Used to test an optimized implementation against a reference implementation.
 #[cfg(test)]
-fn test_equivalent(a: &dyn Hasher, b: &dyn Hasher) {
+fn test_pairs_equivalent(a: &dyn Hasher, b: &dyn Hasher) {
     use std::array;
     for length in 0..32 {
         let mut input = vec![HASH_ZERO; 2 * length];
