@@ -10,6 +10,10 @@ pub fn is_power_of_two(n: usize) -> bool {
     n & (n - 1) == 0
 }
 
+// performs big-endian binary decomposition of value and returns the result.
+//
+// The returned vector v starts with the big-endian bits of value and always has exactly n_bits many elements.
+// n_bits must be at must usize::BITS. If it is strictly smaller, the relevant higher-order bits of value are ignored.
 pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
     // Ensure that n is within the bounds of the input integer type
     assert!(n_bits <= usize::BITS as usize);
@@ -20,6 +24,15 @@ pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
     result
 }
 
+
+// TODO: n_bits is a misnomer if base > 2. Should be n_limbs or sth.
+
+// decomposes value into its base-ary decomposition, meaning we return a vector v, s.t.
+//
+// value = v[0] + v[1] * base + v[2] * base^2 + ... + v[n_bits-1] * base^(n_bits-1),
+// where each v[i] is in 0..base.
+// The returned vector always has length exactly n_bits (we pad with leading zeros);
+// if value >= base^n_bits, we truncate, effectively computing value % (base^n_bits)
 pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
     // Initialize the result vector with zeros of the specified length
     let mut result = vec![0u8; n_bits];
@@ -64,7 +77,7 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::stack_evaluations;
+    use super::{stack_evaluations, to_binary};
 
     #[test]
     fn test_evaluations_stack() {
@@ -85,5 +98,13 @@ mod tests {
                 assert_eq!(fold[j], F::from((i + j * num / fold_size) as u64));
             }
         }
+    }
+
+    #[test]
+    fn test_to_binary() {
+        assert_eq!(to_binary(0b10111, 5), vec![true,false,true,true,true]);
+        assert_eq!(to_binary(0b11001, 2), vec![false, true]);  // truncate
+        assert_eq!(to_binary(1, 0), vec![]);
+        assert_eq!(to_binary(0,0), vec![]);
     }
 }
