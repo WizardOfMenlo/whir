@@ -2,7 +2,11 @@ use crate::ntt::transpose;
 use ark_ff::Field;
 use std::collections::BTreeSet;
 
+// checks whether the given number n is a power of two.
+//
+// You must not call this with n == 0.
 pub fn is_power_of_two(n: usize) -> bool {
+    // BUG: This underflows if n == 0, causing a panic on release builds and returns true on debug build.
     n & (n - 1) == 0
 }
 
