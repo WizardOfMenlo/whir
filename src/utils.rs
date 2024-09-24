@@ -49,6 +49,10 @@ pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
     result
 }
 
+// Gotti: Consider renaming this function. The name sounds like it's a PRG.
+
+// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
+// (This is typically used for a random choice of base; taking a scalar product with the retured vector corresponds to evaluation at base)
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     let mut res = Vec::with_capacity(len);
     let mut acc = F::ONE;
@@ -65,12 +69,17 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
     Vec::from_iter(BTreeSet::from_iter(v))
 }
 
+// FIXME: comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
+// Also, k should be defined: k = evals.() / 2^{folding_factor}, I guess.
+
 // Takes the vector of evaluations (assume that evals[i] = f(omega^i))
 // and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
 pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> Vec<F> {
     let folding_factor_exp = 1 << folding_factor;
     assert!(evals.len() % folding_factor_exp == 0);
     let size_of_new_domain = evals.len() / folding_factor_exp;
+
+    // interpret evals as (folding_factor_exp x size_of_new_domain)-matrix and transpose in-place
     transpose(&mut evals, folding_factor_exp, size_of_new_domain);
     evals
 }
