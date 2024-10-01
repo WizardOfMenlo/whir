@@ -1,6 +1,6 @@
 use ark_ff::{
-    Field, Fp128, Fp192, Fp2, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig, MontFp,
-    PrimeField,
+    Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig,
+    MontFp, PrimeField,
 };
 
 pub trait FieldWithSize {
@@ -16,7 +16,11 @@ where
     }
 }
 
-pub type Field256 = ark_test_curves::bls12_381::Fr;
+#[derive(MontConfig)]
+#[modulus = "21888242871839275222246405745257275088548364400416034343698204186575808495617"]
+#[generator = "5"]
+pub struct BN254Config;
+pub type Field256 = Fp256<MontBackend<BN254Config, 4>>;
 
 #[derive(MontConfig)]
 #[modulus = "3801539170989320091464968600173246866371124347557388484609"]
