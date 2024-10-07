@@ -138,22 +138,31 @@ impl<'a, T> MatrixMut<'a, T> {
         }
     }
 
+    /// returns an immutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
     unsafe fn ptr_at(&self, row: usize, col: usize) -> *const T {
-        assert!(row < self.rows);
-        assert!(col < self.cols);
+        // Safe to call under the following assertion (checked by caller)
+        // assert!(row < self.rows);
+        // assert!(col < self.cols);
+
         // Safety: The structure invariant guarantees that at offset `row * self.row_stride + col`
         // there is valid data.
         self.data.add(row * self.row_stride + col)
     }
 
+    /// returns a mutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
     unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
-        assert!(row < self.rows);
-        assert!(col < self.cols);
+        // Safe to call under the following assertion (checked by caller)
+        //
+        // assert!(row < self.rows);
+        // assert!(col < self.cols);
+
         // Safety: The structure invariant guarantees that at offset `row * self.row_stride + col`
         // there is valid data.
         self.data.add(row * self.row_stride + col)
     }
 }
+
+// Use MatrixMut::ptr_at and MatrixMut::ptr_at_mut to implement Index and IndexMut. These are not unsafe, since they contain bounds-checks.
 
 impl<T> Index<(usize, usize)> for MatrixMut<'_, T> {
     type Output = T;
