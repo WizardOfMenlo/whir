@@ -119,9 +119,9 @@ impl<'a, T> MatrixMut<'a, T> {
     /// [A B] = self
     /// [C D]
     pub fn split_quadrants(self, row: usize, col: usize) -> (Self, Self, Self, Self) {
-        let (u, d) = self.split_vertical(row);
+        let (u, l) = self.split_vertical(row); // split into upper and lower parts
         let (a, b) = u.split_horizontal(col);
-        let (c, d) = d.split_horizontal(col);
+        let (c, d) = l.split_horizontal(col);
         (a, b, c, d)
     }
 
