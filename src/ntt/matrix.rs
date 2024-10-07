@@ -125,8 +125,10 @@ impl<'a, T> MatrixMut<'a, T> {
         (a, b, c, d)
     }
 
-    /// Swap two elements in the matrix.
-    pub fn swap(&mut self, a: (usize, usize), b: (usize, usize)) {
+    /// Swap two elements `a` and `b` in the matrix.
+    /// Each of `a`, `b` is given as (row,column)-pair.
+    /// If the given coordinates are out-of-bounds, the behaviour is undefined.
+    pub unsafe fn swap(&mut self, a: (usize, usize), b: (usize, usize)) {
         if a != b {
             unsafe {
                 let a = self.ptr_at_mut(a.0, a.1);

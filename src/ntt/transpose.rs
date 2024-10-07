@@ -84,7 +84,8 @@ fn transpose_square<F: Sized + Send>(mut m: MatrixMut<F>) {
     } else {
         for i in 0..size {
             for j in (i + 1)..size {
-                m.swap((i, j), (j, i));
+                // unsafe needed due to lack of bounds-check by swap. We are guaranteed that (i,j) and (j,i) are within the bounds.
+                unsafe {m.swap((i, j), (j, i));}
             }
         }
     }
