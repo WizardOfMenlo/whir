@@ -27,6 +27,7 @@ unsafe impl<'a, T: Send> Send for MatrixMut<'_, T> {}
 unsafe impl<'a, T: Sync> Sync for MatrixMut<'_, T> {}
 
 impl<'a, T> MatrixMut<'a, T> {
+    /// creates a MatrixMut from `slice`, where slice is the concatenations of `rows` rows, each consisting of `cols` many entries.
     pub fn from_mut_slice(slice: &'a mut [T], rows: usize, cols: usize) -> Self {
         assert_eq!(slice.len(), rows * cols);
         // Safety: The input slice is valid for the lifetime `'a` and has
@@ -40,18 +41,22 @@ impl<'a, T> MatrixMut<'a, T> {
         }
     }
 
+    /// returns the number of rows
     pub fn rows(&self) -> usize {
         self.rows
     }
 
+    /// returns the number of columns
     pub fn cols(&self) -> usize {
         self.cols
     }
 
+    /// checks whether the matrix is a square matrix
     pub fn is_square(&self) -> bool {
         self.rows == self.cols
     }
 
+    /// returns a mutable reference to the `row`'th row of the MatrixMut
     pub fn row(&mut self, row: usize) -> &mut [T] {
         assert!(row < self.rows);
         // Safety: The structure invariant guarantees that at offset `row * self.row_stride`
@@ -59,9 +64,10 @@ impl<'a, T> MatrixMut<'a, T> {
         unsafe { slice::from_raw_parts_mut(self.data.add(row * self.row_stride), self.cols) }
     }
 
-    /// Split the matrix into two vertically.
+    /// Split the matrix into two vertically at the `row`'th row (meaning that in the returned pair (A,B), the matrix A has `row` rows).
     ///
-    /// [A] = self
+    /// [A]
+    /// [ ] = self
     /// [B]
     pub fn split_vertical(self, row: usize) -> (Self, Self) {
         assert!(row <= self.rows);
@@ -83,7 +89,7 @@ impl<'a, T> MatrixMut<'a, T> {
         )
     }
 
-    /// Split the matrix into two horizontally.
+    /// Split the matrix into two horizontally at the `col`th column (meaning that in the returned pair (A,B), the matrix A has `col` columns).
     ///
     /// [A B] = self
     pub fn split_horizontal(self, col: usize) -> (Self, Self) {
@@ -108,7 +114,7 @@ impl<'a, T> MatrixMut<'a, T> {
         )
     }
 
-    /// Split the matrix into four quadrants.
+    /// Split the matrix into four quadrants at the indicated `row` and `col` (meaning that in the returned 4-tuple (A,B,C,D), the matrix A is a `row`x`col` )
     ///
     /// [A B] = self
     /// [C D]

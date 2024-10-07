@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 //
 // You must not call this with n == 0.
 pub fn is_power_of_two(n: usize) -> bool {
-    // BUG: This underflows if n == 0, causing a panic on release builds and returns true on debug build.
+    // NOTE: This underflows if n == 0, causing a panic on release builds and returns true on debug build.
     n & (n - 1) == 0
 }
 
@@ -70,7 +70,7 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
 }
 
 // FIXME: comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
-// Also, k should be defined: k = evals.() / 2^{folding_factor}, I guess.
+// Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
 // Takes the vector of evaluations (assume that evals[i] = f(omega^i))
 // and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
