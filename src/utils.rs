@@ -3,11 +3,8 @@ use ark_ff::Field;
 use std::collections::BTreeSet;
 
 // checks whether the given number n is a power of two.
-//
-// You must not call this with n == 0.
 pub fn is_power_of_two(n: usize) -> bool {
-    // NOTE: This underflows if n == 0, causing a panic on release builds and returns true on debug build.
-    n & (n - 1) == 0
+    n != 0 && (n & (n - 1) == 0)
 }
 
 // performs big-endian binary decomposition of value and returns the result.
@@ -86,7 +83,7 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{stack_evaluations, to_binary};
+    use super::{stack_evaluations, to_binary, is_power_of_two};
 
     #[test]
     fn test_evaluations_stack() {
@@ -113,7 +110,18 @@ mod tests {
     fn test_to_binary() {
         assert_eq!(to_binary(0b10111, 5), vec![true,false,true,true,true]);
         assert_eq!(to_binary(0b11001, 2), vec![false, true]);  // truncate
-        assert_eq!(to_binary(1, 0), vec![]);
-        assert_eq!(to_binary(0,0), vec![]);
+        let empty_vec: Vec<bool> = vec![]; // just for the explicit bool type.
+        assert_eq!(to_binary(1, 0), empty_vec);
+        assert_eq!(to_binary(0,0), empty_vec);
     }
+
+    #[test]
+    fn test_is_power_of_two() {
+        assert_eq!(is_power_of_two(0), false);
+        assert_eq!(is_power_of_two(1), true);
+        assert_eq!(is_power_of_two(2), true);
+        assert_eq!(is_power_of_two(3), false);
+        assert_eq!(is_power_of_two(usize::MAX), false);
+    }
+
 }
