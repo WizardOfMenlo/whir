@@ -1,4 +1,5 @@
-use super::{utils::workload_size, MatrixMut};
+use super::MatrixMut;
+use crate::utils::workload_size;
 use std::mem::swap;
 
 #[cfg(feature = "parallel")]

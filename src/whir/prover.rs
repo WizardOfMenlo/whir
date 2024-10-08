@@ -140,6 +140,7 @@ where
                 final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
             }));
 
+            eprintln!("C: {}", final_challenge_indexes.len());
             let merkle_proof = round_state
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
@@ -237,6 +238,7 @@ where
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
 
+        eprintln!("C: {}", stir_challenges_indexes.len());
         let merkle_proof = round_state
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())

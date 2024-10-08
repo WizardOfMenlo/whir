@@ -5,8 +5,9 @@
 
 use super::{
     transpose,
-    utils::{lcm, sqrt_factor, workload_size},
+    utils::{lcm, sqrt_factor},
 };
+use crate::utils::workload_size;
 use ark_ff::{FftField, Field};
 use std::{
     any::{Any, TypeId},
