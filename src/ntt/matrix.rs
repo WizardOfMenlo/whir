@@ -162,7 +162,7 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 }
 
-// Use MatrixMut::ptr_at and MatrixMut::ptr_at_mut to implement Index and IndexMut. These are not unsafe, since they contain bounds-checks.
+// Use MatrixMut::ptr_at and MatrixMut::ptr_at_mut to implement Index and IndexMut. The latter are not unsafe, since they contain bounds-checks.
 
 impl<T> Index<(usize, usize)> for MatrixMut<'_, T> {
     type Output = T;

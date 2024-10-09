@@ -45,20 +45,20 @@ pub struct NttEngine<F: Field> {
 
 /// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
-    NttEngine::new_from_cache().ntt(values);
+    NttEngine::<F>::new_from_cache().ntt(values);
 }
 
 /// Compute the many NTTs of size `size` using a cached engine.
 pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::new_from_cache().ntt_batch(values, size);
+    NttEngine::<F>::new_from_cache().ntt_batch(values, size);
 }
 
 pub fn intt<F: FftField>(values: &mut [F]) {
-    NttEngine::new_from_cache().intt(values);
+    NttEngine::<F>::new_from_cache().intt(values);
 }
 
 pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::new_from_cache().intt_batch(values, size);
+    NttEngine::<F>::new_from_cache().intt_batch(values, size);
 }
 
 impl<F: FftField> NttEngine<F> {
