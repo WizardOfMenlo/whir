@@ -32,7 +32,7 @@ where
     //
     // This asserts that the domain size is divisible by 1 << folding_factor
     pub fn folded_size(&self, folding_factor: usize) -> usize {
-        assert!(self.backing_domain.size() % (1<<folding_factor) == 0);
+        assert!(self.backing_domain.size() % (1 << folding_factor) == 0);
         self.backing_domain.size() / (1 << folding_factor)
     }
 

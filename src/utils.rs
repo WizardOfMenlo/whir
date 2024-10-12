@@ -21,7 +21,6 @@ pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
     result
 }
 
-
 // TODO: n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 
 // decomposes value into its base-ary decomposition, meaning we return a vector v, s.t.
@@ -83,7 +82,7 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{stack_evaluations, to_binary, is_power_of_two};
+    use super::{is_power_of_two, stack_evaluations, to_binary};
 
     #[test]
     fn test_evaluations_stack() {
@@ -108,11 +107,11 @@ mod tests {
 
     #[test]
     fn test_to_binary() {
-        assert_eq!(to_binary(0b10111, 5), vec![true,false,true,true,true]);
-        assert_eq!(to_binary(0b11001, 2), vec![false, true]);  // truncate
+        assert_eq!(to_binary(0b10111, 5), vec![true, false, true, true, true]);
+        assert_eq!(to_binary(0b11001, 2), vec![false, true]); // truncate
         let empty_vec: Vec<bool> = vec![]; // just for the explicit bool type.
         assert_eq!(to_binary(1, 0), empty_vec);
-        assert_eq!(to_binary(0,0), empty_vec);
+        assert_eq!(to_binary(0, 0), empty_vec);
     }
 
     #[test]
@@ -123,5 +122,4 @@ mod tests {
         assert_eq!(is_power_of_two(3), false);
         assert_eq!(is_power_of_two(usize::MAX), false);
     }
-
 }
