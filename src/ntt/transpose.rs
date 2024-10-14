@@ -46,6 +46,7 @@ fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<F>, dst: MatrixMut<F>) 
     transpose_copy_parallel(src, dst);
 }
 
+/// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
 #[cfg(feature = "parallel")]
 fn transpose_copy_parallel<'a, 'b, F: Sized + Copy + Send>(
     src: MatrixMut<'a, F>,
@@ -76,6 +77,9 @@ fn transpose_copy_parallel<'a, 'b, F: Sized + Copy + Send>(
     }
 }
 
+
+/// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
+/// This is the non-parallel version
 fn transpose_copy_not_parallel<'a, 'b, F: Sized + Copy>(
     src: MatrixMut<'a, F>,
     mut dst: MatrixMut<'b, F>,
@@ -111,6 +115,8 @@ fn transpose_square<F: Sized + Send>(m: MatrixMut<F>) {
     transpose_square_non_parallel(m);
 }
 
+/// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
+/// This is the parallel version.
 #[cfg(feature = "parallel")]
 fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
     debug_assert!(m.is_square());
@@ -123,11 +129,11 @@ fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
         let (a, b, c, d) = m.split_quadrants(n, n);
 
         join(
-            || transpose_square_parallel(a),
+            || transpose_square_swap_parallel(b, c),
             || {
                 join(
+                    || transpose_square_parallel(a),
                     || transpose_square_parallel(d),
-                    || transpose_square_swap_parallel(b, c),
                 )
             },
         );
@@ -143,7 +149,8 @@ fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
     }
 }
 
-/// Transpose a square matrix in-place.
+/// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
+/// This is the non-parallel version.
 fn transpose_square_non_parallel<F: Sized>(mut m: MatrixMut<F>) {
     debug_assert!(m.is_square());
     debug_assert!(m.rows().is_power_of_two());
