@@ -8,7 +8,7 @@ use rayon::join;
 /// Transpose a matrix in-place.
 /// Will batch transpose multiple matrices if the length of the slice is a multiple of rows * cols.
 pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: usize) {
-    debug_assert_eq!(matrix.len() % rows * cols, 0);
+    debug_assert_eq!(matrix.len() % (rows * cols), 0);
     // eprintln!(
     //     "Transpose {} x {rows} x {cols} matrix.",
     //     matrix.len() / (rows * cols)
@@ -102,7 +102,7 @@ fn transpose_copy_not_parallel<'a, 'b, F: Sized + Copy>(
 }
 
 /// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
-fn transpose_square<F: Sized + Send>(mut m: MatrixMut<F>) {
+fn transpose_square<F: Sized + Send>(m: MatrixMut<F>) {
     #[cfg(feature = "parallel")]
     transpose_square_parallel(m);
     #[cfg(not(feature = "parallel"))]
@@ -242,9 +242,6 @@ fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: Matr
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Index;
-    use std::slice::from_mut;
-
     use super::super::utils::workload_size;
     use super::*;
 
@@ -253,6 +250,7 @@ mod tests {
     type Triple = (usize, usize, usize);
 
     // create a vector (intended to be viewed as a matrix) whose (i,j)'th entry is the pair (i,j) itself.
+    // This is useful to debug transposition algorithms.
     fn make_example_matrix(rows: usize, columns: usize) -> Vec<Pair> {
         let mut v: Vec<Pair> = vec![(0, 0); rows * columns];
         let mut view = MatrixMut::from_mut_slice(&mut v, rows, columns);
@@ -336,15 +334,21 @@ mod tests {
 
     #[test]
     fn test_transpose_square() {
+        // iterate over parallel and non-parallel variants:
         let mut funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, Triple>, MatrixMut<'a, Triple>)> = vec![
             &transpose_square_swap::<Triple>,
             &transpose_square_swap_non_parallel::<Triple>,
         ];
         #[cfg(feature = "parallel")]
         funs.push(&transpose_square_swap_parallel::<Triple>);
+
         for f in funs {
+            
+            // Set rows manually. We want to be sure to trigger the actual recursion.
+            // (Computing this from workload_size was too much hassle.)
             let rows = 1024; // workload_size::<Triple>();
-                             // columns == rows
+            assert!(rows * rows > 2 * workload_size::<Triple>());
+
             let examples: Vec<Triple> = make_example_matrices(rows, rows, 2);
             let mut examples1 = Vec::from(&examples[0..rows * rows]);
             let mut examples2 = Vec::from(&examples[rows * rows..2 * rows * rows]);
