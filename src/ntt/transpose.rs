@@ -5,10 +5,16 @@ use std::mem::swap;
 #[cfg(feature = "parallel")]
 use rayon::join;
 
+// NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
+// (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).
+
 /// Transpose a matrix in-place.
 /// Will batch transpose multiple matrices if the length of the slice is a multiple of rows * cols.
+/// This algorithm assumes that both rows and cols are powers of two.
 pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: usize) {
     debug_assert_eq!(matrix.len() % (rows * cols), 0);
+    debug_assert!(is_power_of_two(rows));
+    debug_assert!(is_power_of_two(cols));
     // eprintln!(
     //     "Transpose {} x {rows} x {cols} matrix.",
     //     matrix.len() / (rows * cols)
@@ -190,7 +196,7 @@ fn transpose_square_swap_parallel<F: Sized + Send>(mut a: MatrixMut<F>, mut b: M
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
     debug_assert!(is_power_of_two(a.rows()));
-    debug_assert!(workload_size::<F>() > 2); // otherwise, we would recurse even if size == 1.
+    debug_assert!(workload_size::<F>() >= 2); // otherwise, we would recurse even if size == 1.
     let size = a.rows();
     if 2 * size * size > workload_size::<F>() {
         // Recurse into quadrants.
@@ -228,7 +234,7 @@ fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: Matr
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
     debug_assert!(is_power_of_two(a.rows()));
-    debug_assert!(workload_size::<F>() > 2); // otherwise, we would recurse even if size == 1.
+    debug_assert!(workload_size::<F>() >= 2); // otherwise, we would recurse even if size == 1.
 
     let size = a.rows();
     if 2 * size * size > workload_size::<F>() {
@@ -302,7 +308,7 @@ mod tests {
         funs.push(&transpose_copy_parallel::<Pair>);
 
         for f in funs {
-            let rows: usize = workload_size::<Pair>();
+            let rows: usize = workload_size::<Pair>() + 1;  // intentionally not a power of two: The function is not described as only working for powers of two.
             let columns: usize = 4;
             let mut srcarray = make_example_matrix(rows, columns);
             let mut dstarray: Vec<(usize, usize)> = vec![(0, 0); rows * columns];
@@ -322,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transpose_square() {
+    fn test_transpose_square_swap() {
         // iterate over parallel and non-parallel variants:
         let mut funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, Triple>, MatrixMut<'a, Triple>)> = vec![
             &transpose_square_swap::<Triple>,
@@ -339,6 +345,7 @@ mod tests {
             assert!(rows * rows > 2 * workload_size::<Triple>());
 
             let examples: Vec<Triple> = make_example_matrices(rows, rows, 2);
+            // Make copies for simplicity, because we borrow different parts.
             let mut examples1 = Vec::from(&examples[0..rows * rows]);
             let mut examples2 = Vec::from(&examples[rows * rows..2 * rows * rows]);
 
@@ -360,5 +367,91 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_transpose_square(){
+        let mut funs: Vec<&dyn for <'a> Fn(MatrixMut<'a,_>)> = vec![
+            &transpose_square::<Pair>, &transpose_square_parallel::<Pair>
+        ];
+        #[cfg(feature="parallel")]
+        funs.push(&transpose_square::<Pair>);
+        for f in funs{
+            // Set rows manually. We want to be sure to trigger the actual recursion.
+            // (Computing this from workload_size was too much hassle.)
+            let size = 1024; 
+            assert!(size * size > 2 * workload_size::<Pair>());
+
+            let mut example = make_example_matrix(size, size);
+            let view = MatrixMut::from_mut_slice(&mut example, size, size);
+            f(view);
+            let view = MatrixMut::from_mut_slice(&mut example, size, size);
+            for i in 0..size{
+                for j in 0..size{
+                    assert_eq!(view[(i,j)], (j,i));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_transpose(){
+        let size = 1024;
+        
+        // rectangular matrix:
+        let rows = size;
+        let cols = 16;
+        let mut example = make_example_matrix(rows, cols);
+        transpose(&mut example, rows, cols);
+        let view = MatrixMut::from_mut_slice(&mut example, cols, rows);
+        for i in 0..cols{
+            for j in 0..rows{
+                assert_eq!(view[(i,j)], (j,i));
+            }
+        }
+
+        // square matrix:
+        let rows = size;
+        let cols = size;
+        let mut example = make_example_matrix(rows, cols);
+        transpose(&mut example, rows, cols);
+        let view = MatrixMut::from_mut_slice(&mut example, cols, rows);
+        for i in 0..cols{
+            for j in 0..rows{
+                assert_eq!(view[(i,j)], (j,i));
+            }
+        }
+
+        // 20 rectangular matrices:
+        let number_of_matrices = 20;
+        let rows = size;
+        let cols = 16;
+        let mut example = make_example_matrices(rows, cols, number_of_matrices);
+        transpose(&mut example, rows, cols);
+        for index in 0..number_of_matrices{
+            let view = MatrixMut::from_mut_slice(&mut example[index*rows*cols..(index+1)*rows*cols], cols, rows);
+            for i in 0..cols{
+                for j in 0..rows{
+                    assert_eq!(view[(i,j)], (index,j,i));
+                }
+            }
+        }
+
+        // 20 square matrices:
+        let number_of_matrices = 20;
+        let rows = size;
+        let cols = size;
+        let mut example = make_example_matrices(rows, cols, number_of_matrices);
+        transpose(&mut example, rows, cols);
+        for index in 0..number_of_matrices{
+            let view = MatrixMut::from_mut_slice(&mut example[index*rows*cols..(index+1)*rows*cols], cols, rows);
+            for i in 0..cols{
+                for j in 0..rows{
+                    assert_eq!(view[(i,j)], (index,j,i));
+                }
+            }
+        }
+
+
     }
 }
