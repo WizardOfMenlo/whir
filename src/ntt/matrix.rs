@@ -114,10 +114,10 @@ impl<'a, T> MatrixMut<'a, T> {
         )
     }
 
-    /// Split the matrix into four quadrants at the indicated `row` and `col` (meaning that in the returned 4-tuple (A,B,C,D), the matrix A is a `row`x`col` )
+    /// Split the matrix into four quadrants at the indicated `row` and `col` (meaning that in the returned 4-tuple (A,B,C,D), the matrix A is a `row`x`col` matrix)
     ///
-    /// [A B] = self
-    /// [C D]
+    /// self = [A B] 
+    ///        [C D]
     pub fn split_quadrants(self, row: usize, col: usize) -> (Self, Self, Self, Self) {
         let (u, l) = self.split_vertical(row); // split into upper and lower parts
         let (a, b) = u.split_horizontal(col);

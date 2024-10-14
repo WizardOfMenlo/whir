@@ -31,11 +31,13 @@ pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: us
     }
 }
 
-// Fuly split those parallel and a non-parallel functions (rather than using #[cfg] within a single function).
-// The reason is that this simplifies testing: We otherwise would need to build twice to cover both cases and
-// we could not do differential tests.
-// This assumes the compiler inlines away the extra "indirection".
-// NOTE: Could lift the Send contraint on non-parallel build.
+// The following function have both a parallel and a non-parallel implementation.
+// We fuly split those in a parallel and a non-parallel functions (rather than using #[cfg] within a single function) 
+// and have main entry point fun that just calls the appropriate version (either fun_parallel or fun_not_parallel).
+// The sole reason is that this simplifies unit tests: We otherwise would need to build twice to cover both cases.
+// For effiency, we assume the compiler inlines away the extra "indirection" that we add to the entry point function.
+
+// NOTE: We could lift the Send constraints on non-parallel build.
 
 fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<F>, dst: MatrixMut<F>) {
     #[cfg(not(feature = "parallel"))]
@@ -174,12 +176,14 @@ fn transpose_square_swap<F: Sized + Send>(a: MatrixMut<F>, b: MatrixMut<F>) {
     transpose_square_swap_non_parallel(a, b);
 }
 
-/// Transpose and swap two square size matrices.
+/// Transpose and swap two square size matrices (parallel version). The size must be a power of two.
 #[cfg(feature = "parallel")]
 fn transpose_square_swap_parallel<F: Sized + Send>(mut a: MatrixMut<F>, mut b: MatrixMut<F>) {
     debug_assert!(a.is_square());
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
+    debug_assert!(is_power_of_two(a.rows()));
+    debug_assert!(workload_size::<F>() > 2); // otherwise, we would recurse even if size == 1.
     let size = a.rows();
     if 2 * size * size > workload_size::<F>() {
         // Recurse into quadrants.
@@ -211,14 +215,13 @@ fn transpose_square_swap_parallel<F: Sized + Send>(mut a: MatrixMut<F>, mut b: M
     }
 }
 
-/// Transpose and swap two square size matrices, whose sizes are a power of two.
+/// Transpose and swap two square size matrices, whose sizes are a power of two (non-parallel version)
 fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: MatrixMut<F>) {
     debug_assert!(a.is_square());
-
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
-
     debug_assert!(is_power_of_two(a.rows()));
+    debug_assert!(workload_size::<F>() > 2); // otherwise, we would recurse even if size == 1.
 
     let size = a.rows();
     if 2 * size * size > workload_size::<F>() {
@@ -245,7 +248,6 @@ mod tests {
     use super::super::utils::workload_size;
     use super::*;
 
-    type F = i32; // for simplicity
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
 
@@ -262,7 +264,7 @@ mod tests {
         v
     }
 
-    // create a vector (intended to be viewed as a sequence of `instances` matrix) where (i,j)'th entry of the `index`th matrix
+    // create a vector (intended to be viewed as a sequence of `instances` of matrices) where (i,j)'th entry of the `index`th matrix
     // is the triple (index, i,j).
     fn make_example_matrices(rows: usize, columns: usize, instances: usize) -> Vec<Triple> {
         let mut v: Vec<Triple> = vec![(0, 0, 0); rows * columns * instances];
@@ -279,26 +281,6 @@ mod tests {
             }
         }
         v
-    }
-
-    // not needed, actually. We compare the backing arrays.
-    impl<'a, 'b> PartialEq for MatrixMut<'a, F> {
-        fn eq(&self, other: &Self) -> bool {
-            let r = self.rows();
-            let c = self.cols();
-
-            if other.rows() != r || other.cols() != c {
-                return false;
-            }
-            for i in 0..r {
-                for j in 0..c {
-                    if self[(i, j)] != other[(i, j)] {
-                        return false;
-                    }
-                }
-            }
-            true
-        }
     }
 
     #[test]
