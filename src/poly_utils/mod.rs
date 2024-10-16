@@ -16,6 +16,7 @@ pub mod hypercube;
 pub mod sequential_lag_poly;
 pub mod streaming_evaluation_helper;
 
+/// Point (x_1,..., x_n) in F^n for some n. Often, the x_i are binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultilinearPoint<F>(pub Vec<F>);
 
@@ -23,10 +24,16 @@ impl<F> MultilinearPoint<F>
 where
     F: Field,
 {
+    // returns the number of variables.
     pub fn n_variables(&self) -> usize {
         self.0.len()
     }
 
+    // NOTE: Conversion BinaryHypercube <-> MultilinearPoint converts a 
+    // multilinear point (x1,x2,...,x_n) into the number with bit-pattern 0...0 x_1 x_2 ... x_n, provided all x_i are in {0,1}.
+    // That means we pad 0 bits in BinaryHypercube from the msb end and use big-endian for the actual conversion.
+
+    /// Creates a MultilinearPoint from a BinaryHypercubePoint; the latter models the same thing, but is restricted to binary entries.
     pub fn from_binary_hypercube_point(point: BinaryHypercubePoint, num_variables: usize) -> Self {
         Self(
             to_binary(point.0, num_variables)

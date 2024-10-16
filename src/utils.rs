@@ -7,10 +7,10 @@ pub fn is_power_of_two(n: usize) -> bool {
     n != 0 && (n & (n - 1) == 0)
 }
 
-// performs big-endian binary decomposition of value and returns the result.
-//
-// The returned vector v starts with the big-endian bits of value and always has exactly n_bits many elements.
-// n_bits must be at must usize::BITS. If it is strictly smaller, the relevant higher-order bits of value are ignored.
+/// performs big-endian binary decomposition of `value` and returns the result.
+///
+/// `n_bits` must be at must usize::BITS. If it is strictly smaller, the most significant bits of `value` are ignored.
+/// The returned vector v ends with the least significant bit of `value` and always has exactly `n_bits` many elements.
 pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
     // Ensure that n is within the bounds of the input integer type
     assert!(n_bits <= usize::BITS as usize);
@@ -21,14 +21,14 @@ pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
     result
 }
 
-// TODO: n_bits is a misnomer if base > 2. Should be n_limbs or sth.
+// TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 
-// decomposes value into its base-ary decomposition, meaning we return a vector v, s.t.
-//
-// value = v[0] + v[1] * base + v[2] * base^2 + ... + v[n_bits-1] * base^(n_bits-1),
-// where each v[i] is in 0..base.
-// The returned vector always has length exactly n_bits (we pad with leading zeros);
-// if value >= base^n_bits, we truncate, effectively computing value % (base^n_bits)
+/// decomposes value into its big-endian base-ary decomposition, meaning we return a vector v, s.t.
+///
+/// value = v[0]*base^(n_bits-1) + v[1] * base^(n_bits-2) + ... + v[n_bits-1] * 1,
+/// where each v[i] is in 0..base.
+/// The returned vector always has length exactly n_bits (we pad with leading zeros);
+/// if value >= base^n_bits, we truncate, effectively computing value % (base^n_bits)
 pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
     // Initialize the result vector with zeros of the specified length
     let mut result = vec![0u8; n_bits];
@@ -47,8 +47,8 @@ pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
 
 // Gotti: Consider renaming this function. The name sounds like it's a PRG.
 
-// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
-// (This is typically used for a random choice of base; taking a scalar product with the retured vector corresponds to evaluation at base)
+/// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
+/// (This is typically used for a random choice of base; taking a scalar product with the retured vector corresponds to evaluation at base)
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     let mut res = Vec::with_capacity(len);
     let mut acc = F::ONE;
@@ -60,7 +60,7 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     res
 }
 
-// Deduplicates AND orders a vector
+/// Deduplicates AND orders a vector
 pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
     Vec::from_iter(BTreeSet::from_iter(v))
 }
@@ -68,8 +68,8 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
 // FIXME: comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
 // Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
-// Takes the vector of evaluations (assume that evals[i] = f(omega^i))
-// and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
+/// Takes the vector of evaluations (assume that evals[i] = f(omega^i))
+/// and folds them into a vector of such that folded_evals[i] = [f(omega^(i + k * j)) for j in 0..folding_factor]
 pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> Vec<F> {
     let folding_factor_exp = 1 << folding_factor;
     assert!(evals.len() % folding_factor_exp == 0);
@@ -82,6 +82,8 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::base_decomposition;
+
     use super::{is_power_of_two, stack_evaluations, to_binary};
 
     #[test]
@@ -121,5 +123,10 @@ mod tests {
         assert_eq!(is_power_of_two(2), true);
         assert_eq!(is_power_of_two(3), false);
         assert_eq!(is_power_of_two(usize::MAX), false);
+    }
+
+    #[test]
+    fn test_base_decomposition(){
+        assert_eq!(base_decomposition(0b1011, 2, 6), vec![0,0,1,0,1,1]);
     }
 }
