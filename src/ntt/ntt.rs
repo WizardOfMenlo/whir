@@ -26,10 +26,10 @@ static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>
 /// Enginge for computing NTTs over arbitrary fields.
 /// Assumes the field has large two-adicity.
 pub struct NttEngine<F: Field> {
-    order: usize,
-    omega_order: F,
+    order: usize, // order of omega_orger
+    omega_order: F,  // primitive order'th root.
 
-    // Small roots (zero if unavailable)
+    // Roots of small order (zero if unavailable). The naming convention is that omega_foo has order foo.
     half_omega_3_1_plus_2: F, // ½(ω₃ + ω₃²)
     half_omega_3_1_min_2: F,  // ½(ω₃ - ω₃²)
     omega_4_1: F,
@@ -53,10 +53,13 @@ pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::<F>::new_from_cache().ntt_batch(values, size);
 }
 
+/// Compute the inverse NTT of a slice of field element without the 1/n scaling factor, using a cached engine.
 pub fn intt<F: FftField>(values: &mut [F]) {
     NttEngine::<F>::new_from_cache().intt(values);
 }
 
+
+/// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the 1/n scaling factor and using a cached engine.
 pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::<F>::new_from_cache().intt_batch(values, size);
 }
@@ -90,10 +93,11 @@ impl<F: FftField> NttEngine<F> {
     }
 }
 
+/// Creates a new NttEngine. `omega_order` must be a primitive root of unity of even order `omega`.
 impl<F: Field> NttEngine<F> {
     pub fn new(order: usize, omega_order: F) -> Self {
-        assert!(order.trailing_zeros() > 0, "Order must be a power of 2.");
-        // TODO: Assert that omega_order factors into 2s and 3s.
+        assert!(order.trailing_zeros() > 0, "Order must be a multiple of 2.");
+        // TODO: Assert that omega factors into 2s and 3s.
         assert_eq!(omega_order.pow([order as u64]), F::ONE);
         assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
         let mut res = NttEngine {
@@ -112,6 +116,7 @@ impl<F: Field> NttEngine<F> {
         if order % 3 == 0 {
             let omega_3_1 = res.root(3);
             let omega_3_2 = omega_3_1 * omega_3_1;
+            // Note: char F cannot be 2 and so division by 2 works, because primitive roots of unity with even order exist.
             res.half_omega_3_1_min_2 = (omega_3_1 - omega_3_2) / F::from(2u64);
             res.half_omega_3_1_plus_2 = (omega_3_1 + omega_3_2) / F::from(2u64);
         }
