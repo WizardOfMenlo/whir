@@ -65,6 +65,27 @@ impl<F> Display for MultivariateParameters<F> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct UnivariateParameters<F> {
+    pub(crate) log_degree: usize,
+    _field: PhantomData<F>,
+}
+
+impl<F> UnivariateParameters<F> {
+    pub fn new(log_degree: usize) -> Self {
+        Self {
+            log_degree,
+            _field: PhantomData,
+        }
+    }
+}
+
+impl<F> Display for UnivariateParameters<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Degree: 2^{}", self.log_degree)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum FoldType {
     Naive,
     ProverHelps,
@@ -97,7 +118,7 @@ impl Display for FoldType {
 }
 
 #[derive(Clone)]
-pub struct WhirParameters<MerkleConfig, PowStrategy>
+pub struct ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
@@ -117,7 +138,7 @@ where
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-impl<MerkleConfig, PowStrategy> Display for WhirParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig, PowStrategy> Display for ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {

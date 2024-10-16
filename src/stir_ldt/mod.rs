@@ -9,20 +9,20 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct StirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
 
-pub fn whir_proof_size<MerkleConfig, F>(
+pub fn stir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
-    whir_proof: &WhirProof<MerkleConfig, F>,
+    stir_proof: &StirProof<MerkleConfig, F>,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    transcript.len() + stir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
@@ -31,7 +31,7 @@ mod tests {
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, ProtocolParameters};
+    use crate::parameters::{FoldType, MultivariateParameters, ProtocolParameters, SoundnessType};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::whir_ldt::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
@@ -42,7 +42,7 @@ mod tests {
     type PowStrategy = Blake3PoW;
     type F = Field64;
 
-    fn make_whir_things(
+    fn make_stir_things(
         num_variables: usize,
         folding_factor: usize,
         soundness_type: SoundnessType,
@@ -108,7 +108,7 @@ mod tests {
                 for fold_type in fold_types {
                     for soundness_type in soundness_type {
                         for pow_bits in pow_bits {
-                            make_whir_things(
+                            make_stir_things(
                                 num_variables,
                                 folding_factor,
                                 soundness_type,

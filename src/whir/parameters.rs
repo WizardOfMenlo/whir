@@ -7,7 +7,7 @@ use ark_ff::FftField;
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters},
+    parameters::{FoldType, MultivariateParameters, SoundnessType, ProtocolParameters},
 };
 
 #[derive(Clone)]
@@ -60,7 +60,7 @@ where
 {
     pub fn new(
         mv_parameters: MultivariateParameters<F>,
-        whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
+        whir_parameters: ProtocolParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
         // We need to fold at least some time
         assert!(
