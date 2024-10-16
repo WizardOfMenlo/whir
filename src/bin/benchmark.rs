@@ -227,7 +227,7 @@ fn run_whir<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
         security_level,
         pow_bits,
         folding_factor,

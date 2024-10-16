@@ -32,7 +32,7 @@ mod tests {
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
+    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, ProtocolParameters};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::whir_ldt::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
@@ -57,7 +57,7 @@ mod tests {
 
         let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             security_level: 32,
             pow_bits,
             folding_factor,

@@ -15,6 +15,7 @@ pub mod gray_lag_poly;
 pub mod hypercube;
 pub mod sequential_lag_poly;
 pub mod streaming_evaluation_helper;
+pub mod univariate;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultilinearPoint<F>(pub Vec<F>);
