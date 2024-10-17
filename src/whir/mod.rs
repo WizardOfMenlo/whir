@@ -65,7 +65,7 @@ mod tests {
 
     use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
 
-    use crate::crypto::fields::Field64;
+    use crate::crypto::fields::FieldBn256;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
     use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
@@ -78,7 +78,7 @@ mod tests {
 
     type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
     type PowStrategy = Blake3PoW;
-    type F = Field64;
+    type F = FieldBn256;
 
     fn make_whir_things(
         num_variables: usize,
@@ -181,16 +181,16 @@ mod tests {
 
     #[test]
     fn test_serialize() {
-        let path_sol_whir_test_data = "./test/data";
+        let path_sol_whir_test_data = std::env::current_dir().unwrap();
         let point = MultilinearPoint(vec![F::from(4242), F::from(2424)]);
         let statement = Statement {
             points: vec![point.clone(), point],
             evaluations: vec![F::from(42), F::from(42)],
         };
         let statement_json = serde_json::to_string(&statement).unwrap();
-        let mut file = File::create(path_sol_whir_test_data.to_owned() + "/simple_statement.json")
-            .expect("Failed at creating file");
-
+        let mut file =
+            File::create(path_sol_whir_test_data.to_str().unwrap().to_owned() + "/statement.json")
+                .expect("Failed at creating file");
         file.write_all(statement_json.as_bytes())
             .expect("Unable to write data");
     }
