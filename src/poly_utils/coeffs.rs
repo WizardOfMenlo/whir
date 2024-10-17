@@ -287,11 +287,11 @@ mod tests {
     use ark_poly::{univariate::DensePolynomial, Polynomial};
 
     use crate::{
-        crypto::fields::Field64,
+        crypto::fields::FieldBn256,
         poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
     };
 
-    type F = Field64;
+    type F = FieldBn256;
 
     #[test]
     fn test_evaluation_conversion() {
