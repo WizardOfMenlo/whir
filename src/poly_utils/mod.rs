@@ -143,15 +143,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::crypto::fields::FieldBn256;
+    use crate::poly_utils::eq_poly;
     use crate::poly_utils::eq_poly3;
     use crate::poly_utils::hypercube::BinaryHypercube;
-    use crate::{crypto::fields::Field64, poly_utils::eq_poly};
 
     use super::coeffs::CoefficientList;
     use super::BinaryHypercubePoint;
     use super::MultilinearPoint;
 
-    type F = Field64;
+    type F = FieldBn256;
 
     #[test]
     fn test_equality() {
