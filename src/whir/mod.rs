@@ -1,5 +1,7 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::poly_utils::MultilinearPoint;
 
@@ -13,6 +15,29 @@ pub mod verifier;
 pub struct Statement<F> {
     pub points: Vec<MultilinearPoint<F>>,
     pub evaluations: Vec<F>,
+}
+
+impl<F: PrimeField> Serialize for MultilinearPoint<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let str_vec: Vec<String> = self.0.iter().map(|x| x.to_string()).collect();
+        str_vec.serialize(serializer)
+    }
+}
+
+impl<F: PrimeField> Serialize for Statement<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Statement", 2)?;
+        state.serialize_field("points", &self.points)?;
+        let evaluations_str: Vec<String> = self.evaluations.iter().map(|x| x.to_string()).collect();
+        state.serialize_field("evaluations", &evaluations_str)?;
+        state.end()
+    }
 }
 
 // Only includes the authentication paths
@@ -35,6 +60,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use std::io::Write;
+
     use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
 
     use crate::crypto::fields::Field64;
@@ -149,5 +177,39 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_serialize() {
+        let path_sol_whir_test_data = "./test/data";
+        let point = MultilinearPoint(vec![F::from(4242), F::from(2424)]);
+        let statement = Statement {
+            points: vec![point.clone(), point],
+            evaluations: vec![F::from(42), F::from(42)],
+        };
+        let statement_json = serde_json::to_string(&statement).unwrap();
+        let mut file = File::create(path_sol_whir_test_data.to_owned() + "/simple_statement.json")
+            .expect("Failed at creating file");
+
+        file.write_all(statement_json.as_bytes())
+            .expect("Unable to write data");
+    }
+
+    #[test]
+    fn test_whir_single_poly() {
+        let folding_factor = 1;
+        let soundness_type = SoundnessType::UniqueDecoding;
+        let fold_type = FoldType::ProverHelps;
+        let num_points = 4;
+        let pow_bits = 0;
+        let num_variables = 3;
+        make_whir_things(
+            num_variables as usize,
+            folding_factor as usize,
+            num_points,
+            soundness_type,
+            pow_bits,
+            fold_type,
+        );
     }
 }
