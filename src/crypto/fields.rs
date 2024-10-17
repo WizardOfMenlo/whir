@@ -2,6 +2,7 @@ use ark_ff::{
     Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig,
     MontFp, PrimeField,
 };
+use serde::Serialize;
 
 pub trait FieldWithSize {
     fn field_size_in_bits() -> usize;
@@ -33,6 +34,12 @@ pub type Field192 = Fp192<MontBackend<FConfig192, 3>>;
 #[generator = "3"]
 pub struct FrConfig128;
 pub type Field128 = Fp128<MontBackend<FrConfig128, 2>>;
+
+#[derive(MontConfig, Serialize)]
+#[modulus = "21888242871839275222246405745257275088548364400416034343698204186575808495617"]
+#[generator = "5"]
+pub struct FqConfig;
+pub type FieldBn256 = Fp256<MontBackend<FqConfig, 4>>;
 
 #[derive(MontConfig)]
 #[modulus = "18446744069414584321"]
