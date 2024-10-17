@@ -22,18 +22,20 @@ pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
 }
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
+// Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
+// Currently, we compute the decomposition of value % (base^n_bits).
 
 /// decomposes value into its big-endian base-ary decomposition, meaning we return a vector v, s.t.
 ///
 /// value = v[0]*base^(n_bits-1) + v[1] * base^(n_bits-2) + ... + v[n_bits-1] * 1,
 /// where each v[i] is in 0..base.
 /// The returned vector always has length exactly n_bits (we pad with leading zeros);
-/// if value >= base^n_bits, we truncate, effectively computing value % (base^n_bits)
 pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
     // Initialize the result vector with zeros of the specified length
     let mut result = vec![0u8; n_bits];
 
     // Create a mutable copy of the value for computation
+    // Note: We could just make the local passed-by-value argument `value` mutable, but this is clearer.
     let mut value = value;
 
     // Compute the base decomposition
@@ -41,14 +43,15 @@ pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
         result[n_bits - 1 - i] = (value % (base as usize)) as u8;
         value /= base as usize;
     }
+    // TODO: Should we assert!(value == 0) here to check that the orginally passed `value` is < base^n_bits ?
 
     result
 }
 
 // Gotti: Consider renaming this function. The name sounds like it's a PRG.
+// TODO (Gotti): Check that ordering is actually correct at point of use (everything else is big-endian).
 
 /// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
-/// (This is typically used for a random choice of base; taking a scalar product with the retured vector corresponds to evaluation at base)
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     let mut res = Vec::with_capacity(len);
     let mut acc = F::ONE;
@@ -65,7 +68,7 @@ pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
     Vec::from_iter(BTreeSet::from_iter(v))
 }
 
-// FIXME: comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
+// FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
 // Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
 /// Takes the vector of evaluations (assume that evals[i] = f(omega^i))
@@ -128,5 +131,9 @@ mod tests {
     #[test]
     fn test_base_decomposition(){
         assert_eq!(base_decomposition(0b1011, 2, 6), vec![0,0,1,0,1,1]);
+        assert_eq!(base_decomposition(15,3,3), vec![1,2,0]);
+        // check truncation: This checks the current (undocumented) behaviour (compute modulo base^number_of_limbs) works as believed.
+        // If we actually specify the API to have a different behaviour, this test should change.
+        assert_eq!(base_decomposition(15+81, 3,3), vec![1,2,0]);
     }
 }

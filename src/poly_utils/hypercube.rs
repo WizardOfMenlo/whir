@@ -10,7 +10,7 @@
 /// The point is encoded via the bits of a usize and we do not store n.
 pub struct BinaryHypercubePoint(pub usize);
 
-// BinaryHypercube is an Iterator that is used to range over the points of {0,1}^n, where n == `num_variables`
+/// BinaryHypercube is an Iterator that is used to range over the points of {0,1}^n, where n == `num_variables`
 pub struct BinaryHypercube {
     pos: usize,  // current position, encoded via the bits of pos
     num_variables: usize, // dimension of the hypercube
