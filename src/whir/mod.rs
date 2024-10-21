@@ -59,6 +59,134 @@ where
 }
 
 #[cfg(test)]
+mod evm_tests {
+    use nimue::plugins::pow::blake3::Blake3PoW;
+
+    use crate::crypto::fields::FieldBn256;
+    use crate::crypto::merkle_tree::keccak as merkle_tree;
+    use crate::fs_utils::EVMFs;
+    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
+    use crate::poly_utils::coeffs::CoefficientList;
+    use crate::poly_utils::MultilinearPoint;
+    use crate::whir::Statement;
+    use crate::whir::{
+        committer::Committer, parameters::WhirConfig, prover::Prover, verifier::Verifier,
+    };
+
+    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
+    type PowStrategy = Blake3PoW;
+    type F = FieldBn256;
+
+    fn evm_make_whir_things(
+        num_variables: usize,
+        folding_factor: usize,
+        num_points: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+        fold_type: FoldType,
+    ) {
+        let num_coeffs = 1 << num_variables;
+
+        let mut rng = ark_std::test_rng();
+        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+
+        let mv_params = MultivariateParameters::<F>::new(num_variables);
+
+        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            security_level: 32,
+            pow_bits,
+            folding_factor,
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            fold_optimisation: fold_type,
+        };
+
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let polynomial = CoefficientList::new(vec![F::from(1); num_coeffs]);
+        let points: Vec<_> = (0..num_points)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+        let statement = Statement {
+            points: points.clone(),
+            evaluations: points
+                .iter()
+                .map(|point| polynomial.evaluate(point))
+                .collect(),
+        };
+        let mut evmfs_merlin = EVMFs::<F>::new();
+        let committer = Committer::new(params.clone());
+        let prover = Prover(params.clone());
+        let verifier = Verifier::new(params);
+        let evm_witness = committer
+            .evm_commit(&mut evmfs_merlin, polynomial.clone())
+            .unwrap();
+        let evm_proof = prover
+            .evm_prove(&mut evmfs_merlin, statement.clone(), evm_witness)
+            .unwrap();
+        let mut evmfs_arthur = evmfs_merlin.to_arthur();
+        assert!(verifier
+            .evm_verify(&mut evmfs_arthur, &statement, &evm_proof)
+            .is_ok());
+    }
+
+    #[test]
+    fn evm_test_whir() {
+        let folding_factors = [1, 2, 3, 4];
+        let soundness_type = [
+            SoundnessType::ConjectureList,
+            SoundnessType::ProvableList,
+            SoundnessType::UniqueDecoding,
+        ];
+        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
+        let num_points = [0, 1, 2];
+        let pow_bits = [0, 5, 10];
+
+        for folding_factor in folding_factors {
+            let num_variables = folding_factor..=3 * folding_factor;
+            for num_variables in num_variables {
+                for fold_type in fold_types {
+                    for num_points in num_points {
+                        for soundness_type in soundness_type {
+                            for pow_bits in pow_bits {
+                                evm_make_whir_things(
+                                    num_variables,
+                                    folding_factor,
+                                    num_points,
+                                    soundness_type,
+                                    pow_bits,
+                                    fold_type,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_whir_single_poly() {
+        let folding_factor = 1;
+        let soundness_type = SoundnessType::UniqueDecoding;
+        let fold_type = FoldType::ProverHelps;
+        let num_points = 4;
+        let pow_bits = 0;
+        let num_variables = 3;
+        evm_make_whir_things(
+            num_variables as usize,
+            folding_factor as usize,
+            num_points,
+            soundness_type,
+            pow_bits,
+            fold_type,
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::fs::File;
     use std::io::Write;

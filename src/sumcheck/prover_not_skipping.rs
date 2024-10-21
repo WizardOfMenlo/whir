@@ -8,7 +8,7 @@ use nimue::{
 };
 
 use crate::{
-    fs_utils::WhirPoWIOPattern,
+    fs_utils::{EVMFs, WhirPoWIOPattern},
     poly_utils::{coeffs::CoefficientList, MultilinearPoint},
 };
 
@@ -61,6 +61,37 @@ where
         }
     }
 
+    pub fn evm_compute_sumcheck_polynomials<S>(
+        &mut self,
+        evmfs: &mut EVMFs<F>,
+        folding_factor: usize,
+        pow_bits: f64,
+    ) -> ProofResult<MultilinearPoint<F>>
+    where
+        S: PowStrategy,
+    {
+        let mut res = Vec::with_capacity(folding_factor);
+
+        for _ in 0..folding_factor {
+            let sumcheck_poly = self.sumcheck_prover.compute_sumcheck_polynomial();
+            evmfs.absorb_scalars(sumcheck_poly.evaluations())?;
+            // merlin.add_scalars(sumcheck_poly.evaluations())?;
+            let [folding_randomness] = [evmfs.squeeze_scalars(1)[0]];
+            // let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
+            res.push(folding_randomness);
+
+            // TODO: Do PoW if needed
+            //if pow_bits > 0. {
+            //    merlin.challenge_pow::<S>(pow_bits)?;
+            //}
+
+            self.sumcheck_prover
+                .compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
+        }
+
+        res.reverse();
+        Ok(MultilinearPoint(res))
+    }
     pub fn compute_sumcheck_polynomials<S>(
         &mut self,
         merlin: &mut Merlin,
