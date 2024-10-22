@@ -1,8 +1,11 @@
-use sha3::{Digest, Keccak256};
 use std::{marker::PhantomData, usize};
 
 use ark_ff::{Field, PrimeField};
 use ark_serialize::SerializationError;
+use ethers_core::{
+    abi::{encode_packed, Token},
+    utils::keccak256,
+};
 use nimue::{
     plugins::{ark::FieldIOPattern, pow::PoWIOPattern},
     IOPattern, ProofError,
@@ -46,9 +49,9 @@ impl<F: Field> EVMFs<F> {
     }
 
     fn keccak(left: &[u8], right: &[u8]) -> [u8; 32] {
-        let mut keccak = Keccak256::new();
-        keccak.update([left, right].concat());
-        keccak.finalize().into()
+        let to_hash = [left, right].concat();
+        let encoded = encode_packed(&[Token::Bytes(to_hash)]).unwrap();
+        keccak256(encoded)
     }
 
     /// Arthur/Merlin
@@ -57,7 +60,6 @@ impl<F: Field> EVMFs<F> {
     pub fn squeeze_scalars(&mut self, n: usize) -> Vec<F> {
         let mut challenges = Vec::with_capacity(n);
         let n: u32 = n.try_into().unwrap();
-
         let mut challenge_bytes = Self::keccak(self.state.as_slice(), &0_u32.to_be_bytes());
         challenges.push(Self::bytes_to_scalar(&challenge_bytes));
 
@@ -191,6 +193,11 @@ where
 
 #[cfg(test)]
 pub mod tests {
+    use ethers_core::{
+        abi::{encode_packed, Token},
+        utils::keccak256,
+    };
+
     use super::EVMFs;
     use crate::crypto::fields::FieldBn256;
     pub type F = FieldBn256;
@@ -235,5 +242,30 @@ pub mod tests {
         assert_eq!(next_scalars[0], absorbed_scalars_1[0]);
         assert_eq!(next_scalars[1], absorbed_scalars_1[1]);
         assert_eq!(arthur_evmfs.squeeze_scalars(1)[0], squeezed_2);
+    }
+
+    #[test]
+    fn test_evm_fs_2() {
+        let mut evmfs = EVMFs::<F>::new();
+        let transcript = (0_u8..96_u8).into_iter().collect::<Vec<u8>>().to_vec();
+        evmfs.transcript = transcript;
+        let scalars = evmfs.next_scalars(2);
+        let squeezed = evmfs.squeeze_scalars(2);
+        for scalar in scalars {
+            println!("n: {}", scalar);
+        }
+        for scalar in squeezed {
+            println!("sq: {}", scalar);
+        }
+    }
+
+    #[test]
+    fn test_encode_packed() {
+        let left = vec![0_u8, 1_u8];
+        let right = vec![1_u8, 2_u8];
+        let to_hash = [left, right].concat();
+        let encoded = encode_packed(&[Token::Bytes(to_hash)]).unwrap();
+        let res = keccak256(encoded);
+        println!("{}", hex::encode(res));
     }
 }
