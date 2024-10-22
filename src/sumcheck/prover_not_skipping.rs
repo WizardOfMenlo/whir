@@ -1,11 +1,9 @@
 use ark_ff::Field;
 use nimue::{
-    plugins::{
-        ark::{FieldChallenges, FieldIOPattern, FieldWriter},
-        pow::{PoWChallenge, PowStrategy},
-    },
+    plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter},
     IOPattern, Merlin, ProofResult,
 };
+use nimue_pow::{PoWChallenge, PowStrategy};
 
 use crate::{
     fs_utils::WhirPoWIOPattern,
@@ -107,9 +105,9 @@ mod tests {
     use ark_ff::Field;
     use nimue::{
         plugins::ark::{FieldChallenges, FieldIOPattern, FieldReader},
-        plugins::pow::blake3::Blake3PoW,
         IOPattern, ProofResult,
     };
+    use nimue_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::fields::Field64,

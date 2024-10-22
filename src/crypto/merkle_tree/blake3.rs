@@ -1,9 +1,9 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-use super::HashCounter;
+use super::{HashCounter, IdentityDigestConverter};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::{Config, IdentityDigestConverter},
+    merkle_tree::Config,
     sponge::Absorb,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

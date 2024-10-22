@@ -4,7 +4,7 @@ pub mod mock;
 
 use std::{borrow::Borrow, marker::PhantomData, sync::atomic::AtomicUsize};
 
-use ark_crypto_primitives::crh::CRHScheme;
+use ark_crypto_primitives::{crh::CRHScheme, merkle_tree::DigestConverter, Error};
 use ark_serialize::CanonicalSerialize;
 use lazy_static::lazy_static;
 use rand::RngCore;
@@ -57,5 +57,17 @@ impl<F: CanonicalSerialize + Send> CRHScheme for LeafIdentityHasher<F> {
         let mut buf = vec![];
         CanonicalSerialize::serialize_compressed(input.borrow(), &mut buf)?;
         Ok(buf)
+    }
+}
+
+/// A trivial converter where digest of previous layer's hash is the same as next layer's input.
+pub struct IdentityDigestConverter<T> {
+    _prev_layer_digest: T,
+}
+
+impl<T> DigestConverter<T, T> for IdentityDigestConverter<T> {
+    type TargetType = T;
+    fn convert(item: T) -> Result<T, Error> {
+        Ok(item)
     }
 }

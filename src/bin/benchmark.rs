@@ -9,7 +9,8 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
-use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
+use nimue::{DefaultHash, IOPattern};
+use nimue_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{

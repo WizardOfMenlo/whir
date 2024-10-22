@@ -4,12 +4,10 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::{
-        ark::{FieldChallenges, FieldReader},
-        pow::{self, PoWChallenge},
-    },
+    plugins::ark::{FieldChallenges, FieldReader},
     Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
 };
+use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
 
 use crate::{
@@ -66,7 +64,7 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    PowStrategy: pow::PowStrategy,
+    PowStrategy: nimue_pow::PowStrategy,
 {
     pub fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Verifier {
