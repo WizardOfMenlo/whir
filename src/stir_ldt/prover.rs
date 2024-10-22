@@ -10,12 +10,10 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
 use nimue::{
-    plugins::{
-        ark::{FieldChallenges, FieldWriter},
-        pow::{self, PoWChallenge},
-    },
+    plugins::ark::{FieldChallenges, FieldWriter},
     ByteChallenges, ByteWriter, Merlin, ProofResult,
 };
+use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
 
 #[cfg(feature = "parallel")]
@@ -31,7 +29,7 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
-    PowStrategy: pow::PowStrategy,
+    PowStrategy: nimue_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
         self.0.uv_parameters.log_degree

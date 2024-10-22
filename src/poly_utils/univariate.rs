@@ -4,7 +4,7 @@ use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 // Compute the quotient
 pub fn poly_quotient<F: Field>(poly: &DensePolynomial<F>, points: &[F]) -> DensePolynomial<F> {
     let evaluations: Vec<_> = points.iter().map(|x| (*x, poly.evaluate(x))).collect();
-    let ans_polynomial = naive_interpolation(evaluations.iter());
+    let ans_polynomial = naive_interpolation(evaluations);
     let vanishing_poly = vanishing_poly(points);
     let numerator = poly + &ans_polynomial;
 

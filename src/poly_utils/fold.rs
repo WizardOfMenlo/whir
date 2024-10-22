@@ -5,6 +5,8 @@ use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::MultilinearPoint;
+
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
 // Compute the fold on that point
 pub fn compute_fold<F: Field>(
@@ -26,7 +28,6 @@ pub fn compute_fold<F: Field>(
             let f_value_0 = answers[i];
             let f_value_1 = answers[i + offset];
             let point_inv = coset_offset_inv * coset_index_inv;
-
             let left = f_value_0 + f_value_1;
             let right = point_inv * (f_value_0 - f_value_1);
 
@@ -42,6 +43,30 @@ pub fn compute_fold<F: Field>(
     }
 
     answers[0]
+}
+
+// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
+// Compute the univariate fold on that point
+pub fn compute_fold_univariate<F: Field>(
+    answers: &[F],
+    folding_randomness: F,
+    coset_offset_inv: F,
+    coset_gen_inv: F,
+    two_inv: F,
+    folding_factor: usize,
+) -> F {
+    // Either this or the other way around
+    let expanded_randomness =
+        MultilinearPoint::expand_from_univariate(folding_randomness, folding_factor).0;
+
+    compute_fold(
+        answers,
+        &expanded_randomness,
+        coset_offset_inv,
+        coset_gen_inv,
+        two_inv,
+        folding_factor,
+    )
 }
 
 pub fn restructure_evaluations<F: FftField>(

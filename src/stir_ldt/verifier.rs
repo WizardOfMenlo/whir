@@ -4,17 +4,15 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::{FftField, Field};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
 use nimue::{
-    plugins::{
-        ark::{FieldChallenges, FieldReader},
-        pow::{self, PoWChallenge},
-    },
+    plugins::ark::{FieldChallenges, FieldReader},
     Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
 };
+use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
 
 use crate::{
-    poly_utils::{fold::compute_fold, univariate::naive_interpolation},
-    utils::{self, expand_randomness},
+    poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
+    utils,
 };
 
 use super::{parameters::StirConfig, StirProof};
@@ -24,6 +22,7 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
+    two_inv: F,
     params: StirConfig<F, MerkleConfig, PowStrategy>,
 }
 
@@ -63,10 +62,13 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    PowStrategy: pow::PowStrategy,
+    PowStrategy: nimue_pow::PowStrategy,
 {
     pub fn new(params: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Verifier { params }
+        Verifier {
+            params,
+            two_inv: F::from(2).inverse().unwrap(),
+        }
     }
 
     fn parse_commitment(
@@ -277,8 +279,12 @@ where
                 r.ood_answers.iter().chain(&evaluations).copied().collect();
             let num_terms = quotient_set.len();
 
-            let ans_polynomial =
-                naive_interpolation(quotient_set.iter().cloned().zip(quotient_answers));
+            let ans_polynomial = naive_interpolation(
+                quotient_set
+                    .iter()
+                    .zip(quotient_answers)
+                    .map(|(x, y)| (*x, y)),
+            );
 
             // The points that we are querying the new function at
             let evaluation_indexes = if r_num == parsed.rounds.len() - 1 {
@@ -288,6 +294,10 @@ where
             }
             .clone();
 
+            let coset_generator_inv = r
+                .domain_gen_inv
+                .pow([(domain_size / coset_domain_size) as u64]);
+
             // The evaluations of the previous committed function ->
             // need to be reshaped into evaluations of the virtual function f'
             let committed_answers = &committed_functions_answers[r_num + 1];
@@ -296,6 +306,7 @@ where
             for (index, answer) in evaluation_indexes.into_iter().zip(committed_answers) {
                 // Coset eval is the evaluations of the virtual function on the coset
                 let mut coset_evals = Vec::with_capacity(1 << self.params.folding_factor);
+                let coset_offset_inv = r.domain_gen_inv.pow([index as u64]);
                 for j in 0..1 << self.params.folding_factor {
                     // TODO: Optimize
                     let evaluation_point =
@@ -327,10 +338,19 @@ where
                 }
 
                 // TODO: Compute the fold on these points
+                let eval = compute_fold_univariate(
+                    &coset_evals,
+                    r.folding_randomness,
+                    coset_offset_inv,
+                    coset_generator_inv,
+                    self.two_inv,
+                    self.params.folding_factor,
+                );
+
+                new_evaluations.push(eval);
             }
 
             evaluations = new_evaluations;
-
             domain_size /= 2;
         }
 
