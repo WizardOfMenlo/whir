@@ -1,4 +1,8 @@
-use std::{borrow::Borrow, marker::PhantomData};
+use std::{
+    borrow::Borrow,
+    fmt::{Display, Formatter},
+    marker::PhantomData,
+};
 
 use super::HashCounter;
 use ark_crypto_primitives::{
@@ -14,6 +18,12 @@ use sha3::Digest;
     Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct KeccakDigest([u8; 32]);
+
+impl Display for KeccakDigest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{}", hex::encode(self.as_ref()))
+    }
+}
 
 impl Absorb for KeccakDigest {
     fn to_sponge_bytes(&self, dest: &mut Vec<u8>) {

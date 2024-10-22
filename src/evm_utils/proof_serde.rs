@@ -1,4 +1,8 @@
-use crate::crypto::merkle_tree::keccak::KeccakDigest;
+use std::marker::PhantomData;
+
+use crate::crypto::{fields::Field256, merkle_tree::keccak::KeccakDigest};
+use ark_ff::FftField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{
     de::{MapAccess, Visitor},
     ser::SerializeStruct,
@@ -7,9 +11,11 @@ use serde::{
 
 use crate::evm_utils::proof_converter::OpenZeppelinMultiProof;
 
-struct OpenZeppelinMultiProofVisitor {}
-impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
-    type Value = OpenZeppelinMultiProof;
+struct OpenZeppelinMultiProofVisitor<F: FftField> {
+    _marker: PhantomData<F>,
+}
+impl<'de, F: FftField + EvmFieldElementSerDe> Visitor<'de> for OpenZeppelinMultiProofVisitor<F> {
+    type Value = OpenZeppelinMultiProof<F>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(formatter, "OpenZeppelinMultiProof")
@@ -18,23 +24,24 @@ impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
     fn visit_map<A>(
         self,
         mut map: A,
-    ) -> Result<OpenZeppelinMultiProof, <A as MapAccess<'de>>::Error>
+    ) -> Result<OpenZeppelinMultiProof<F>, <A as MapAccess<'de>>::Error>
     where
         A: serde::de::MapAccess<'de>,
     {
-        let mut leaves: Option<Vec<KeccakDigest>> = None;
+        let mut preimages: Option<Vec<Vec<F>>> = None;
         let mut proof: Option<Vec<KeccakDigest>> = None;
         let mut proof_flags: Option<Vec<bool>> = None;
         let mut root: Option<KeccakDigest> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
-                "leaves" => {
-                    //Parse the array of hex strings into KeccakDigests
-                    leaves = Some(
-                        map.next_value::<Vec<String>>()?
+                "preimages" => {
+                    preimages = Some(
+                        map.next_value::<Vec<Vec<String>>>()?
                             .iter()
-                            .map(|hex_str| keccak_from_string(hex_str))
+                            .map(|inner_vec| {
+                                inner_vec.iter().map(|val| F::deserialize(val)).collect()
+                            })
                             .collect(),
                     );
                 }
@@ -59,7 +66,7 @@ impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
         }
 
         Ok(OpenZeppelinMultiProof {
-            leaves: leaves.unwrap(),
+            preimages: preimages.unwrap(),
             proof: proof.unwrap(),
             proof_flags: proof_flags.unwrap(),
             root: root.unwrap(),
@@ -76,16 +83,18 @@ fn keccak_from_string(hex_str: &str) -> KeccakDigest {
     KeccakDigest::from(bytes_array)
 }
 
-impl<'de> Deserialize<'de> for OpenZeppelinMultiProof {
+impl<'de, F: FftField + EvmFieldElementSerDe> Deserialize<'de> for OpenZeppelinMultiProof<F> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_any(OpenZeppelinMultiProofVisitor {})
+        deserializer.deserialize_any(OpenZeppelinMultiProofVisitor::<F> {
+            _marker: PhantomData,
+        })
     }
 }
 
-impl Serialize for OpenZeppelinMultiProof {
+impl<F: FftField + EvmFieldElementSerDe> Serialize for OpenZeppelinMultiProof<F> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -93,13 +102,17 @@ impl Serialize for OpenZeppelinMultiProof {
         let mut state = serializer.serialize_struct("OpenZeppelinMultiProof", 3)?;
 
         state.serialize_field(
-            "leaves",
+            "preimages",
             &self
-                .leaves
+                .preimages
                 .iter()
-                // "0x" is necessary for Foundry to recognize it as bytes32
-                .map(|digest| "0x".to_owned() + &hex::encode(digest.as_ref()))
-                .collect::<Vec<String>>(),
+                .map(|inner_vec| {
+                    inner_vec
+                        .iter()
+                        .map(|val| val.serialize())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<Vec<_>>>(),
         )?;
         state.serialize_field(
             "proof",
@@ -118,5 +131,27 @@ impl Serialize for OpenZeppelinMultiProof {
         )?;
 
         state.end()
+    }
+}
+
+trait EvmFieldElementSerDe {
+    fn serialize(&self) -> String;
+    fn deserialize(serialized: &str) -> Self;
+}
+
+impl EvmFieldElementSerDe for Field256 {
+    fn serialize(&self) -> String {
+        let mut byte_buf = vec![];
+        self.serialize_compressed(&mut byte_buf).unwrap();
+        byte_buf.reverse();
+        "0x".to_owned() + &hex::encode(byte_buf)
+    }
+
+    fn deserialize(serialized: &str) -> Field256 {
+        // Remove "0x" prefix
+        let val = serialized.trim_start_matches("0x");
+        let mut buf = hex::decode(val).unwrap();
+        buf.reverse();
+        Field256::deserialize_uncompressed(buf.as_slice()).unwrap()
     }
 }
