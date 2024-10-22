@@ -86,7 +86,7 @@ where
         stir_proof: &StirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>> {
         // Derive initial combination randomness
-        let [mut folding_randomness] = arthur.next_scalars()?;
+        let [mut folding_randomness] = arthur.challenge_scalars()?;
 
         // PoW
         if self.params.starting_folding_pow_bits > 0. {
