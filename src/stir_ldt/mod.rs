@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn test_whir_ldt() {
+    fn test_stir_ldt() {
         let folding_factors = [1, 2, 3, 4];
         let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let soundness_type = [
