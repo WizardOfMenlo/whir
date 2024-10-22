@@ -191,19 +191,17 @@ where
     }
 }
 
+// TODO: remove print statements below, used for cross-checks with sol
+// ideally removed when ffi is setup
 #[cfg(test)]
 pub mod tests {
-    use ethers_core::{
-        abi::{encode_packed, Token},
-        utils::keccak256,
-    };
 
     use super::EVMFs;
     use crate::crypto::fields::FieldBn256;
     pub type F = FieldBn256;
 
     #[test]
-    fn test_evm_fs() {
+    fn test_evm_fs_merlin() {
         let mut evmfs = EVMFs::new();
         let _ = evmfs
             .absorb_scalars(&[F::from(42), F::from(24), F::from(42)])
@@ -245,9 +243,9 @@ pub mod tests {
     }
 
     #[test]
-    fn test_evm_fs_2() {
+    fn test_evm_fs_arthur() {
         let mut evmfs = EVMFs::<F>::new();
-        let transcript = (0_u8..96_u8).into_iter().collect::<Vec<u8>>().to_vec();
+        let transcript = (0_u8..160_u8).into_iter().collect::<Vec<u8>>().to_vec();
         evmfs.transcript = transcript;
         let scalars = evmfs.next_scalars(2);
         let squeezed = evmfs.squeeze_scalars(2);
@@ -257,15 +255,24 @@ pub mod tests {
         for scalar in squeezed {
             println!("sq: {}", scalar);
         }
-    }
 
-    #[test]
-    fn test_encode_packed() {
-        let left = vec![0_u8, 1_u8];
-        let right = vec![1_u8, 2_u8];
-        let to_hash = [left, right].concat();
-        let encoded = encode_packed(&[Token::Bytes(to_hash)]).unwrap();
-        let res = keccak256(encoded);
-        println!("{}", hex::encode(res));
+        let scalars = evmfs.next_scalars(1);
+        let squeezed = evmfs.squeeze_scalars(2);
+        for scalar in scalars {
+            println!("n: {}", scalar);
+        }
+        for scalar in squeezed {
+            println!("sq: {}", scalar);
+        }
+        let bytes = evmfs.next_bytes(32);
+        println!("n: {}", hex::encode(bytes));
+        let squeezed = evmfs.squeeze_scalars(1);
+        println!("sq: {}", squeezed[0]);
+
+        let bytes = evmfs.next_bytes(32);
+        println!("n: {}", hex::encode(bytes));
+        let squeezed = evmfs.squeeze_bytes(2);
+        println!("sq: {}", hex::encode(squeezed[0]));
+        println!("sq: {}", hex::encode(squeezed[1]));
     }
 }
