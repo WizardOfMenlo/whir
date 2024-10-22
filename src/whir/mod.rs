@@ -35,7 +35,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
+    use nimue::{DefaultHash, IOPattern};
+    use nimue_pow::blake3::Blake3PoW;
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
