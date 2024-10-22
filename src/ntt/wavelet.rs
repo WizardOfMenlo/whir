@@ -1,4 +1,5 @@
-use super::{transpose, utils::workload_size};
+use super::transpose;
+use crate::utils::workload_size;
 use ark_ff::Field;
 use std::cmp::max;
 

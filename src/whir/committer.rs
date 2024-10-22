@@ -1,5 +1,6 @@
 use super::parameters::WhirConfig;
 use crate::{
+    merkle_tree::{Hashers, MerkleTreeHasher, HASH_ZERO},
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
     utils,
@@ -49,6 +50,9 @@ where
     where
         Merlin: FieldChallenges<F> + ByteWriter,
     {
+        // TODO: Maybe even smaller expansions than 2?
+        // TODO: Evaluate on coset so that we are not committing to witness values
+        // directly, once we implement ZK.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / polynomial.num_coeffs();
         let evals = expand_from_coeff(polynomial.coeffs(), expansion);
@@ -77,17 +81,27 @@ where
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = folded_evals.chunks_exact(fold_size);
         #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals.par_chunks_exact(fold_size);
+        let leaves_iter = folded_evals.par_chunks_exact(fold_size);
 
+        dbg!(leaves_iter.len());
+        let leaves = vec![HASH_ZERO; leaves_iter.len()];
+
+        eprintln!("Merkle tree creation started.");
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            leafs_iter,
+            leaves_iter,
         )
         .unwrap();
 
-        let root = merkle_tree.root();
+        eprintln!("Merkle tree creation started again!");
+        let merklizer = MerkleTreeHasher::new(23, Hashers::Blake3);
+        let tree = merklizer.commit(&leaves);
+        dbg!(tree.len());
 
+        // TODO: We keep `folded_evals` in memory, really all we need is the root and upper levels.
+        // We can recompute specific leafs from the polynomial quite efficiently.
+        let root = merkle_tree.root();
         merlin.add_bytes(root.as_ref())?;
 
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];

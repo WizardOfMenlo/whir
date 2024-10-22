@@ -284,6 +284,7 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
+ "digest",
 ]
 
 [[package]]
@@ -914,8 +915,10 @@ dependencies = [
  "ark-test-curves",
  "blake2",
  "blake3",
+ "bytemuck",
  "clap",
  "derivative",
+ "digest",
  "lazy_static",
  "nimue",
  "nimue-pow",
