@@ -55,6 +55,14 @@ mod tests {
         pow_bits: usize,
         fold_type: FoldType,
     ) {
+        dbg!((
+            log_degree,
+            folding_factor,
+            soundness_type,
+            pow_bits,
+            fold_type
+        ));
+
         let num_coeffs = 1 << log_degree;
 
         let mut rng = ark_std::test_rng();

@@ -1,3 +1,5 @@
+use std::iter;
+
 use super::{committer::Witness, parameters::StirConfig, StirProof};
 use crate::{
     domain::Domain,
@@ -104,11 +106,17 @@ where
         // Base case
         if round_state.round == self.0.n_rounds() {
             // Coefficients of the polynomial
-            merlin.add_scalars(folded_coefficients.coeffs())?;
+            let mut coeffs = folded_coefficients.coeffs;
+            coeffs.extend(iter::repeat_n(
+                F::ZERO,
+                (1 << self.0.final_log_degree) - coeffs.len(),
+            ));
+            merlin.add_scalars(&coeffs)?;
 
             // Final verifier queries and answers
             let mut queries_seed = [0u8; 32];
             merlin.fill_challenge_bytes(&mut queries_seed)?;
+
             let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
             let final_challenge_indexes = utils::dedup((0..self.0.final_queries).map(|_| {
                 final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
