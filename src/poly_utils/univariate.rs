@@ -25,8 +25,8 @@ pub fn vanishing_poly<'a, F: Field>(points: impl IntoIterator<Item = &'a F>) -> 
 }
 
 // Computes a polynomial that interpolates the given points with the given answers
-pub fn naive_interpolation<'a, F: Field>(
-    points: impl IntoIterator<Item = &'a (F, F)>,
+pub fn naive_interpolation<F: Field>(
+    points: impl IntoIterator<Item = (F, F)>,
 ) -> DensePolynomial<F> {
     let points: Vec<_> = points.into_iter().collect();
     let vanishing_poly = vanishing_poly(points.iter().map(|(a, _)| a));

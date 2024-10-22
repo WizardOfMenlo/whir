@@ -50,6 +50,7 @@ where
         // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
         // They also partially overlap and undo one another. We should merge them.
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        // NOTE: This a prover helps, the following ones need to be Naive
         let folded_evals = restructure_evaluations(
             folded_evals,
             FoldType::ProverHelps,
