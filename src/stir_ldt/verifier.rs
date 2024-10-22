@@ -35,7 +35,6 @@ struct ParsedCommitment<D> {
 struct ParsedProof<F: Field> {
     rounds: Vec<ParsedRound<F>>,
     final_domain_gen: F,
-    final_domain_gen_inv: F,
     final_randomness_indexes: Vec<usize>,
     final_randomness_points: Vec<F>,
     final_randomness_answers: Vec<Vec<F>>,
@@ -207,7 +206,6 @@ where
         Ok(ParsedProof {
             rounds,
             final_domain_gen: domain_gen,
-            final_domain_gen_inv: domain_gen_inv,
             final_folding_randomness: folding_randomness,
             final_randomness_indexes,
             final_randomness_answers: final_randomness_answers.to_vec(),
@@ -268,7 +266,7 @@ where
         {
             // The next virtual function is defined by the following
             // TODO: This actually is just a single value that we need
-            let combination_randomness = r.combination_randomness.clone();
+            let combination_randomness = r.combination_randomness;
             let quotient_set: Vec<_> = r
                 .ood_points
                 .iter()
@@ -307,6 +305,7 @@ where
                 // Coset eval is the evaluations of the virtual function on the coset
                 let mut coset_evals = Vec::with_capacity(1 << self.params.folding_factor);
                 let coset_offset_inv = r.domain_gen_inv.pow([index as u64]);
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..1 << self.params.folding_factor {
                     // TODO: Optimize
                     let evaluation_point =
@@ -337,7 +336,6 @@ where
                     coset_evals.push(scale_factor * numerator * denom_inv);
                 }
 
-                // TODO: Compute the fold on these points
                 let eval = compute_fold_univariate(
                     &coset_evals,
                     r.folding_randomness,
