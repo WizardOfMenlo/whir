@@ -3,13 +3,7 @@ use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
     parameters::FoldType,
-    poly_utils::{
-        self,
-        coeffs::CoefficientList,
-        fold::{compute_fold, restructure_evaluations},
-        MultilinearPoint,
-    },
-    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
+    poly_utils::{self, fold::restructure_evaluations},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -109,9 +103,6 @@ where
             self.0.folding_factor,
         );
 
-        let log_degree =
-            self.0.uv_parameters.log_degree - (round_state.round + 1) * self.0.folding_factor;
-
         // Base case
         if round_state.round == self.0.n_rounds() {
             // Coefficients of the polynomial
@@ -143,7 +134,9 @@ where
                 merlin.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
             }
 
-            return Ok(StirProof(round_state.merkle_proofs));
+            return Ok(StirProof {
+                merkle_proofs: round_state.merkle_proofs,
+            });
         }
 
         let round_params = &self.0.round_parameters[round_state.round];
@@ -157,7 +150,7 @@ where
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
         let folded_evals = restructure_evaluations(
             folded_evals,
-            FoldType::ProverHelps,
+            FoldType::Naive,
             new_domain.backing_domain.group_gen(),
             new_domain.backing_domain.group_gen_inv(),
             self.0.folding_factor,
@@ -242,7 +235,6 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
-        // TODO: Update the witness here
         // The quotient polynomial is then computed
         let quotient_polynomial =
             poly_utils::univariate::poly_quotient(&folded_coefficients, &stir_challenges);

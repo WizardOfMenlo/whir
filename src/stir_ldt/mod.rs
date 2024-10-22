@@ -1,4 +1,5 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
@@ -9,10 +10,13 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct StirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct StirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+    F: Field + Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+}
 
 pub fn stir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
@@ -20,21 +24,22 @@ pub fn stir_proof_size<MerkleConfig, F>(
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+    F: Field + Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     transcript.len() + stir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_poly::univariate::DensePolynomial;
+    use ark_poly::DenseUVPolynomial;
     use nimue::{plugins::pow::blake3::Blake3PoW, DefaultHash, IOPattern};
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, ProtocolParameters, SoundnessType};
-    use crate::poly_utils::coeffs::CoefficientList;
-    use crate::whir_ldt::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
+    use crate::parameters::{FoldType, ProtocolParameters, SoundnessType, UnivariateParameters};
+    use crate::stir_ldt::{
+        committer::Committer, iopattern::StirIOPattern, parameters::StirConfig, prover::Prover,
         verifier::Verifier,
     };
 
@@ -43,20 +48,20 @@ mod tests {
     type F = Field64;
 
     fn make_stir_things(
-        num_variables: usize,
+        log_degree: usize,
         folding_factor: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
         fold_type: FoldType,
     ) {
-        let num_coeffs = 1 << num_variables;
+        let num_coeffs = 1 << log_degree;
 
         let mut rng = ark_std::test_rng();
         let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
 
-        let mv_params = MultivariateParameters::<F>::new(num_variables);
+        let mv_params = UnivariateParameters::<F>::new(log_degree);
 
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let stir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             security_level: 32,
             pow_bits,
             folding_factor,
@@ -68,13 +73,13 @@ mod tests {
             _pow_parameters: Default::default(),
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let params = StirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, stir_params);
 
-        let polynomial = CoefficientList::new(vec![F::from(1); num_coeffs]);
+        let polynomial = DensePolynomial::from_coefficients_vec(vec![F::from(1); num_coeffs]);
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
+            .add_stir_proof(&params)
             .clone();
 
         let mut merlin = io.to_merlin();
