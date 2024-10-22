@@ -107,10 +107,7 @@ where
         if round_state.round == self.0.n_rounds() {
             // Coefficients of the polynomial
             let mut coeffs = folded_coefficients.coeffs;
-            coeffs.extend(iter::repeat_n(
-                F::ZERO,
-                (1 << self.0.final_log_degree) - coeffs.len(),
-            ));
+            coeffs.resize(1 << self.0.final_log_degree, F::ZERO);
             merlin.add_scalars(&coeffs)?;
 
             // Final verifier queries and answers
