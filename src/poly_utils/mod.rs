@@ -17,6 +17,7 @@ pub mod sequential_lag_poly;
 pub mod streaming_evaluation_helper;
 
 /// Point (x_1,..., x_n) in F^n for some n. Often, the x_i are binary.
+/// For the latter case, we also have BinaryHypercubePoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultilinearPoint<F>(pub Vec<F>);
 
