@@ -8,7 +8,6 @@ use crate::{
 };
 use ark_crypto_primitives::merkle_tree::{MerkleTree, MultiPath};
 use ark_ff::FftField;
-use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -22,6 +21,7 @@ pub struct OpenZeppelinMultiProof {
 
 pub struct WhirEvmProof(pub(crate) Vec<(OpenZeppelinMultiProof, Vec<Vec<fields::Field256>>)>);
 
+/// Converts WHIR proof to an EVM-friendly format where the merkle proof is an `OpenZeppelinMultiProof`
 pub fn convert_whir_proof<PowStrategy>(
     proof: WhirProof<MerkleTreeEvmParams<fields::Field256>, fields::Field256>,
 ) -> Result<WhirEvmProof, Box<dyn Error>> {
@@ -34,6 +34,7 @@ pub fn convert_whir_proof<PowStrategy>(
     })
 }
 
+/// Converts a proof from the Arkworks to the OpenZeppelin format
 pub fn convert_merkle_proof<F: FftField>(
     proof: &MultiPath<MerkleTreeEvmParams<F>>,
 ) -> OpenZeppelinMultiProof {

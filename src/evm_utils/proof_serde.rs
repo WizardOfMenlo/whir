@@ -126,6 +126,7 @@ impl Serialize for WhirEvmProof {
 }
 
 trait EvmFieldElementSerDe {
+    /// Serialize a Field256 to a hex string in EVM format
     fn serialize(&self) -> String;
 }
 

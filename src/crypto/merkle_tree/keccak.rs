@@ -19,6 +19,7 @@ use sha3::Digest;
 )]
 pub struct KeccakDigest([u8; 32]);
 
+/// Display the KeccakDigest as EVM bytes32
 impl Display for KeccakDigest {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "0x{}", hex::encode(self.as_ref()))
