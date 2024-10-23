@@ -4,24 +4,39 @@ use crate::{
         merkle_tree::keccak::KeccakDigest,
     },
     evm_utils::hasher::MerkleTreeEvmParams,
+    whir::WhirProof,
 };
 use ark_crypto_primitives::merkle_tree::{MerkleTree, MultiPath};
 use ark_ff::FftField;
-use std::collections::{HashMap, HashSet};
+use serde::Serialize;
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+};
 
 #[derive(Debug, PartialEq)]
-pub struct OpenZeppelinMultiProof<F: FftField> {
-    pub(crate) preimages: Vec<Vec<F>>,
+pub struct OpenZeppelinMultiProof {
     pub(crate) proof: Vec<KeccakDigest>,
     pub(crate) proof_flags: Vec<bool>,
-    pub(crate) root: KeccakDigest,
 }
 
-pub fn convert_proof<F: FftField>(
+pub struct WhirEvmProof(pub(crate) Vec<(OpenZeppelinMultiProof, Vec<Vec<fields::Field256>>)>);
+
+pub fn convert_whir_proof<PowStrategy>(
+    proof: WhirProof<MerkleTreeEvmParams<fields::Field256>, fields::Field256>,
+) -> Result<WhirEvmProof, Box<dyn Error>> {
+    let mut converted_proofs = vec![];
+    for (proof, answers) in proof.0 {
+        converted_proofs.push((convert_merkle_proof(&proof), answers));
+    }
+    Ok(WhirEvmProof {
+        0: converted_proofs,
+    })
+}
+
+pub fn convert_merkle_proof<F: FftField>(
     proof: &MultiPath<MerkleTreeEvmParams<F>>,
-    preimages: Vec<Vec<F>>,
-    root: KeccakDigest,
-) -> OpenZeppelinMultiProof<F> {
+) -> OpenZeppelinMultiProof {
     let path_len = proof.auth_paths_suffixes[0].len();
     let tree_height = path_len + 1;
 
@@ -90,11 +105,9 @@ pub fn convert_proof<F: FftField>(
         }
     }
 
-    OpenZeppelinMultiProof::<F> {
-        preimages,
+    OpenZeppelinMultiProof {
         proof: converted_proof,
         proof_flags: converted_proof_flags,
-        root,
     }
 }
 
@@ -138,7 +151,7 @@ mod tests {
         crypto::fields::Field256,
         evm_utils::{
             hasher::MerkleTreeEvmParams,
-            proof_converter::{convert_proof, OpenZeppelinMultiProof},
+            proof_converter::{convert_merkle_proof, OpenZeppelinMultiProof},
         },
     };
 
@@ -238,14 +251,9 @@ mod tests {
             .generate_multi_proof(indices_to_prove.to_owned())
             .unwrap();
 
-        let preimages = indices_to_prove
-            .iter()
-            .map(|i| leaf_preimages[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect::<Vec<_>>();
-
-        let converted_proof = convert_proof(&proof, preimages, merkle_tree.root());
+        let converted_proof = convert_merkle_proof(&proof);
         let file = File::open(file_path).unwrap();
-        let expected_proof: OpenZeppelinMultiProof<F> = serde_json::from_reader(file).unwrap();
+        let expected_proof: OpenZeppelinMultiProof = serde_json::from_reader(file).unwrap();
         assert_eq!(converted_proof, expected_proof);
     }
 }
