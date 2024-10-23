@@ -14,7 +14,9 @@ use crate::{
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
+use ark_ff::Field;
 use ark_poly::EvaluationDomain;
+use ark_serialize::SerializationError;
 use nimue::{
     plugins::{
         ark::{FieldChallenges, FieldWriter},
@@ -22,10 +24,12 @@ use nimue::{
     },
     ByteChallenges, ByteWriter, Merlin, ProofResult,
 };
+use num_bigint::BigUint;
 use rand::{Rng, SeedableRng};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use sha3::digest::generic_array::functional;
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
@@ -200,18 +204,33 @@ where
             // merlin.add_scalars(folded_coefficients.coeffs())?;
 
             // Final verifier queries and answers
-            let queries_seed = evmfs.squeeze_bytes(32)[0];
-            // let mut queries_seed = [0u8; 32];
-            // merlin.fill_challenge_bytes(&mut queries_seed)?;
-            let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
-            let final_challenge_indexes = utils::dedup((0..self.0.final_queries).map(|_| {
-                final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
+            // let queries_seed = evmfs.squeeze_bytes(32)[0];
 
+            // let mut final_gen_2 = evmfs.absorb_bytes(&queries_seed);
+            let final_gen = evmfs.squeeze_scalars(self.0.final_queries);
+            let max_target = BigUint::from(round_state.domain.folded_size(self.0.folding_factor));
+            let final_challenge_indexes = utils::dedup(
+                final_gen
+                    .into_iter()
+                    .map(|idx| to_range(idx, &max_target))
+                    .collect::<Vec<usize>>(),
+            );
             let merkle_proof = round_state
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
                 .unwrap();
+
+            // let mut queries_seed = [0u8; 32];
+            // merlin.fill_challenge_bytes(&mut queries_seed)?;
+            //let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
+            //let final_challenge_indexes = utils::dedup((0..self.0.final_queries).map(|_| {
+            //    final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
+            //}));
+
+            //let merkle_proof = round_state
+            //    .prev_merkle
+            //    .generate_multi_proof(final_challenge_indexes.clone())
+            //    .unwrap();
             let fold_size = 1 << self.0.folding_factor;
             let answers = final_challenge_indexes
                 .into_iter()
@@ -289,15 +308,23 @@ where
         }
 
         // STIR queries
-        let mut stir_queries_seed = evmfs.squeeze_bytes(32)[0];
+        // let mut stir_queries_seed = evmfs.squeeze_bytes(32)[0];
+        let stir_gen = evmfs.squeeze_scalars(round_params.num_queries);
+        let max_target = BigUint::from(round_state.domain.folded_size(self.0.folding_factor));
+        let stir_challenges_indexes = utils::dedup(
+            stir_gen
+                .into_iter()
+                .map(|idx| to_range(idx, &max_target))
+                .collect::<Vec<usize>>(),
+        );
 
         // let mut stir_queries_seed = [0u8; 32];
         // merlin.fill_challenge_bytes(&mut stir_queries_seed)?;
-        let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
-        let stir_challenges_indexes =
-            utils::dedup((0..round_params.num_queries).map(|_| {
-                stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
+        // let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
+        // let stir_challenges_indexes =
+        //     utils::dedup((0..round_params.num_queries).map(|_| {
+        //         stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
+        //     }));
 
         let domain_scaled_gen = round_state
             .domain
@@ -324,6 +351,7 @@ where
             .collect();
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers.clone();
+
         match self.0.fold_optimisation {
             FoldType::Naive => {
                 // See `Verifier::compute_folds_full`
@@ -614,4 +642,38 @@ where
     prev_merkle: MerkleTree<MerkleConfig>,
     prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+}
+
+fn scalar_to_bytes(scalar: impl Field) -> Result<[u8; 32], SerializationError> {
+    let mut bytes = [0_u8; 32];
+    scalar.serialize_uncompressed(&mut bytes[..])?;
+    Ok(bytes)
+}
+
+// WARNING: adhoc code that should not be trusted
+pub fn to_range(element: impl Field, max_target: &BigUint) -> usize {
+    let element = BigUint::from_bytes_le(&scalar_to_bytes(element).unwrap());
+    let modulo = element % max_target;
+    usize::from_str_radix(&modulo.to_string(), 10).unwrap()
+}
+
+#[cfg(test)]
+pub mod tests {
+    use crate::crypto::fields::FieldBn256;
+    use crate::whir::prover::scalar_to_bytes;
+    use num_bigint::BigUint;
+    type F = FieldBn256;
+
+    #[test]
+    fn test_range() {
+        let a = F::from(1010);
+        let r = F::from(19);
+        let a = BigUint::from_bytes_le(&scalar_to_bytes(a).unwrap());
+        let r = BigUint::from_bytes_le(&scalar_to_bytes(r).unwrap());
+        // WARNING: this is not safe. I just needed a quick goto to generate the range
+        a % r;
+        // BigUint::from_str(&format(a));
+        // a % r;
+        //(F::MODULUS - 1)
+    }
 }

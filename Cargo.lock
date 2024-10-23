@@ -1692,6 +1692,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "nimue",
+ "num-bigint",
  "rand",
  "rand_chacha",
  "rayon",

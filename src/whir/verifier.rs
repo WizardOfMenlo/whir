@@ -10,6 +10,7 @@ use nimue::{
     },
     Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
 };
+use num_bigint::BigUint;
 use rand::{Rng, SeedableRng};
 
 use crate::{
@@ -20,7 +21,7 @@ use crate::{
     utils::{self, expand_randomness},
 };
 
-use super::{parameters::WhirConfig, Statement, WhirProof};
+use super::{parameters::WhirConfig, prover::to_range, Statement, WhirProof};
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
 where
@@ -195,15 +196,23 @@ where
                 // arthur.fill_next_scalars(&mut ood_answers)?;
             }
 
-            // TODO: EVMFS: Replace the Chacha20Rng
-            let mut stir_queries_seed = evmfs.squeeze_bytes(32)[0];
-            //            let mut stir_queries_seed = [0u8; 32];
-            //           arthur.fill_challenge_bytes(&mut stir_queries_seed)?;
-            let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
+            let stir_gen = evmfs.squeeze_scalars(round_params.num_queries);
             let folded_domain_size = domain_size / (1 << self.params.folding_factor);
+            let max_target = BigUint::from(folded_domain_size);
             let stir_challenges_indexes = utils::dedup(
-                (0..round_params.num_queries).map(|_| stir_gen.gen_range(0..folded_domain_size)),
+                stir_gen
+                    .into_iter()
+                    .map(|idx| to_range(idx, &max_target))
+                    .collect::<Vec<usize>>(),
             );
+
+            // let mut stir_queries_seed = [0u8; 32];
+            // arthur.fill_challenge_bytes(&mut stir_queries_seed)?;
+            // let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
+            // let stir_challenges_indexes = utils::dedup(
+            //    (0..round_params.num_queries).map(|_| stir_gen.gen_range(0..folded_domain_size)),
+            //);
+
             let stir_challenges_points = stir_challenges_indexes
                 .iter()
                 .map(|index| exp_domain_gen.pow([*index as u64]))
@@ -277,14 +286,24 @@ where
         let final_coefficients = CoefficientList::new(final_coefficients);
 
         // Final queries verify
-        let mut queries_seed = evmfs.squeeze_bytes(32)[0];
-        //let mut queries_seed = [0u8; 32];
-        //arthur.fill_challenge_bytes(&mut queries_seed)?;
-        let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
+        // let mut queries_seed = evmfs.squeeze_bytes(32)[0];
+        // let mut queries_seed = [0u8; 32];
+        // arthur.fill_challenge_bytes(&mut queries_seed)?;
+        // let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
+
+        let final_gen = evmfs.squeeze_scalars(self.params.final_queries);
         let folded_domain_size = domain_size / (1 << self.params.folding_factor);
+
+        let max_target = BigUint::from(folded_domain_size);
         let final_randomness_indexes = utils::dedup(
-            (0..self.params.final_queries).map(|_| final_gen.gen_range(0..folded_domain_size)),
+            final_gen
+                .into_iter()
+                .map(|idx| to_range(idx, &max_target))
+                .collect::<Vec<usize>>(),
         );
+        //let final_randomness_indexes = utils::dedup(
+        //    (0..self.params.final_queries).map(|_| final_gen.gen_range(0..folded_domain_size)),
+        //);
         let final_randomness_points = final_randomness_indexes
             .iter()
             .map(|index| exp_domain_gen.pow([*index as u64]))

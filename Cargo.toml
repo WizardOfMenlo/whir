@@ -27,6 +27,7 @@ lazy_static = "1.4"
 rayon = { version = "1.10.0", optional = true }
 hex = "0.4"
 ethers-core = "2.0.14"
+num-bigint = "0.4.6"
 
 [profile.release]
 debug = true
