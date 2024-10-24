@@ -134,11 +134,13 @@ mod evm_tests {
             .evm_prove(&mut evmfs_merlin, statement.clone(), evm_witness)
             .unwrap();
         let mut evmfs_arthur = evmfs_merlin.to_arthur();
+        // Return the untouched transcript
+        let proof_transcript = evmfs_arthur.clone();
         assert!(verifier
             .evm_verify(&mut evmfs_arthur, &statement, &evm_proof)
             .is_ok());
 
-        (evmfs_arthur, statement, evm_proof)
+        (proof_transcript, statement, evm_proof)
     }
 
     #[test]
