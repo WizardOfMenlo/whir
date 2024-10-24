@@ -1,4 +1,5 @@
 use crate::crypto::merkle_tree::keccak::KeccakDigest;
+use ark_ff::PrimeField;
 use serde::{
     de::{MapAccess, Visitor},
     ser::SerializeStruct,
@@ -6,6 +7,8 @@ use serde::{
 };
 
 use crate::evm_utils::proof_converter::OpenZeppelinMultiProof;
+
+use super::proof_converter::WhirEvmProof;
 
 struct OpenZeppelinMultiProofVisitor {}
 impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
@@ -22,22 +25,11 @@ impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
     where
         A: serde::de::MapAccess<'de>,
     {
-        let mut leaves: Option<Vec<KeccakDigest>> = None;
         let mut proof: Option<Vec<KeccakDigest>> = None;
         let mut proof_flags: Option<Vec<bool>> = None;
-        let mut root: Option<KeccakDigest> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
-                "leaves" => {
-                    //Parse the array of hex strings into KeccakDigests
-                    leaves = Some(
-                        map.next_value::<Vec<String>>()?
-                            .iter()
-                            .map(|hex_str| keccak_from_string(hex_str))
-                            .collect(),
-                    );
-                }
                 "proof" => {
                     proof = Some(
                         map.next_value::<Vec<String>>()?
@@ -49,9 +41,6 @@ impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
                 "proofFlags" => {
                     proof_flags = Some(map.next_value()?);
                 }
-                "root" => {
-                    root = Some(keccak_from_string(&map.next_value::<String>()?));
-                }
                 _ => {
                     println!("Unknown key: {}", key);
                 }
@@ -59,10 +48,8 @@ impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
         }
 
         Ok(OpenZeppelinMultiProof {
-            leaves: leaves.unwrap(),
             proof: proof.unwrap(),
             proof_flags: proof_flags.unwrap(),
-            root: root.unwrap(),
         })
     }
 }
@@ -93,15 +80,6 @@ impl Serialize for OpenZeppelinMultiProof {
         let mut state = serializer.serialize_struct("OpenZeppelinMultiProof", 3)?;
 
         state.serialize_field(
-            "leaves",
-            &self
-                .leaves
-                .iter()
-                // "0x" is necessary for Foundry to recognize it as bytes32
-                .map(|digest| "0x".to_owned() + &hex::encode(digest.as_ref()))
-                .collect::<Vec<String>>(),
-        )?;
-        state.serialize_field(
             "proof",
             &self
                 .proof
@@ -111,12 +89,47 @@ impl Serialize for OpenZeppelinMultiProof {
                 .collect::<Vec<String>>(),
         )?;
         state.serialize_field("proofFlags", &self.proof_flags)?;
-        state.serialize_field(
-            "root",
-            // "0x" is necessary for Foundry to recognize it as bytes32
-            &("0x".to_owned() + &hex::encode(self.root.as_ref())),
-        )?;
 
         state.end()
+    }
+}
+
+impl<F: PrimeField> Serialize for WhirEvmProof<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("WhirEvmProof", 1)?;
+        state.serialize_field(
+            "proofs",
+            &self
+                .0
+                .iter()
+                .map(|(proof, answers)| {
+                    (
+                        proof,
+                        answers
+                            .iter()
+                            .map(|inner_vec| inner_vec.iter().map(F::serialize).collect())
+                            .collect::<Vec<Vec<String>>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        state.end()
+    }
+}
+
+pub trait EvmFieldElementSerDe {
+    /// Serialize a PrimeField to a hex string in EVM format
+    fn serialize(&self) -> String;
+}
+
+impl<T: PrimeField> EvmFieldElementSerDe for T {
+    fn serialize(&self) -> String {
+        let mut byte_buf = vec![];
+        self.serialize_compressed(&mut byte_buf).unwrap();
+        byte_buf.reverse();
+        "0x".to_owned() + &hex::encode(byte_buf)
     }
 }

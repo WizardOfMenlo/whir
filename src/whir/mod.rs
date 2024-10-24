@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
+use crate::evm_utils::proof_serde::EvmFieldElementSerDe;
 use crate::poly_utils::MultilinearPoint;
 
 pub mod committer;
@@ -22,7 +23,7 @@ impl<F: PrimeField> Serialize for MultilinearPoint<F> {
     where
         S: Serializer,
     {
-        let str_vec: Vec<String> = self.0.iter().map(|x| x.to_string()).collect();
+        let str_vec: Vec<String> = self.0.iter().map(F::serialize).collect();
         str_vec.serialize(serializer)
     }
 }
@@ -34,7 +35,7 @@ impl<F: PrimeField> Serialize for Statement<F> {
     {
         let mut state = serializer.serialize_struct("Statement", 2)?;
         state.serialize_field("points", &self.points)?;
-        let evaluations_str: Vec<String> = self.evaluations.iter().map(|x| x.to_string()).collect();
+        let evaluations_str: Vec<String> = self.evaluations.iter().map(F::serialize).collect();
         state.serialize_field("evaluations", &evaluations_str)?;
         state.end()
     }
@@ -42,7 +43,7 @@ impl<F: PrimeField> Serialize for Statement<F> {
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct WhirProof<MerkleConfig, F>(pub(crate) Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
@@ -60,10 +61,14 @@ where
 
 #[cfg(test)]
 mod evm_tests {
-    use nimue::plugins::pow::blake3::Blake3PoW;
+    use std::io::Write;
+
+    use nimue::plugins::pow::keccak::KeccakPoW;
 
     use crate::crypto::fields::FieldBn256;
     use crate::crypto::merkle_tree::keccak as merkle_tree;
+    use crate::evm_utils::hasher::MerkleTreeEvmParams;
+    use crate::evm_utils::proof_converter::{convert_whir_proof, FullEvmProof};
     use crate::fs_utils::EVMFs;
     use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
@@ -73,8 +78,10 @@ mod evm_tests {
         committer::Committer, parameters::WhirConfig, prover::Prover, verifier::Verifier,
     };
 
-    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
-    type PowStrategy = Blake3PoW;
+    use super::WhirProof;
+
+    type MerkleConfig = MerkleTreeEvmParams<F>;
+    type PowStrategy = KeccakPoW;
     type F = FieldBn256;
 
     fn evm_make_whir_things(
@@ -84,7 +91,7 @@ mod evm_tests {
         soundness_type: SoundnessType,
         pow_bits: usize,
         fold_type: FoldType,
-    ) {
+    ) -> (EVMFs<F>, Statement<F>, WhirProof<MerkleConfig, F>) {
         let num_coeffs = 1 << num_variables;
 
         let mut rng = ark_std::test_rng();
@@ -130,6 +137,8 @@ mod evm_tests {
         assert!(verifier
             .evm_verify(&mut evmfs_arthur, &statement, &evm_proof)
             .is_ok());
+
+        (evmfs_arthur, statement, evm_proof)
     }
 
     #[test]
@@ -183,6 +192,37 @@ mod evm_tests {
             pow_bits,
             fold_type,
         );
+    }
+
+    #[test]
+    fn test_serialize_full_proof() {
+        let folding_factor = 4;
+        let soundness_type = SoundnessType::ConjectureList;
+        let fold_type = FoldType::ProverHelps;
+        let num_points = 2;
+        let pow_bits = 10;
+        let num_variables = 3 * folding_factor;
+        let proof = evm_make_whir_things(
+            num_variables,
+            folding_factor,
+            num_points,
+            soundness_type,
+            pow_bits,
+            fold_type,
+        );
+
+        let full_proof = FullEvmProof {
+            whir_proof: convert_whir_proof::<PowStrategy, F>(proof.2).unwrap(),
+            statement: proof.1,
+            arthur: proof.0,
+        };
+        let full_proof_json = serde_json::to_string_pretty(&full_proof).unwrap();
+        let mut file = std::fs::File::create(format!(
+            "proof_{}_{}_{}_{}_{}_{}.json",
+            num_variables, folding_factor, num_points, soundness_type, pow_bits, fold_type
+        ))
+        .unwrap();
+        file.write_all(full_proof_json.as_bytes()).unwrap();
     }
 }
 

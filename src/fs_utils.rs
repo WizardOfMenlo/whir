@@ -11,6 +11,7 @@ use nimue::{
     plugins::{ark::FieldIOPattern, pow::PoWIOPattern},
     IOPattern, ProofError,
 };
+use serde::{ser::SerializeStruct, Serialize};
 
 /// Fiat shamir, for the EVM
 /// Prototype implementation
@@ -153,6 +154,18 @@ impl<F: Field> EVMFs<F> {
             self.push_to_transcript(&bytes);
         }
         Ok(())
+    }
+}
+
+impl<F: Field> Serialize for EVMFs<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("EVMFs", 2)?;
+        state.serialize_field("transcript", &self.transcript)?;
+        state.serialize_field("state", &self.state)?;
+        state.end()
     }
 }
 
