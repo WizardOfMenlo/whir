@@ -184,8 +184,13 @@ impl<F: Field> Serialize for EVMFs<F> {
         S: serde::Serializer,
     {
         let mut state = serializer.serialize_struct("EVMFs", 2)?;
-        state.serialize_field("transcript", &self.transcript)?;
-        state.serialize_field("state", &self.state)?;
+        let transcript_hex = format!("0x{}", hex::encode(&self.transcript));
+        state.serialize_field("transcript", &transcript_hex)?;
+        assert!(
+            self.state.is_empty(),
+            "State should be empty when serializing"
+        );
+        state.skip_field("state")?;
         state.end()
     }
 }
