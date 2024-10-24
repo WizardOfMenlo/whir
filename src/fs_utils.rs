@@ -1,4 +1,7 @@
-use nimue::plugins::pow::PowStrategy;
+use nimue::{
+    plugins::pow::{PoWChallenge, PowStrategy},
+    ProofResult,
+};
 use std::{marker::PhantomData, usize};
 
 use ark_ff::{Field, PrimeField};
@@ -135,6 +138,23 @@ impl<F: Field> EVMFs<F> {
         scalars
     }
 
+    /// Arthur only PoW module
+    /// TODO
+    pub fn arthur_challenge_pow<S: PowStrategy>(&mut self, bits: f64) -> Result<(), ProofError> {
+        // get challenge from squeezing state
+        let challenge = self.squeeze_bytes(32)[0];
+        // get nonce solving pow from transcript, nonce should be eight bytes
+        todo!();
+        // get nonce solving pow from transcript, nonce should be eight bytes
+        // let nonce = u64::from_be_bytes(self.next_bytes(32)[0]);
+        // check pow
+        // if S::new(challenge, bits).check(nonce) {
+        //    Ok(())
+        //} else {
+        //    Err(ProofError::InvalidProof)
+        //}
+    }
+
     /// Merlin
     pub fn absorb_bytes(&mut self, bytes: &[u8]) {
         assert!(bytes.len() == 32, "EVMFs expects 32 bytes arrays");
@@ -226,12 +246,28 @@ impl PowStrategy for KeccakEVMPoW {
     }
 }
 
+impl<F: Field> PoWChallenge for EVMFs<F> {
+    fn challenge_pow<S: PowStrategy>(&mut self, bits: f64) -> ProofResult<()> {
+        // get challenge from verifier
+        let challenge = self.squeeze_bytes(32)[0];
+        // compute nonce solving pow
+        let nonce = S::new(challenge, bits)
+            .solve()
+            .ok_or(ProofError::InvalidProof)?;
+        // absorb nonce (i.e. hash and append to transcript)
+        self.absorb_bytes(&nonce.to_be_bytes());
+        Ok(())
+    }
+}
+
 // TODO: remove print statements below, used for cross-checks with sol
 // ideally removed when ffi is setup
 #[cfg(test)]
 pub mod tests {
 
-    use super::EVMFs;
+    use nimue::plugins::pow::PoWChallenge;
+
+    use super::{EVMFs, KeccakEVMPoW};
     use crate::crypto::fields::FieldBn256;
     pub type F = FieldBn256;
 
@@ -309,5 +345,17 @@ pub mod tests {
         let squeezed = evmfs.squeeze_bytes(2);
         println!("sq: {}", hex::encode(squeezed[0]));
         println!("sq: {}", hex::encode(squeezed[1]));
+    }
+
+    #[test]
+    fn evm_fs_pow() {
+        let mut merlin = EVMFs::new();
+        merlin.absorb_scalars(&[F::from(42)]).unwrap();
+        // this won't work since we haven't implemented the pow check logic yet
+        merlin.challenge_pow::<KeccakEVMPoW>(5.0).unwrap();
+
+        let mut arthur = merlin.to_arthur();
+        arthur.next_scalars(1);
+        arthur.arthur_challenge_pow::<KeccakEVMPoW>(5.0).unwrap();
     }
 }
