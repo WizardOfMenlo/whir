@@ -125,7 +125,7 @@ where
     acc
 }
 
-/// Compute eq(coords,point), where eq is the equality polynomial, where point is not neccessarily binary.
+/// Compute eq(coords,point), where eq is the equality polynomial and where point is not neccessarily binary.
 ///
 /// Recall that the equality polynomial eq(c, p) is defined as eq(c,p) == \prod_i c_i * p_i + (1-c_i)*(1-p_i).
 /// Note that for fixed p, viewed as a polynomial in c, it is the interpolation polynomial associated to the evaluation point p in the evaluation set {0,1}^n.
@@ -145,8 +145,9 @@ where
 }
 
 // TODO: Precompute two_inv?
+// Alternatively, compute it directly without the general (and slow) .inverse() map.
 
-/// Compute eq3(coords,point), where eq3 is the equality polynomial for {0,1,2}^n and point is interpreted as an element from {0,1,2}^n via ternary decomposition.
+/// Compute eq3(coords,point), where eq3 is the equality polynomial for {0,1,2}^n and point is interpreted as an element from {0,1,2}^n via (big Endian) ternary decomposition.
 ///
 /// eq3(coords, point) is the unique polynomial of degree <=2 in each variable, s.t.
 /// for coords, point in {0,1,2}^n, we have:
@@ -163,6 +164,8 @@ where
 
     let mut acc = F::ONE;
 
+    // Note: This iterates over the ternary decomposition least-significant trit(?) first.
+    // Since our convention is big endian, we reverse the order of coords to account for this.
     for &val in coords.0.iter().rev() {
         let b = point % 3;
         acc *= match b {
