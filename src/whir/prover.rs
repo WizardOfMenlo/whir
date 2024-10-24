@@ -659,20 +659,25 @@ pub fn to_range(element: impl Field, max_target: &BigUint) -> usize {
 #[cfg(test)]
 pub mod tests {
     use crate::crypto::fields::FieldBn256;
-    use crate::whir::prover::scalar_to_bytes;
+    use crate::fs_utils::EVMFs;
+    use crate::utils;
     use num_bigint::BigUint;
+
+    use super::to_range;
     type F = FieldBn256;
 
     #[test]
-    fn test_range() {
-        let a = F::from(1010);
-        let r = F::from(19);
-        let a = BigUint::from_bytes_le(&scalar_to_bytes(a).unwrap());
-        let r = BigUint::from_bytes_le(&scalar_to_bytes(r).unwrap());
-        // WARNING: this is not safe. I just needed a quick goto to generate the range
-        a % r;
-        // BigUint::from_str(&format(a));
-        // a % r;
-        //(F::MODULUS - 1)
+    fn test_to_range_and_sort() {
+        // used in the context of sorting out indexes when doing merkle tree queries
+        let mut evmfs = EVMFs::<F>::new();
+        evmfs.absorb_bytes(&[4_u8, 2_u8]);
+        let squeezed = evmfs.squeeze_scalars(5);
+        let max_range = BigUint::from(15_u8);
+        let ranged_squeezed = squeezed
+            .into_iter()
+            .map(|x| to_range(x, &max_range))
+            .collect::<Vec<usize>>();
+        let ordered_deduped_squeezed = utils::dedup(ranged_squeezed);
+        assert_eq!(ordered_deduped_squeezed, vec![0, 3, 11, 12]);
     }
 }

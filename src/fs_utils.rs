@@ -156,6 +156,7 @@ impl<F: Field> EVMFs<F> {
     }
 
     /// Merlin
+    /// TODO: remove 32 bytes length assertion
     pub fn absorb_bytes(&mut self, bytes: &[u8]) {
         assert!(bytes.len() == 32, "EVMFs expects 32 bytes arrays");
         // when serialized uncompressed, F is serialized in be
