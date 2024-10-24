@@ -4,10 +4,12 @@ use crate::{
         merkle_tree::keccak::KeccakDigest,
     },
     evm_utils::hasher::MerkleTreeEvmParams,
-    whir::WhirProof,
+    fs_utils::EVMFs,
+    whir::{Statement, WhirProof},
 };
 use ark_crypto_primitives::merkle_tree::{MerkleTree, MultiPath};
-use ark_ff::FftField;
+use ark_ff::PrimeField;
+use serde::{ser::SerializeStruct, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -19,23 +21,40 @@ pub struct OpenZeppelinMultiProof {
     pub(crate) proof_flags: Vec<bool>,
 }
 
-pub struct WhirEvmProof(pub(crate) Vec<(OpenZeppelinMultiProof, Vec<Vec<fields::Field256>>)>);
+pub struct FullEvmProof<F: PrimeField> {
+    pub whir_proof: WhirEvmProof<F>,
+    pub statement: Statement<F>,
+    pub arthur: EVMFs<F>,
+}
+
+impl<F: PrimeField> Serialize for FullEvmProof<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("FullEvmProof", 3)?;
+        state.serialize_field("whir_proof", &self.whir_proof)?;
+        state.serialize_field("statement", &self.statement)?;
+        state.serialize_field("arthur", &self.arthur)?;
+        state.end()
+    }
+}
+
+pub struct WhirEvmProof<F>(pub(crate) Vec<(OpenZeppelinMultiProof, Vec<Vec<F>>)>);
 
 /// Converts WHIR proof to an EVM-friendly format where the merkle proof is an `OpenZeppelinMultiProof`
-pub fn convert_whir_proof<PowStrategy>(
-    proof: WhirProof<MerkleTreeEvmParams<fields::Field256>, fields::Field256>,
-) -> Result<WhirEvmProof, Box<dyn Error>> {
+pub fn convert_whir_proof<PowStrategy, F: PrimeField>(
+    proof: WhirProof<MerkleTreeEvmParams<F>, F>,
+) -> Result<WhirEvmProof<F>, Box<dyn Error>> {
     let mut converted_proofs = vec![];
     for (proof, answers) in proof.0 {
         converted_proofs.push((convert_merkle_proof(&proof), answers));
     }
-    Ok(WhirEvmProof {
-        0: converted_proofs,
-    })
+    Ok(WhirEvmProof(converted_proofs))
 }
 
 /// Converts a proof from the Arkworks to the OpenZeppelin format
-pub fn convert_merkle_proof<F: FftField>(
+pub fn convert_merkle_proof<F: PrimeField>(
     proof: &MultiPath<MerkleTreeEvmParams<F>>,
 ) -> OpenZeppelinMultiProof {
     let path_len = proof.auth_paths_suffixes[0].len();

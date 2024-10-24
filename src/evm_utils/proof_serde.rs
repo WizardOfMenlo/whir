@@ -1,5 +1,5 @@
-use crate::crypto::{fields::Field256, merkle_tree::keccak::KeccakDigest};
-use ark_serialize::CanonicalSerialize;
+use crate::crypto::merkle_tree::keccak::KeccakDigest;
+use ark_ff::PrimeField;
 use serde::{
     de::{MapAccess, Visitor},
     ser::SerializeStruct,
@@ -94,7 +94,7 @@ impl Serialize for OpenZeppelinMultiProof {
     }
 }
 
-impl Serialize for WhirEvmProof {
+impl<F: PrimeField> Serialize for WhirEvmProof<F> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -110,12 +110,7 @@ impl Serialize for WhirEvmProof {
                         proof,
                         answers
                             .iter()
-                            .map(|inner_vec| {
-                                inner_vec
-                                    .iter()
-                                    .map(Field256::serialize)
-                                    .collect::<Vec<String>>()
-                            })
+                            .map(|inner_vec| inner_vec.iter().map(F::serialize).collect())
                             .collect::<Vec<Vec<String>>>(),
                     )
                 })
@@ -125,12 +120,12 @@ impl Serialize for WhirEvmProof {
     }
 }
 
-trait EvmFieldElementSerDe {
-    /// Serialize a Field256 to a hex string in EVM format
+pub trait EvmFieldElementSerDe {
+    /// Serialize a PrimeField to a hex string in EVM format
     fn serialize(&self) -> String;
 }
 
-impl EvmFieldElementSerDe for Field256 {
+impl<T: PrimeField> EvmFieldElementSerDe for T {
     fn serialize(&self) -> String {
         let mut byte_buf = vec![];
         self.serialize_compressed(&mut byte_buf).unwrap();

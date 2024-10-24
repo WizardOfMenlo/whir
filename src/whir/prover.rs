@@ -60,7 +60,6 @@ where
         evmfs: &mut EVMFs<F>,
         statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-        //TODO use evm_utils::proof_converter::WhirEvmProof instead of WhirProof
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F> + ByteWriter,
@@ -116,7 +115,6 @@ where
             coefficients: witness.polynomial,
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
-            // TODO convert Merkle proofs into evm_utils::proof_converter::OpenZeppelinMultiProof
             merkle_proofs: vec![],
         };
 
