@@ -1,3 +1,4 @@
+use nimue::plugins::pow::PowStrategy;
 use std::{marker::PhantomData, usize};
 
 use ark_ff::{Field, PrimeField};
@@ -188,6 +189,27 @@ where
         } else {
             self
         }
+    }
+}
+
+// TODO: implement the EVM compatible PoW module
+#[derive(Clone, Copy)]
+pub struct KeccakEVMPoW {
+    challenge: [u8; 32],
+    threshold: u64,
+}
+
+impl PowStrategy for KeccakEVMPoW {
+    fn new(challenge: [u8; 32], bits: f64) -> Self {
+        let threshold = (64.0 - bits).exp2().ceil() as u64;
+        Self {
+            challenge: bytemuck::cast(challenge),
+            threshold,
+        }
+    }
+
+    fn check(&mut self, nonce: u64) -> bool {
+        todo!()
     }
 }
 

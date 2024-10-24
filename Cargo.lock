@@ -1686,6 +1686,7 @@ dependencies = [
  "ark-test-curves",
  "blake2",
  "blake3",
+ "bytemuck",
  "clap",
  "derivative",
  "ethers-core",

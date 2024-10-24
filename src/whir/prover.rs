@@ -29,7 +29,6 @@ use rand::{Rng, SeedableRng};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use sha3::digest::generic_array::functional;
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
