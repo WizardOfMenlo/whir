@@ -1,4 +1,5 @@
 use crate::evm_utils::proof_serde::EvmFieldElementSerDe;
+use crate::whir::parameters::{RoundConfig, WhirConfig};
 use crate::{
     crypto::{
         fields::{self},
@@ -8,9 +9,11 @@ use crate::{
     fs_utils::EVMFs,
     whir::{Statement, WhirProof},
 };
-use ark_crypto_primitives::merkle_tree::{MerkleTree, MultiPath};
-use ark_ff::PrimeField;
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_ff::{FftField, PrimeField};
+use nimue::plugins::pow::PowStrategy;
 use serde::{ser::SerializeStruct, Serialize};
+use std::usize;
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -22,18 +25,65 @@ pub struct OpenZeppelinMultiProof {
     pub(crate) proof_flags: Vec<bool>,
 }
 
-pub struct FullEvmProof<F: PrimeField> {
+pub struct FullEvmProof<F: FftField, M: Config, P: PowStrategy> {
     pub whir_proof: WhirEvmProof<F>,
     pub statement: Statement<F>,
     pub arthur: EVMFs<F>,
+    pub config: WhirConfig<F, M, P>,
 }
 
-impl<F: PrimeField> Serialize for FullEvmProof<F> {
+impl<F: FftField, MerkleConfig: Config, P: PowStrategy> Serialize
+    for WhirConfig<F, MerkleConfig, P>
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_struct("FullEvmProof", 3)?;
+        let mut state = serializer.serialize_struct("WhirConfig", 13)?;
+        state.serialize_field("numVariables", &self.mv_parameters.num_variables)?;
+        state.serialize_field("securityLevel", &self.security_level)?;
+        state.serialize_field("maxPow", &self.max_pow_bits)?;
+        state.serialize_field("commitmentOodSamples", &self.committment_ood_samples)?;
+        state.serialize_field("startingLogInvRate", &self.starting_log_inv_rate)?;
+        state.serialize_field(
+            "startingFoldingPowBits",
+            &(self.starting_folding_pow_bits as usize),
+        )?;
+        state.serialize_field("foldingFactor", &self.folding_factor)?;
+        state.serialize_field("roundParameters", &self.round_parameters)?;
+        state.serialize_field("finalQueries", &self.final_queries)?;
+        state.serialize_field("finalPowBits", &(self.final_pow_bits as usize))?;
+        state.serialize_field("finalLogInvRate", &(self.final_log_inv_rate))?;
+        state.serialize_field("finalSumcheckRound", &(self.final_sumcheck_rounds))?;
+        state.serialize_field(
+            "finalFoldingPowBits",
+            &(self.final_folding_pow_bits as usize),
+        )?;
+        state.end()
+    }
+}
+
+impl Serialize for RoundConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("RoundConfig", 5)?;
+        state.serialize_field("powBits", &(self.pow_bits as usize))?;
+        state.serialize_field("foldingPowBits", &(self.folding_pow_bits as usize))?;
+        state.serialize_field("numQueries", &self.num_queries)?;
+        state.serialize_field("oodSamples", &self.ood_samples)?;
+        state.serialize_field("logInvRate", &self.log_inv_rate)?;
+        state.end()
+    }
+}
+
+impl<F: PrimeField, M: Config, P: PowStrategy> Serialize for FullEvmProof<F, M, P> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("FullEvmProof", 5)?;
         let mut proofs_vec = vec![];
         let mut answers_vec = vec![];
         for (proof, answers) in self.whir_proof.0.iter() {
@@ -49,6 +99,7 @@ impl<F: PrimeField> Serialize for FullEvmProof<F> {
         state.serialize_field("answers", &answers_vec)?;
         state.serialize_field("statement", &self.statement)?;
         state.serialize_field("arthur", &self.arthur)?;
+        state.serialize_field("config", &self.config)?;
         state.end()
     }
 }

@@ -91,7 +91,12 @@ mod evm_tests {
         soundness_type: SoundnessType,
         pow_bits: usize,
         fold_type: FoldType,
-    ) -> (EVMFs<F>, Statement<F>, WhirProof<MerkleConfig, F>) {
+    ) -> (
+        WhirConfig<F, MerkleConfig, PowStrategy>,
+        EVMFs<F>,
+        Statement<F>,
+        WhirProof<MerkleConfig, F>,
+    ) {
         let num_coeffs = 1 << num_variables;
 
         let mut rng = ark_std::test_rng();
@@ -126,7 +131,7 @@ mod evm_tests {
         let mut evmfs_merlin = EVMFs::<F>::new();
         let committer = Committer::new(params.clone());
         let prover = Prover(params.clone());
-        let verifier = Verifier::new(params);
+        let verifier = Verifier::new(params.clone());
         let evm_witness = committer
             .evm_commit(&mut evmfs_merlin, polynomial.clone())
             .unwrap();
@@ -140,7 +145,7 @@ mod evm_tests {
             .evm_verify(&mut evmfs_arthur, &statement, &evm_proof)
             .is_ok());
 
-        (proof_transcript, statement, evm_proof)
+        (params, proof_transcript, statement, evm_proof)
     }
 
     #[test]
@@ -198,11 +203,11 @@ mod evm_tests {
 
     #[test]
     fn test_serialize_full_proof() {
-        let folding_factor = 4;
+        let folding_factor = 2;
         let soundness_type = SoundnessType::ConjectureList;
         let fold_type = FoldType::ProverHelps;
         let num_points = 2;
-        let pow_bits = 10;
+        let pow_bits = 0;
         let num_variables = 3 * folding_factor;
         let proof = evm_make_whir_things(
             num_variables,
@@ -214,9 +219,10 @@ mod evm_tests {
         );
 
         let full_proof = FullEvmProof {
-            whir_proof: convert_whir_proof::<PowStrategy, F>(proof.2).unwrap(),
-            statement: proof.1,
-            arthur: proof.0,
+            whir_proof: convert_whir_proof::<PowStrategy, F>(proof.3).unwrap(),
+            statement: proof.2,
+            arthur: proof.1,
+            config: proof.0,
         };
         let full_proof_json = serde_json::to_string_pretty(&full_proof).unwrap();
         let mut file = std::fs::File::create(format!(
