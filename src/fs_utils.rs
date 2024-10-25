@@ -255,14 +255,13 @@ impl PowStrategy for KeccakEVMPoW {
         input[32..].copy_from_slice(&nonce.to_be_bytes());
 
         let mut h = sha3::Keccak256::new();
-        h.update(&input);
+        h.update(input);
 
         let output = h.finalize();
 
         let value = U256::from_big_endian(&output);
 
-        let res = value < self.threshold;
-        res
+        value < self.threshold
     }
 }
 
