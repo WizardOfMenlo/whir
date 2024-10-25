@@ -383,6 +383,8 @@ pub mod tests {
             .challenge_pow::<KeccakEVMPoW>(bits_difficulty)
             .unwrap();
 
+        merlin.absorb_scalars(&[F::from(69)]).unwrap();
+
         let mut arthur = merlin.to_arthur();
 
         // For testing in Solidity
@@ -390,9 +392,15 @@ pub mod tests {
         // let mut file = std::fs::File::create("arthur.json").unwrap();
         // file.write_all(arthur_serialized.as_bytes()).unwrap();
 
-        arthur.next_scalars(1);
+        let scalar_1 = arthur.next_scalars(1);
+
+        assert!(scalar_1[0] == F::from(42));
+
         arthur
             .arthur_challenge_pow::<KeccakEVMPoW>(bits_difficulty)
             .unwrap();
+
+        let scalar_1 = arthur.next_scalars(1);
+        assert!(scalar_1[0] == F::from(69));
     }
 }
