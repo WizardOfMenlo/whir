@@ -160,10 +160,9 @@ where
             // let [folding_randomness_single] = arthur.challenge_scalars()?;
             sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-            // TODO: PoW
-            //if self.params.starting_folding_pow_bits > 0. {
-            //    arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
-            //}
+            if self.params.starting_folding_pow_bits > 0. {
+                evmfs.arthur_challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+            }
         }
 
         let mut folding_randomness =
@@ -230,10 +229,9 @@ where
                 return Err(ProofError::InvalidProof);
             }
 
-            // TODO: EVMFS PoW
-            //if round_params.pow_bits > 0. {
-            //   arthur.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-            //}
+            if round_params.pow_bits > 0. {
+                evmfs.arthur_challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+            }
 
             let [combination_randomness_gen] = [evmfs.squeeze_scalars(1)[0]];
             // let [combination_randomness_gen] = arthur.challenge_scalars()?;
@@ -251,10 +249,9 @@ where
                 // let [folding_randomness_single] = arthur.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-                // TODO: EVMFS PoW
-                //if round_params.folding_pow_bits > 0. {
-                //    arthur.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
-                //}
+                if round_params.folding_pow_bits > 0. {
+                    evmfs.arthur_challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
+                }
             }
 
             let new_folding_randomness =
@@ -323,10 +320,9 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        // TODO: EVMFS Pow
-        //if self.params.final_pow_bits > 0. {
-        //    arthur.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
-        //}
+        if self.params.final_pow_bits > 0. {
+            evmfs.arthur_challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
+        }
 
         let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
         for _ in 0..self.params.final_sumcheck_rounds {
@@ -337,10 +333,9 @@ where
             // let [folding_randomness_single] = arthur.challenge_scalars()?;
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-            // TODO: EVMFS PoW
-            //if self.params.final_folding_pow_bits > 0. {
-            //    arthur.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
-            //}
+            if self.params.final_folding_pow_bits > 0. {
+                evmfs.arthur_challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
+            }
         }
         let final_sumcheck_randomness = MultilinearPoint(
             final_sumcheck_rounds

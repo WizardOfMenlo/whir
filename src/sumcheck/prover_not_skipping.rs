@@ -80,10 +80,9 @@ where
             // let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
             res.push(folding_randomness);
 
-            // TODO: Do PoW if needed
-            //if pow_bits > 0. {
-            //    merlin.challenge_pow::<S>(pow_bits)?;
-            //}
+            if pow_bits > 0. {
+                evmfs.challenge_pow::<S>(pow_bits)?;
+            }
 
             self.sumcheck_prover
                 .compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);

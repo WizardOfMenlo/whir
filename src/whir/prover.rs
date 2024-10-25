@@ -238,11 +238,10 @@ where
                 })
                 .collect();
             round_state.merkle_proofs.push((merkle_proof, answers));
-            // TODO: Pow EVMFS
-            // PoW
-            //if self.0.final_pow_bits > 0. {
-            //    merlin.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
-            //}
+
+            if self.0.final_pow_bits > 0. {
+                evmfs.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
+            }
 
             // Final sumcheck
             round_state
@@ -383,10 +382,9 @@ where
         }
         round_state.merkle_proofs.push((merkle_proof, answers));
 
-        // TODO: EVMFS PoW
-        //if round_params.pow_bits > 0. {
-        //    merlin.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-        //}
+        if round_params.pow_bits > 0. {
+            evmfs.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+        }
 
         // Randomness for combination
         let [combination_randomness_gen] = [evmfs.squeeze_scalars(1)[0]];
