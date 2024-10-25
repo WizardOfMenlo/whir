@@ -8,8 +8,6 @@ use serde::{
 
 use crate::evm_utils::proof_converter::OpenZeppelinMultiProof;
 
-use super::proof_converter::WhirEvmProof;
-
 struct OpenZeppelinMultiProofVisitor {}
 impl<'de> Visitor<'de> for OpenZeppelinMultiProofVisitor {
     type Value = OpenZeppelinMultiProof;
@@ -90,32 +88,6 @@ impl Serialize for OpenZeppelinMultiProof {
         )?;
         state.serialize_field("proofFlags", &self.proof_flags)?;
 
-        state.end()
-    }
-}
-
-impl<F: PrimeField> Serialize for WhirEvmProof<F> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("WhirEvmProof", 1)?;
-        state.serialize_field(
-            "proofs",
-            &self
-                .0
-                .iter()
-                .map(|(proof, answers)| {
-                    (
-                        proof,
-                        answers
-                            .iter()
-                            .map(|inner_vec| inner_vec.iter().map(F::serialize).collect())
-                            .collect::<Vec<Vec<String>>>(),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )?;
         state.end()
     }
 }

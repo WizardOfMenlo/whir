@@ -1,3 +1,4 @@
+use crate::evm_utils::proof_serde::EvmFieldElementSerDe;
 use crate::{
     crypto::{
         fields::{self},
@@ -33,7 +34,19 @@ impl<F: PrimeField> Serialize for FullEvmProof<F> {
         S: serde::Serializer,
     {
         let mut state = serializer.serialize_struct("FullEvmProof", 3)?;
-        state.serialize_field("whir_proof", &self.whir_proof)?;
+        let mut proofs_vec = vec![];
+        let mut answers_vec = vec![];
+        for (proof, answers) in self.whir_proof.0.iter() {
+            proofs_vec.push(proof);
+            answers_vec.push(
+                answers
+                    .iter()
+                    .map(|inner_vec| inner_vec.iter().map(F::serialize).collect::<Vec<String>>())
+                    .collect::<Vec<Vec<String>>>(),
+            );
+        }
+        state.serialize_field("merkleProofs", &proofs_vec)?;
+        state.serialize_field("answers", &answers_vec)?;
         state.serialize_field("statement", &self.statement)?;
         state.serialize_field("arthur", &self.arthur)?;
         state.end()
