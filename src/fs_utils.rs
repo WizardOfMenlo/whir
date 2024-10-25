@@ -146,7 +146,10 @@ impl<F: Field> EVMFs<F> {
         let challenge = self.squeeze_bytes(32)[0];
         // get nonce solving pow from transcript, nonce should be eight bytes
         let mut nonce = [0_u8; 8];
-        nonce.copy_from_slice(&self.next_bytes(8));
+        let bytes = &self.next_bytes(32);
+        // Take last 8 bytes because uint256 is 32 bytes big-endian,
+        // but the actual nonce value only occupies 8 bytes
+        nonce.copy_from_slice(&bytes[24..]);
         let nonce = u64::from_be_bytes(nonce);
         //check pow
         if S::new(challenge, bits).check(nonce) {
