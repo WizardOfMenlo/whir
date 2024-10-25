@@ -146,10 +146,7 @@ impl<F: Field> EVMFs<F> {
         let challenge = self.squeeze_bytes(32)[0];
         // get nonce solving pow from transcript, nonce should be eight bytes
         let mut nonce = [0_u8; 8];
-        let bytes = &self.next_bytes(32);
-        // Take last 8 bytes because uint256 is 32 bytes big-endian,
-        // but the actual nonce value only occupies 8 bytes
-        nonce.copy_from_slice(&bytes[24..]);
+        nonce.copy_from_slice(&self.next_bytes(8));
         let nonce = u64::from_be_bytes(nonce);
         //check pow
         if S::new(challenge, bits).check(nonce) {
@@ -160,9 +157,7 @@ impl<F: Field> EVMFs<F> {
     }
 
     /// Merlin
-    /// TODO: remove 32 bytes length assertion
     pub fn absorb_bytes(&mut self, bytes: &[u8]) {
-        assert!(bytes.len() == 32, "EVMFs expects 32 bytes arrays");
         // when serialized uncompressed, F is serialized in be
         // so, assume bytes are be, hence need to reverse them
         let mut le_bytes = bytes.to_vec();
@@ -277,11 +272,7 @@ impl<F: Field> PoWChallenge for EVMFs<F> {
             .solve()
             .ok_or(ProofError::InvalidProof)?;
         // absorb nonce (i.e. hash and append to transcript)
-        self.absorb_bytes(
-            U256::from_big_endian(&nonce.to_be_bytes())
-                .encode()
-                .as_slice(),
-        );
+        self.absorb_bytes(&nonce.to_be_bytes());
         Ok(())
     }
 }
