@@ -2,12 +2,14 @@ use nimue::{
     plugins::pow::{PoWChallenge, PowStrategy},
     ProofResult,
 };
+use sha3::Digest;
 use std::{marker::PhantomData, usize};
 
 use ark_ff::{Field, PrimeField};
 use ark_serialize::SerializationError;
 use ethers_core::{
-    abi::{encode_packed, Token},
+    abi::{encode_packed, AbiEncode, Token},
+    types::U256,
     utils::keccak256,
 };
 use nimue::{
@@ -139,20 +141,19 @@ impl<F: Field> EVMFs<F> {
     }
 
     /// Arthur only PoW module
-    /// TODO
     pub fn arthur_challenge_pow<S: PowStrategy>(&mut self, bits: f64) -> Result<(), ProofError> {
         // get challenge from squeezing state
         let challenge = self.squeeze_bytes(32)[0];
         // get nonce solving pow from transcript, nonce should be eight bytes
-        todo!();
-        // get nonce solving pow from transcript, nonce should be eight bytes
-        // let nonce = u64::from_be_bytes(self.next_bytes(32)[0]);
-        // check pow
-        // if S::new(challenge, bits).check(nonce) {
-        //    Ok(())
-        //} else {
-        //    Err(ProofError::InvalidProof)
-        //}
+        let mut nonce = [0_u8; 8];
+        nonce.copy_from_slice(&self.next_bytes(8));
+        let nonce = u64::from_be_bytes(nonce);
+        //check pow
+        if S::new(challenge, bits).check(nonce) {
+            Ok(())
+        } else {
+            Err(ProofError::InvalidProof)
+        }
     }
 
     /// Merlin
@@ -231,24 +232,37 @@ where
     }
 }
 
-// TODO: implement the EVM compatible PoW module
 #[derive(Clone, Copy)]
 pub struct KeccakEVMPoW {
     challenge: [u8; 32],
-    threshold: u64,
+    threshold: U256,
 }
 
 impl PowStrategy for KeccakEVMPoW {
     fn new(challenge: [u8; 32], bits: f64) -> Self {
-        let threshold = (64.0 - bits).exp2().ceil() as u64;
+        let shift = 256 - bits.ceil() as usize;
+        let threshold = U256::from(1) << shift;
         Self {
-            challenge: bytemuck::cast(challenge),
+            challenge,
             threshold,
         }
     }
 
     fn check(&mut self, nonce: u64) -> bool {
-        todo!()
+        let mut input = [0_u8; 40];
+        // Equivalent to ABI.encodePacked(challenge, nonce)
+        input[..32].copy_from_slice(&self.challenge);
+        input[32..].copy_from_slice(&nonce.to_be_bytes());
+
+        let mut h = sha3::Keccak256::new();
+        h.update(&input);
+
+        let output = h.finalize();
+
+        let value = U256::from_big_endian(&output);
+
+        let res = value < self.threshold;
+        res
     }
 }
 
@@ -261,7 +275,11 @@ impl<F: Field> PoWChallenge for EVMFs<F> {
             .solve()
             .ok_or(ProofError::InvalidProof)?;
         // absorb nonce (i.e. hash and append to transcript)
-        self.absorb_bytes(&nonce.to_be_bytes());
+        self.absorb_bytes(
+            U256::from_big_endian(&nonce.to_be_bytes())
+                .encode()
+                .as_slice(),
+        );
         Ok(())
     }
 }
@@ -357,11 +375,22 @@ pub mod tests {
     fn evm_fs_pow() {
         let mut merlin = EVMFs::new();
         merlin.absorb_scalars(&[F::from(42)]).unwrap();
-        // this won't work since we haven't implemented the pow check logic yet
-        merlin.challenge_pow::<KeccakEVMPoW>(5.0).unwrap();
+
+        let bits_difficulty = 20.0;
+        merlin
+            .challenge_pow::<KeccakEVMPoW>(bits_difficulty)
+            .unwrap();
 
         let mut arthur = merlin.to_arthur();
+
+        // For testing in Solidity
+        // let arthur_serialized = serde_json::to_string_pretty(&arthur).unwrap();
+        // let mut file = std::fs::File::create("arthur.json").unwrap();
+        // file.write_all(arthur_serialized.as_bytes()).unwrap();
+
         arthur.next_scalars(1);
-        arthur.arthur_challenge_pow::<KeccakEVMPoW>(5.0).unwrap();
+        arthur
+            .arthur_challenge_pow::<KeccakEVMPoW>(bits_difficulty)
+            .unwrap();
     }
 }

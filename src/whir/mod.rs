@@ -63,13 +63,11 @@ where
 mod evm_tests {
     use std::io::Write;
 
-    use nimue::plugins::pow::keccak::KeccakPoW;
-
     use crate::crypto::fields::FieldBn256;
     use crate::crypto::merkle_tree::keccak as merkle_tree;
     use crate::evm_utils::hasher::MerkleTreeEvmParams;
     use crate::evm_utils::proof_converter::{convert_whir_proof, FullEvmProof};
-    use crate::fs_utils::EVMFs;
+    use crate::fs_utils::{EVMFs, KeccakEVMPoW};
     use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
@@ -81,7 +79,7 @@ mod evm_tests {
     use super::WhirProof;
 
     type MerkleConfig = MerkleTreeEvmParams<F>;
-    type PowStrategy = KeccakPoW;
+    type PowStrategy = KeccakEVMPoW;
     type F = FieldBn256;
 
     fn evm_make_whir_things(
