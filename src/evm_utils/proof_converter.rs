@@ -11,6 +11,7 @@ use crate::{
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::{FftField, PrimeField};
+use ark_poly::EvaluationDomain;
 use nimue::plugins::pow::PowStrategy;
 use serde::{ser::SerializeStruct, Serialize};
 use std::usize;
@@ -32,19 +33,27 @@ pub struct FullEvmProof<F: FftField, M: Config, P: PowStrategy> {
     pub config: WhirConfig<F, M, P>,
 }
 
-impl<F: FftField, MerkleConfig: Config, P: PowStrategy> Serialize
+impl<F: PrimeField, MerkleConfig: Config, P: PowStrategy> Serialize
     for WhirConfig<F, MerkleConfig, P>
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_struct("WhirConfig", 13)?;
+        let mut state = serializer.serialize_struct("WhirConfig", 17)?;
         state.serialize_field("numVariables", &self.mv_parameters.num_variables)?;
         state.serialize_field("securityLevel", &self.security_level)?;
         state.serialize_field("maxPow", &self.max_pow_bits)?;
         state.serialize_field("commitmentOodSamples", &self.committment_ood_samples)?;
         state.serialize_field("startingLogInvRate", &self.starting_log_inv_rate)?;
+
+        let domain_gen = &self.starting_domain.backing_domain.group_gen();
+        let exp_domain_gen = domain_gen.pow([1 << self.folding_factor]);
+        let group_gen_inv = F::serialize(&self.starting_domain.backing_domain.group_gen_inv());
+        state.serialize_field("domainGen", &F::serialize(domain_gen))?;
+        state.serialize_field("expDomainGen", &F::serialize(&exp_domain_gen))?;
+        state.serialize_field("domainGenInv", &group_gen_inv)?;
+        state.serialize_field("domainSize", &self.starting_domain.size())?;
         state.serialize_field(
             "startingFoldingPowBits",
             &(self.starting_folding_pow_bits as usize),
