@@ -56,7 +56,7 @@ where
         return Self::eval_extension_parallel(coeff, eval, scalar);
     }
 
-    // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variable.
+    // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
     // You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
     // The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
     
@@ -68,8 +68,8 @@ where
         debug_assert_eq!(coeff.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = coeff.split_at(coeff.len() / 2);
-            let a = Self::eval_extension(low, tail, scalar);
-            let b = Self::eval_extension(high, tail, scalar * x);
+            let a = Self::eval_extension_nonparallel(low, tail, scalar);
+            let b = Self::eval_extension_nonparallel(high, tail, scalar * x);
             a + b
         } else {
             scalar.mul_by_base_prime_field(&coeff[0])
@@ -84,8 +84,8 @@ where
             let (low, high) = coeff.split_at(coeff.len() / 2);
             if tail.len() > PARALLEL_THRESHOLD {
                 let (a, b) = rayon::join(
-                    || Self::eval_extension(low, tail, scalar),
-                    || Self::eval_extension(high, tail, scalar * x),
+                    || Self::eval_extension_parallel(low, tail, scalar),
+                    || Self::eval_extension_parallel(high, tail, scalar * x),
                 );
                 a + b
             } else {
@@ -108,7 +108,15 @@ where
         Self::eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
+    /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending i) and evaluates it at each point in `points`.
+    /// We return the vector of evaluations.
+    ///
+    /// NOTE: For the `usual` mapping between univariate and multilinear polynomials, the coefficient ordering is such that
+    /// for a single point x, we have (extending notation to a single point)
+    /// self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}), ..., x^2, x])
     pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
+        // DensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
+        // The coefficient order is "coefficient of 1 first".
         let univariate = DensePolynomial::from_coefficients_slice(&self.coeffs);
         points
             .iter()
@@ -154,7 +162,7 @@ impl<F> CoefficientList<F> {
     }
 }
 
-// Multivariate evaluation in coefficient form.
+/// Multivariate evaluation in coefficient form.
 fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     debug_assert_eq!(coeffs.len(), 1 << point.len());
     match point {
@@ -216,6 +224,11 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    /// fold folds the polynomial at the provided folding_randomness.
+    ///
+    /// Namely, when self is interpreted as a multi-linear polynomial f in X_0, ..., X_{n-1}, 
+    /// it partially evaluates f at the provided `folding_randomness`.
+    /// Our ordering convention is to evaluate at the higher indices, i.e. we return f(X_0,X_1,..., folding_randomness[0], folding_randomness[1],...)
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.n_variables();
         #[cfg(not(feature = "parallel"))]

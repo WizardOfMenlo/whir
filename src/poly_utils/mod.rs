@@ -25,7 +25,7 @@ impl<F> MultilinearPoint<F>
 where
     F: Field,
 {
-    // returns the number of variables.
+    /// returns the number of variables.
     pub fn n_variables(&self) -> usize {
         self.0.len()
     }
