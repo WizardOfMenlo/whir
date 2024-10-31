@@ -39,7 +39,7 @@ struct ParsedCommitment<F, D> {
     ood_answers: Vec<F>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ParsedProof<F> {
     initial_combination_randomness: Vec<F>,
     initial_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
@@ -257,7 +257,7 @@ where
             let new_folding_randomness =
                 MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
 
-            rounds.push(ParsedRound {
+            let parsed_round = ParsedRound {
                 folding_randomness,
                 ood_points,
                 ood_answers,
@@ -267,7 +267,8 @@ where
                 combination_randomness,
                 sumcheck_rounds,
                 domain_gen_inv,
-            });
+            };
+            rounds.push(parsed_round);
 
             folding_randomness = new_folding_randomness;
 
@@ -298,6 +299,7 @@ where
                 .map(|idx| to_range(idx, &max_target))
                 .collect::<Vec<usize>>(),
         );
+
         //let final_randomness_indexes = utils::dedup(
         //    (0..self.params.final_queries).map(|_| final_gen.gen_range(0..folded_domain_size)),
         //);
@@ -345,7 +347,7 @@ where
                 .collect(),
         );
 
-        Ok(ParsedProof {
+        let parsed_proof = ParsedProof {
             initial_combination_randomness,
             initial_sumcheck_rounds: sumcheck_rounds,
             rounds,
@@ -357,7 +359,9 @@ where
             final_sumcheck_rounds,
             final_sumcheck_randomness,
             final_coefficients,
-        })
+        };
+
+        Ok(parsed_proof)
     }
 
     fn parse_proof(
@@ -578,7 +582,6 @@ where
         for round_proof in &proof.rounds {
             num_variables -= self.params.folding_factor;
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
-
             let ood_points = &round_proof.ood_points;
             let stir_challenges_points = &round_proof.stir_challenges_points;
             let stir_challenges: Vec<_> = ood_points
@@ -598,10 +601,8 @@ where
                 .zip(&round_proof.combination_randomness)
                 .map(|(point, rand)| point * rand)
                 .sum();
-
             value = value + sum_of_claims;
         }
-
         value
     }
 
@@ -698,6 +699,7 @@ where
                 CoefficientList::new(answers.to_vec()).evaluate(&parsed.final_folding_randomness)
             })
             .collect();
+
         result.push(evaluations);
 
         result
@@ -743,15 +745,12 @@ where
 
         for (round, folds) in parsed.rounds.iter().zip(&computed_folds) {
             let (sumcheck_poly, new_randomness) = &round.sumcheck_rounds[0].clone();
-
             let values = round.ood_answers.iter().copied().chain(folds.clone());
-
             let claimed_sum = prev_poly.evaluate_at_point(&randomness.into())
                 + values
                     .zip(&round.combination_randomness)
                     .map(|(val, rand)| val * rand)
                     .sum::<F>();
-
             if sumcheck_poly.sum_over_hypercube() != claimed_sum {
                 return Err(ProofError::InvalidProof);
             }
