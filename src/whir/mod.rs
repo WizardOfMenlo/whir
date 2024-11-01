@@ -236,6 +236,83 @@ mod evm_tests {
             }
         }
     }
+
+    #[test]
+    fn evm_test_serialize_single() {
+        let num_variables = 20;
+        let folding_factor = 4;
+        let soundness_type = SoundnessType::ConjectureList;
+        let starting_log_inv_rate = 6;
+        let pow_bits = 0;
+        let num_points = 1;
+
+        let num_coeffs = 1 << num_variables;
+
+        let mut rng = ark_std::test_rng();
+        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+
+        let mv_params = MultivariateParameters::<F>::new(num_variables);
+
+        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            security_level: 100,
+            pow_bits,
+            folding_factor,
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate,
+            fold_optimisation: FoldType::ProverHelps,
+        };
+
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let polynomial = CoefficientList::new(vec![F::from(1); num_coeffs]);
+        let points: Vec<_> = (0..1)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+        let statement = Statement {
+            points: points.clone(),
+            evaluations: points
+                .iter()
+                .map(|point| polynomial.evaluate(point))
+                .collect(),
+        };
+        let mut evmfs_merlin = EVMFs::<F>::new();
+        let committer = Committer::new(params.clone());
+        let prover = Prover(params.clone());
+        let verifier = Verifier::new(params.clone());
+        let evm_witness = committer
+            .evm_commit(&mut evmfs_merlin, polynomial.clone())
+            .unwrap();
+        let evm_proof = prover
+            .evm_prove(&mut evmfs_merlin, statement.clone(), evm_witness)
+            .unwrap();
+        let mut evmfs_arthur = evmfs_merlin.to_arthur();
+        // Return the untouched transcript
+        let proof_transcript = evmfs_arthur.clone();
+        assert!(verifier
+            .evm_verify(&mut evmfs_arthur, &statement, &evm_proof)
+            .is_ok());
+
+        let full_proof = FullEvmProof {
+            whir_proof: convert_whir_proof::<PowStrategy, F>(evm_proof).unwrap(),
+            statement,
+            arthur: proof_transcript,
+            config: params,
+        };
+        let full_proof_json = serde_json::to_string_pretty(&full_proof).unwrap();
+        let mut file = std::fs::File::create(format!(
+            "proof_{}_{}_{}_{}_{}_{}.json",
+            num_variables,
+            folding_factor,
+            num_points,
+            soundness_type,
+            pow_bits,
+            FoldType::ProverHelps
+        ))
+        .unwrap();
+        file.write_all(full_proof_json.as_bytes()).unwrap();
+    }
 }
 
 #[cfg(test)]
