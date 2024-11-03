@@ -5,8 +5,8 @@ use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
-// Compute the fold on that point
+/// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
+/// Compute the fold on that point
 pub fn compute_fold<F: Field>(
     answers: &[F],
     folding_randomness: &[F],

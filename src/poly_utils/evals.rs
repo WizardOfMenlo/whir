@@ -4,6 +4,10 @@ use ark_ff::Field;
 
 use super::{sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 
+/// An EvaluationsList models a multi-linear polynomial f in `num_variables`
+/// unknowns, stored via their evaluations at {0,1}^{num_variables}
+/// 
+/// `evals` stores the evaluation in lexicographic order.
 #[derive(Debug)]
 pub struct EvaluationsList<F> {
     evals: Vec<F>,
@@ -14,6 +18,10 @@ impl<F> EvaluationsList<F>
 where
     F: Field,
 {
+    /// Constructs a EvaluationList from the given vector `eval` of evaluations.
+    /// 
+    /// The provided `evals` is supposed to be the list of evaluations, where the ordering of evaluation points in {0,1}^n
+    /// is lexicographic.
     pub fn new(evals: Vec<F>) -> Self {
         let len = evals.len();
         assert!(len.is_power_of_two());
@@ -25,6 +33,7 @@ where
         }
     }
 
+    /// evaluate the polynomial at `point`
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         if let Some(point) = point.to_hypercube() {
             return self.evals[point.0];
