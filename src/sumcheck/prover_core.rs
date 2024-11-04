@@ -25,15 +25,15 @@ where
     // and initialises the table of the initial polynomial
     // v(X_1, ..., X_n) = p(X_1, ... X_n) * (epsilon_1 eq_z_1(X) + epsilon_2 eq_z_2(X) ...)
     pub fn new(
-        coeffs: CoefficientList<F>,
-        points: &[MultilinearPoint<F>],
+        coeffs: CoefficientList<F>,  // multilinear polynomial in n variables
+        points: &[MultilinearPoint<F>],  // list of points, each of length n.
         combination_randomness: &[F],
     ) -> Self {
         assert_eq!(points.len(), combination_randomness.len());
         let num_variables = coeffs.num_variables();
 
         let mut prover = SumcheckCore {
-            evaluation_of_p: coeffs.into(),
+            evaluation_of_p: coeffs.into(),  // transform coefficient form -> evaluation form
             evaluation_of_equality: EvaluationsList::new(vec![F::ZERO; 1 << num_variables]),
             num_variables,
         };
@@ -51,6 +51,7 @@ where
         let suffix_len = 1 << folding_factor;
         let prefix_len = (1 << self.num_variables) / suffix_len;
 
+        // sets evaluation_points to the set of all {0,1,2}^folding_factor
         let evaluation_points: Vec<_> = (0..num_evaluation_points)
             .map(|point| {
                 MultilinearPoint(
