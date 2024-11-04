@@ -17,7 +17,7 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, MultilinearPoint},
 };
 
-use nimue::plugins::pow::blake3::Blake3PoW;
+use nimue_pow::blake3::Blake3PoW;
 
 use clap::Parser;
 
