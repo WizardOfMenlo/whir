@@ -8,16 +8,29 @@ use {
     std::mem::size_of,
 };
 
+
+/// A CoefficientList models a (multilinear) polynomial in `num_variable` variables in coefficient form.
+/// 
+/// The order of coefficients follows the following convention: coeffs[j] corresponds to the monomial
+/// determined by the binary decomposition of j with an X_i-variable present if the
+/// i-th highest-significant bit among the `num_variables` least significant bits is set.
+/// 
+/// e.g. is `num_variables` is 3 with variables X_0, X_1, X_2, then
+///  - coeffs[0] is the coefficient of 1
+///  - coeffs[1] is the coefficient of X_2
+///  - coeffs[2] is the coefficient of X_1
+///  - coeffs[4] is the coefficient of X_0
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
-    coeffs: Vec<F>,
-    num_variables: usize,
+    coeffs: Vec<F>, // list of coefficients. For multilinear polynomials, we have coeffs.len() == 1 << num_variables.
+    num_variables: usize,  // number of variables
 }
 
 impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    /// Evaluate the given polynomial at `point` from {0,1}^n
     pub fn evaluate_hypercube(&self, point: BinaryHypercubePoint) -> F {
         assert_eq!(self.coeffs.len(), 1 << self.num_variables);
         assert!(point.0 < (1 << self.num_variables));
@@ -28,18 +41,35 @@ where
         ))
     }
 
+    /// Evaluate the given polynomial at `point` from F^n.
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.n_variables());
         eval_multivariate(&self.coeffs, &point.0)
     }
 
-    #[cfg(not(feature = "parallel"))]
+    #[inline]
     fn eval_extension<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+        // explicit "return" just to simplify static code-analyzers' tasks (that can't figure out the cfg's are disjoint)
+        #[cfg(not(feature = "parallel"))]
+        return Self::eval_extension_nonparallel(coeff, eval, scalar);
+        #[cfg(feature = "parallel")]
+        return Self::eval_extension_parallel(coeff, eval, scalar);
+    }
+
+    // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
+    // You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
+    // The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
+    
+    // recursive helper function for polynomial evaluation:
+    // Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
+    
+    /// Recursively compute scalar * poly_eval(coeffs;eval) where poly_eval interprets coeffs as a polynomial and eval are the evaluation points.
+    fn eval_extension_nonparallel<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
         debug_assert_eq!(coeff.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = coeff.split_at(coeff.len() / 2);
-            let a = Self::eval_extension(low, tail, scalar);
-            let b = Self::eval_extension(high, tail, scalar * x);
+            let a = Self::eval_extension_nonparallel(low, tail, scalar);
+            let b = Self::eval_extension_nonparallel(high, tail, scalar * x);
             a + b
         } else {
             scalar.mul_by_base_prime_field(&coeff[0])
@@ -47,26 +77,29 @@ where
     }
 
     #[cfg(feature = "parallel")]
-    fn eval_extension<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+    fn eval_extension_parallel<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
         const PARALLEL_THRESHOLD: usize = 10;
         debug_assert_eq!(coeff.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = coeff.split_at(coeff.len() / 2);
             if tail.len() > PARALLEL_THRESHOLD {
                 let (a, b) = rayon::join(
-                    || Self::eval_extension(low, tail, scalar),
-                    || Self::eval_extension(high, tail, scalar * x),
+                    || Self::eval_extension_parallel(low, tail, scalar),
+                    || Self::eval_extension_parallel(high, tail, scalar * x),
                 );
                 a + b
             } else {
-                Self::eval_extension(low, tail, scalar)
-                    + Self::eval_extension(high, tail, scalar * x)
+                Self::eval_extension_nonparallel(low, tail, scalar)
+                    + Self::eval_extension_nonparallel(high, tail, scalar * x)
             }
         } else {
             scalar.mul_by_base_prime_field(&coeff[0])
         }
     }
 
+    /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
+    /// 
+    /// Note that we only support the case where F is a prime field.
     pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
         &self,
         point: &MultilinearPoint<E>,
@@ -75,7 +108,15 @@ where
         Self::eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
+    /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending i) and evaluates it at each point in `points`.
+    /// We return the vector of evaluations.
+    ///
+    /// NOTE: For the `usual` mapping between univariate and multilinear polynomials, the coefficient ordering is such that
+    /// for a single point x, we have (extending notation to a single point)
+    /// self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}), ..., x^2, x])
     pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
+        // DensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
+        // The coefficient order is "coefficient of 1 first".
         let univariate = DensePolynomial::from_coefficients_slice(&self.coeffs);
         points
             .iter()
@@ -108,7 +149,9 @@ impl<F> CoefficientList<F> {
         self.coeffs.len()
     }
 
-    // Map to the corresponding polynomial in the extension field
+    /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field extension of F.
+    ///
+    /// NOte that this is currently restricted to the case where F is a prime field.
     pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
         CoefficientList::new(
             self.coeffs
@@ -119,7 +162,7 @@ impl<F> CoefficientList<F> {
     }
 }
 
-// Multivariate evaluation in coefficient form.
+/// Multivariate evaluation in coefficient form.
 fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     debug_assert_eq!(coeffs.len(), 1 << point.len());
     match point {
@@ -181,6 +224,11 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    /// fold folds the polynomial at the provided folding_randomness.
+    ///
+    /// Namely, when self is interpreted as a multi-linear polynomial f in X_0, ..., X_{n-1}, 
+    /// it partially evaluates f at the provided `folding_randomness`.
+    /// Our ordering convention is to evaluate at the higher indices, i.e. we return f(X_0,X_1,..., folding_randomness[0], folding_randomness[1],...)
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.n_variables();
         #[cfg(not(feature = "parallel"))]

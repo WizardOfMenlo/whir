@@ -1,13 +1,24 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+
+// TODO (Gotti): Should pos rather be a u64? usize is platform-dependent, giving a platform-dependent limit on the number of variables.
+// num_variables may be smaller as well.
+
+// NOTE: Conversion BinaryHypercube <-> MultilinearPoint is Big Endian, using only the num_variables least significant bits of the number stored inside BinaryHypercube.
+
+/// point on the binary hypercube {0,1}^n for some n.
+/// 
+/// The point is encoded via the n least significant bits of a usize in big endian order and we do not store n.
 pub struct BinaryHypercubePoint(pub usize);
 
+/// BinaryHypercube is an Iterator that is used to range over the points of the hypercube {0,1}^n, where n == `num_variables`
 pub struct BinaryHypercube {
-    pos: usize,
-    num_variables: usize,
+    pos: usize,  // current position, encoded via the bits of pos
+    num_variables: usize, // dimension of the hypercube
 }
 
 impl BinaryHypercube {
     pub fn new(num_variables: usize) -> Self {
+        debug_assert!(num_variables < usize::BITS as usize);  // Note that we need strictly smaller, since some code would overflow otherwise.
         BinaryHypercube {
             pos: 0,
             num_variables,

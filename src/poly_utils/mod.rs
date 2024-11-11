@@ -16,6 +16,8 @@ pub mod hypercube;
 pub mod sequential_lag_poly;
 pub mod streaming_evaluation_helper;
 
+/// Point (x_1,..., x_n) in F^n for some n. Often, the x_i are binary.
+/// For the latter case, we also have BinaryHypercubePoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultilinearPoint<F>(pub Vec<F>);
 
@@ -23,10 +25,16 @@ impl<F> MultilinearPoint<F>
 where
     F: Field,
 {
+    /// returns the number of variables.
     pub fn n_variables(&self) -> usize {
         self.0.len()
     }
 
+    // NOTE: Conversion BinaryHypercube <-> MultilinearPoint converts a 
+    // multilinear point (x1,x2,...,x_n) into the number with bit-pattern 0...0 x_1 x_2 ... x_n, provided all x_i are in {0,1}.
+    // That means we pad zero bits in BinaryHypercube from the msb end and use big-endian for the actual conversion.
+
+    /// Creates a MultilinearPoint from a BinaryHypercubePoint; the latter models the same thing, but is restricted to binary entries.
     pub fn from_binary_hypercube_point(point: BinaryHypercubePoint, num_variables: usize) -> Self {
         Self(
             to_binary(point.0, num_variables)
@@ -36,6 +44,7 @@ where
         )
     }
 
+    /// Converts to a BinaryHypercubePoint, provided the MultilinearPoint is actually in {0,1}^n.
     pub fn to_hypercube(&self) -> Option<BinaryHypercubePoint> {
         let mut counter = 0;
         for &coord in &self.0 {
@@ -51,6 +60,16 @@ where
         Some(BinaryHypercubePoint(counter))
     }
 
+    /// converts a univariate evaluation point into a multilinear one.
+    ///
+    /// Notably, consider the usual bijection
+    /// {multilinear polys in n variables} <-> {univariate polys of deg < 2^n}
+    /// f(x_1,...x_n)  <-> g(y) := f(y^(2^(n-1), ..., y^4, y^2, y).
+    /// x_1^i_1 * ... *x_n^i_n <-> y^i, where (i_1,...,i_n) is the (big-endian) binary decomposition of i.
+    ///
+    /// expand_from_univariate maps the evaluation points to the multivariate domain, i.e.
+    /// f(expand_from_univariate(y)) == g(y).
+    /// in a way that is compatible with our endianness choices.
     pub fn expand_from_univariate(point: F, num_variables: usize) -> Self {
         let mut res = Vec::with_capacity(num_variables);
         let mut cur = point;
@@ -66,6 +85,7 @@ where
     }
 }
 
+/// creates a random MultilinearPoint of length `num_variables` using the RNG `rng`.
 impl<F> MultilinearPoint<F>
 where
     Standard: Distribution<F>,
@@ -75,19 +95,24 @@ where
     }
 }
 
+/// creates a MultilinearPoint of length 1 from a single field element
 impl<F> From<F> for MultilinearPoint<F> {
     fn from(value: F) -> Self {
         MultilinearPoint(vec![value])
     }
 }
 
+/// Compute eq(coords,point), where eq is the equality polynomial, where point is binary.
+///
+/// Recall that the equality polynomial eq(c, p) is defined as eq(c,p) == \prod_i c_i * p_i + (1-c_i)*(1-p_i).
+/// Note that for fixed p, viewed as a polynomial in c, it is the interpolation polynomial associated to the evaluation point p in the evaluation set {0,1}^n.
 pub fn eq_poly<F>(coords: &MultilinearPoint<F>, point: BinaryHypercubePoint) -> F
 where
     F: Field,
 {
     let mut point = point.0;
     let n_variables = coords.n_variables();
-    assert!(point < (1 << n_variables));
+    assert!(point < (1 << n_variables));  // check that the lengths of coords and point match.
 
     let mut acc = F::ONE;
 
@@ -100,6 +125,10 @@ where
     acc
 }
 
+/// Compute eq(coords,point), where eq is the equality polynomial and where point is not neccessarily binary.
+///
+/// Recall that the equality polynomial eq(c, p) is defined as eq(c,p) == \prod_i c_i * p_i + (1-c_i)*(1-p_i).
+/// Note that for fixed p, viewed as a polynomial in c, it is the interpolation polynomial associated to the evaluation point p in the evaluation set {0,1}^n.
 pub fn eq_poly_outside<F>(coords: &MultilinearPoint<F>, point: &MultilinearPoint<F>) -> F
 where
     F: Field,
@@ -115,6 +144,14 @@ where
     acc
 }
 
+// TODO: Precompute two_inv?
+// Alternatively, compute it directly without the general (and slow) .inverse() map.
+
+/// Compute eq3(coords,point), where eq3 is the equality polynomial for {0,1,2}^n and point is interpreted as an element from {0,1,2}^n via (big Endian) ternary decomposition.
+///
+/// eq3(coords, point) is the unique polynomial of degree <=2 in each variable, s.t.
+/// for coords, point in {0,1,2}^n, we have:
+/// eq3(coords,point) = 1 if coords == point and 0 otherwise.
 pub fn eq_poly3<F>(coords: &MultilinearPoint<F>, mut point: usize) -> F
 where
     F: Field,
@@ -127,6 +164,8 @@ where
 
     let mut acc = F::ONE;
 
+    // Note: This iterates over the ternary decomposition least-significant trit(?) first.
+    // Since our convention is big endian, we reverse the order of coords to account for this.
     for &val in coords.0.iter().rev() {
         let b = point % 3;
         acc *= match b {
@@ -156,16 +195,16 @@ mod tests {
     #[test]
     fn test_equality() {
         let point = MultilinearPoint(vec![F::from(0), F::from(0)]);
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0)), F::from(1));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(1)), F::from(0));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(2)), F::from(0));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(3)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b00)), F::from(1));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b01)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b10)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b11)), F::from(0));
 
         let point = MultilinearPoint(vec![F::from(1), F::from(0)]);
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0)), F::from(0));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(1)), F::from(0));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(2)), F::from(1));
-        assert_eq!(eq_poly(&point, BinaryHypercubePoint(3)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b00)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b01)), F::from(0));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b10)), F::from(1));
+        assert_eq!(eq_poly(&point, BinaryHypercubePoint(0b11)), F::from(0));
     }
 
     #[test]
@@ -204,7 +243,7 @@ mod tests {
         assert_eq!(eq_poly3(&point, 0), F::from(0));
         assert_eq!(eq_poly3(&point, 1), F::from(0));
         assert_eq!(eq_poly3(&point, 2), F::from(0));
-        assert_eq!(eq_poly3(&point, 3), F::from(1));
+        assert_eq!(eq_poly3(&point, 3), F::from(1)); // 3 corresponds to ternary (1,0)
         assert_eq!(eq_poly3(&point, 4), F::from(0));
         assert_eq!(eq_poly3(&point, 5), F::from(0));
         assert_eq!(eq_poly3(&point, 6), F::from(0));
@@ -215,7 +254,7 @@ mod tests {
 
         assert_eq!(eq_poly3(&point, 0), F::from(0));
         assert_eq!(eq_poly3(&point, 1), F::from(0));
-        assert_eq!(eq_poly3(&point, 2), F::from(1));
+        assert_eq!(eq_poly3(&point, 2), F::from(1)); // 2 corresponds to ternary (0,2)
         assert_eq!(eq_poly3(&point, 3), F::from(0));
         assert_eq!(eq_poly3(&point, 4), F::from(0));
         assert_eq!(eq_poly3(&point, 5), F::from(0));
@@ -233,15 +272,16 @@ mod tests {
         assert_eq!(eq_poly3(&point, 5), F::from(0));
         assert_eq!(eq_poly3(&point, 6), F::from(0));
         assert_eq!(eq_poly3(&point, 7), F::from(0));
-        assert_eq!(eq_poly3(&point, 8), F::from(1));
+        assert_eq!(eq_poly3(&point, 8), F::from(1)); // 8 corresponds to ternary (2,2)
     }
 
     #[test]
     #[should_panic]
     fn test_equality_2() {
-        let point = MultilinearPoint(vec![F::from(0), F::from(0)]);
+        let coords = MultilinearPoint(vec![F::from(0), F::from(0)]);
 
-        let _x = eq_poly(&point, BinaryHypercubePoint(4));
+        // implicit length of BinaryHypercubePoint is (at least) 3, exceeding lenth of coords
+        let _x = eq_poly(&coords, BinaryHypercubePoint(0b100));
     }
 
     #[test]

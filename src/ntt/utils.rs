@@ -35,14 +35,115 @@ pub fn sqrt_factor(n: usize) -> usize {
 }
 
 /// Least common multiple.
+///
+/// Note that lcm(0,0) will panic (rather than give the correct answer 0).
 pub fn lcm(a: usize, b: usize) -> usize {
-    a * b / gcd(a, b)
+    a * (b / gcd(a, b))
 }
 
-// Greatest common divisor.
+/// Greatest common divisor.
 pub fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
         (a, b) = (b, a % b);
     }
     a
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{as_chunks_exact_mut, gcd, lcm, sqrt_factor};
+
+    #[test]
+    fn test_gcd() {
+        assert_eq!(gcd(4, 6), 2);
+        assert_eq!(gcd(0, 4), 4);
+        assert_eq!(gcd(4, 0), 4);
+        assert_eq!(gcd(1, 1), 1);
+        assert_eq!(gcd(64, 16), 16);
+        assert_eq!(gcd(81, 9), 9);
+        assert_eq!(gcd(0, 0), 0);
+    }
+
+    #[test]
+    fn test_lcm() {
+        assert_eq!(lcm(5, 6), 30);
+        assert_eq!(lcm(3, 7), 21);
+        assert_eq!(lcm(0, 10), 0);
+    }
+    #[test]
+    fn test_sqrt_factor() {
+        // naive brute-force search for largest divisor up to sqrt n.
+        // This is not supposed to be efficient, but optimized for "ease of convincing yourself it's correct (provided none of the asserts trigger)".
+        fn get_largest_divisor_up_to_sqrt(x: usize) -> usize {
+            if x == 0 {
+                return 0;
+            }
+            let mut result = 1;
+            let isqrt_of_x: usize = {
+                // use x.isqrt() once this is stabilized. That would be MUCH simpler.
+
+                assert!(x < (1 << f64::MANTISSA_DIGITS)); // guarantees that each of {x, floor(sqrt(x)), ceil(sqrt(x))} can be represented exactly by f64.
+                let x_as_float = x as f64;
+                // sqrt is guaranteed to be the exact result, then rounded. Due to the above assert, the rounded value is between floor(sqrt(x)) and ceil(sqrt(x)).
+                let sqrt_x = x_as_float.sqrt();
+                // We return sqrt_x, rounded to 0; for correctness, we need to rule out that we rounded from a non-integer up to the integer ceil(sqrt(x)).
+                if sqrt_x.fract() == 0.0 {
+                    assert!(sqrt_x * sqrt_x == x_as_float);
+                }
+                unsafe { sqrt_x.to_int_unchecked() }
+            };
+            for i in 1..=isqrt_of_x {
+                if x % i == 0 {
+                    result = i;
+                }
+            }
+            result
+        }
+
+        for i in 0..10 {
+            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
+        }
+        for i in 0..10 {
+            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
+        }
+
+        for i in 0..10 {
+            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
+        }
+    }
+
+    #[test]
+    fn test_as_chunks_exact_mut() {
+        let v = &mut [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        assert_eq!(
+            as_chunks_exact_mut::<_, 12>(v),
+            &[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
+        );
+        assert_eq!(
+            as_chunks_exact_mut::<_, 6>(v),
+            &[[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]]
+        );
+        assert_eq!(
+            as_chunks_exact_mut::<_, 1>(v),
+            &[
+                [1],
+                [2],
+                [3],
+                [4],
+                [5],
+                [6],
+                [7],
+                [8],
+                [9],
+                [10],
+                [11],
+                [12]
+            ]
+        );
+        let should_not_work = std::panic::catch_unwind(|| {
+            as_chunks_exact_mut::<_, 2>(&mut [1, 2, 3]);
+            return;
+        });
+        assert!(should_not_work.is_err())
+    }
 }
