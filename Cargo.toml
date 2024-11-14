@@ -7,12 +7,12 @@ edition = "2021"
 default-run = "main"
 
 [dependencies]
-ark-std = "0.4"
-ark-ff = { version = "0.4", features = ["asm"] }
-ark-serialize = "0.4"
-ark-crypto-primitives = { version = "0.4", features = ["merkle_tree"] }
-ark-poly = "0.4"
-ark-test-curves = { version = "0.4", features = ["bls12_381_curve"] }
+ark-std = {version = "0.5", features = ["std"]}
+ark-ff = { version = "0.5", features = ["asm", "std"] }
+ark-serialize = "0.5"
+ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
+ark-poly = "0.5"
+ark-test-curves = { version = "0.5", features = ["bls12_381_curve"] }
 derivative = { version = "2", features = ["use_core"] }
 blake3 = "1.5.0"
 blake2 = "0.10"

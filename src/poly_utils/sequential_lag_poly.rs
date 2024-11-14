@@ -15,13 +15,13 @@ use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
 ///
 /// This means that y == eq_poly(point, x)
 pub struct LagrangePolynomialIterator<F: Field> {
-    last_position: Option<usize>,  // the previously output BinaryHypercubePoint (encoded as usize). None before the first output.
-    point: Vec<F>,  // stores a copy of the `point` given when creating the iterator. For easier(?) bit-fiddling, we store in in reverse order.
+    last_position: Option<usize>, // the previously output BinaryHypercubePoint (encoded as usize). None before the first output.
+    point: Vec<F>, // stores a copy of the `point` given when creating the iterator. For easier(?) bit-fiddling, we store in in reverse order.
     point_negated: Vec<F>, // stores the precomputed values 1-point[i] in the same ordering as point.
     /// stack Stores the n+1 values (in order) 1, y_1, y_1*y_2, y_1*y_2*y_3, ..., y_1*...*y_n for the previously output y.
     /// Before the first iteration (if last_position == None), it stores the values for the next (i.e. first) output instead.
     stack: Vec<F>,
-    num_variables: usize,  // dimension
+    num_variables: usize, // dimension
 }
 
 impl<F: Field> LagrangePolynomialIterator<F> {

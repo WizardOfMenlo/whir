@@ -30,7 +30,7 @@ where
         self.0.len()
     }
 
-    // NOTE: Conversion BinaryHypercube <-> MultilinearPoint converts a 
+    // NOTE: Conversion BinaryHypercube <-> MultilinearPoint converts a
     // multilinear point (x1,x2,...,x_n) into the number with bit-pattern 0...0 x_1 x_2 ... x_n, provided all x_i are in {0,1}.
     // That means we pad zero bits in BinaryHypercube from the msb end and use big-endian for the actual conversion.
 
@@ -112,7 +112,7 @@ where
 {
     let mut point = point.0;
     let n_variables = coords.n_variables();
-    assert!(point < (1 << n_variables));  // check that the lengths of coords and point match.
+    assert!(point < (1 << n_variables)); // check that the lengths of coords and point match.
 
     let mut acc = F::ONE;
 
