@@ -129,11 +129,11 @@ mod tests {
     }
 
     #[test]
-    fn test_base_decomposition(){
-        assert_eq!(base_decomposition(0b1011, 2, 6), vec![0,0,1,0,1,1]);
-        assert_eq!(base_decomposition(15,3,3), vec![1,2,0]);
+    fn test_base_decomposition() {
+        assert_eq!(base_decomposition(0b1011, 2, 6), vec![0, 0, 1, 0, 1, 1]);
+        assert_eq!(base_decomposition(15, 3, 3), vec![1, 2, 0]);
         // check truncation: This checks the current (undocumented) behaviour (compute modulo base^number_of_limbs) works as believed.
         // If we actually specify the API to have a different behaviour, this test should change.
-        assert_eq!(base_decomposition(15+81, 3,3), vec![1,2,0]);
+        assert_eq!(base_decomposition(15 + 81, 3, 3), vec![1, 2, 0]);
     }
 }

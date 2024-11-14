@@ -26,8 +26,8 @@ static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>
 /// Enginge for computing NTTs over arbitrary fields.
 /// Assumes the field has large two-adicity.
 pub struct NttEngine<F: Field> {
-    order: usize, // order of omega_orger
-    omega_order: F,  // primitive order'th root.
+    order: usize,   // order of omega_orger
+    omega_order: F, // primitive order'th root.
 
     // Roots of small order (zero if unavailable). The naming convention is that omega_foo has order foo.
     half_omega_3_1_plus_2: F, // ½(ω₃ + ω₃²)
@@ -57,7 +57,6 @@ pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
 pub fn intt<F: FftField>(values: &mut [F]) {
     NttEngine::<F>::new_from_cache().intt(values);
 }
-
 
 /// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the 1/n scaling factor and using a cached engine.
 pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {

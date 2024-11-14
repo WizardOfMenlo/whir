@@ -8,13 +8,12 @@ use {
     std::mem::size_of,
 };
 
-
 /// A CoefficientList models a (multilinear) polynomial in `num_variable` variables in coefficient form.
-/// 
+///
 /// The order of coefficients follows the following convention: coeffs[j] corresponds to the monomial
 /// determined by the binary decomposition of j with an X_i-variable present if the
 /// i-th highest-significant bit among the `num_variables` least significant bits is set.
-/// 
+///
 /// e.g. is `num_variables` is 3 with variables X_0, X_1, X_2, then
 ///  - coeffs[0] is the coefficient of 1
 ///  - coeffs[1] is the coefficient of X_2
@@ -23,7 +22,7 @@ use {
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
     coeffs: Vec<F>, // list of coefficients. For multilinear polynomials, we have coeffs.len() == 1 << num_variables.
-    num_variables: usize,  // number of variables
+    num_variables: usize, // number of variables
 }
 
 impl<F> CoefficientList<F>
@@ -59,12 +58,16 @@ where
     // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
     // You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
     // The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
-    
+
     // recursive helper function for polynomial evaluation:
     // Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
-    
+
     /// Recursively compute scalar * poly_eval(coeffs;eval) where poly_eval interprets coeffs as a polynomial and eval are the evaluation points.
-    fn eval_extension_nonparallel<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+    fn eval_extension_nonparallel<E: Field<BasePrimeField = F>>(
+        coeff: &[F],
+        eval: &[E],
+        scalar: E,
+    ) -> E {
         debug_assert_eq!(coeff.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
             let (low, high) = coeff.split_at(coeff.len() / 2);
@@ -77,7 +80,11 @@ where
     }
 
     #[cfg(feature = "parallel")]
-    fn eval_extension_parallel<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+    fn eval_extension_parallel<E: Field<BasePrimeField = F>>(
+        coeff: &[F],
+        eval: &[E],
+        scalar: E,
+    ) -> E {
         const PARALLEL_THRESHOLD: usize = 10;
         debug_assert_eq!(coeff.len(), 1 << eval.len());
         if let Some((&x, tail)) = eval.split_first() {
@@ -98,7 +105,7 @@ where
     }
 
     /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
-    /// 
+    ///
     /// Note that we only support the case where F is a prime field.
     pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
         &self,
@@ -226,7 +233,7 @@ where
 {
     /// fold folds the polynomial at the provided folding_randomness.
     ///
-    /// Namely, when self is interpreted as a multi-linear polynomial f in X_0, ..., X_{n-1}, 
+    /// Namely, when self is interpreted as a multi-linear polynomial f in X_0, ..., X_{n-1},
     /// it partially evaluates f at the provided `folding_randomness`.
     /// Our ordering convention is to evaluate at the higher indices, i.e. we return f(X_0,X_1,..., folding_randomness[0], folding_randomness[1],...)
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
