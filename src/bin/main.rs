@@ -5,7 +5,7 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::FftField;
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use nimue::{DefaultHash, IOPattern};
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
@@ -15,6 +15,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+    whir::Statement,
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -199,10 +200,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
-    use whir::whir_ldt::prover::Prover;
+    use whir::whir::{
+        committer::Committer, parameters::WhirConfig as ProverConfig, prover::Prover,
+    };
     use whir::whir_ldt::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, verifier::Verifier,
-        whir_proof_size,
+        parameters::WhirConfig as VerifierConfig, verifier::Verifier, WhirProof as VerifierProof,
     };
 
     // Runs as a LDT
@@ -236,12 +238,14 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = ProverConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
 
-    let io = IOPattern::<DefaultHash>::new("🌪️")
-        .commit_statement(&params)
-        .add_whir_proof(&params)
-        .clone();
+    let io = {
+        use whir::whir::iopattern::WhirIOPattern;
+        IOPattern::<DefaultHash>::new("🌪️")
+            .commit_statement(&params)
+            .add_whir_proof(&params)
+    };
 
     let mut merlin = io.to_merlin();
 
@@ -265,15 +269,27 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let committer = Committer::new(params.clone());
     let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
-    let prover = Prover(params.clone());
+    let prover = Prover(params);
 
-    let proof = prover.prove(&mut merlin, witness).unwrap();
+    let proof = prover
+        .prove(&mut merlin, Statement::default(), witness)
+        .unwrap();
 
     dbg!(whir_prover_time.elapsed());
-    dbg!(whir_proof_size(merlin.transcript(), &proof));
+
+    // Serialize proof
+    let transcript = merlin.transcript();
+    let mut proof_bytes = vec![];
+    proof.serialize_compressed(&mut proof_bytes).unwrap();
+
+    let proof_size = transcript.len() + proof_bytes.len();
+    dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
+    let params = VerifierConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
     let verifier = Verifier::new(params);
+
+    let proof = VerifierProof::deserialize_compressed::<&[u8]>(proof_bytes.as_ref()).unwrap();
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
