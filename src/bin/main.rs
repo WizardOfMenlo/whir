@@ -199,9 +199,10 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
+    use whir::whir_ldt::prover::Prover;
     use whir::whir_ldt::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier, whir_proof_size,
+        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, verifier::Verifier,
+        whir_proof_size,
     };
 
     // Runs as a LDT
@@ -223,6 +224,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: false,
         security_level,
         pow_bits,
         folding_factor,
@@ -317,6 +319,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: true,
         security_level,
         pow_bits,
         folding_factor,

@@ -9,7 +9,7 @@ pub mod parameters;
 pub mod prover;
 pub mod verifier;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Statement<F> {
     pub points: Vec<MultilinearPoint<F>>,
     pub evaluations: Vec<F>,
