@@ -8,6 +8,7 @@ pub mod iopattern;
 pub mod parameters;
 pub mod prover;
 pub mod verifier;
+mod fs_utils;
 
 #[derive(Debug, Clone)]
 pub struct Statement<F> {

@@ -47,18 +47,24 @@ where
             .challenge_scalars(1, "initial_combination_randomness")
             .add_sumcheck(params.folding_factor, params.starting_folding_pow_bits);
 
+        let mut folded_domain_size = params.starting_domain.folded_size(params.folding_factor);
+
         for r in &params.round_parameters {
+            let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
             self = self
                 .add_bytes(32, "merkle_digest")
                 .add_ood(r.ood_samples)
-                .challenge_bytes(32, "stir_queries_seed")
+                .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(params.folding_factor, r.folding_pow_bits);
+            folded_domain_size /= 2;
         }
 
+        let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
+
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")
-            .challenge_bytes(32, "final_queries_seed")
+            .challenge_bytes(domain_size_bytes * params.final_queries, "final_queries")
             .pow(params.final_pow_bits)
             .add_sumcheck(params.final_sumcheck_rounds, params.final_folding_pow_bits)
     }
