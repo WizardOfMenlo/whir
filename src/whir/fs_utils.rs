@@ -1,8 +1,4 @@
-use crate::domain::Domain;
 use crate::utils::dedup;
-use crate::whir::parameters::{RoundConfig, WhirConfig};
-use ark_crypto_primitives::merkle_tree;
-use ark_ff::FftField;
 use nimue::{ByteChallenges, ProofResult};
 
 pub fn get_challenge_stir_queries<T>(

@@ -90,7 +90,7 @@ mod tests {
         let num_evaluation_points = 3_usize.pow(num_variables as u32);
         let evaluations = (0..num_evaluation_points as u64).map(F::from).collect();
 
-        let poly = SumcheckPolynomial::new(evaluations, num_variables as usize);
+        let poly = SumcheckPolynomial::new(evaluations, num_variables);
 
         for i in 0..num_evaluation_points {
             let decomp = base_decomposition(i, 3, num_variables);

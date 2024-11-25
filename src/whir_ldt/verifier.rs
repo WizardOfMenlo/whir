@@ -291,7 +291,7 @@ where
                 .map(|(point, rand)| point * rand)
                 .sum();
 
-            value = value + sum_of_claims;
+            value += sum_of_claims;
         }
 
         value
