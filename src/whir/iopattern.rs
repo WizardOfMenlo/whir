@@ -61,8 +61,10 @@ where
             folded_domain_size /= 2;
         }
 
+        let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
+
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")
-            .challenge_bytes(32, "final_queries_seed")
+            .challenge_bytes(domain_size_bytes * params.final_queries, "final_queries")
             .pow(params.final_pow_bits)
             .add_sumcheck(params.final_sumcheck_rounds, params.final_folding_pow_bits)
     }

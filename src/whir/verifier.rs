@@ -222,13 +222,12 @@ where
         let final_coefficients = CoefficientList::new(final_coefficients);
 
         // Final queries verify
-        let mut queries_seed = [0u8; 32];
-        arthur.fill_challenge_bytes(&mut queries_seed)?;
-        let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
-        let folded_domain_size = domain_size / (1 << self.params.folding_factor);
-        let final_randomness_indexes = utils::dedup(
-            (0..self.params.final_queries).map(|_| final_gen.gen_range(0..folded_domain_size)),
-        );
+        let final_randomness_indexes = get_challenge_stir_queries(
+            domain_size,
+            self.params.folding_factor,
+            self.params.final_queries,
+            arthur,
+        )?;
         let final_randomness_points = final_randomness_indexes
             .iter()
             .map(|index| exp_domain_gen.pow([*index as u64]))
