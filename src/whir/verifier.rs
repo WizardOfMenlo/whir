@@ -5,10 +5,9 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldReader},
-    Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
+    Arthur, ByteReader, ProofError, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-use rand::{Rng, SeedableRng};
 
 use super::{parameters::WhirConfig, Statement, WhirProof};
 use crate::whir::fs_utils::get_challenge_stir_queries;
@@ -16,7 +15,7 @@ use crate::{
     parameters::FoldType,
     poly_utils::{coeffs::CoefficientList, eq_poly_outside, fold::compute_fold, MultilinearPoint},
     sumcheck::proof::SumcheckPolynomial,
-    utils::{self, expand_randomness},
+    utils::{expand_randomness},
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
@@ -335,7 +334,7 @@ where
                 .map(|(point, rand)| point * rand)
                 .sum();
 
-            value = value + sum_of_claims;
+            value += sum_of_claims;
         }
 
         value

@@ -6,6 +6,7 @@ use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
 
 /// There is an alternative (possibly more efficient) implementation that iterates over the x in Gray code ordering.
 
+///
 /// LagrangePolynomialIterator for a given multilinear n-dimensional `point` iterates over pairs (x, y)
 /// where x ranges over all possible {0,1}^n
 /// and y equals the product y_1 * ... * y_n where
@@ -60,7 +61,7 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
     // Iterator implementation for the struct
     fn next(&mut self) -> Option<Self::Item> {
         // a) Check if this is the first iteration
-        if self.last_position == None {
+        if self.last_position.is_none() {
             // Initialize last position
             self.last_position = Some(0);
             // Return the top of the stack

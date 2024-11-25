@@ -83,8 +83,8 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
         let mut h = sha3::Keccak256::new();
-        h.update(&left_input.borrow().0);
-        h.update(&right_input.borrow().0);
+        h.update(left_input.borrow().0);
+        h.update(right_input.borrow().0);
         let mut output = [0; 32];
         output.copy_from_slice(&h.finalize()[..]);
         HashCounter::add();
@@ -123,8 +123,8 @@ pub fn default_config<F: CanonicalSerialize + Send>(
     <LeafH<F> as CRHScheme>::Parameters,
     <CompressH as TwoToOneCRHScheme>::Parameters,
 ) {
-    let leaf_hash_params = <LeafH<F> as CRHScheme>::setup(rng).unwrap();
-    let two_to_one_params = <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
+    <LeafH<F> as CRHScheme>::setup(rng).unwrap();
+    <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
 
-    (leaf_hash_params, two_to_one_params)
+    ((), ())
 }

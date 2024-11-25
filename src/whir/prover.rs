@@ -15,11 +15,9 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, Merlin, ProofResult,
+    plugins::ark::{FieldChallenges, FieldWriter}, ByteWriter, Merlin, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-use rand::{Rng, SeedableRng};
 
 use crate::whir::fs_utils::get_challenge_stir_queries;
 #[cfg(feature = "parallel")]
