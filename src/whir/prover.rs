@@ -103,12 +103,12 @@ where
             );
         }
 
-        let [combination_randomness_gen] = merlin.challenge_scalars()?;
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, initial_claims.len());
-
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
+            let [combination_randomness_gen] = merlin.challenge_scalars()?;
+            let combination_randomness =
+                expand_randomness(combination_randomness_gen, initial_claims.len());
+
             sumcheck_prover = Some(SumcheckProverNotSkipping::new(
                 witness.polynomial.clone(),
                 &initial_claims,
@@ -127,6 +127,7 @@ where
         } else {
             let mut folding_randomness = vec![F::ZERO; self.0.folding_factor];
             merlin.fill_challenge_scalars(&mut folding_randomness)?;
+
             if self.0.starting_folding_pow_bits > 0. {
                 merlin.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
             }

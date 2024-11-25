@@ -140,6 +140,7 @@ where
                 .unwrap()
                 || merkle_proof.leaf_indexes != stir_challenges_indexes
             {
+                dbg!();
                 return Err(ProofError::InvalidProof);
             }
 

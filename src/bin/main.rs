@@ -278,7 +278,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(whir_prover_time.elapsed());
 
     // Serialize proof
-    let transcript = merlin.transcript();
+    let transcript = merlin.transcript().to_vec();
     let mut proof_bytes = vec![];
     proof.serialize_compressed(&mut proof_bytes).unwrap();
 
@@ -287,14 +287,21 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     // Just not to count that initial inversion (which could be precomputed)
     let params = VerifierConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
-    let verifier = Verifier::new(params);
+    let verifier = Verifier::new(params.clone());
+
+    let io = {
+        use whir::whir_ldt::iopattern::WhirIOPattern;
+        IOPattern::<DefaultHash>::new("🌪️")
+            .commit_statement(&params)
+            .add_whir_proof(&params)
+    };
 
     let proof = VerifierProof::deserialize_compressed::<&[u8]>(proof_bytes.as_ref()).unwrap();
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut arthur = io.to_arthur(merlin.transcript());
+        let mut arthur = io.to_arthur(&transcript);
         verifier.verify(&mut arthur, &proof).unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
