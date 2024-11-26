@@ -201,10 +201,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
     use whir::whir::{
-        committer::Committer, parameters::WhirConfig as ProverConfig, prover::Prover,
-    };
-    use whir::whir::{
-        parameters::WhirConfig as VerifierConfig, verifier::Verifier, WhirProof as VerifierProof,
+        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
+        verifier::Verifier, WhirProof,
     };
 
     // Runs as a LDT
@@ -238,14 +236,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = ProverConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
 
-    let io = {
-        use whir::whir::iopattern::WhirIOPattern;
-        IOPattern::<DefaultHash>::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params)
-    };
+    let io = IOPattern::<DefaultHash>::new("🌪️")
+        .commit_statement(&params)
+        .add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
@@ -269,7 +264,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let committer = Committer::new(params.clone());
     let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
-    let prover = Prover(params);
+    let prover = Prover(params.clone());
 
     let proof = prover
         .prove(&mut merlin, Statement::default(), witness)
@@ -286,17 +281,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
-    let params = VerifierConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
     let verifier = Verifier::new(params.clone());
-
-    let io = {
-        use whir::whir::iopattern::WhirIOPattern;
-        IOPattern::<DefaultHash>::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params)
-    };
-
-    let proof = VerifierProof::deserialize_compressed::<&[u8]>(proof_bytes.as_ref()).unwrap();
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
