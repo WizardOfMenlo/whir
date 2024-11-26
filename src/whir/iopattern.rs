@@ -34,8 +34,12 @@ where
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
         // TODO: Add params
-        self.add_bytes(32, "merkle_digest")
-            .add_ood(params.committment_ood_samples)
+        let mut this = self.add_bytes(32, "merkle_digest");
+        if params.committment_ood_samples > 0 {
+            assert!(params.initial_statement);
+            this = this.add_ood(params.committment_ood_samples);
+        }
+        this
     }
 
     fn add_whir_proof<MerkleConfig: Config, PowStrategy>(
@@ -43,9 +47,15 @@ where
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
         // TODO: Add statement
-        self = self
-            .challenge_scalars(1, "initial_combination_randomness")
-            .add_sumcheck(params.folding_factor, params.starting_folding_pow_bits);
+        if params.initial_statement {
+            self = self
+                .challenge_scalars(1, "initial_combination_randomness")
+                .add_sumcheck(params.folding_factor, params.starting_folding_pow_bits);
+        } else {
+            self = self
+                .challenge_scalars(params.folding_factor, "folding_randomness")
+                .pow(params.starting_folding_pow_bits);
+        }
 
         let mut folded_domain_size = params.starting_domain.folded_size(params.folding_factor);
 

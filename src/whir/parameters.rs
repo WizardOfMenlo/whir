@@ -22,6 +22,7 @@ where
     pub(crate) max_pow_bits: usize,
 
     pub(crate) committment_ood_samples: usize,
+    pub(crate) initial_statement: bool,
     pub(crate) starting_domain: Domain<F>,
     pub(crate) starting_log_inv_rate: usize,
     pub(crate) starting_folding_pow_bits: f64,
@@ -86,29 +87,47 @@ where
 
         let field_size_bits = F::field_size_in_bits();
 
-        let committment_ood_samples = Self::ood_samples(
-            whir_parameters.security_level,
-            whir_parameters.soundness_type,
-            mv_parameters.num_variables,
-            whir_parameters.starting_log_inv_rate,
-            Self::log_eta(
+        let committment_ood_samples = if whir_parameters.initial_statement {
+            Self::ood_samples(
+                whir_parameters.security_level,
                 whir_parameters.soundness_type,
+                mv_parameters.num_variables,
                 whir_parameters.starting_log_inv_rate,
-            ),
-            field_size_bits,
-        );
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+                field_size_bits,
+            )
+        } else {
+            0
+        };
 
-        let starting_folding_pow_bits = Self::folding_pow_bits(
-            whir_parameters.security_level,
-            whir_parameters.soundness_type,
-            field_size_bits,
-            mv_parameters.num_variables,
-            whir_parameters.starting_log_inv_rate,
-            Self::log_eta(
+        let starting_folding_pow_bits = if whir_parameters.initial_statement {
+            Self::folding_pow_bits(
+                whir_parameters.security_level,
                 whir_parameters.soundness_type,
+                field_size_bits,
+                mv_parameters.num_variables,
                 whir_parameters.starting_log_inv_rate,
-            ),
-        );
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+            )
+        } else {
+            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
+                whir_parameters.soundness_type,
+                field_size_bits,
+                mv_parameters.num_variables,
+                whir_parameters.starting_log_inv_rate,
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+            ) + (whir_parameters.folding_factor as f64).log2();
+            0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
+        };
 
         let mut round_parameters = Vec::with_capacity(num_rounds);
         let mut num_variables = mv_parameters.num_variables - whir_parameters.folding_factor;
@@ -186,6 +205,7 @@ where
         WhirConfig {
             security_level: whir_parameters.security_level,
             max_pow_bits: whir_parameters.pow_bits,
+            initial_statement: whir_parameters.initial_statement,
             committment_ood_samples,
             mv_parameters,
             starting_domain,
@@ -240,13 +260,9 @@ where
         log_eta: f64,
     ) -> f64 {
         match soundness_type {
-            SoundnessType::ConjectureList => {
-                
-                (num_variables + log_inv_rate) as f64 - log_eta
-            }
+            SoundnessType::ConjectureList => (num_variables + log_inv_rate) as f64 - log_eta,
             SoundnessType::ProvableList => {
                 let log_inv_sqrt_rate: f64 = log_inv_rate as f64 / 2.;
-                
                 log_inv_sqrt_rate - (1. + log_eta)
             }
             SoundnessType::UniqueDecoding => 0.0,
@@ -385,7 +401,6 @@ where
         num_queries: usize,
     ) -> f64 {
         let num_queries = num_queries as f64;
-        
 
         match soundness_type {
             SoundnessType::UniqueDecoding => {

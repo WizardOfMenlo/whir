@@ -101,6 +101,7 @@ pub struct WhirParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
+    pub initial_statement: bool,
     pub starting_log_inv_rate: usize,
     pub folding_factor: usize,
     pub soundness_type: SoundnessType,

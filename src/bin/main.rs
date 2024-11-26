@@ -15,6 +15,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+    whir::Statement,
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -199,9 +200,9 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
 {
-    use whir::whir_ldt::{
+    use whir::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier, whir_proof_size,
+        verifier::Verifier,
     };
 
     // Runs as a LDT
@@ -223,6 +224,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: false,
         security_level,
         pow_bits,
         folding_factor,
@@ -234,12 +236,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)
-        .add_whir_proof(&params)
-        .clone();
+        .add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
@@ -265,19 +266,30 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let proof = prover.prove(&mut merlin, witness).unwrap();
+    let proof = prover
+        .prove(&mut merlin, Statement::default(), witness)
+        .unwrap();
 
     dbg!(whir_prover_time.elapsed());
-    dbg!(whir_proof_size(merlin.transcript(), &proof));
+
+    // Serialize proof
+    let transcript = merlin.transcript().to_vec();
+    let mut proof_bytes = vec![];
+    proof.serialize_compressed(&mut proof_bytes).unwrap();
+
+    let proof_size = transcript.len() + proof_bytes.len();
+    dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
-    let verifier = Verifier::new(params);
+    let verifier = Verifier::new(params.clone());
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut arthur = io.to_arthur(merlin.transcript());
-        verifier.verify(&mut arthur, &proof).unwrap();
+        let mut arthur = io.to_arthur(&transcript);
+        verifier
+            .verify(&mut arthur, &Statement::default(), &proof)
+            .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
     dbg!(HashCounter::get() as f64 / reps as f64);
@@ -317,6 +329,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: true,
         security_level,
         pow_bits,
         folding_factor,
