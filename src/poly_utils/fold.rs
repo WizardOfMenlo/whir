@@ -179,7 +179,7 @@ mod tests {
 
         // Evaluate the polynomial on the domain
         let domain_evaluations: Vec<_> = (0..domain_size)
-            .map(|w| root_of_unity.pow([w as u64]))
+            .map(|w| root_of_unity.pow([w]))
             .map(|point| {
                 poly.evaluate(&MultilinearPoint::expand_from_univariate(
                     point,
@@ -199,10 +199,10 @@ mod tests {
         );
 
         let num = domain_size / folding_factor_exp;
-        let coset_gen_inv = root_of_unity_inv.pow(&[num]);
+        let coset_gen_inv = root_of_unity_inv.pow([num]);
 
         for index in 0..num {
-            let offset_inv = root_of_unity_inv.pow(&[index]);
+            let offset_inv = root_of_unity_inv.pow([index]);
             let span =
                 (index * folding_factor_exp) as usize..((index + 1) * folding_factor_exp) as usize;
 

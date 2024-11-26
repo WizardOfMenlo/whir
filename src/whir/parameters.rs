@@ -401,7 +401,8 @@ where
         num_queries: usize,
     ) -> f64 {
         let num_queries = num_queries as f64;
-        let bits_of_sec_queries = match soundness_type {
+
+        match soundness_type {
             SoundnessType::UniqueDecoding => {
                 let rate = 1. / ((1 << log_inv_rate) as f64);
                 let denom = -(0.5 * (1. + rate)).log2();
@@ -410,9 +411,7 @@ where
             }
             SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate as f64,
             SoundnessType::ConjectureList => num_queries * log_inv_rate as f64,
-        };
-
-        bits_of_sec_queries
+        }
     }
 
     pub fn rbr_soundness_queries_combination(
@@ -504,7 +503,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-            prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits as f64,
+            prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits,
             self.folding_factor,
             prox_gaps_error,
             sumcheck_error,
@@ -545,7 +544,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, combination: {:.1}, pow: {:.1}",
-                query_error.min(combination_error) + r.pow_bits as f64,
+                query_error.min(combination_error) + r.pow_bits,
                 query_error,
                 combination_error,
                 r.pow_bits,
@@ -569,7 +568,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits as f64,
+                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
                 self.folding_factor,
                 prox_gaps_error,
                 sumcheck_error,
@@ -587,7 +586,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-            query_error + self.final_pow_bits as f64,
+            query_error + self.final_pow_bits,
             query_error,
             self.final_pow_bits,
         )?;
@@ -597,7 +596,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + self.final_pow_bits as f64,
+                combination_error + self.final_pow_bits,
                 self.final_sumcheck_rounds,
                 combination_error,
                 self.final_folding_pow_bits,

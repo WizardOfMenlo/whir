@@ -37,7 +37,7 @@ impl<F: Field> Iterator for TermPolynomialIterator<F> {
     // Iterator implementation for the struct
     fn next(&mut self) -> Option<Self::Item> {
         // a) Check if this is the first iteration
-        if self.last_position == None {
+        if self.last_position.is_none() {
             // Initialize last position
             self.last_position = Some(0);
             // Return the top of the stack

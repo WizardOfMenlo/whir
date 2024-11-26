@@ -54,9 +54,9 @@ fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<F>, dst: MatrixMut<F>) 
 
 /// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
 #[cfg(feature = "parallel")]
-fn transpose_copy_parallel<'a, 'b, F: Sized + Copy + Send>(
-    src: MatrixMut<'a, F>,
-    mut dst: MatrixMut<'b, F>,
+fn transpose_copy_parallel<F: Sized + Copy + Send>(
+    src: MatrixMut<'_, F>,
+    mut dst: MatrixMut<'_, F>,
 ) {
     assert_eq!(src.rows(), dst.cols());
     assert_eq!(src.cols(), dst.rows());
@@ -85,9 +85,9 @@ fn transpose_copy_parallel<'a, 'b, F: Sized + Copy + Send>(
 
 /// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
 /// This is the non-parallel version
-fn transpose_copy_not_parallel<'a, 'b, F: Sized + Copy>(
-    src: MatrixMut<'a, F>,
-    mut dst: MatrixMut<'b, F>,
+fn transpose_copy_not_parallel<F: Sized + Copy>(
+    src: MatrixMut<'_, F>,
+    mut dst: MatrixMut<'_, F>,
 ) {
     assert_eq!(src.rows(), dst.cols());
     assert_eq!(src.cols(), dst.rows());

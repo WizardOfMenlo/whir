@@ -5,7 +5,7 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::FftField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use nimue::{DefaultHash, IOPattern};
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
@@ -202,7 +202,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 {
     use whir::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier, WhirProof,
+        verifier::Verifier,
     };
 
     // Runs as a LDT
@@ -369,7 +369,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         .collect();
     let evaluations = points
         .iter()
-        .map(|point| polynomial.evaluate_at_extension(&point))
+        .map(|point| polynomial.evaluate_at_extension(point))
         .collect();
 
     let statement = Statement {

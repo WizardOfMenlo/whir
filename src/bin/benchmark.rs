@@ -348,7 +348,7 @@ fn run_whir<F, MerkleConfig>(
             .collect();
         let evaluations = points
             .iter()
-            .map(|point| polynomial.evaluate_at_extension(&point))
+            .map(|point| polynomial.evaluate_at_extension(point))
             .collect();
         let statement = Statement {
             points,

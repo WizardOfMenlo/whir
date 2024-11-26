@@ -121,11 +121,11 @@ mod tests {
 
     #[test]
     fn test_is_power_of_two() {
-        assert_eq!(is_power_of_two(0), false);
-        assert_eq!(is_power_of_two(1), true);
-        assert_eq!(is_power_of_two(2), true);
-        assert_eq!(is_power_of_two(3), false);
-        assert_eq!(is_power_of_two(usize::MAX), false);
+        assert!(!is_power_of_two(0));
+        assert!(is_power_of_two(1));
+        assert!(is_power_of_two(2));
+        assert!(!is_power_of_two(3));
+        assert!(!is_power_of_two(usize::MAX));
     }
 
     #[test]

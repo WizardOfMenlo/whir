@@ -15,12 +15,11 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, Merlin, ProofResult,
+    plugins::ark::{FieldChallenges, FieldWriter}, ByteWriter, Merlin, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-use rand::{Rng, SeedableRng};
 
+use crate::whir::fs_utils::get_challenge_stir_queries;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -167,13 +166,13 @@ where
             merlin.add_scalars(folded_coefficients.coeffs())?;
 
             // Final verifier queries and answers
-            let mut queries_seed = [0u8; 32];
-            merlin.fill_challenge_bytes(&mut queries_seed)?;
-            let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
-            let final_challenge_indexes = utils::dedup((0..self.0.final_queries).map(|_| {
-                final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
-
+            let final_challenge_indexes = get_challenge_stir_queries(
+                round_state.domain.size(),
+                self.0.folding_factor,
+                self.0.final_queries,
+                merlin,
+            )?;
+            
             let merkle_proof = round_state
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
@@ -255,13 +254,12 @@ where
         }
 
         // STIR queries
-        let mut stir_queries_seed = [0u8; 32];
-        merlin.fill_challenge_bytes(&mut stir_queries_seed)?;
-        let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
-        let stir_challenges_indexes =
-            utils::dedup((0..round_params.num_queries).map(|_| {
-                stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
+        let stir_challenges_indexes = get_challenge_stir_queries(
+            round_state.domain.size(),
+            self.0.folding_factor,
+            round_params.num_queries,
+            merlin,
+        )?;
         let domain_scaled_gen = round_state
             .domain
             .backing_domain
