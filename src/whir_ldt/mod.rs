@@ -1,10 +1,8 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-pub mod committer;
 pub mod iopattern;
 pub mod parameters;
-pub mod prover;
 pub mod verifier;
 
 // Only includes the authentication paths
