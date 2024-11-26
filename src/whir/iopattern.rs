@@ -36,6 +36,7 @@ where
         // TODO: Add params
         let mut this = self.add_bytes(32, "merkle_digest");
         if params.committment_ood_samples > 0 {
+            assert!(!params.initial_statement);
             this = this.add_ood(params.committment_ood_samples);
         }
         this

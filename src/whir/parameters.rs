@@ -121,7 +121,10 @@ where
                 field_size_bits,
                 mv_parameters.num_variables,
                 whir_parameters.starting_log_inv_rate,
-                Self::log_eta_ldt(whir_parameters.starting_log_inv_rate),
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
             ) + (whir_parameters.folding_factor as f64).log2();
             0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
         };
@@ -248,11 +251,6 @@ where
             SoundnessType::UniqueDecoding => 0.,
             SoundnessType::ConjectureList => -(log_inv_rate as f64 + 1.),
         }
-    }
-
-    // TODO: Why is this not the same as `log_eta`?
-    pub fn log_eta_ldt(log_inv_rate: usize) -> f64 {
-        -(log_inv_rate as f64 + LOG2_10)
     }
 
     pub fn list_size_bits(

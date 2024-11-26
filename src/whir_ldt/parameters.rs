@@ -89,7 +89,10 @@ where
             field_size_bits,
             mv_parameters.num_variables,
             whir_parameters.starting_log_inv_rate,
-            Self::log_eta(whir_parameters.starting_log_inv_rate),
+            Self::log_eta(
+                whir_parameters.soundness_type,
+                whir_parameters.starting_log_inv_rate,
+            ),
         ) + (whir_parameters.folding_factor as f64).log2();
         let starting_folding_pow_bits =
             0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error);
@@ -101,7 +104,7 @@ where
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate + (whir_parameters.folding_factor - 1);
 
-            let log_next_eta = Self::log_eta(next_rate);
+            let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
             let num_queries = Self::queries(
                 whir_parameters.soundness_type,
                 protocol_security_level,
@@ -207,8 +210,13 @@ where
             })
     }
 
-    pub fn log_eta(log_inv_rate: usize) -> f64 {
-        -(log_inv_rate as f64 + LOG2_10)
+    pub fn log_eta(soundness_type: SoundnessType, log_inv_rate: usize) -> f64 {
+        // Ask me how I did this? At the time, only God and I knew. Now only God knows
+        match soundness_type {
+            SoundnessType::ProvableList => -(0.5 * log_inv_rate as f64 + LOG2_10 + 1.),
+            SoundnessType::UniqueDecoding => 0.,
+            SoundnessType::ConjectureList => -(log_inv_rate as f64 + 1.),
+        }
     }
 
     pub fn list_size_bits(
@@ -431,7 +439,7 @@ where
         writeln!(f, "------------------------------------")?;
 
         let field_size_bits = F::field_size_in_bits();
-        let log_eta = Self::log_eta(self.starting_log_inv_rate);
+        let log_eta = Self::log_eta(self.soundness_type, self.starting_log_inv_rate);
         let mut num_variables = self.mv_parameters.num_variables;
 
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
@@ -454,7 +462,7 @@ where
 
         for r in &self.round_parameters {
             let next_rate = r.log_inv_rate + (self.folding_factor - 1);
-            let log_eta = Self::log_eta(next_rate);
+            let log_eta = Self::log_eta(self.soundness_type, next_rate);
 
             if r.ood_samples > 0 {
                 writeln!(
