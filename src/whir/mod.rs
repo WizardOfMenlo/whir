@@ -69,6 +69,7 @@ mod tests {
         let mv_params = MultivariateParameters::<F>::new(num_variables);
 
         let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
