@@ -203,7 +203,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     use whir::whir::{
         committer::Committer, parameters::WhirConfig as ProverConfig, prover::Prover,
     };
-    use whir::whir_ldt::{
+    use whir::whir::{
         parameters::WhirConfig as VerifierConfig, verifier::Verifier, WhirProof as VerifierProof,
     };
 
@@ -290,7 +290,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let verifier = Verifier::new(params.clone());
 
     let io = {
-        use whir::whir_ldt::iopattern::WhirIOPattern;
+        use whir::whir::iopattern::WhirIOPattern;
         IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params)
@@ -302,7 +302,9 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut arthur = io.to_arthur(&transcript);
-        verifier.verify(&mut arthur, &proof).unwrap();
+        verifier
+            .verify(&mut arthur, &Statement::default(), &proof)
+            .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
     dbg!(HashCounter::get() as f64 / reps as f64);
