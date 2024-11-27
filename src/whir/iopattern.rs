@@ -20,7 +20,7 @@ pub trait WhirIOPattern<F: FftField> {
     ) -> Self;
 }
 
-impl<F> WhirIOPattern<F> for IOPattern
+impl<F, IOPattern> WhirIOPattern<F> for IOPattern
 where
     F: FftField,
     IOPattern: ByteIOPattern

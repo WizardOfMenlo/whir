@@ -41,13 +41,13 @@ where
         Self(config)
     }
 
-    pub fn commit(
+    pub fn commit<Merlin>(
         &self,
         merlin: &mut Merlin,
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter,
     {
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / polynomial.num_coeffs();

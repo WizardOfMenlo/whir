@@ -13,7 +13,7 @@ pub trait SumcheckNotSkippingIOPattern<F: Field> {
     fn add_sumcheck(self, folding_factor: usize, pow_bits: f64) -> Self;
 }
 
-impl<F> SumcheckNotSkippingIOPattern<F> for IOPattern
+impl<F, IOPattern> SumcheckNotSkippingIOPattern<F> for IOPattern
 where
     F: Field,
     IOPattern: FieldIOPattern<F> + WhirPoWIOPattern,
@@ -101,10 +101,7 @@ where
 #[cfg(test)]
 mod tests {
     use ark_ff::Field;
-    use nimue::{
-        plugins::ark::{FieldChallenges, FieldIOPattern, FieldReader},
-        IOPattern, ProofResult,
-    };
+    use nimue::{plugins::ark::{FieldChallenges, FieldIOPattern, FieldReader}, IOPattern, Merlin, ProofResult};
     use nimue_pow::blake3::Blake3PoW;
 
     use crate::{
@@ -155,7 +152,7 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW, Merlin>(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
@@ -241,14 +238,14 @@ mod tests {
         );
 
         let folding_randomness_1 =
-            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW, Merlin>(&mut merlin, folding_factor, 0.)?;
 
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
         let fold_eval = folded_poly_1.evaluate_at_extension(&fold_point);
         prover.add_new_equality(&[fold_point.clone()], &combination_randomness, &[fold_eval]);
 
         let folding_randomness_2 =
-            prover.compute_sumcheck_polynomials::<Blake3PoW>(&mut merlin, folding_factor, 0.)?;
+            prover.compute_sumcheck_polynomials::<Blake3PoW, Merlin>(&mut merlin, folding_factor, 0.)?;
 
         // Compute the answers
         let folded_poly_1 = polynomial.fold(&folding_randomness_1);
