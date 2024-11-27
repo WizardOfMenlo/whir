@@ -8,8 +8,9 @@ pub mod iopattern;
 pub mod parameters;
 pub mod prover;
 pub mod verifier;
+mod fs_utils;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Statement<F> {
     pub points: Vec<MultilinearPoint<F>>,
     pub evaluations: Vec<F>,
@@ -69,6 +70,7 @@ mod tests {
         let mv_params = MultivariateParameters::<F>::new(num_variables);
 
         let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,

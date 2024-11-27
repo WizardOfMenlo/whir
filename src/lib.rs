@@ -8,4 +8,3 @@ pub mod poly_utils; // Utils for polynomials
 pub mod sumcheck; // Sumcheck specialised
 pub mod utils; // Utils in general
 pub mod whir; // The real prover
-pub mod whir_ldt; // Whir as a LDT // Shared parameters
