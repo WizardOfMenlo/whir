@@ -15,7 +15,8 @@ use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter}, ByteWriter, Merlin, ProofResult,
+    plugins::ark::{FieldChallenges, FieldWriter},
+    ByteChallenges, ByteWriter, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -65,14 +66,14 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
-    pub fn prove(
+    pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
         statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        Merlin: FieldChallenges<F> + FieldWriter<F> + ByteChallenges + ByteWriter + PoWChallenge,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -118,7 +119,7 @@ where
             sumcheck_prover
                 .as_mut()
                 .unwrap()
-                .compute_sumcheck_polynomials::<PowStrategy>(
+                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                     merlin,
                     self.0.folding_factor,
                     self.0.starting_folding_pow_bits,
@@ -147,11 +148,14 @@ where
         self.round(merlin, round_state)
     }
 
-    fn round(
+    fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>> {
+    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    where
+        Merlin: FieldChallenges<F> + ByteChallenges + FieldWriter<F> + ByteWriter + PoWChallenge,
+    {
         // Fold the coefficients
         let folded_coefficients = round_state
             .coefficients
@@ -198,7 +202,7 @@ where
                     .unwrap_or_else(|| {
                         SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[], &[])
                     })
-                    .compute_sumcheck_polynomials::<PowStrategy>(
+                    .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                         merlin,
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
@@ -347,7 +351,7 @@ where
                 )
             });
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy>(
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, Merlin>(
             merlin,
             self.0.folding_factor,
             round_params.folding_pow_bits,

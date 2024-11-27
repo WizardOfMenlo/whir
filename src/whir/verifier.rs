@@ -4,8 +4,8 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldReader},
-    Arthur, ByteReader, ProofError, ProofResult,
+    plugins::ark::{FieldChallenges, FieldReader}
+    , ByteChallenges, ByteReader, ProofError, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -15,7 +15,7 @@ use crate::{
     parameters::FoldType,
     poly_utils::{coeffs::CoefficientList, eq_poly_outside, fold::compute_fold, MultilinearPoint},
     sumcheck::proof::SumcheckPolynomial,
-    utils::{expand_randomness},
+    utils::expand_randomness,
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
@@ -76,10 +76,13 @@ where
         }
     }
 
-    fn parse_commitment(
+    fn parse_commitment<Arthur>(
         &self,
         arthur: &mut Arthur,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>> {
+    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    where
+        Arthur: ByteReader + FieldReader<F> + FieldChallenges<F>,
+    {
         let root: [u8; 32] = arthur.next_bytes()?;
 
         let mut ood_points = vec![F::ZERO; self.params.committment_ood_samples];
@@ -96,13 +99,16 @@ where
         })
     }
 
-    fn parse_proof(
+    fn parse_proof<Arthur>(
         &self,
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>, // Will be needed later
         whir_proof: &WhirProof<MerkleConfig, F>,
-    ) -> ProofResult<ParsedProof<F>> {
+    ) -> ProofResult<ParsedProof<F>>
+    where
+        Arthur: FieldReader<F> + FieldChallenges<F> + PoWChallenge + ByteReader + ByteChallenges,
+    {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness: MultilinearPoint<F>;
         let initial_combination_randomness;
@@ -457,12 +463,15 @@ where
         result
     }
 
-    pub fn verify(
+    pub fn verify<Arthur>(
         &self,
         arthur: &mut Arthur,
         statement: &Statement<F>,
         whir_proof: &WhirProof<MerkleConfig, F>,
-    ) -> ProofResult<()> {
+    ) -> ProofResult<()>
+    where
+        Arthur: FieldChallenges<F> + FieldReader<F> + ByteChallenges + ByteReader + PoWChallenge,
+    {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
