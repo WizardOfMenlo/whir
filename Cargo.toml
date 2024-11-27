@@ -27,6 +27,9 @@ nimue-pow = { git = "https://github.com/arkworks-rs/nimue"}
 lazy_static = "1.4"
 rayon = { version = "1.10.0", optional = true }
 
+goldilocks = { git = "https://github.com/scroll-tech/ceno-Goldilocks" }
+thiserror = "1"
+
 [profile.release]
 debug = true
 

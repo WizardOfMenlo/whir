@@ -1,6 +1,7 @@
 pub mod cmdline_utils;
 pub mod crypto; // Crypto utils
 pub mod domain; // Domain that we are evaluating over
+pub mod errors;
 pub mod fs_utils;
 pub mod ntt;
 pub mod parameters;
