@@ -1,8 +1,5 @@
 use ark_ff::Field;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter},
-    IOPattern, Merlin, ProofResult,
-};
+use nimue::{plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter}, IOPattern, ProofResult};
 use nimue_pow::{PoWChallenge, PowStrategy};
 
 use crate::{
@@ -59,7 +56,7 @@ where
         }
     }
 
-    pub fn compute_sumcheck_polynomials<S>(
+    pub fn compute_sumcheck_polynomials<S, Merlin>(
         &mut self,
         merlin: &mut Merlin,
         folding_factor: usize,
@@ -67,6 +64,7 @@ where
     ) -> ProofResult<MultilinearPoint<F>>
     where
         S: PowStrategy,
+        Merlin: FieldChallenges<F> + FieldWriter<F> + PoWChallenge,
     {
         let mut res = Vec::with_capacity(folding_factor);
 
