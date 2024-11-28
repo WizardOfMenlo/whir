@@ -1,14 +1,20 @@
-use super::proof::SumcheckPolynomial;
+use super::SumcheckPolynomial;
 use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
+use nimue::{
+    plugins::ark::{FieldChallenges, FieldWriter},
+    Merlin, ProofResult,
+};
+use nimue_pow::{PoWChallenge, PowStrategy};
+
 #[cfg(feature = "parallel")]
 use rayon::{join, prelude::*};
 
+/// Sumcheck instance for a single weighted sum of an MLE.
 pub struct SumcheckSingle<F> {
     // The evaluation of p
     evaluation_of_p: EvaluationsList<F>,
-    evaluation_of_equality: EvaluationsList<F>,
-    num_variables: usize,
+    weights: EvaluationsList<F>,
     sum: F,
 }
 
@@ -19,27 +25,35 @@ where
     // Get the coefficient of polynomial p and a list of points
     // and initialises the table of the initial polynomial
     // v(X_1, ..., X_n) = p(X_1, ... X_n) * (epsilon_1 eq_z_1(X) + epsilon_2 eq_z_2(X) ...)
-    pub fn new(
-        coeffs: CoefficientList<F>,
-        points: &[MultilinearPoint<F>],
-        combination_randomness: &[F],
-        evaluations: &[F],
-    ) -> Self {
-        assert_eq!(points.len(), combination_randomness.len());
-        assert_eq!(points.len(), evaluations.len());
-        let num_variables = coeffs.num_variables();
-
-        let mut prover = SumcheckSingle {
+    pub fn new(coeffs: CoefficientList<F>) -> Self {
+        let weights = EvaluationsList::new(vec![F::ZERO; 1 << coeffs.num_variables()]);
+        SumcheckSingle {
             evaluation_of_p: coeffs.into(),
-            evaluation_of_equality: EvaluationsList::new(vec![F::ZERO; 1 << num_variables]),
-            num_variables,
+            weights,
             sum: F::ZERO,
-        };
-
-        prover.add_new_equality(points, combination_randomness, evaluations);
-        prover
+        }
     }
 
+    pub fn num_variables(&self) -> usize {
+        self.evaluation_of_p.num_variables()
+    }
+
+    pub fn add_weighted_sum(
+        &mut self,
+        weights: &EvaluationsList<F>,
+        sum: F,
+        combination_randomness: F,
+    ) {
+        assert_eq!(weights.num_variables(), self.num_variables());
+        self.weights
+            .evals_mut()
+            .iter_mut()
+            .zip(weights.evals())
+            .for_each(|(w, &w_prime)| *w += combination_randomness * w_prime);
+        self.sum += combination_randomness * sum;
+    }
+
+    /// Compute the polynomial that represents the sum in the first variable.
     #[cfg(not(feature = "parallel"))]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables >= 1);
@@ -71,13 +85,14 @@ where
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
+    /// Compute the polynomial that represents the sum in the first variable.
     #[cfg(feature = "parallel")]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
-        assert!(self.num_variables >= 1);
+        assert!(self.num_variables() >= 1);
 
         // Compute coefficients of the quadratic result polynomial
         let eval_p_iter = self.evaluation_of_p.evals().par_chunks_exact(2);
-        let eval_eq_iter = self.evaluation_of_equality.evals().par_chunks_exact(2);
+        let eval_eq_iter = self.weights.evals().par_chunks_exact(2);
         let (c0, c2) = eval_p_iter
             .zip(eval_eq_iter)
             .map(|(p_at, eq_at)| {
@@ -102,6 +117,36 @@ where
         let eval_2 = eval_1 + c1 + c2 + c2.double();
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
+    }
+
+    /// Do `folding_factor` rounds of sumcheck, and return the proof.
+    pub fn compute_sumcheck_polynomials<S>(
+        &mut self,
+        merlin: &mut Merlin,
+        folding_factor: usize,
+        pow_bits: f64,
+    ) -> ProofResult<MultilinearPoint<F>>
+    where
+        S: PowStrategy,
+    {
+        let mut res = Vec::with_capacity(folding_factor);
+
+        for _ in 0..folding_factor {
+            let sumcheck_poly = self.compute_sumcheck_polynomial();
+            merlin.add_scalars(sumcheck_poly.evaluations())?;
+            let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
+            res.push(folding_randomness);
+
+            // Do PoW if needed
+            if pow_bits > 0. {
+                merlin.challenge_pow::<S>(pow_bits)?;
+            }
+
+            self.compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
+        }
+
+        res.reverse();
+        Ok(MultilinearPoint(res))
     }
 
     // Evaluate the eq function on for a given point on the hypercube, and add
@@ -150,15 +195,15 @@ where
     pub fn add_new_equality(
         &mut self,
         points: &[MultilinearPoint<F>],
-        combination_randomness: &[F],
         evaluations: &[F],
+        combination_randomness: &[F],
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         assert_eq!(combination_randomness.len(), evaluations.len());
         for (point, rand) in points.iter().zip(combination_randomness) {
             // TODO: We might want to do all points simultaneously so we
             // do only a single pass over the data.
-            Self::eval_eq(&point.0, self.evaluation_of_equality.evals_mut(), *rand);
+            Self::eval_eq(&point.0, self.weights.evals_mut(), *rand);
         }
 
         // Update the sum
@@ -207,7 +252,7 @@ where
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
         assert_eq!(folding_randomness.n_variables(), 1);
-        assert!(self.num_variables >= 1);
+        assert!(self.num_variables() >= 1);
 
         let randomness = folding_randomness.0[0];
         let (evaluations_of_p, evaluations_of_eq) = join(
@@ -219,7 +264,7 @@ where
                     .collect()
             },
             || {
-                self.evaluation_of_equality
+                self.weights
                     .evals()
                     .par_chunks_exact(2)
                     .map(|at| (at[1] - at[0]) * randomness + at[0])
@@ -228,23 +273,23 @@ where
         );
 
         // Update
-        self.num_variables -= 1;
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
-        self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
+        self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
-        crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+        crypto::fields::Field64 as F,
+        poly_utils::{
+            coeffs::CoefficientList, sequential_lag_poly::LagrangePolynomialIterator,
+            MultilinearPoint,
+        },
     };
-
-    use super::SumcheckSingle;
-
-    type F = Field64;
+    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_sumcheck_folding_factor_1() {
@@ -255,7 +300,8 @@ mod tests {
         let claimed_value = polynomial.evaluate(&eval_point);
 
         let eval = polynomial.evaluate(&eval_point);
-        let mut prover = SumcheckSingle::new(polynomial, &[eval_point], &[F::from(1)], &[eval]);
+        let mut prover = SumcheckSingle::new(polynomial);
+        prover.add_new_equality(&[eval_point], &[eval], &[F::from(1)]);
 
         let poly_1 = prover.compute_sumcheck_polynomial();
 
@@ -274,25 +320,21 @@ mod tests {
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
-}
 
-#[test]
-fn test_eval_eq() {
-    use crate::crypto::fields::Field64 as F;
-    use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
-    use ark_ff::AdditiveGroup;
+    #[test]
+    fn test_eval_eq() {
+        let eval = vec![F::from(3), F::from(5)];
+        let mut out = vec![F::ZERO; 4];
+        SumcheckSingle::eval_eq(&eval, &mut out, F::ONE);
+        dbg!(&out);
 
-    let eval = vec![F::from(3), F::from(5)];
-    let mut out = vec![F::ZERO; 4];
-    SumcheckSingle::eval_eq(&eval, &mut out, F::ONE);
-    dbg!(&out);
+        let point = MultilinearPoint(eval.clone());
+        let mut expected = vec![F::ZERO; 4];
+        for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
+            expected[prefix.0] = lag;
+        }
+        dbg!(&expected);
 
-    let point = MultilinearPoint(eval.clone());
-    let mut expected = vec![F::ZERO; 4];
-    for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
-        expected[prefix.0] = lag;
+        assert_eq!(&out, &expected);
     }
-    dbg!(&expected);
-
-    assert_eq!(&out, &expected);
 }

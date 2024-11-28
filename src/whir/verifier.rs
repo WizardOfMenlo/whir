@@ -14,8 +14,8 @@ use crate::whir::fs_utils::get_challenge_stir_queries;
 use crate::{
     parameters::FoldType,
     poly_utils::{coeffs::CoefficientList, eq_poly_outside, fold::compute_fold, MultilinearPoint},
-    sumcheck::proof::SumcheckPolynomial,
-    utils::{expand_randomness},
+    sumcheck::SumcheckPolynomial,
+    utils::expand_randomness,
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>

@@ -1,9 +1,8 @@
-use ark_ff::Field;
-
 use crate::{
     poly_utils::{eq_poly3, MultilinearPoint},
     utils::base_decomposition,
 };
+use ark_ff::Field;
 
 // Stored in evaluation form
 #[derive(Debug, Clone)]

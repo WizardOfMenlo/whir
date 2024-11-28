@@ -4,7 +4,7 @@ use nimue::plugins::ark::*;
 
 use crate::{
     fs_utils::{OODIOPattern, WhirPoWIOPattern},
-    sumcheck::prover_not_skipping::SumcheckNotSkippingIOPattern,
+    sumcheck::SumcheckSingleIOPattern,
 };
 
 use super::parameters::WhirConfig;
@@ -25,7 +25,7 @@ where
     F: FftField,
     IOPattern: ByteIOPattern
         + FieldIOPattern<F>
-        + SumcheckNotSkippingIOPattern<F>
+        + SumcheckSingleIOPattern<F>
         + WhirPoWIOPattern
         + OODIOPattern<F>,
 {

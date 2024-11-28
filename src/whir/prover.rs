@@ -8,14 +8,15 @@ use crate::{
         fold::{compute_fold, restructure_evaluations},
         MultilinearPoint,
     },
-    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
+    sumcheck::SumcheckSingle,
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter}, ByteWriter, Merlin, ProofResult,
+    plugins::ark::{FieldChallenges, FieldWriter},
+    ByteWriter, Merlin, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -108,12 +109,15 @@ where
             let combination_randomness =
                 expand_randomness(combination_randomness_gen, initial_claims.len());
 
-            sumcheck_prover = Some(SumcheckProverNotSkipping::new(
-                witness.polynomial.clone(),
-                &initial_claims,
-                &combination_randomness,
-                &initial_answers,
-            ));
+            sumcheck_prover = {
+                let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
+                sumcheck.add_new_equality(
+                    &initial_claims,
+                    &initial_answers,
+                    &combination_randomness,
+                );
+                Some(sumcheck)
+            };
 
             sumcheck_prover
                 .as_mut()
@@ -172,7 +176,7 @@ where
                 self.0.final_queries,
                 merlin,
             )?;
-            
+
             let merkle_proof = round_state
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
@@ -195,9 +199,7 @@ where
             if self.0.final_sumcheck_rounds > 0 {
                 round_state
                     .sumcheck_prover
-                    .unwrap_or_else(|| {
-                        SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[], &[])
-                    })
+                    .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone()))
                     .compute_sumcheck_polynomials::<PowStrategy>(
                         merlin,
                         self.0.final_sumcheck_rounds,
@@ -333,18 +335,19 @@ where
             .map(|mut sumcheck_prover| {
                 sumcheck_prover.add_new_equality(
                     &stir_challenges,
-                    &combination_randomness,
                     &stir_evaluations,
+                    &combination_randomness,
                 );
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                SumcheckProverNotSkipping::new(
-                    folded_coefficients.clone(),
+                let mut sumcheck = SumcheckSingle::new(folded_coefficients.clone());
+                sumcheck.add_new_equality(
                     &stir_challenges,
-                    &combination_randomness,
                     &stir_evaluations,
-                )
+                    &combination_randomness,
+                );
+                sumcheck
             });
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy>(
@@ -375,7 +378,7 @@ where
 {
     round: usize,
     domain: Domain<F>,
-    sumcheck_prover: Option<SumcheckProverNotSkipping<F>>,
+    sumcheck_prover: Option<SumcheckSingle<F>>,
     folding_randomness: MultilinearPoint<F>,
     coefficients: CoefficientList<F>,
     prev_merkle: MerkleTree<MerkleConfig>,
