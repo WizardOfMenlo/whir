@@ -1066,38 +1066,3 @@ dependencies = [
  "quote",
  "syn 2.0.87",
 ]
-
-[[patch.unused]]
-name = "ark-crypto-primitives"
-version = "0.4.0"
-source = "git+https://github.com/arkworks-rs/crypto-primitives#b13983815e5b3a0fbeed0e7da0edec751beac270"
-
-[[patch.unused]]
-name = "ark-ec"
-version = "0.4.2"
-source = "git+https://github.com/WizardOfMenlo/algebra?branch=fft_extensions#fe932806ba46425ba8adc7536dbc20f6d61ae13a"
-
-[[patch.unused]]
-name = "ark-ff"
-version = "0.4.2"
-source = "git+https://github.com/WizardOfMenlo/algebra?branch=fft_extensions#fe932806ba46425ba8adc7536dbc20f6d61ae13a"
-
-[[patch.unused]]
-name = "ark-poly"
-version = "0.4.2"
-source = "git+https://github.com/WizardOfMenlo/algebra?branch=fft_extensions#fe932806ba46425ba8adc7536dbc20f6d61ae13a"
-
-[[patch.unused]]
-name = "ark-serialize"
-version = "0.4.2"
-source = "git+https://github.com/WizardOfMenlo/algebra?branch=fft_extensions#fe932806ba46425ba8adc7536dbc20f6d61ae13a"
-
-[[patch.unused]]
-name = "ark-std"
-version = "0.4.0"
-source = "git+https://github.com/arkworks-rs/std#db4367e68ff60da31ac759831e38f60171f4e03d"
-
-[[patch.unused]]
-name = "ark-test-curves"
-version = "0.4.2"
-source = "git+https://github.com/WizardOfMenlo/algebra?branch=fft_extensions#fe932806ba46425ba8adc7536dbc20f6d61ae13a"

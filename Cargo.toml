@@ -7,7 +7,7 @@ edition = "2021"
 default-run = "main"
 
 [dependencies]
-ark-std = {version = "0.5", features = ["std"]}
+ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
 ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
@@ -23,7 +23,7 @@ clap = { version = "4.4.17", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 nimue = { git = "https://github.com/arkworks-rs/nimue", features = ["ark"] }
-nimue-pow = { git = "https://github.com/arkworks-rs/nimue"}
+nimue-pow = { git = "https://github.com/arkworks-rs/nimue" }
 lazy_static = "1.4"
 rayon = { version = "1.10.0", optional = true }
 
@@ -41,11 +41,4 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 
-[patch.crates-io]
-ark-std = { git = "https://github.com/arkworks-rs/std" }
-ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
-ark-test-curves = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-ff = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-poly = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-serialize = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-ec = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
+

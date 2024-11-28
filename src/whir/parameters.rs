@@ -22,6 +22,7 @@ where
     pub(crate) max_pow_bits: usize,
 
     pub(crate) committment_ood_samples: usize,
+    pub(crate) initial_statement: bool,
     pub(crate) starting_domain: Domain<F>,
     pub(crate) starting_log_inv_rate: usize,
     pub(crate) starting_folding_pow_bits: f64,
@@ -86,29 +87,47 @@ where
 
         let field_size_bits = F::field_size_in_bits();
 
-        let committment_ood_samples = Self::ood_samples(
-            whir_parameters.security_level,
-            whir_parameters.soundness_type,
-            mv_parameters.num_variables,
-            whir_parameters.starting_log_inv_rate,
-            Self::log_eta(
+        let committment_ood_samples = if whir_parameters.initial_statement {
+            Self::ood_samples(
+                whir_parameters.security_level,
                 whir_parameters.soundness_type,
+                mv_parameters.num_variables,
                 whir_parameters.starting_log_inv_rate,
-            ),
-            field_size_bits,
-        );
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+                field_size_bits,
+            )
+        } else {
+            0
+        };
 
-        let starting_folding_pow_bits = Self::folding_pow_bits(
-            whir_parameters.security_level,
-            whir_parameters.soundness_type,
-            field_size_bits,
-            mv_parameters.num_variables,
-            whir_parameters.starting_log_inv_rate,
-            Self::log_eta(
+        let starting_folding_pow_bits = if whir_parameters.initial_statement {
+            Self::folding_pow_bits(
+                whir_parameters.security_level,
                 whir_parameters.soundness_type,
+                field_size_bits,
+                mv_parameters.num_variables,
                 whir_parameters.starting_log_inv_rate,
-            ),
-        );
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+            )
+        } else {
+            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
+                whir_parameters.soundness_type,
+                field_size_bits,
+                mv_parameters.num_variables,
+                whir_parameters.starting_log_inv_rate,
+                Self::log_eta(
+                    whir_parameters.soundness_type,
+                    whir_parameters.starting_log_inv_rate,
+                ),
+            ) + (whir_parameters.folding_factor as f64).log2();
+            0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
+        };
 
         let mut round_parameters = Vec::with_capacity(num_rounds);
         let mut num_variables = mv_parameters.num_variables - whir_parameters.folding_factor;
@@ -186,6 +205,7 @@ where
         WhirConfig {
             security_level: whir_parameters.security_level,
             max_pow_bits: whir_parameters.pow_bits,
+            initial_statement: whir_parameters.initial_statement,
             committment_ood_samples,
             mv_parameters,
             starting_domain,
@@ -198,7 +218,7 @@ where
             final_pow_bits,
             final_sumcheck_rounds,
             final_folding_pow_bits,
-            pow_strategy: PhantomData::default(),
+            pow_strategy: PhantomData,
             fold_optimisation: whir_parameters.fold_optimisation,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
@@ -240,14 +260,10 @@ where
         log_eta: f64,
     ) -> f64 {
         match soundness_type {
-            SoundnessType::ConjectureList => {
-                let result = (num_variables + log_inv_rate) as f64 - log_eta;
-                result
-            }
+            SoundnessType::ConjectureList => (num_variables + log_inv_rate) as f64 - log_eta,
             SoundnessType::ProvableList => {
                 let log_inv_sqrt_rate: f64 = log_inv_rate as f64 / 2.;
-                let result = log_inv_sqrt_rate - (1. + log_eta);
-                result
+                log_inv_sqrt_rate - (1. + log_eta)
             }
             SoundnessType::UniqueDecoding => 0.0,
         }
@@ -385,7 +401,8 @@ where
         num_queries: usize,
     ) -> f64 {
         let num_queries = num_queries as f64;
-        let bits_of_sec_queries = match soundness_type {
+
+        match soundness_type {
             SoundnessType::UniqueDecoding => {
                 let rate = 1. / ((1 << log_inv_rate) as f64);
                 let denom = -(0.5 * (1. + rate)).log2();
@@ -394,9 +411,7 @@ where
             }
             SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate as f64,
             SoundnessType::ConjectureList => num_queries * log_inv_rate as f64,
-        };
-
-        bits_of_sec_queries
+        }
     }
 
     pub fn rbr_soundness_queries_combination(
@@ -488,7 +503,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-            prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits as f64,
+            prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits,
             self.folding_factor,
             prox_gaps_error,
             sumcheck_error,
@@ -529,7 +544,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, combination: {:.1}, pow: {:.1}",
-                query_error.min(combination_error) + r.pow_bits as f64,
+                query_error.min(combination_error) + r.pow_bits,
                 query_error,
                 combination_error,
                 r.pow_bits,
@@ -553,7 +568,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits as f64,
+                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
                 self.folding_factor,
                 prox_gaps_error,
                 sumcheck_error,
@@ -571,7 +586,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-            query_error + self.final_pow_bits as f64,
+            query_error + self.final_pow_bits,
             query_error,
             self.final_pow_bits,
         )?;
@@ -581,7 +596,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + self.final_pow_bits as f64,
+                combination_error + self.final_pow_bits,
                 self.final_sumcheck_rounds,
                 combination_error,
                 self.final_folding_pow_bits,

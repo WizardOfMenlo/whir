@@ -19,7 +19,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::coeffs::CoefficientList,
-    whir::Statement,
+    whir::{iopattern::WhirIOPattern, Statement},
 };
 
 use serde::Serialize;
@@ -228,6 +228,7 @@ fn run_whir<F, MerkleConfig>(
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: true,
         security_level,
         pow_bits,
         folding_factor,
@@ -253,11 +254,15 @@ fn run_whir<F, MerkleConfig>(
         whir_ldt_verifier_hashes,
     ) = {
         // Run LDT
-        use whir::whir_ldt::{
+        use whir::whir::{
             committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
             verifier::Verifier, whir_proof_size,
         };
 
+        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: false,
+            ..whir_params.clone()
+        };
         let params =
             WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
         if !params.check_pow_bits() {
@@ -280,7 +285,9 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
-        let proof = prover.prove(&mut merlin, witness).unwrap();
+        let proof = prover
+            .prove(&mut merlin, Statement::default(), witness)
+            .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
         let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
@@ -293,7 +300,9 @@ fn run_whir<F, MerkleConfig>(
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier.verify(&mut arthur, &proof).unwrap();
+            verifier
+                .verify(&mut arthur, &Statement::default(), &proof)
+                .unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -339,7 +348,7 @@ fn run_whir<F, MerkleConfig>(
             .collect();
         let evaluations = points
             .iter()
-            .map(|point| polynomial.evaluate_at_extension(&point))
+            .map(|point| polynomial.evaluate_at_extension(point))
             .collect();
         let statement = Statement {
             points,

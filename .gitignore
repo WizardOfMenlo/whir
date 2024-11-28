@@ -7,3 +7,5 @@ outputs/temp/
 *.pdf
 scripts/__pycache__/
 .DS_Store
+outputs/
+.idea

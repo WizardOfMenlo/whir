@@ -142,7 +142,6 @@ mod tests {
         );
         let should_not_work = std::panic::catch_unwind(|| {
             as_chunks_exact_mut::<_, 2>(&mut [1, 2, 3]);
-            return;
         });
         assert!(should_not_work.is_err())
     }

@@ -16,11 +16,11 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, Merlin, ProofResult,
+    ByteChallenges, ByteWriter, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-use rand::{Rng, SeedableRng};
 
+use crate::whir::fs_utils::get_challenge_stir_queries;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -42,30 +42,43 @@ where
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        statement
+        if statement.points.len() != statement.evaluations.len() {
+            return false;
+        }
+        if !statement
             .points
             .iter()
             .all(|point| point.0.len() == self.0.mv_parameters.num_variables)
+        {
+            return false;
+        }
+        if !self.0.initial_statement && !statement.points.is_empty() {
+            return false;
+        }
+        true
     }
 
     fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
+        assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
+        if !self.0.initial_statement {
+            assert!(witness.ood_points.is_empty());
+        }
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
-    pub fn prove(
+    pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
         statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        Merlin: FieldChallenges<F> + FieldWriter<F> + ByteChallenges + ByteWriter + PoWChallenge,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
 
-        let [combination_randomness_gen] = merlin.challenge_scalars()?;
         let initial_claims: Vec<_> = witness
             .ood_points
             .into_iter()
@@ -77,26 +90,49 @@ where
             })
             .chain(statement.points)
             .collect();
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, initial_claims.len());
         let initial_answers: Vec<_> = witness
             .ood_answers
             .into_iter()
             .chain(statement.evaluations)
             .collect();
 
-        let mut sumcheck_prover = SumcheckProverNotSkipping::new(
-            witness.polynomial.clone(),
-            &initial_claims,
-            &combination_randomness,
-            &initial_answers,
-        );
+        if !self.0.initial_statement {
+            assert!(
+                initial_answers.is_empty(),
+                "Can not have initial answers without initial statement"
+            );
+        }
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy>(
-            merlin,
-            self.0.folding_factor,
-            self.0.starting_folding_pow_bits,
-        )?;
+        let mut sumcheck_prover = None;
+        let folding_randomness = if self.0.initial_statement {
+            let [combination_randomness_gen] = merlin.challenge_scalars()?;
+            let combination_randomness =
+                expand_randomness(combination_randomness_gen, initial_claims.len());
+
+            sumcheck_prover = Some(SumcheckProverNotSkipping::new(
+                witness.polynomial.clone(),
+                &initial_claims,
+                &combination_randomness,
+                &initial_answers,
+            ));
+
+            sumcheck_prover
+                .as_mut()
+                .unwrap()
+                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                    merlin,
+                    self.0.folding_factor,
+                    self.0.starting_folding_pow_bits,
+                )?
+        } else {
+            let mut folding_randomness = vec![F::ZERO; self.0.folding_factor];
+            merlin.fill_challenge_scalars(&mut folding_randomness)?;
+
+            if self.0.starting_folding_pow_bits > 0. {
+                merlin.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
+            }
+            MultilinearPoint(folding_randomness)
+        };
 
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
@@ -112,11 +148,14 @@ where
         self.round(merlin, round_state)
     }
 
-    fn round(
+    fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>> {
+    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    where
+        Merlin: FieldChallenges<F> + ByteChallenges + FieldWriter<F> + ByteWriter + PoWChallenge,
+    {
         // Fold the coefficients
         let folded_coefficients = round_state
             .coefficients
@@ -131,13 +170,13 @@ where
             merlin.add_scalars(folded_coefficients.coeffs())?;
 
             // Final verifier queries and answers
-            let mut queries_seed = [0u8; 32];
-            merlin.fill_challenge_bytes(&mut queries_seed)?;
-            let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(queries_seed);
-            let final_challenge_indexes = utils::dedup((0..self.0.final_queries).map(|_| {
-                final_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
-
+            let final_challenge_indexes = get_challenge_stir_queries(
+                round_state.domain.size(),
+                self.0.folding_factor,
+                self.0.final_queries,
+                merlin,
+            )?;
+            
             let merkle_proof = round_state
                 .prev_merkle
                 .generate_multi_proof(final_challenge_indexes.clone())
@@ -157,13 +196,18 @@ where
             }
 
             // Final sumcheck
-            round_state
-                .sumcheck_prover
-                .compute_sumcheck_polynomials::<PowStrategy>(
-                    merlin,
-                    self.0.final_sumcheck_rounds,
-                    self.0.final_folding_pow_bits,
-                )?;
+            if self.0.final_sumcheck_rounds > 0 {
+                round_state
+                    .sumcheck_prover
+                    .unwrap_or_else(|| {
+                        SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[], &[])
+                    })
+                    .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                        merlin,
+                        self.0.final_sumcheck_rounds,
+                        self.0.final_folding_pow_bits,
+                    )?;
+            }
 
             return Ok(WhirProof(round_state.merkle_proofs));
         }
@@ -214,13 +258,12 @@ where
         }
 
         // STIR queries
-        let mut stir_queries_seed = [0u8; 32];
-        merlin.fill_challenge_bytes(&mut stir_queries_seed)?;
-        let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
-        let stir_challenges_indexes =
-            utils::dedup((0..round_params.num_queries).map(|_| {
-                stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
+        let stir_challenges_indexes = get_challenge_stir_queries(
+            round_state.domain.size(),
+            self.0.folding_factor,
+            round_params.num_queries,
+            merlin,
+        )?;
         let domain_scaled_gen = round_state
             .domain
             .backing_domain
@@ -288,24 +331,36 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
-        round_state.sumcheck_prover.add_new_equality(
-            &stir_challenges,
-            &combination_randomness,
-            &stir_evaluations,
-        );
-
-        let folding_randomness = round_state
+        let mut sumcheck_prover = round_state
             .sumcheck_prover
-            .compute_sumcheck_polynomials::<PowStrategy>(
-                merlin,
-                self.0.folding_factor,
-                round_params.folding_pow_bits,
-            )?;
+            .take()
+            .map(|mut sumcheck_prover| {
+                sumcheck_prover.add_new_equality(
+                    &stir_challenges,
+                    &combination_randomness,
+                    &stir_evaluations,
+                );
+                sumcheck_prover
+            })
+            .unwrap_or_else(|| {
+                SumcheckProverNotSkipping::new(
+                    folded_coefficients.clone(),
+                    &stir_challenges,
+                    &combination_randomness,
+                    &stir_evaluations,
+                )
+            });
+
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+            merlin,
+            self.0.folding_factor,
+            round_params.folding_pow_bits,
+        )?;
 
         let round_state = RoundState {
             round: round_state.round + 1,
             domain: new_domain,
-            sumcheck_prover: round_state.sumcheck_prover,
+            sumcheck_prover: Some(sumcheck_prover),
             folding_randomness,
             coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
             prev_merkle: merkle_tree,
@@ -324,7 +379,7 @@ where
 {
     round: usize,
     domain: Domain<F>,
-    sumcheck_prover: SumcheckProverNotSkipping<F>,
+    sumcheck_prover: Option<SumcheckProverNotSkipping<F>>,
     folding_randomness: MultilinearPoint<F>,
     coefficients: CoefficientList<F>,
     prev_merkle: MerkleTree<MerkleConfig>,

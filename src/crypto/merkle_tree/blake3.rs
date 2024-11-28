@@ -122,8 +122,8 @@ pub fn default_config<F: CanonicalSerialize + Send>(
     <LeafH<F> as CRHScheme>::Parameters,
     <CompressH as TwoToOneCRHScheme>::Parameters,
 ) {
-    let leaf_hash_params = <LeafH<F> as CRHScheme>::setup(rng).unwrap();
-    let two_to_one_params = <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
+    <LeafH<F> as CRHScheme>::setup(rng).unwrap();
+    <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
 
-    (leaf_hash_params, two_to_one_params)
+    ((), ())
 }

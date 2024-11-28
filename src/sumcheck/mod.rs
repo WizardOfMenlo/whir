@@ -99,7 +99,7 @@ mod tests {
         // First, check that is sums to the right value over the hypercube
         assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
 
-        let combination_randomness = vec![F::from(293), F::from(42)];
+        let combination_randomness = [F::from(293), F::from(42)];
         let folding_randomness = MultilinearPoint(vec![F::from(335), F::from(222)]);
 
         let new_eval_point = MultilinearPoint(vec![F::from(32); num_variables - folding_factor]);
@@ -146,7 +146,7 @@ mod tests {
         let [epsilon_1, epsilon_2] = [F::from(15), F::from(32)];
         let folding_randomness_1 = MultilinearPoint(vec![F::from(11), F::from(31)]);
         let fold_point = MultilinearPoint(vec![F::from(31), F::from(15)]);
-        let combination_randomness = vec![F::from(31), F::from(4999)];
+        let combination_randomness = [F::from(31), F::from(4999)];
         let folding_randomness_2 = MultilinearPoint(vec![F::from(97), F::from(36)]);
 
         let mut prover = SumcheckCore::new(
@@ -184,7 +184,7 @@ mod tests {
         );
 
         let full_folding =
-            MultilinearPoint(vec![folding_randomness_2.0.clone(), folding_randomness_1.0].concat());
+            MultilinearPoint([folding_randomness_2.0.clone(), folding_randomness_1.0].concat());
         let eval_coeff = folded_poly_1.fold(&folding_randomness_2).coeffs()[0];
         assert_eq!(
             sumcheck_poly_2.evaluate_at_point(&folding_randomness_2),
@@ -217,8 +217,8 @@ mod tests {
         let fold_point_12 =
             MultilinearPoint(vec![F::from(1231), F::from(15), F::from(4231), F::from(15)]);
         let fold_point_2 = MultilinearPoint(vec![F::from(311), F::from(115)]);
-        let combination_randomness_1 = vec![F::from(1289), F::from(3281), F::from(10921)];
-        let combination_randomness_2 = vec![F::from(3281), F::from(3232)];
+        let combination_randomness_1 = [F::from(1289), F::from(3281), F::from(10921)];
+        let combination_randomness_2 = [F::from(3281), F::from(3232)];
 
         let mut prover = SumcheckCore::new(
             polynomial.clone(),
