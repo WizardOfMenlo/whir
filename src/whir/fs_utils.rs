@@ -1,3 +1,4 @@
+use ark_crypto_primitives::merkle_tree::Config;
 use crate::utils::dedup;
 use nimue::{ByteChallenges, ProofResult};
 
@@ -23,4 +24,12 @@ where
         result % folded_domain_size
     });
     Ok(dedup(indices))
+}
+
+pub trait DigestWriter<MerkleConfig: Config> {
+    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
+}
+
+pub trait DigestReader<MerkleConfig: Config> {
+    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }
