@@ -6,7 +6,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::FftField;
 use ark_serialize::CanonicalSerialize;
-use nimue::{DefaultHash, IOPattern};
+use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -21,6 +21,8 @@ use whir::{
 use nimue_pow::blake3::Blake3PoW;
 
 use clap::Parser;
+use whir::whir::fs_utils::{DigestReader, DigestWriter};
+use whir::whir::iopattern::DigestIOPattern;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -182,6 +184,9 @@ fn run_whir<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    IOPattern: DigestIOPattern<MerkleConfig>,
+    Merlin: DigestWriter<MerkleConfig>,
+    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
 {
     match args.protocol_type {
         WhirType::PCS => run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params),
@@ -199,6 +204,9 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    IOPattern: DigestIOPattern<MerkleConfig>,
+    Merlin: DigestWriter<MerkleConfig>,
+    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
@@ -303,6 +311,9 @@ fn run_whir_pcs<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    IOPattern: DigestIOPattern<MerkleConfig>,
+    Merlin: DigestWriter<MerkleConfig>,
+    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,

@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use nimue::{plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter}, IOPattern, ProofResult};
+use nimue::{plugins::ark::{FieldChallenges, FieldIOPattern, FieldWriter}, ProofResult};
 use nimue_pow::{PoWChallenge, PowStrategy};
 
 use crate::{

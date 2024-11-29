@@ -6,9 +6,13 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
     sponge::Absorb,
 };
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use nimue::{Arthur, ByteIOPattern, ByteReader, ByteWriter, IOPattern, Merlin, ProofError, ProofResult};
 use rand::RngCore;
 use sha3::Digest;
+use crate::whir::fs_utils::{DigestReader, DigestWriter};
+use crate::whir::iopattern::DigestIOPattern;
 
 #[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,
@@ -127,4 +131,24 @@ pub fn default_config<F: CanonicalSerialize + Send>(
     <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
 
     ((), ())
+}
+
+impl <F: Field> DigestIOPattern<MerkleTreeParams<F>> for IOPattern {
+    fn add_digest(self, label: &str) -> Self {
+        self.add_bytes(32, label)
+    }
+}
+
+impl <F: Field> DigestWriter<MerkleTreeParams<F>> for Merlin {
+    fn add_digest(&mut self, digest: KeccakDigest) -> ProofResult<()> {
+        self.add_bytes(&digest.0).map_err(ProofError::InvalidIO)
+    }
+}
+
+impl <'a, F: Field> DigestReader<MerkleTreeParams<F>> for Arthur<'a> {
+    fn read_digest(&mut self) -> ProofResult<KeccakDigest> {
+        let mut digest = [0; 32];
+        self.fill_next_bytes(&mut digest)?;
+        Ok(KeccakDigest(digest))
+    }
 }

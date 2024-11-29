@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use nimue::{plugins::ark::FieldIOPattern, IOPattern};
+use nimue::plugins::ark::FieldIOPattern;
 use nimue_pow::PoWIOPattern;
 pub trait OODIOPattern<F: Field> {
     fn add_ood(self, num_samples: usize) -> Self;
