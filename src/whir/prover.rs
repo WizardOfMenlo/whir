@@ -20,7 +20,7 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use crate::whir::fs_utils::get_challenge_stir_queries;
+use crate::whir::fs_utils::{get_challenge_stir_queries, DigestWriter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -33,7 +33,6 @@ impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
@@ -73,7 +72,7 @@ where
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F> + FieldWriter<F> + ByteChallenges + ByteWriter + PoWChallenge,
+        Merlin: FieldChallenges<F> + FieldWriter<F> + ByteChallenges + ByteWriter + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -154,7 +153,7 @@ where
         mut round_state: RoundState<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F> + ByteChallenges + FieldWriter<F> + ByteWriter + PoWChallenge,
+        Merlin: FieldChallenges<F> + ByteChallenges + FieldWriter<F> + ByteWriter + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -241,7 +240,7 @@ where
         .unwrap();
 
         let root = merkle_tree.root();
-        merlin.add_bytes(root.as_ref())?;
+        merlin.add_digest(root)?;
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples];

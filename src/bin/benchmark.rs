@@ -9,7 +9,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
-use nimue::{DefaultHash, IOPattern};
+use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use nimue_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
@@ -25,6 +25,8 @@ use whir::{
 use serde::Serialize;
 
 use clap::Parser;
+use whir::whir::fs_utils::{DigestReader, DigestWriter};
+use whir::whir::iopattern::DigestIOPattern;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -211,6 +213,9 @@ fn run_whir<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    IOPattern: DigestIOPattern<MerkleConfig>,
+    Merlin: DigestWriter<MerkleConfig>,
+    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
