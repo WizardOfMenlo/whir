@@ -73,11 +73,24 @@ where
         Ok(witness)
     }
 
-    fn batch_commit(
-        _pp: &Self::Param,
-        _polys: &[Self::Poly],
+    fn batch_commit_and_write(
+        pp: &Self::Param,
+        polys: &[Self::Poly],
+        transcript: &mut Self::Transcript,
     ) -> Result<Self::CommitmentWithData, Error> {
-        todo!()
+        if polys.is_empty() {
+            return Err(Error::InvalidPcsParam);
+        }
+
+        for i in 1..polys.len() {
+            if polys[i].num_vars() != polys[0].num_vars() {
+                return Err(Error::InvalidPcsParam);
+            }
+        }
+
+        let committer = Committer::new(pp.clone());
+        let witness = committer.batch_commit(transcript, polys)?;
+        Ok(witness)
     }
 
     fn open(

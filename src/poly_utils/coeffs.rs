@@ -29,6 +29,10 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    pub fn num_vars(&self) -> usize {
+        self.num_variables
+    }
+
     /// Evaluate the given polynomial at `point` from {0,1}^n
     pub fn evaluate_hypercube(&self, point: BinaryHypercubePoint) -> F {
         assert_eq!(self.coeffs.len(), 1 << self.num_variables);

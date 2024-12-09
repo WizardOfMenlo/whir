@@ -8,6 +8,8 @@ use std::fmt::Debug;
 pub enum Error {
     #[error(transparent)]
     ProofError(#[from] nimue::ProofError),
+    #[error("InvalidPcsParams")]
+    InvalidPcsParam,
 }
 
 pub trait PolynomialCommitmentScheme<E: FftField>: Clone {
@@ -25,9 +27,10 @@ pub trait PolynomialCommitmentScheme<E: FftField>: Clone {
         transcript: &mut Self::Transcript,
     ) -> Result<Self::CommitmentWithData, Error>;
 
-    fn batch_commit(
+    fn batch_commit_and_write(
         pp: &Self::Param,
         polys: &[Self::Poly],
+        transcript: &mut Self::Transcript,
     ) -> Result<Self::CommitmentWithData, Error>;
 
     fn open(

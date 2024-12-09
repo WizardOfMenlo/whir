@@ -35,7 +35,7 @@ where
 impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = [F]>
+    MerkleConfig: Config<Leaf = [F]>,
 {
     pub fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
@@ -110,5 +110,16 @@ where
             ood_points,
             ood_answers,
         })
+    }
+
+    pub fn batch_commit<Merlin>(
+        &self,
+        _merlin: &mut Merlin,
+        _polys: &[CoefficientList<F::BasePrimeField>],
+    ) -> ProofResult<Witness<F, MerkleConfig>>
+    where
+        Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter + DigestWriter<MerkleConfig>,
+    {
+        todo!()
     }
 }
