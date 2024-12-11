@@ -83,6 +83,12 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
     evals
 }
 
+/// Takes a vector of matrix and stacking them horizontally
+/// Use in-place matrix transposes to avoid data copy
+pub fn horizontal_stacking<F: Field>(mut _evals: Vec<Vec<F>>, _folding_factor: usize) -> Vec<F> {
+    todo!()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::base_decomposition;

@@ -5,7 +5,7 @@ use crate::parameters::{
 };
 use crate::poly_utils::{coeffs::CoefficientList, MultilinearPoint};
 use crate::whir::{
-    committer::{Committer, Witness},
+    committer::{Committer, Witnesses},
     iopattern::WhirIOPattern,
     parameters::WhirConfig,
     prover::Prover,
@@ -34,7 +34,7 @@ where
     E: FftField + CanonicalSerialize + CanonicalDeserialize,
 {
     type Param = WhirPCSConfig<E>;
-    type CommitmentWithData = Witness<E, MerkleTreeParams<E>>;
+    type CommitmentWithData = Witnesses<E, MerkleTreeParams<E>>;
     type Proof = WhirProof<MerkleTreeParams<E>, E>;
     // TODO: support both base and extension fields
     type Poly = CoefficientList<E::BasePrimeField>;
@@ -70,7 +70,7 @@ where
     ) -> Result<Self::CommitmentWithData, Error> {
         let committer = Committer::new(pp.clone());
         let witness = committer.commit(transcript, poly.clone())?;
-        Ok(witness)
+        Ok(witness.into())
     }
 
     fn batch_commit_and_write(
@@ -106,7 +106,7 @@ where
             evaluations: vec![eval.clone()],
         };
 
-        let proof = prover.prove(transcript, statement, witness)?;
+        let proof = prover.prove(transcript, statement, witness.into())?;
         Ok(proof)
     }
 

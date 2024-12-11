@@ -27,6 +27,41 @@ where
     pub(crate) ood_answers: Vec<F>,
 }
 
+pub struct Witnesses<F, MerkleConfig>
+where
+    MerkleConfig: Config,
+{
+    pub(crate) polys: Vec<CoefficientList<F>>,
+    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
+    pub(crate) merkle_leaves: Vec<F>,
+    pub(crate) ood_points: Vec<F>,
+    pub(crate) ood_answers: Vec<Vec<F>>,
+}
+
+impl<F, MerkleConfig: Config> From<Witness<F, MerkleConfig>> for Witnesses<F, MerkleConfig> {
+    fn from(witness: Witness<F, MerkleConfig>) -> Self {
+        Self {
+            polys: vec![witness.polynomial],
+            merkle_tree: witness.merkle_tree,
+            merkle_leaves: witness.merkle_leaves,
+            ood_points: witness.ood_points,
+            ood_answers: vec![witness.ood_answers],
+        }
+    }
+}
+
+impl<F: Clone, MerkleConfig: Config> From<Witnesses<F, MerkleConfig>> for Witness<F, MerkleConfig> {
+    fn from(witness: Witnesses<F, MerkleConfig>) -> Self {
+        Self {
+            polynomial: witness.polys[0].clone(),
+            merkle_tree: witness.merkle_tree,
+            merkle_leaves: witness.merkle_leaves,
+            ood_points: witness.ood_points,
+            ood_answers: witness.ood_answers[0].clone(),
+        }
+    }
+}
+
 pub struct Committer<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
 where
     F: FftField,
@@ -114,12 +149,83 @@ where
 
     pub fn batch_commit<Merlin>(
         &self,
-        _merlin: &mut Merlin,
-        _polys: &[CoefficientList<F::BasePrimeField>],
-    ) -> ProofResult<Witness<F, MerkleConfig>>
+        merlin: &mut Merlin,
+        polys: &[CoefficientList<F::BasePrimeField>],
+    ) -> ProofResult<Witnesses<F, MerkleConfig>>
     where
         Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter + DigestWriter<MerkleConfig>,
     {
-        todo!()
+        let base_domain = self.0.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / polys[0].num_coeffs();
+        let evals = polys
+            .iter()
+            .map(|poly| expand_from_coeff(poly.coeffs(), expansion))
+            .collect::<Vec<Vec<_>>>();
+
+        let folded_evals = evals
+            .into_iter()
+            .map(|evals| utils::stack_evaluations(evals, self.0.folding_factor))
+            .map(|evals| {
+                restructure_evaluations(
+                    evals,
+                    self.0.fold_optimisation,
+                    base_domain.group_gen(),
+                    base_domain.group_gen_inv(),
+                    self.0.folding_factor,
+                )
+            })
+            .map(|evals| {
+                evals
+                    .into_iter()
+                    .map(F::from_base_prime_field)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<Vec<_>>>();
+        let folded_evals = utils::horizontal_stacking(folded_evals, self.0.folding_factor);
+
+        // Group folds together as a leaf.
+        let fold_size = 1 << self.0.folding_factor;
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = folded_evals.chunks_exact(fold_size * base_domain.size());
+        #[cfg(feature = "parallel")]
+        let leafs_iter = folded_evals.par_chunks_exact(fold_size * base_domain.size());
+
+        let merkle_tree = MerkleTree::<MerkleConfig>::new(
+            &self.0.leaf_hash_params,
+            &self.0.two_to_one_params,
+            leafs_iter,
+        )
+        .unwrap();
+
+        let root = merkle_tree.root();
+
+        merlin.add_digest(root)?;
+
+        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
+        let mut ood_answers = vec![Vec::with_capacity(self.0.committment_ood_samples); polys.len()];
+        if self.0.committment_ood_samples > 0 {
+            for i in 0..polys.len() {
+                merlin.fill_challenge_scalars(&mut ood_points)?;
+                ood_answers[i].extend(ood_points.iter().map(|ood_point| {
+                    polys[i].evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
+                        *ood_point,
+                        self.0.mv_parameters.num_variables,
+                    ))
+                }));
+                merlin.add_scalars(&ood_answers[i])?;
+            }
+        }
+        let polys = polys
+            .into_iter()
+            .map(|poly| poly.clone().to_extension())
+            .collect::<Vec<_>>();
+
+        Ok(Witnesses {
+            polys,
+            merkle_tree,
+            merkle_leaves: folded_evals,
+            ood_points,
+            ood_answers,
+        })
     }
 }
