@@ -16,6 +16,7 @@ use crate::whir::fs_utils::DigestWriter;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[derive(Clone)]
 pub struct Witness<F, MerkleConfig>
 where
     MerkleConfig: Config,
@@ -35,7 +36,7 @@ where
 impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = [F]>
+    MerkleConfig: Config<Leaf = [F]>,
 {
     pub fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)

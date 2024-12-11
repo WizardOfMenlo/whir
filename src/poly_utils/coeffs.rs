@@ -2,6 +2,7 @@ use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, Multilinear
 use crate::ntt::wavelet_transform;
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "parallel")]
 use {
     rayon::{join, prelude::*},
@@ -19,7 +20,7 @@ use {
 ///  - coeffs[1] is the coefficient of X_2
 ///  - coeffs[2] is the coefficient of X_1
 ///  - coeffs[4] is the coefficient of X_0
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoefficientList<F> {
     coeffs: Vec<F>, // list of coefficients. For multilinear polynomials, we have coeffs.len() == 1 << num_variables.
     num_variables: usize, // number of variables

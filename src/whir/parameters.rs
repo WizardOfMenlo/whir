@@ -3,6 +3,7 @@ use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::fields::FieldWithSize,
@@ -45,7 +46,7 @@ where
     pub(crate) two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RoundConfig {
     pub(crate) pow_bits: f64,
     pub(crate) folding_pow_bits: f64,

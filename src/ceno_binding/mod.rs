@@ -1,7 +1,9 @@
 mod pcs;
+pub use pcs::Whir;
 
 use ark_ff::FftField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
 #[derive(Debug, thiserror::Error)]
@@ -11,10 +13,10 @@ pub enum Error {
 }
 
 pub trait PolynomialCommitmentScheme<E: FftField>: Clone {
-    type Param: Clone;
-    type CommitmentWithData;
+    type Param: Clone + Debug + Serialize + DeserializeOwned;
+    type CommitmentWithData: Clone + Debug + Serialize + DeserializeOwned;
     type Proof: Clone + CanonicalSerialize + CanonicalDeserialize;
-    type Poly: Clone;
+    type Poly: Clone + Debug + Serialize + DeserializeOwned;
     type Transcript;
 
     fn setup(poly_size: usize) -> Self::Param;

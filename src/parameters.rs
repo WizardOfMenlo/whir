@@ -1,13 +1,13 @@
 use std::{fmt::Display, marker::PhantomData, str::FromStr};
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
     num_variables + log_inv_rate - 3
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SoundnessType {
     UniqueDecoding,
     ProvableList,
@@ -64,7 +64,7 @@ impl<F> Display for MultivariateParameters<F> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum FoldType {
     Naive,
     ProverHelps,
