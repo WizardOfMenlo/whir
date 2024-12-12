@@ -401,6 +401,47 @@ impl<F: FftField> Clone for WitnessWrapper<F> {
     }
 }
 
+// Wrapper for WhirProof
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct WhirProofWrapper<MerkleConfig, F>(WhirProof<MerkleConfig, F>)
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+
+impl<MerkleConfig, F> Serialize for WhirProofWrapper<MerkleConfig, F>
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let proof = &self.0 .0;
+        // Create a buffer that implements the `Write` trait
+        let mut buffer = Vec::new();
+        proof.serialize_compressed(&mut buffer).unwrap();
+        serializer.serialize_bytes(&buffer)
+    }
+}
+
+impl<'de, MerkleConfig, F> Deserialize<'de> for WhirProofWrapper<MerkleConfig, F>
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize the bytes into a buffer
+        let buffer: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        // Deserialize the buffer into a proof
+        let proof = WhirProof::deserialize_compressed(&buffer[..]).unwrap();
+        Ok(WhirProofWrapper(proof))
+    }
+}
+
 impl<E> PolynomialCommitmentScheme<E> for Whir<E>
 where
     E: FftField + CanonicalSerialize + CanonicalDeserialize + Serialize + DeserializeOwned + Debug,
@@ -408,7 +449,7 @@ where
 {
     type Param = WhirConfigWrapper<E>;
     type CommitmentWithData = WitnessWrapper<E>;
-    type Proof = WhirProof<MerkleTreeParams<E>, E>;
+    type Proof = WhirProofWrapper<MerkleTreeParams<E>, E>;
     type Poly = CoefficientList<E::BasePrimeField>;
     type Transcript = Merlin<DefaultHash>;
 
@@ -470,7 +511,7 @@ where
         };
 
         let proof = prover.prove(transcript, statement, witness.inner)?;
-        Ok(proof)
+        Ok(WhirProofWrapper(proof))
     }
 
     fn batch_open(
@@ -504,7 +545,7 @@ where
 
         for _ in 0..reps {
             let mut arthur = io.to_arthur(transcript.transcript());
-            verifier.verify(&mut arthur, &statement, proof)?;
+            verifier.verify(&mut arthur, &statement, &proof.0)?;
         }
         Ok(())
     }
@@ -522,11 +563,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::Field;
+    use ark_ff::{Field, Fp2, MontBackend, MontConfig};
     use rand::Rng;
 
+    use crate::crypto::fields::F2Config64;
+
     use super::*;
-    use crate::crypto::fields::Field64_2 as F;
+
+    type Field64_2 = Fp2<F2Config64>;
+
+    type F = Field64_2;
 
     #[test]
     fn single_point_verify() {

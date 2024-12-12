@@ -4,11 +4,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::poly_utils::MultilinearPoint;
 
 pub mod committer;
+pub mod fs_utils;
 pub mod iopattern;
 pub mod parameters;
 pub mod prover;
 pub mod verifier;
-pub mod fs_utils;
 
 #[derive(Debug, Clone, Default)]
 pub struct Statement<F> {
@@ -18,7 +18,7 @@ pub struct Statement<F> {
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct WhirProof<MerkleConfig, F>(pub(crate) Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;

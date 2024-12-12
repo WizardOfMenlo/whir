@@ -15,7 +15,7 @@ pub enum Error {
 pub trait PolynomialCommitmentScheme<E: FftField>: Clone {
     type Param: Clone + Debug + Serialize + DeserializeOwned;
     type CommitmentWithData: Clone + Debug + Serialize + DeserializeOwned;
-    type Proof: Clone + CanonicalSerialize + CanonicalDeserialize;
+    type Proof: Clone + CanonicalSerialize + CanonicalDeserialize + Serialize + DeserializeOwned;
     type Poly: Clone + Debug + Serialize + DeserializeOwned;
     type Transcript;
 
