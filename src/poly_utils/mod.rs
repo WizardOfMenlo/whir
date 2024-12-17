@@ -26,7 +26,7 @@ where
     F: Field,
 {
     /// returns the number of variables.
-    pub fn n_variables(&self) -> usize {
+    pub fn num_variables(&self) -> usize {
         self.0.len()
     }
 
@@ -111,7 +111,7 @@ where
     F: Field,
 {
     let mut point = point.0;
-    let n_variables = coords.n_variables();
+    let n_variables = coords.num_variables();
     assert!(point < (1 << n_variables)); // check that the lengths of coords and point match.
 
     let mut acc = F::ONE;
@@ -133,7 +133,7 @@ pub fn eq_poly_outside<F>(coords: &MultilinearPoint<F>, point: &MultilinearPoint
 where
     F: Field,
 {
-    assert_eq!(coords.n_variables(), point.n_variables());
+    assert_eq!(coords.num_variables(), point.num_variables());
 
     let mut acc = F::ONE;
 
@@ -159,7 +159,7 @@ where
     let two = F::ONE + F::ONE;
     let two_inv = two.inverse().unwrap();
 
-    let n_variables = coords.n_variables();
+    let n_variables = coords.num_variables();
     assert!(point < 3usize.pow(n_variables as u32));
 
     let mut acc = F::ONE;
@@ -292,9 +292,9 @@ mod tests {
         let point1 = MultilinearPoint::expand_from_univariate(F::from(1), num_variables);
         let point2 = MultilinearPoint::expand_from_univariate(F::from(2), num_variables);
 
-        assert_eq!(point0.n_variables(), num_variables);
-        assert_eq!(point1.n_variables(), num_variables);
-        assert_eq!(point2.n_variables(), num_variables);
+        assert_eq!(point0.num_variables(), num_variables);
+        assert_eq!(point1.num_variables(), num_variables);
+        assert_eq!(point2.num_variables(), num_variables);
 
         assert_eq!(
             MultilinearPoint::from_binary_hypercube_point(BinaryHypercubePoint(0), num_variables),

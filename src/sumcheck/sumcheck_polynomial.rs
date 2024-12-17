@@ -61,7 +61,7 @@ where
     ///
     /// We assert that point.n_variables() == self.n_variables
     pub fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
-        assert!(point.n_variables() == self.n_variables);
+        assert!(point.num_variables() == self.n_variables);
         let num_evaluation_points = 3_usize.pow(self.n_variables as u32);
 
         let mut evaluation = F::ZERO;

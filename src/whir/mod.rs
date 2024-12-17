@@ -4,11 +4,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::poly_utils::MultilinearPoint;
 
 pub mod committer;
+mod fs_utils;
 pub mod iopattern;
 pub mod parameters;
 pub mod prover;
+pub mod statement;
 pub mod verifier;
-mod fs_utils;
 
 #[derive(Debug, Clone, Default)]
 pub struct Statement<F> {

@@ -60,7 +60,7 @@ where
 
         // Compute coefficients of the quadratic result polynomial
         let eval_p_iter = self.evaluation_of_p.evals().chunks_exact(2);
-        let eval_eq_iter = self.evaluation_of_equality.evals().chunks_exact(2);
+        let eval_eq_iter = self.weights.evals().chunks_exact(2);
         let (c0, c2) = eval_p_iter
             .zip(eval_eq_iter)
             .map(|(p_at, eq_at)| {
@@ -231,7 +231,7 @@ where
             .map(|at| (at[1] - at[0]) * randomness + at[0])
             .collect();
         let evaluations_of_eq = self
-            .evaluation_of_equality
+            .weights
             .evals()
             .chunks_exact(2)
             .map(|at| (at[1] - at[0]) * randomness + at[0])
@@ -240,7 +240,7 @@ where
         // Update
         self.num_variables -= 1;
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
-        self.evaluation_of_equality = EvaluationsList::new(evaluations_of_eq);
+        self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 
@@ -251,7 +251,7 @@ where
         folding_randomness: &MultilinearPoint<F>,
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
-        assert_eq!(folding_randomness.n_variables(), 1);
+        assert_eq!(folding_randomness.num_variables(), 1);
         assert!(self.num_variables() >= 1);
 
         let randomness = folding_randomness.0[0];
