@@ -9,32 +9,36 @@ use crate::{
 
 use super::parameters::WhirConfig;
 
-pub trait WhirIOPattern<F: FftField> {
-    fn commit_statement<MerkleConfig: Config, PowStrategy>(
-        self,
-        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self;
-    fn add_whir_proof<MerkleConfig: Config, PowStrategy>(
-        self,
-        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self;
+pub trait DigestIOPattern<MerkleConfig: Config> {
+    fn add_digest(self, label: &str) -> Self;
 }
 
-impl<F> WhirIOPattern<F> for IOPattern
+pub trait WhirIOPattern<F: FftField, MerkleConfig: Config> {
+    fn commit_statement<PowStrategy>(
+        self,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self;
+    fn add_whir_proof<PowStrategy>(self, params: &WhirConfig<F, MerkleConfig, PowStrategy>)
+        -> Self;
+}
+
+impl<F, MerkleConfig, IOPattern> WhirIOPattern<F, MerkleConfig> for IOPattern
 where
     F: FftField,
+    MerkleConfig: Config,
     IOPattern: ByteIOPattern
         + FieldIOPattern<F>
         + SumcheckSingleIOPattern<F>
         + WhirPoWIOPattern
-        + OODIOPattern<F>,
+        + OODIOPattern<F>
+        + DigestIOPattern<MerkleConfig>,
 {
-    fn commit_statement<MerkleConfig: Config, PowStrategy>(
+    fn commit_statement<PowStrategy>(
         self,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
         // TODO: Add params
-        let mut this = self.add_bytes(32, "merkle_digest");
+        let mut this = self.add_digest("merkle_digest");
         if params.committment_ood_samples > 0 {
             assert!(params.initial_statement);
             this = this.add_ood(params.committment_ood_samples);
@@ -42,7 +46,7 @@ where
         this
     }
 
-    fn add_whir_proof<MerkleConfig: Config, PowStrategy>(
+    fn add_whir_proof<PowStrategy>(
         mut self,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
@@ -62,7 +66,7 @@ where
         for r in &params.round_parameters {
             let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
             self = self
-                .add_bytes(32, "merkle_digest")
+                .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
                 .pow(r.pow_bits)

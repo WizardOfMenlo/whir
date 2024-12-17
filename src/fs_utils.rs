@@ -1,11 +1,11 @@
 use ark_ff::Field;
-use nimue::{plugins::ark::FieldIOPattern, IOPattern};
+use nimue::plugins::ark::FieldIOPattern;
 use nimue_pow::PoWIOPattern;
 pub trait OODIOPattern<F: Field> {
     fn add_ood(self, num_samples: usize) -> Self;
 }
 
-impl<F> OODIOPattern<F> for IOPattern
+impl<F, IOPattern> OODIOPattern<F> for IOPattern
 where
     F: Field,
     IOPattern: FieldIOPattern<F>,
@@ -24,7 +24,7 @@ pub trait WhirPoWIOPattern {
     fn pow(self, bits: f64) -> Self;
 }
 
-impl WhirPoWIOPattern for IOPattern
+impl <IOPattern> WhirPoWIOPattern for IOPattern
 where
     IOPattern: PoWIOPattern,
 {

@@ -5,12 +5,12 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldReader},
-    Arthur, ByteReader, ProofError, ProofResult,
+    ByteChallenges, ByteReader, ProofError, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
 use super::{parameters::WhirConfig, Statement, WhirProof};
-use crate::whir::fs_utils::get_challenge_stir_queries;
+use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
     poly_utils::{coeffs::CoefficientList, eq_poly_outside, fold::compute_fold, MultilinearPoint},
@@ -66,7 +66,6 @@ impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
     pub fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
@@ -76,11 +75,14 @@ where
         }
     }
 
-    fn parse_commitment(
+    fn parse_commitment<Arthur>(
         &self,
         arthur: &mut Arthur,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>> {
-        let root: [u8; 32] = arthur.next_bytes()?;
+    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    where
+        Arthur: ByteReader + FieldReader<F> + FieldChallenges<F> + DigestReader<MerkleConfig>,
+    {
+        let root = arthur.read_digest()?;
 
         let mut ood_points = vec![F::ZERO; self.params.committment_ood_samples];
         let mut ood_answers = vec![F::ZERO; self.params.committment_ood_samples];
@@ -90,19 +92,27 @@ where
         }
 
         Ok(ParsedCommitment {
-            root: root.into(),
+            root,
             ood_points,
             ood_answers,
         })
     }
 
-    fn parse_proof(
+    fn parse_proof<Arthur>(
         &self,
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>, // Will be needed later
         whir_proof: &WhirProof<MerkleConfig, F>,
-    ) -> ProofResult<ParsedProof<F>> {
+    ) -> ProofResult<ParsedProof<F>>
+    where
+        Arthur: FieldReader<F>
+            + FieldChallenges<F>
+            + PoWChallenge
+            + ByteReader
+            + ByteChallenges
+            + DigestReader<MerkleConfig>,
+    {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness: MultilinearPoint<F>;
         let initial_combination_randomness;
@@ -156,7 +166,7 @@ where
             let (merkle_proof, answers) = &whir_proof.0[r];
             let round_params = &self.params.round_parameters[r];
 
-            let new_root: [u8; 32] = arthur.next_bytes()?;
+            let new_root = arthur.read_digest()?;
 
             let mut ood_points = vec![F::ZERO; round_params.ood_samples];
             let mut ood_answers = vec![F::ZERO; round_params.ood_samples];
@@ -208,6 +218,7 @@ where
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
                 if round_params.folding_pow_bits > 0. {
+                    println!("pow");
                     arthur.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
                 }
             }
@@ -229,7 +240,7 @@ where
 
             folding_randomness = new_folding_randomness;
 
-            prev_root = new_root.into();
+            prev_root = new_root.clone();
             exp_domain_gen = exp_domain_gen * exp_domain_gen;
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
             domain_size /= 2;
@@ -457,12 +468,20 @@ where
         result
     }
 
-    pub fn verify(
+    pub fn verify<Arthur>(
         &self,
         arthur: &mut Arthur,
         statement: &Statement<F>,
         whir_proof: &WhirProof<MerkleConfig, F>,
-    ) -> ProofResult<()> {
+    ) -> ProofResult<()>
+    where
+        Arthur: FieldChallenges<F>
+            + FieldReader<F>
+            + ByteChallenges
+            + ByteReader
+            + PoWChallenge
+            + DigestReader<MerkleConfig>,
+    {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;

@@ -87,11 +87,12 @@ impl<F: Field> Weights<F> for EvaluationWeights<F> {
         self.point.num_variables()
     }
 
-    fn evaluate_mle(&self, point: &MultilinearPoint<F>) {
+    fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(point.num_variables(), self.point.num_variables());
         let mut acc = F::ONE;
         for (&l, &r) in self.point.0.iter().zip(&point.0) {
             acc *= l * r + (F::ONE - l) * (F::ONE - r);
         }
+        acc
     }
 }

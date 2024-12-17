@@ -9,9 +9,10 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    ByteWriter, Merlin, ProofResult,
+    ByteWriter, ProofResult,
 };
 
+use crate::whir::fs_utils::DigestWriter;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -34,20 +35,19 @@ where
 impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
-    MerkleConfig: Config<Leaf = [F]>,
-    MerkleConfig::InnerDigest: AsRef<[u8]>,
+    MerkleConfig: Config<Leaf = [F]>
 {
     pub fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
 
-    pub fn commit(
+    pub fn commit<Merlin>(
         &self,
         merlin: &mut Merlin,
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter + DigestWriter<MerkleConfig>,
     {
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / polynomial.num_coeffs();
@@ -88,7 +88,7 @@ where
 
         let root = merkle_tree.root();
 
-        merlin.add_bytes(root.as_ref())?;
+        merlin.add_digest(root)?;
 
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
         let mut ood_answers = Vec::with_capacity(self.0.committment_ood_samples);

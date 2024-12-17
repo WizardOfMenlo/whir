@@ -3,7 +3,7 @@ use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, Multili
 use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    Merlin, ProofResult,
+    ProofResult,
 };
 use nimue_pow::{PoWChallenge, PowStrategy};
 
@@ -120,13 +120,14 @@ where
     }
 
     /// Do `folding_factor` rounds of sumcheck, and return the proof.
-    pub fn compute_sumcheck_polynomials<S>(
+    pub fn compute_sumcheck_polynomials<S, Merlin>(
         &mut self,
         merlin: &mut Merlin,
         folding_factor: usize,
         pow_bits: f64,
     ) -> ProofResult<MultilinearPoint<F>>
     where
+        Merlin: FieldWriter<F> + FieldChallenges<F> + PoWChallenge,
         S: PowStrategy,
     {
         let mut res = Vec::with_capacity(folding_factor);

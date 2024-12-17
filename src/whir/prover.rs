@@ -16,11 +16,11 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    ByteWriter, Merlin, ProofResult,
+    ByteChallenges, ByteWriter, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
-use crate::whir::fs_utils::get_challenge_stir_queries;
+use crate::whir::fs_utils::{get_challenge_stir_queries, DigestWriter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -33,7 +33,6 @@ impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
@@ -66,14 +65,19 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
-    pub fn prove(
+    pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
         statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        Merlin: FieldChallenges<F>
+            + FieldWriter<F>
+            + ByteChallenges
+            + ByteWriter
+            + PoWChallenge
+            + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -122,7 +126,7 @@ where
             sumcheck_prover
                 .as_mut()
                 .unwrap()
-                .compute_sumcheck_polynomials::<PowStrategy>(
+                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                     merlin,
                     self.0.folding_factor,
                     self.0.starting_folding_pow_bits,
@@ -151,11 +155,19 @@ where
         self.round(merlin, round_state)
     }
 
-    fn round(
+    fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>> {
+    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    where
+        Merlin: FieldChallenges<F>
+            + ByteChallenges
+            + FieldWriter<F>
+            + ByteWriter
+            + PoWChallenge
+            + DigestWriter<MerkleConfig>,
+    {
         // Fold the coefficients
         let folded_coefficients = round_state
             .coefficients
@@ -200,7 +212,7 @@ where
                 round_state
                     .sumcheck_prover
                     .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone()))
-                    .compute_sumcheck_polynomials::<PowStrategy>(
+                    .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                         merlin,
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
@@ -239,7 +251,7 @@ where
         .unwrap();
 
         let root = merkle_tree.root();
-        merlin.add_bytes(root.as_ref())?;
+        merlin.add_digest(root)?;
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples];
@@ -350,11 +362,12 @@ where
                 sumcheck
             });
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy>(
-            merlin,
-            self.0.folding_factor,
-            round_params.folding_pow_bits,
-        )?;
+        let folding_randomness = sumcheck_prover
+            .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                merlin,
+                self.0.folding_factor,
+                round_params.folding_pow_bits,
+            )?;
 
         let round_state = RoundState {
             round: round_state.round + 1,
