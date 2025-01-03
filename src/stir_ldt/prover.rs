@@ -34,6 +34,17 @@ where
     PowStrategy: nimue_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
+        // Check that for each round the repetition parameters are appropriate.
+        // This is the inequality from Construction 5.2, bullet point 6.
+        self.0.round_parameters.iter().fold(
+            1 << self.0.uv_parameters.log_degree,
+            |degree, round_parameters| {
+                assert!(round_parameters.num_queries + 1 <= degree / (1 << self.0.folding_factor));
+                degree / (1 << self.0.folding_factor)
+            },
+        );
+
+        // Check that the degrees add up
         self.0.uv_parameters.log_degree
             == (self.0.n_rounds() + 1) * self.0.folding_factor + self.0.final_log_degree
     }
