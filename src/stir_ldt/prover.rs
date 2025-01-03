@@ -155,9 +155,8 @@ where
 
         let round_params = &self.0.round_parameters[round_state.round];
 
-        // Fold the coefficients, and compute fft of polynomial (and commit)
-        // TODO: This actually should be shifted!!!
-        let new_domain = round_state.domain.scale(2);
+        // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
+        let new_domain = round_state.domain.scale_with_offset(2);
         let expansion = new_domain.size() / (folded_coefficients.degree() + 1);
         let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
         // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
