@@ -217,13 +217,14 @@ where
             .domain
             .backing_domain
             .element(1 << self.0.folding_factor);
+        let domain_scaled_offset = round_state.domain.backing_domain.coset_offset();
         // This is \mathcal{G}_i from the paper.
         let stir_challenges: Vec<_> = ood_points
             .into_iter()
             .chain(
                 stir_challenges_indexes
                     .iter()
-                    .map(|i| domain_scaled_gen.pow([*i as u64])),
+                    .map(|i| domain_scaled_offset * domain_scaled_gen.pow([*i as u64])),
             )
             .collect();
 
