@@ -1,5 +1,3 @@
-use std::iter;
-
 use super::{committer::Witness, parameters::StirConfig, StirProof};
 use crate::{
     domain::Domain,
@@ -66,7 +64,7 @@ where
 
         let [folding_randomness] = merlin.challenge_scalars()?;
 
-        // PoW
+        // PoW: we need to compensate in order to achieve the target number of bits of security.
         if self.0.starting_folding_pow_bits > 0. {
             merlin.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
         }
@@ -162,6 +160,8 @@ where
         // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
         // They also partially overlap and undo one another. We should merge them.
         let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
+        // This allows for the evaluation of the virutal function using an interpolation on the rows.
         let folded_evals = restructure_evaluations(
             folded_evals,
             FoldType::Naive,
@@ -170,6 +170,9 @@ where
             self.0.folding_factor,
         );
 
+        // The leaves of the merkle tree are the k points that are the
+        // root of the index in the previous domain. This allows
+        // for the evaluation of the virtual function.
         #[cfg(not(feature = "parallel"))]
         let leaf_iter = folded_evals.chunks_exact(1 << self.0.folding_factor);
 
@@ -187,8 +190,8 @@ where
         merlin.add_bytes(root.as_ref())?;
 
         // OOD Samples
-        let mut ood_points = vec![F::ZERO; round_params.ood_samples];
-        let mut ood_answers = Vec::with_capacity(round_params.ood_samples);
+        let mut ood_points = vec![F::ZERO; round_params.ood_samples]; // These are the ri_out's from the paper.
+        let mut ood_answers = Vec::with_capacity(round_params.ood_samples); // These are the beta's from the paper.
         if round_params.ood_samples > 0 {
             merlin.fill_challenge_scalars(&mut ood_points)?;
             ood_answers.extend(
@@ -203,14 +206,18 @@ where
         let mut stir_queries_seed = [0u8; 32];
         merlin.fill_challenge_bytes(&mut stir_queries_seed)?;
         let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
+        // Obtain t random integers between 0 and size of the folded domain.
+        // These are the r_shifts from the paper.
         let stir_challenges_indexes =
             utils::dedup((0..round_params.num_queries).map(|_| {
                 stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
             }));
+        // Obtain the generator of the folded domain.
         let domain_scaled_gen = round_state
             .domain
             .backing_domain
             .element(1 << self.0.folding_factor);
+        // This is \mathcal{G}_i from the paper.
         let stir_challenges: Vec<_> = ood_points
             .into_iter()
             .chain(
@@ -225,10 +232,13 @@ where
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
         let fold_size = 1 << self.0.folding_factor;
+        // Create the virtual oracle for the concerned STIR queries.
         let answers: Vec<_> = stir_challenges_indexes
             .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+
+        // Still not sure about this. Is this how the interpolation is done?
 
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers.clone();
