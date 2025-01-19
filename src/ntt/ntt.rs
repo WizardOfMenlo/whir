@@ -84,7 +84,7 @@ impl<F: FftField> NttEngine<F> {
             Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
         } else {
             let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
-            for _ in 0..(63 - F::TWO_ADICITY) {
+            for _ in 0..(F::TWO_ADICITY - 63) {
                 generator = generator.square();
             }
             Self::new(1 << 63, generator)
