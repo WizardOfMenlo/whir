@@ -11,6 +11,7 @@ pub mod prover;
 pub mod statement;
 pub mod verifier;
 
+// (VELJKO) current statement
 #[derive(Debug, Clone, Default)]
 pub struct Statement<F> {
     pub points: Vec<MultilinearPoint<F>>,
@@ -46,6 +47,7 @@ mod tests {
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
     use crate::whir::Statement;
+    use crate::whir::statement::{Statement as StatementNew, EvaluationWeights};
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -91,6 +93,15 @@ mod tests {
             .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
             .collect();
 
+        let mut statement_prover = StatementNew::<F>::new(num_variables);
+        // TODO (Veljko): remove this after you fix clone method on Statement
+
+        for point in &points {
+            let eval = polynomial.evaluate(point);
+            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            statement_prover.add_constraint(weights, eval);
+        }
+
         let statement = Statement {
             points: points.clone(),
             evaluations: points
@@ -112,7 +123,7 @@ mod tests {
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+            .prove(&mut merlin, statement_prover, witness)
             .unwrap();
 
         let verifier = Verifier::new(params);

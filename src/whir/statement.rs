@@ -45,13 +45,33 @@ pub trait Weights<F: Field>: Debug {
         }
         sum
     }
+
+    fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
+        // Make a clone if you want to return ownership
+        None
+    }
+    fn box_clone(&self) -> Box<dyn Weights<F>>;
+
 }
 
+impl<F: Field> Clone for Statement<F> {
+    fn clone(&self) -> Self {
+        let mut new_constraints = Vec::with_capacity(self.constraints.len());
+        for (weights, sum) in &self.constraints {
+            new_constraints.push((weights.box_clone(), *sum));
+        }
+        Self {
+            num_variables: self.num_variables,
+            constraints: new_constraints,
+        }
+    }
+}
 /// A statement for the prover to prove. Statements are a collection of linear constraints.
+// (VELJKO) GR1CS should reference this
 #[derive(Debug, Default)]
 pub struct Statement<F: Field> {
     num_variables: usize,
-    constraints: Vec<(Box<dyn Weights<F>>, F)>,
+    pub constraints: Vec<(Box<dyn Weights<F>>, F)>,
 }
 
 #[derive(Clone, Debug)]
@@ -78,7 +98,28 @@ impl<F: Field> Statement<F> {
 
     /// Combine all linear constraints into a single dense linear constraint.
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
-        todo!()
+        let evaluations_vec = vec![F::ZERO; self.num_variables];
+        let mut combined_evals = EvaluationsList::new(evaluations_vec);
+        let mut combined_sum = F::ZERO;
+
+        let mut challenge_power = F::ONE;
+        for (weights, sum) in &self.constraints {
+            weights.accumulate(&mut combined_evals, challenge_power);
+
+            combined_sum += *sum * challenge_power;
+
+            challenge_power *= challenge;
+        }
+
+        (combined_evals, combined_sum)
+    }
+}
+
+impl<F: Field> EvaluationWeights<F> {
+    pub fn new(point: MultilinearPoint<F>) -> Self {
+        Self {
+            point
+        }
     }
 }
 
@@ -94,5 +135,13 @@ impl<F: Field> Weights<F> for EvaluationWeights<F> {
             acc *= l * r + (F::ONE - l) * (F::ONE - r);
         }
         acc
+    }
+
+    fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
+        Some(self.point.clone())
+    }
+    
+    fn box_clone(&self) -> Box<dyn Weights<F>> {
+        Box::new(self.clone())
     }
 }

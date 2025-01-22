@@ -1,4 +1,5 @@
 use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
+use super::statement::Statement as StatementNew;
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -57,6 +58,14 @@ where
         true
     }
 
+    fn validate_statement_new(&self, statement: &StatementNew<F>) -> bool {
+        if !statement.num_variables() == self.0.mv_parameters.num_variables
+        {
+            return false;
+        }
+        true
+    }
+
     fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
         assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
         if !self.0.initial_statement {
@@ -68,7 +77,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement: Statement<F>,
+        statement_new: StatementNew<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -80,8 +89,13 @@ where
             + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
-        assert!(self.validate_statement(&statement));
+        assert!(self.validate_statement_new(&statement_new));
         assert!(self.validate_witness(&witness));
+
+        println!("statement_new {:?}", statement_new);
+        let points : Vec<_> = statement_new.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
+        println!("statement new points {:?}", points);
+        let evaluations : Vec<_> = statement_new.constraints.into_iter().map(|a| {a.1}).collect();
 
         let initial_claims: Vec<_> = witness
             .ood_points
@@ -92,12 +106,12 @@ where
                     self.0.mv_parameters.num_variables,
                 )
             })
-            .chain(statement.points)
+            .chain(points)
             .collect();
         let initial_answers: Vec<_> = witness
             .ood_answers
             .into_iter()
-            .chain(statement.evaluations)
+            .chain(evaluations)
             .collect();
 
         if !self.0.initial_statement {
