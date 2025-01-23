@@ -195,17 +195,16 @@ where
         let g_root = g_merkle.root();
         merlin.add_bytes(g_root.as_ref())?;
 
-        // OOD Samples
-        let mut ood_points = vec![F::ZERO; round_params.ood_samples]; // These are the ri_out's from the paper.
-        let mut ood_answers = Vec::with_capacity(round_params.ood_samples); // These are the beta's from the paper.
-        if round_params.ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
-            ood_answers.extend(
-                ood_points
-                    .iter()
-                    .map(|ood_point| folded_coefficients.evaluate(ood_point)),
-            );
-            merlin.add_scalars(&ood_answers)?;
+        // PHASE 2:
+        // OOD Sampling
+        // These are the ri_out's from the paper.
+        let mut ri_outs = vec![F::ZERO; round_parameters.ood_samples];
+        // These are the beta's from the paper.
+        let mut betas = Vec::with_capacity(round_parameters.ood_samples);
+        if round_parameters.ood_samples > 0 {
+            merlin.fill_challenge_scalars(&mut ri_outs)?;
+            betas.extend(ri_outs.iter().map(|ood_point| g_poly.evaluate(ood_point)));
+            merlin.add_scalars(&betas)?;
         }
 
         // STIR queries
