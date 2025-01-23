@@ -67,7 +67,6 @@ impl<F: Field> Clone for Statement<F> {
     }
 }
 /// A statement for the prover to prove. Statements are a collection of linear constraints.
-// (VELJKO) GR1CS should reference this
 #[derive(Debug, Default)]
 pub struct Statement<F: Field> {
     num_variables: usize,
