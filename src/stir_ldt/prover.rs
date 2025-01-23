@@ -37,6 +37,7 @@ where
         self.0.round_parameters.iter().fold(
             1 << self.0.uv_parameters.log_degree,
             |degree, round_parameters| {
+                // TODO: Maybe the '+ 1' should be removed and replaced the number of ood samples.
                 assert!(round_parameters.num_queries + 1 <= degree / (1 << self.0.folding_factor));
                 degree / (1 << self.0.folding_factor)
             },
@@ -106,7 +107,7 @@ where
         mut round_state: RoundState<F, MerkleConfig>,
     ) -> ProofResult<StirProof<MerkleConfig, F>> {
         // Fold the coefficients
-        let folded_coefficients = Self::fold(
+        let g_poly = Self::fold(
             &round_state.coefficients,
             round_state.folding_randomness,
             self.0.folding_factor,
@@ -115,7 +116,7 @@ where
         // Base case
         if round_state.round == self.0.n_rounds() {
             // Coefficients of the polynomial
-            let mut coeffs = folded_coefficients.coeffs;
+            let mut coeffs = g_poly.coeffs;
             coeffs.resize(1 << self.0.final_log_degree, F::ZERO);
             merlin.add_scalars(&coeffs)?;
 
@@ -151,43 +152,48 @@ where
             });
         }
 
-        let round_params = &self.0.round_parameters[round_state.round];
+        let round_parameters = &self.0.round_parameters[round_state.round];
 
+        // PHASE 1:
         // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
-        let new_domain = round_state.domain.scale_with_offset(2);
-        let expansion = new_domain.size() / (folded_coefficients.degree() + 1);
-        let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
+        let g_domain = round_state.domain.scale_with_offset(2);
+        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
+        // implement the shifting in the ntt engine.
+        let g_evaluations = g_poly
+            .evaluate_over_domain_by_ref(g_domain.backing_domain)
+            .evals;
         // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
         // They also partially overlap and undo one another. We should merge them.
-        let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
+        let g_folded_evaluations = utils::stack_evaluations(g_evaluations, self.0.folding_factor);
         // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
         // This allows for the evaluation of the virutal function using an interpolation on the rows.
-        let folded_evals = restructure_evaluations(
-            folded_evals,
+        // TODO: for stir we do only Naive, so this will need to be adapted.
+        let g_folded_evaluations = restructure_evaluations(
+            g_folded_evaluations,
             FoldType::Naive,
-            new_domain.backing_domain.group_gen(),
-            new_domain.backing_domain.group_gen_inv(),
+            g_domain.backing_domain.group_gen(),
+            g_domain.backing_domain.group_gen_inv(),
             self.0.folding_factor,
         );
 
         // The leaves of the merkle tree are the k points that are the
-        // root of the index in the previous domain. This allows
-        // for the evaluation of the virtual function.
+        // roots of unity of the index in the previous domain. This
+        // allows for the evaluation of the virtual function.
         #[cfg(not(feature = "parallel"))]
-        let leaf_iter = folded_evals.chunks_exact(1 << self.0.folding_factor);
+        let leaf_iterator = folded_evals.chunks_exact(1 << self.0.folding_factor);
 
         #[cfg(feature = "parallel")]
-        let leaf_iter = folded_evals.par_chunks_exact(1 << self.0.folding_factor);
+        let leaf_iterator = g_folded_evaluations.par_chunks_exact(1 << self.0.folding_factor);
 
-        let merkle_tree = MerkleTree::<MerkleConfig>::new(
+        let g_merkle = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
-            leaf_iter,
+            leaf_iterator,
         )
         .unwrap();
 
-        let root = merkle_tree.root();
-        merlin.add_bytes(root.as_ref())?;
+        let g_root = g_merkle.root();
+        merlin.add_bytes(g_root.as_ref())?;
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples]; // These are the ri_out's from the paper.
