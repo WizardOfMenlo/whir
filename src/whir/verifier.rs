@@ -9,7 +9,7 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use super::{parameters::WhirConfig, Statement, WhirProof};
+use super::{parameters::WhirConfig, statement::Statement, statement::EvaluationWeights, WhirProof};
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
@@ -102,7 +102,7 @@ where
         &self,
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &Statement<F>, // Will be needed later
+        statement_points_len: usize, // Will be needed later
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
@@ -121,7 +121,7 @@ where
             let [combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
             initial_combination_randomness = expand_randomness(
                 combination_randomness_gen,
-                parsed_commitment.ood_points.len() + statement.points.len(),
+                parsed_commitment.ood_points.len() + statement_points_len,
             );
 
             // Initial sumcheck
@@ -141,7 +141,7 @@ where
                 MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
         } else {
             assert_eq!(parsed_commitment.ood_points.len(), 0);
-            assert_eq!(statement.points.len(), 0);
+            assert_eq!(statement_points_len, 0);
 
             initial_combination_randomness = vec![F::ONE];
 
@@ -331,11 +331,13 @@ where
                 .collect(),
         );
 
+        let points : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
+
         let mut value = parsed_commitment
             .ood_points
             .iter()
             .map(|ood_point| MultilinearPoint::expand_from_univariate(*ood_point, num_variables))
-            .chain(statement.points.clone())
+            .chain(points)
             .zip(&proof.initial_combination_randomness)
             .map(|(point, randomness)| *randomness * eq_poly_outside(&point, &folding_randomness))
             .sum();
@@ -485,7 +487,10 @@ where
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
-        let parsed = self.parse_proof(arthur, &parsed_commitment, statement, whir_proof)?;
+        let points : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
+        let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
+
+        let parsed = self.parse_proof(arthur, &parsed_commitment, points.len(), whir_proof)?;
 
         let computed_folds = self.compute_folds(&parsed);
 
@@ -498,7 +503,7 @@ where
                     .ood_answers
                     .iter()
                     .copied()
-                    .chain(statement.evaluations.clone())
+                    .chain(evaluations)
                     .zip(&parsed.initial_combination_randomness)
                     .map(|(ans, rand)| ans * rand)
                     .sum()

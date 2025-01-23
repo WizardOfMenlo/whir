@@ -1,5 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
-use super::statement::Statement as StatementNew;
+use super::{committer::Witness, parameters::WhirConfig, statement::Statement, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -42,25 +41,11 @@ where
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        if statement.points.len() != statement.evaluations.len() {
-            return false;
-        }
-        if !statement
-            .points
-            .iter()
-            .all(|point| point.0.len() == self.0.mv_parameters.num_variables)
-        {
-            return false;
-        }
-        if !self.0.initial_statement && !statement.points.is_empty() {
-            return false;
-        }
-        true
-    }
-
-    fn validate_statement_new(&self, statement: &StatementNew<F>) -> bool {
         if !statement.num_variables() == self.0.mv_parameters.num_variables
         {
+            return false;
+        }
+        if !self.0.initial_statement && !statement.constraints.is_empty() {
             return false;
         }
         true
@@ -77,7 +62,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement_new: StatementNew<F>,
+        statement_new: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -89,7 +74,7 @@ where
             + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
-        assert!(self.validate_statement_new(&statement_new));
+        assert!(self.validate_statement(&statement_new));
         assert!(self.validate_witness(&witness));
 
         println!("statement_new {:?}", statement_new);

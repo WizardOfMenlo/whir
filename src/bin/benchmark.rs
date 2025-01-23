@@ -19,7 +19,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::coeffs::CoefficientList,
-    whir::{iopattern::WhirIOPattern, Statement},
+    whir::statement::{Statement, EvaluationWeights}
 };
 
 use serde::Serialize;
@@ -96,340 +96,343 @@ struct BenchmarkOutput {
 type PowStrategy = Blake3PoW;
 
 fn main() {
-//     let mut args = Args::parse();
-//     let field = args.field;
-//     let merkle = args.merkle_tree;
+    let mut args = Args::parse();
+    let field = args.field;
+    let merkle = args.merkle_tree;
 
-//     if args.pow_bits.is_none() {
-//         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
-//     }
+    if args.pow_bits.is_none() {
+        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
+    }
 
-//     let mut rng = ark_std::test_rng();
+    let mut rng = ark_std::test_rng();
 
-//     match (field, merkle) {
-//         (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
-//             use fields::Field64 as F;
-//             use merkle_tree::blake3 as mt;
+    match (field, merkle) {
+        (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
+            use fields::Field64 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
-//             use fields::Field64 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
+            use fields::Field64 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
-//             use fields::Field64_2 as F;
-//             use merkle_tree::blake3 as mt;
+        (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
+            use fields::Field64_2 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
-//             use fields::Field64_2 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
+            use fields::Field64_2 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
-//             use fields::Field64_3 as F;
-//             use merkle_tree::blake3 as mt;
+        (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
+            use fields::Field64_3 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
-//             use fields::Field64_3 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
+            use fields::Field64_3 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
-//             use fields::Field128 as F;
-//             use merkle_tree::blake3 as mt;
+        (AvailableFields::Field128, AvailableMerkle::Blake3) => {
+            use fields::Field128 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
-//             use fields::Field128 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
+            use fields::Field128 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
-//             use fields::Field192 as F;
-//             use merkle_tree::blake3 as mt;
+        (AvailableFields::Field192, AvailableMerkle::Blake3) => {
+            use fields::Field192 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
-//             use fields::Field192 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
+            use fields::Field192 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
-//             use fields::Field256 as F;
-//             use merkle_tree::blake3 as mt;
+        (AvailableFields::Field256, AvailableMerkle::Blake3) => {
+            use fields::Field256 as F;
+            use merkle_tree::blake3 as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
 
-//         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
-//             use fields::Field256 as F;
-//             use merkle_tree::keccak as mt;
+        (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
+            use fields::Field256 as F;
+            use merkle_tree::keccak as mt;
 
-//             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-//             run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
-//         }
-//     }
+            let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
+            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+        }
+    }
 }
 
-// fn run_whir<F, MerkleConfig>(
-//     args: Args,
-//     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
-//     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
-// ) where
-//     F: FftField + CanonicalSerialize,
-//     MerkleConfig: Config<Leaf = [F]> + Clone,
-//     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-//     IOPattern: DigestIOPattern<MerkleConfig>,
-//     Merlin: DigestWriter<MerkleConfig>,
-//     for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
-// {
-//     let security_level = args.security_level;
-//     let pow_bits = args.pow_bits.unwrap();
-//     let num_variables = args.num_variables;
-//     let starting_rate = args.rate;
-//     let reps = args.verifier_repetitions;
-//     let folding_factor = args.folding_factor;
-//     let soundness_type = args.soundness_type;
-//     let fold_optimisation = args.fold_optimisation;
+fn run_whir<F, MerkleConfig>(
+    args: Args,
+    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
+    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+) where
+    F: FftField + CanonicalSerialize,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    IOPattern: DigestIOPattern<MerkleConfig>,
+    Merlin: DigestWriter<MerkleConfig>,
+    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
+{
+    let security_level = args.security_level;
+    let pow_bits = args.pow_bits.unwrap();
+    let num_variables = args.num_variables;
+    let starting_rate = args.rate;
+    let reps = args.verifier_repetitions;
+    let folding_factor = args.folding_factor;
+    let soundness_type = args.soundness_type;
+    let fold_optimisation = args.fold_optimisation;
 
-//     std::fs::create_dir_all("outputs").unwrap();
+    std::fs::create_dir_all("outputs").unwrap();
 
-//     let num_coeffs = 1 << num_variables;
+    let num_coeffs = 1 << num_variables;
 
-//     let mv_params = MultivariateParameters::<F>::new(num_variables);
+    let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-//     let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
-//         initial_statement: true,
-//         security_level,
-//         pow_bits,
-//         folding_factor,
-//         leaf_hash_params,
-//         two_to_one_params,
-//         soundness_type,
-//         fold_optimisation,
-//         _pow_parameters: Default::default(),
-//         starting_log_inv_rate: starting_rate,
-//     };
+    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: true,
+        security_level,
+        pow_bits,
+        folding_factor,
+        leaf_hash_params,
+        two_to_one_params,
+        soundness_type,
+        fold_optimisation,
+        _pow_parameters: Default::default(),
+        starting_log_inv_rate: starting_rate,
+    };
 
-//     let polynomial = CoefficientList::new(
-//         (0..num_coeffs)
-//             .map(<F as Field>::BasePrimeField::from)
-//             .collect(),
-//     );
+    let polynomial = CoefficientList::new(
+        (0..num_coeffs)
+            .map(<F as Field>::BasePrimeField::from)
+            .collect(),
+    );
 
-//     let (
-//         whir_ldt_prover_time,
-//         whir_ldt_argument_size,
-//         whir_ldt_prover_hashes,
-//         whir_ldt_verifier_time,
-//         whir_ldt_verifier_hashes,
-//     ) = {
-//         // Run LDT
-//         use whir::whir::{
-//             committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-//             verifier::Verifier, whir_proof_size,
-//         };
+    let (
+        whir_ldt_prover_time,
+        whir_ldt_argument_size,
+        whir_ldt_prover_hashes,
+        whir_ldt_verifier_time,
+        whir_ldt_verifier_hashes,
+    ) = {
+        // Run LDT
+        use whir::whir::{
+            committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
+            verifier::Verifier, whir_proof_size,
+        };
 
-//         let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
-//             initial_statement: false,
-//             ..whir_params.clone()
-//         };
-//         let params =
-//             WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
-//         if !params.check_pow_bits() {
-//             println!("WARN: more PoW bits required than what specified.");
-//         }
+        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: false,
+            ..whir_params.clone()
+        };
+        let params =
+            WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
+        if !params.check_pow_bits() {
+            println!("WARN: more PoW bits required than what specified.");
+        }
 
-//         let io = IOPattern::<DefaultHash>::new("🌪️")
-//             .commit_statement(&params)
-//             .add_whir_proof(&params)
-//             .clone();
+        let io = IOPattern::<DefaultHash>::new("🌪️")
+            .commit_statement(&params)
+            .add_whir_proof(&params)
+            .clone();
 
-//         let mut merlin = io.to_merlin();
+        let mut merlin = io.to_merlin();
 
-//         let whir_ldt_prover_time = Instant::now();
+        let whir_ldt_prover_time = Instant::now();
 
-//         HashCounter::reset();
+        HashCounter::reset();
 
-//         let committer = Committer::new(params.clone());
-//         let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let committer = Committer::new(params.clone());
+        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
-//         let prover = Prover(params.clone());
+        let prover = Prover(params.clone());
 
-//         let proof = prover
-//             .prove(&mut merlin, Statement::default(), witness)
-//             .unwrap();
+        let statement_new = Statement::<F>::new(num_variables);
 
-//         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-//         let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
-//         let whir_ldt_prover_hashes = HashCounter::get();
+        let proof = prover
+            .prove(&mut merlin, statement_new.clone(), witness)
+            .unwrap();
 
-//         // Just not to count that initial inversion (which could be precomputed)
-//         let verifier = Verifier::new(params);
+        let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
+        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_ldt_prover_hashes = HashCounter::get();
 
-//         HashCounter::reset();
-//         let whir_ldt_verifier_time = Instant::now();
-//         for _ in 0..reps {
-//             let mut arthur = io.to_arthur(merlin.transcript());
-//             verifier
-//                 .verify(&mut arthur, &Statement::default(), &proof)
-//                 .unwrap();
-//         }
+        // Just not to count that initial inversion (which could be precomputed)
+        let verifier = Verifier::new(params);
 
-//         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
-//         let whir_ldt_verifier_hashes = HashCounter::get() / reps;
+        HashCounter::reset();
+        let whir_ldt_verifier_time = Instant::now();
+        for _ in 0..reps {
+            let mut arthur = io.to_arthur(merlin.transcript());
+            verifier
+                .verify(&mut arthur, &statement_new, &proof)
+                .unwrap();
+        }
 
-//         (
-//             whir_ldt_prover_time,
-//             whir_ldt_argument_size,
-//             whir_ldt_prover_hashes,
-//             whir_ldt_verifier_time,
-//             whir_ldt_verifier_hashes,
-//         )
-//     };
+        let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
+        let whir_ldt_verifier_hashes = HashCounter::get() / reps;
 
-//     let (
-//         whir_prover_time,
-//         whir_argument_size,
-//         whir_prover_hashes,
-//         whir_verifier_time,
-//         whir_verifier_hashes,
-//     ) = {
-//         // Run PCS
-//         use whir::poly_utils::MultilinearPoint;
-//         use whir::whir::{
-//             committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-//             verifier::Verifier, whir_proof_size,
-//         };
+        (
+            whir_ldt_prover_time,
+            whir_ldt_argument_size,
+            whir_ldt_prover_hashes,
+            whir_ldt_verifier_time,
+            whir_ldt_verifier_hashes,
+        )
+    };
 
-//         let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
-//         if !params.check_pow_bits() {
-//             println!("WARN: more PoW bits required than what specified.");
-//         }
+    let (
+        whir_prover_time,
+        whir_argument_size,
+        whir_prover_hashes,
+        whir_verifier_time,
+        whir_verifier_hashes,
+    ) = {
+        // Run PCS
+        use whir::poly_utils::MultilinearPoint;
+        use whir::whir::{
+            committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
+            verifier::Verifier, whir_proof_size,
+        };
 
-//         let io = IOPattern::<DefaultHash>::new("🌪️")
-//             .commit_statement(&params)
-//             .add_whir_proof(&params)
-//             .clone();
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        if !params.check_pow_bits() {
+            println!("WARN: more PoW bits required than what specified.");
+        }
 
-//         let mut merlin = io.to_merlin();
+        let io = IOPattern::<DefaultHash>::new("🌪️")
+            .commit_statement(&params)
+            .add_whir_proof(&params)
+            .clone();
 
-//         let points: Vec<_> = (0..args.num_evaluations)
-//             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
-//             .collect();
-//         let evaluations = points
-//             .iter()
-//             .map(|point| polynomial.evaluate_at_extension(point))
-//             .collect();
-//         let statement = Statement {
-//             points,
-//             evaluations,
-//         };
+        let mut merlin = io.to_merlin();
 
-//         HashCounter::reset();
-//         let whir_prover_time = Instant::now();
+        let points: Vec<_> = (0..args.num_evaluations)
+            .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
+            .collect();
+       
 
-//         let committer = Committer::new(params.clone());
-//         let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let mut statement = Statement::<F>::new(num_variables);
 
-//         let prover = Prover(params.clone());
+        for point in &points {
+            let eval = polynomial.evaluate_at_extension(point);
+            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            statement.add_constraint(weights, eval);
+        }
 
-//         let proof = prover
-//             .prove(&mut merlin, statement.clone(), witness)
-//             .unwrap();
+        HashCounter::reset();
+        let whir_prover_time = Instant::now();
 
-//         let whir_prover_time = whir_prover_time.elapsed();
-//         let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
-//         let whir_prover_hashes = HashCounter::get();
+        let committer = Committer::new(params.clone());
+        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
-//         // Just not to count that initial inversion (which could be precomputed)
-//         let verifier = Verifier::new(params);
+        let prover = Prover(params.clone());
 
-//         HashCounter::reset();
-//         let whir_verifier_time = Instant::now();
-//         for _ in 0..reps {
-//             let mut arthur = io.to_arthur(merlin.transcript());
-//             verifier.verify(&mut arthur, &statement, &proof).unwrap();
-//         }
+        let proof = prover
+            .prove(&mut merlin, statement.clone(), witness)
+            .unwrap();
 
-//         let whir_verifier_time = whir_verifier_time.elapsed();
-//         let whir_verifier_hashes = HashCounter::get() / reps;
+        let whir_prover_time = whir_prover_time.elapsed();
+        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_prover_hashes = HashCounter::get();
 
-//         (
-//             whir_prover_time,
-//             whir_argument_size,
-//             whir_prover_hashes,
-//             whir_verifier_time,
-//             whir_verifier_hashes,
-//         )
-//     };
+        // Just not to count that initial inversion (which could be precomputed)
+        let verifier = Verifier::new(params);
 
-//     let output = BenchmarkOutput {
-//         security_level,
-//         pow_bits,
-//         starting_rate,
-//         num_variables,
-//         repetitions: reps,
-//         folding_factor,
-//         soundness_type,
-//         field: args.field,
-//         merkle_tree: args.merkle_tree,
+        HashCounter::reset();
+        let whir_verifier_time = Instant::now();
+        for _ in 0..reps {
+            let mut arthur = io.to_arthur(merlin.transcript());
+            verifier.verify(&mut arthur, &statement, &proof).unwrap();
+        }
 
-//         // Whir
-//         whir_evaluations: args.num_evaluations,
-//         whir_prover_time,
-//         whir_argument_size,
-//         whir_prover_hashes,
-//         whir_verifier_time,
-//         whir_verifier_hashes,
+        let whir_verifier_time = whir_verifier_time.elapsed();
+        let whir_verifier_hashes = HashCounter::get() / reps;
 
-//         // Whir LDT
-//         whir_ldt_prover_time,
-//         whir_ldt_argument_size,
-//         whir_ldt_prover_hashes,
-//         whir_ldt_verifier_time,
-//         whir_ldt_verifier_hashes,
-//     };
+        (
+            whir_prover_time,
+            whir_argument_size,
+            whir_prover_hashes,
+            whir_verifier_time,
+            whir_verifier_hashes,
+        )
+    };
 
-//     let mut out_file = OpenOptions::new()
-//         .append(true)
-//         .create(true)
-//         .open("outputs/bench_output.json")
-//         .unwrap();
-//     use std::io::Write;
-//     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
-// }
+    let output = BenchmarkOutput {
+        security_level,
+        pow_bits,
+        starting_rate,
+        num_variables,
+        repetitions: reps,
+        folding_factor,
+        soundness_type,
+        field: args.field,
+        merkle_tree: args.merkle_tree,
+
+        // Whir
+        whir_evaluations: args.num_evaluations,
+        whir_prover_time,
+        whir_argument_size,
+        whir_prover_hashes,
+        whir_verifier_time,
+        whir_verifier_hashes,
+
+        // Whir LDT
+        whir_ldt_prover_time,
+        whir_ldt_argument_size,
+        whir_ldt_prover_hashes,
+        whir_ldt_verifier_time,
+        whir_ldt_verifier_hashes,
+    };
+
+    let mut out_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("outputs/bench_output.json")
+        .unwrap();
+    use std::io::Write;
+    writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
+}
