@@ -12,7 +12,12 @@ pub trait Weights<F: Field>: Debug {
     /// Return the weight associated with a particular corner.
     /// `corner` must be < 2^num_variables.
     fn evaluate_cube(&self, corner: usize) -> F {
-        let point = MultilinearPoint(
+        let point = self.convert_to_multilinear_point(corner);
+        self.evaluate_mle(&point)
+    }
+
+    fn convert_to_multilinear_point(&self, corner: usize) -> MultilinearPoint<F> {
+        MultilinearPoint(
             (0..self.num_variables())
                 .map(|b| {
                     if (corner >> b) & 1 == 1 {
@@ -22,8 +27,7 @@ pub trait Weights<F: Field>: Debug {
                     }
                 })
                 .collect::<Vec<_>>(),
-        );
-        self.evaluate_mle(&point)
+        )
     }
 
     /// Accumulate the weights on the hypercube.
@@ -47,7 +51,6 @@ pub trait Weights<F: Field>: Debug {
     }
 
     fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
-        // Make a clone if you want to return ownership
         None
     }
     fn box_clone(&self) -> Box<dyn Weights<F>>;
@@ -142,5 +145,53 @@ impl<F: Field> Weights<F> for EvaluationWeights<F> {
     
     fn box_clone(&self) -> Box<dyn Weights<F>> {
         Box::new(self.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AffineClaimWeights<F: Field> {
+    input: EvaluationsList<F>,
+    constant_term: EvaluationsList<F>,
+    linear_term: EvaluationsList<F>,
+}
+
+impl<F: Field> AffineClaimWeights<F> {
+    pub fn new(input: EvaluationsList<F>, constant_term: EvaluationsList<F>, linear_term: EvaluationsList<F>) -> Self {
+        assert!(input.num_variables() == constant_term.num_variables());
+        assert!(constant_term.num_variables() == linear_term.num_variables());
+        Self {
+            input,
+            constant_term,
+            linear_term
+        }
+    }
+}
+
+impl<F: Field> Weights<F> for AffineClaimWeights<F> {
+    fn num_variables(&self) -> usize {
+        self.input.num_variables()
+    }
+
+    fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
+        assert_eq!(point.num_variables(), self.input.num_variables());
+        self.linear_term.evaluate(point)
+    }
+
+    fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
+        None
+    }
+    
+    fn box_clone(&self) -> Box<dyn Weights<F>> {
+        Box::new(self.clone())
+    }
+
+    fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
+        assert_eq!(poly.num_variables(), self.num_variables());
+        let mut sum = F::ZERO;
+        for (corner, poly) in poly.evals().iter().enumerate() {
+            let point = self.convert_to_multilinear_point(corner);
+            sum += self.input.evaluate(&point) * self.constant_term.evaluate(&point) + self.evaluate_cube(corner) * poly;
+        }
+        sum
     }
 }
