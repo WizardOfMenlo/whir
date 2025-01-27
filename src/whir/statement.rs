@@ -100,7 +100,7 @@ impl<F: Field> Statement<F> {
 
     /// Combine all linear constraints into a single dense linear constraint.
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
-        let evaluations_vec = vec![F::ZERO; self.num_variables];
+        let evaluations_vec = vec![F::ZERO; 1 << self.num_variables];
         let mut combined_evals = EvaluationsList::new(evaluations_vec);
         let mut combined_sum = F::ZERO;
 

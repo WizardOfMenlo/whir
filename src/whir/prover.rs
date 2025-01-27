@@ -9,7 +9,7 @@ use crate::{
         MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::{self, expand_randomness},
+    utils::{self, expand_randomness}, whir::statement::EvaluationWeights,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -62,7 +62,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement_new: Statement<F>,
+        statement_new: &mut Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -78,46 +78,30 @@ where
         assert!(self.validate_witness(&witness));
 
         println!("statement_new {:?}", statement_new);
-        let points : Vec<_> = statement_new.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
-        println!("statement new points {:?}", points);
-        let evaluations : Vec<_> = statement_new.constraints.into_iter().map(|a| {a.1}).collect();
-
-        let initial_claims: Vec<_> = witness
-            .ood_points
-            .into_iter()
-            .map(|ood_point| {
-                MultilinearPoint::expand_from_univariate(
-                    ood_point,
-                    self.0.mv_parameters.num_variables,
-                )
-            })
-            .chain(points)
-            .collect();
-        let initial_answers: Vec<_> = witness
-            .ood_answers
-            .into_iter()
-            .chain(evaluations)
-            .collect();
-
-        if !self.0.initial_statement {
-            assert!(
-                initial_answers.is_empty(),
-                "Can not have initial answers without initial statement"
-            );
+        // let points : Vec<_> = statement_new.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
+        // println!("statement new points {:?}", points);
+        // let evaluations : Vec<_> = statement_new.constraints.into_iter().map(|a| {a.1}).collect();
+       
+        for (point, evaluation) in witness.ood_points.into_iter().zip(witness
+            .ood_answers) {
+                
+            let weights = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, statement_new.num_variables())));
+            statement_new.add_constraint(weights.clone(), evaluation);
         }
-
+        
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
             let combination_randomness =
-                expand_randomness(combination_randomness_gen, initial_claims.len());
+                expand_randomness(combination_randomness_gen, statement_new.constraints.len());
 
             sumcheck_prover = {
                 let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
-                sumcheck.add_new_equality(
-                    &initial_claims,
-                    &initial_answers,
-                    &combination_randomness,
+                let combination = statement_new.combine(combination_randomness_gen);
+                sumcheck.add_weighted_sum(
+                    &combination.0,
+                    combination.1,
+                    combination_randomness_gen,
                 );
                 Some(sumcheck)
             };

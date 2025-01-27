@@ -27,6 +27,7 @@ where
     // v(X_1, ..., X_n) = p(X_1, ... X_n) * (epsilon_1 eq_z_1(X) + epsilon_2 eq_z_2(X) ...)
     pub fn new(coeffs: CoefficientList<F>) -> Self {
         let weights = EvaluationsList::new(vec![F::ZERO; 1 << coeffs.num_variables()]);
+           
         SumcheckSingle {
             evaluation_of_p: coeffs.into(),
             weights,

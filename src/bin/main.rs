@@ -275,7 +275,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut merlin, Statement::default(), witness)
+        .prove(&mut merlin, &mut Statement::default(), witness)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -395,7 +395,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut merlin, statement.clone(), witness)
+        .prove(&mut merlin, &mut statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());

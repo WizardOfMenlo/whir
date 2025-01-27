@@ -487,10 +487,9 @@ where
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
-        let points : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
         let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
 
-        let parsed = self.parse_proof(arthur, &parsed_commitment, points.len(), whir_proof)?;
+        let parsed = self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
 
         let computed_folds = self.compute_folds(&parsed);
 
