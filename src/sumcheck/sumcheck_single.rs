@@ -1,5 +1,5 @@
 use super::SumcheckPolynomial;
-use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
+use crate::{poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::Statement};
 use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
@@ -41,17 +41,11 @@ where
 
     pub fn add_weighted_sum(
         &mut self,
-        weights: &EvaluationsList<F>,
-        sum: F,
-        combination_randomness: F,
+        statement: &Statement<F>,
+        combination_randomness_gen : F
     ) {
-        assert_eq!(weights.num_variables(), self.num_variables());
-        self.weights
-            .evals_mut()
-            .iter_mut()
-            .zip(weights.evals())
-            .for_each(|(w, &w_prime)| *w += combination_randomness * w_prime);
-        self.sum += combination_randomness * sum;
+        assert_eq!(statement.num_variables(), self.num_variables());
+        (self.weights, self.sum) = statement.combine(combination_randomness_gen);
     }
 
     /// Compute the polynomial that represents the sum in the first variable.
@@ -207,7 +201,6 @@ where
             // do only a single pass over the data.
             Self::eval_eq(&point.0, self.weights.evals_mut(), *rand);
         }
-
         // Update the sum
         for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
             self.sum += *rand * eval;
@@ -289,7 +282,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, sequential_lag_poly::LagrangePolynomialIterator,
             MultilinearPoint,
-        },
+        }, whir::statement::EvaluationWeights,
     };
     use ark_ff::AdditiveGroup;
 
@@ -304,6 +297,43 @@ mod tests {
         let eval = polynomial.evaluate(&eval_point);
         let mut prover = SumcheckSingle::new(polynomial);
         prover.add_new_equality(&[eval_point], &[eval], &[F::from(1)]);
+
+        let poly_1 = prover.compute_sumcheck_polynomial();
+
+        // First, check that is sums to the right value over the hypercube
+        assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
+
+        let combination_randomness = F::from(100101);
+        let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
+
+        prover.compress(combination_randomness, &folding_randomness, &poly_1);
+
+        let poly_2 = prover.compute_sumcheck_polynomial();
+
+        assert_eq!(
+            poly_2.sum_over_hypercube(),
+            combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
+        );
+    }
+
+
+
+    #[test]
+    fn test_sumcheck_weighted_folding_factor_1() {
+        let eval_point = MultilinearPoint(vec![F::from(10), F::from(11)]);
+        let polynomial =
+            CoefficientList::new(vec![F::from(1), F::from(5), F::from(10), F::from(14)]);
+
+        let claimed_value: ark_ff::Fp<ark_ff::MontBackend<crate::crypto::fields::FConfig64, 1>, 1> = polynomial.evaluate(&eval_point);
+
+        let eval = polynomial.evaluate(&eval_point);
+        let mut prover = SumcheckSingle::new(polynomial);
+
+        let mut statement = Statement::new(eval_point.num_variables());
+        let weights = Box::new(EvaluationWeights::new(eval_point));
+        statement.add_constraint(weights.clone(), eval);
+
+        prover.add_weighted_sum(&statement, F::from(1));
 
         let poly_1 = prover.compute_sumcheck_polynomial();
 

@@ -77,32 +77,22 @@ where
         assert!(self.validate_statement(&statement_new));
         assert!(self.validate_witness(&witness));
 
-        println!("statement_new {:?}", statement_new);
-        // let points : Vec<_> = statement_new.clone().constraints.into_iter().map(|a| {a.0.get_point_if_evaluation().unwrap()}).collect();
-        // println!("statement new points {:?}", points);
-        // let evaluations : Vec<_> = statement_new.constraints.into_iter().map(|a| {a.1}).collect();
        
-        for (point, evaluation) in witness.ood_points.into_iter().zip(witness
-            .ood_answers) {
-                
-            let weights = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, statement_new.num_variables())));
+        for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
+            let weights = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
             statement_new.add_constraint(weights.clone(), evaluation);
         }
-        
+
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
-            let combination_randomness =
-                expand_randomness(combination_randomness_gen, statement_new.constraints.len());
-
             sumcheck_prover = {
                 let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
-                let combination = statement_new.combine(combination_randomness_gen);
                 sumcheck.add_weighted_sum(
-                    &combination.0,
-                    combination.1,
-                    combination_randomness_gen,
+                    statement_new,
+                    combination_randomness_gen
                 );
+
                 Some(sumcheck)
             };
 

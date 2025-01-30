@@ -17,16 +17,18 @@ pub trait Weights<F: Field>: Debug {
     }
 
     fn convert_to_multilinear_point(&self, corner: usize) -> MultilinearPoint<F> {
+        let mut bits = (0..self.num_variables())
+        .map(|b| {
+            if (corner >> b) & 1 == 1 {
+                F::ONE
+            } else {
+                F::ZERO
+            }
+        })
+        .collect::<Vec<_>>();
+        bits.reverse();
         MultilinearPoint(
-            (0..self.num_variables())
-                .map(|b| {
-                    if (corner >> b) & 1 == 1 {
-                        F::ONE
-                    } else {
-                        F::ZERO
-                    }
-                })
-                .collect::<Vec<_>>(),
+            bits
         )
     }
 
@@ -35,7 +37,9 @@ pub trait Weights<F: Field>: Debug {
     fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         assert_eq!(accumulator.num_variables(), self.num_variables());
         for (corner, acc) in accumulator.evals_mut().iter_mut().enumerate() {
+            println!("corner {:?} acc before {:?}", corner, acc);
             *acc += factor * self.evaluate_cube(corner);
+            println!("corner {:?} acc after {:?}", corner, acc);
         }
     }
 
@@ -95,7 +99,7 @@ impl<F: Field> Statement<F> {
 
     pub fn add_constraint(&mut self, weights: Box<dyn Weights<F>>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.push((weights, sum));
+        self.constraints.insert(0,(weights, sum));
     }
 
     /// Combine all linear constraints into a single dense linear constraint.
@@ -105,9 +109,14 @@ impl<F: Field> Statement<F> {
         let mut combined_sum = F::ZERO;
 
         let mut challenge_power = F::ONE;
+        println!("combined_evals {:?}", combined_evals);
+
         for (weights, sum) in &self.constraints {
+            println!("weights for accumulation {:?}", weights);
             weights.accumulate(&mut combined_evals, challenge_power);
 
+            println!("combined_evals {:?}", combined_evals);
+            println!("challenge power {:?}", challenge_power);
             combined_sum += *sum * challenge_power;
 
             challenge_power *= challenge;
@@ -174,7 +183,11 @@ impl<F: Field> Weights<F> for AffineClaimWeights<F> {
 
     fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(point.num_variables(), self.input.num_variables());
-        self.linear_term.evaluate(point)
+        let mut acc = F::ZERO;
+        for l in point.0.clone() {
+            acc += self.linear_term.evaluate(point) * self.input.evaluate(point) + self.constant_term.evaluate(point) * l
+        }
+        acc
     }
 
     fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
