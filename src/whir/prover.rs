@@ -1,4 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, statement::Statement, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{AffineClaimVerifier, Statement}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -9,7 +9,7 @@ use crate::{
         MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::{self, expand_randomness}, whir::statement::EvaluationWeights,
+    utils::{self, expand_randomness}, whir::statement::{AffineClaimWeights, EvaluationWeights},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -64,6 +64,7 @@ where
         merlin: &mut Merlin,
         statement_new: &mut Statement<F>,
         witness: Witness<F, MerkleConfig>,
+        verifier_statement: &mut Statement<F>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -77,15 +78,17 @@ where
         assert!(self.validate_statement(&statement_new));
         assert!(self.validate_witness(&witness));
 
-       
+       let statement = statement_new.clone();
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
-            let weights = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
-            statement_new.add_constraint(weights.clone(), evaluation);
+            let weights: Box<EvaluationWeights<F>> = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
+            statement_new.add_constraint_in_front(weights.clone(), evaluation);
         }
 
+        
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
+            println!("witness polynomial {:?}", witness.polynomial);
             sumcheck_prover = {
                 let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
                 sumcheck.add_weighted_sum(
@@ -125,13 +128,15 @@ where
             merkle_proofs: vec![],
         };
 
-        self.round(merlin, round_state)
+        self.round(merlin, round_state, &statement, verifier_statement)
     }
 
     fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
+        prover_statement: &Statement<F>,
+        verifier_statement: &mut Statement<F>
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -192,6 +197,22 @@ where
                     )?;
             }
 
+            //TODO: collect all randomness points evaluate (affine part of the claims)
+            println!("round state randomness {:?}", round_state.folding_randomness);
+
+            for (weights, value) in &prover_statement.constraints {
+                match weights.get_point_if_evaluation() {
+                    Some(point) => {
+                        verifier_statement.add_constraint(Box::new(EvaluationWeights::new(point.clone())), value.clone());
+                    }
+                    None => {
+                        let affine_claim_verifier = weights.get_statement_for_verifier(&round_state.folding_randomness);
+                        if let Some(affine_claim_verifier) = affine_claim_verifier {
+                            verifier_statement.add_constraint(Box::new(affine_claim_verifier), value.clone());
+                        }
+                    }
+                }
+            }
             return Ok(WhirProof(round_state.merkle_proofs));
         }
 
@@ -353,7 +374,7 @@ where
             merkle_proofs: round_state.merkle_proofs,
         };
 
-        self.round(merlin, round_state)
+        self.round(merlin, round_state, prover_statement, verifier_statement)
     }
 }
 

@@ -110,7 +110,7 @@ mod tests {
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &statement, &proof).is_ok());
+        assert!(verifier.verify(&mut arthur, &mut statement, &proof).is_ok());
     }
 
     #[test]

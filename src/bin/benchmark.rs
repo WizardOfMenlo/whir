@@ -308,7 +308,7 @@ fn run_whir<F, MerkleConfig>(
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
             verifier
-                .verify(&mut arthur, &statement_new, &proof)
+                .verify(&mut arthur, &mut statement_new.clone(), &proof)
                 .unwrap();
         }
 
@@ -386,7 +386,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier.verify(&mut arthur, &statement, &proof).unwrap();
+            verifier.verify(&mut arthur, &mut statement, &proof).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

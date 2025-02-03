@@ -282,7 +282,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, sequential_lag_poly::LagrangePolynomialIterator,
             MultilinearPoint,
-        }, whir::statement::EvaluationWeights,
+        }, whir::statement::{AffineClaimWeights, EvaluationWeights, Weights},
     };
     use ark_ff::AdditiveGroup;
 
@@ -327,6 +327,7 @@ mod tests {
         let claimed_value: ark_ff::Fp<ark_ff::MontBackend<crate::crypto::fields::FConfig64, 1>, 1> = polynomial.evaluate(&eval_point);
 
         let eval = polynomial.evaluate(&eval_point);
+        println!("eval value {:?}", eval);
         let mut prover = SumcheckSingle::new(polynomial);
 
         let mut statement = Statement::new(eval_point.num_variables());
@@ -336,12 +337,61 @@ mod tests {
         prover.add_weighted_sum(&statement, F::from(1));
 
         let poly_1 = prover.compute_sumcheck_polynomial();
-
+        println!("poly 1 {:?}", poly_1);
         // First, check that is sums to the right value over the hypercube
         assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
 
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
+
+        prover.compress(combination_randomness, &folding_randomness, &poly_1);
+
+        let poly_2 = prover.compute_sumcheck_polynomial();
+
+        assert_eq!(
+            poly_2.sum_over_hypercube(),
+            combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
+        );
+    }
+
+    #[test]
+    fn test_sumcheck_real_weighted_folding_factor_1() {
+        let eval_point = MultilinearPoint(vec![F::from(10), F::from(11)]);
+        let polynomial =
+            CoefficientList::new(vec![F::from(3), F::from(2), F::from(4), F::from(1)]);
+            
+        
+        let eval = polynomial.evaluate(&eval_point);
+
+        let mut prover = SumcheckSingle::new(polynomial.clone());
+
+        let mut statement = Statement::new(polynomial.num_variables());
+
+        let input = EvaluationsList::new(vec![F::from(2), F::from(1), F::from(3), F::from(7)]);
+        let constant = EvaluationsList::new(vec![F::from(4), F::from(4),F::from(2),F::from(8)]);
+        let linear = EvaluationsList::new(vec![F::from(6), F::from(5), F::from(2), F::from(1)]);
+        let weights_real = AffineClaimWeights::new(input, constant ,linear);
+        
+        let poly_evals : Vec<F> = (0..1<<eval_point.num_variables())
+        .map(|d| polynomial.evaluate(&weights_real.convert_to_multilinear_point(d)))
+        .collect();
+        
+        let poly = EvaluationsList::new(poly_evals);
+        let sum = weights_real.weighted_sum(&poly);
+
+        let weights = Box::new(weights_real);
+        statement.add_constraint(weights.clone(), sum);
+        statement.add_constraint(Box::new(EvaluationWeights::new(eval_point)), eval);
+
+        prover.add_weighted_sum(&statement, F::from(5));
+
+        let expected_sum = F::from(sum+sum+sum+sum+sum) + eval;
+        let poly_1 = prover.compute_sumcheck_polynomial();
+        // First, check that is sums to the right value over the hypercube
+        assert_eq!(poly_1.sum_over_hypercube(), expected_sum);
+
+        let combination_randomness = F::from(130101);
+        let folding_randomness = MultilinearPoint(vec![F::from(4959)]);
 
         prover.compress(combination_randomness, &folding_randomness, &poly_1);
 
