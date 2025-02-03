@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{committer::Witness, parameters::WhirConfig, statement::{AffineClaimVerifier, Statement}, WhirProof};
 use crate::{
     domain::Domain,
@@ -116,7 +118,10 @@ where
             }
             MultilinearPoint(folding_randomness)
         };
-
+        let mut randomness_vec = vec![F::ZERO; self.0.mv_parameters.num_variables];
+        for (i, &val) in folding_randomness.0.iter().enumerate() {
+            randomness_vec[i] = val;
+        }
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
             round: 0,
@@ -128,7 +133,7 @@ where
             merkle_proofs: vec![],
         };
 
-        self.round(merlin, round_state, &statement, verifier_statement)
+        self.round(merlin, round_state, &statement, verifier_statement, &mut randomness_vec)
     }
 
     fn round<Merlin>(
@@ -136,7 +141,8 @@ where
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
         prover_statement: &Statement<F>,
-        verifier_statement: &mut Statement<F>
+        verifier_statement: &mut Statement<F>,
+        randomness_vec: &mut Vec<F>
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -198,15 +204,14 @@ where
             }
 
             //TODO: collect all randomness points evaluate (affine part of the claims)
-            println!("round state randomness {:?}", round_state.folding_randomness);
-
+            println!("round state randomness {:?}", randomness_vec);
             for (weights, value) in &prover_statement.constraints {
                 match weights.get_point_if_evaluation() {
                     Some(point) => {
                         verifier_statement.add_constraint(Box::new(EvaluationWeights::new(point.clone())), value.clone());
                     }
                     None => {
-                        let affine_claim_verifier = weights.get_statement_for_verifier(&round_state.folding_randomness);
+                        let affine_claim_verifier = weights.get_statement_for_verifier(&MultilinearPoint(randomness_vec.clone()));
                         if let Some(affine_claim_verifier) = affine_claim_verifier {
                             verifier_statement.add_constraint(Box::new(affine_claim_verifier), value.clone());
                         }
@@ -363,6 +368,11 @@ where
                 round_params.folding_pow_bits,
             )?;
 
+        let start_idx = (round_state.round + 1) * self.0.folding_factor;
+        for (i, &val) in folding_randomness.0.iter().enumerate() {
+            randomness_vec[start_idx + i] = val;
+        }
+ 
         let round_state = RoundState {
             round: round_state.round + 1,
             domain: new_domain,
@@ -374,7 +384,7 @@ where
             merkle_proofs: round_state.merkle_proofs,
         };
 
-        self.round(merlin, round_state, prover_statement, verifier_statement)
+        self.round(merlin, round_state, prover_statement, verifier_statement, randomness_vec)
     }
 }
 

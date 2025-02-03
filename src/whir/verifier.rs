@@ -340,8 +340,11 @@ where
         let mut value : F = statement.constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
-           .map(|((weight, _), randomness)|
+            .map(|((weight, _), randomness)|
+            {
+                println!("weight {:?} randomness {:?}", weight, randomness);
                 *randomness * weight.compute(final_value, &folding_randomness)
+            }
             )
            .sum();
 
@@ -366,7 +369,11 @@ where
                 .into_iter()
                 .map(|point| eq_poly_outside(&point, &folding_randomness))
                 .zip(&round_proof.combination_randomness)
-                .map(|(point, rand)| point * rand)
+                .map(|(point, rand)|
+                {
+                    println!("point {:?} rand {:?}", point, rand);
+                    point * rand
+                })
                 .sum();
 
             value += sum_of_claims * final_value;
