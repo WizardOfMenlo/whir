@@ -85,6 +85,7 @@ mod tests {
             .collect();
 
         let mut statement = Statement::<F>::new(num_variables);
+        let mut statement_verifier = Statement::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate(point);
@@ -105,7 +106,7 @@ mod tests {
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, &mut statement.clone(), witness)
+            .prove(&mut merlin, &mut statement.clone(), witness, &mut statement_verifier)
             .unwrap();
 
         let verifier = Verifier::new(params);

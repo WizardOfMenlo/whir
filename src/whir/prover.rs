@@ -90,7 +90,6 @@ where
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
-            println!("witness polynomial {:?}", witness.polynomial);
             sumcheck_prover = {
                 let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
                 sumcheck.add_weighted_sum(
@@ -119,9 +118,8 @@ where
             MultilinearPoint(folding_randomness)
         };
         let mut randomness_vec = vec![F::ZERO; self.0.mv_parameters.num_variables];
-        for (i, &val) in folding_randomness.0.iter().enumerate() {
-            randomness_vec[i] = val;
-        }
+        randomness_vec[..folding_randomness.0.len()].copy_from_slice(&folding_randomness.0);
+
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
             round: 0,
@@ -203,8 +201,6 @@ where
                     )?;
             }
 
-            //TODO: collect all randomness points evaluate (affine part of the claims)
-            println!("round state randomness {:?}", randomness_vec);
             for (weights, value) in &prover_statement.constraints {
                 match weights.get_point_if_evaluation() {
                     Some(point) => {
@@ -369,9 +365,8 @@ where
             )?;
 
         let start_idx = (round_state.round + 1) * self.0.folding_factor;
-        for (i, &val) in folding_randomness.0.iter().enumerate() {
-            randomness_vec[start_idx + i] = val;
-        }
+        randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
+            .copy_from_slice(&folding_randomness.0);
  
         let round_state = RoundState {
             round: round_state.round + 1,

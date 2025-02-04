@@ -370,10 +370,8 @@ where
                 .map(|point| eq_poly_outside(&point, &folding_randomness))
                 .zip(&round_proof.combination_randomness)
                 .map(|(point, rand)|
-                {
-                    println!("point {:?} rand {:?}", point, rand);
                     point * rand
-                })
+                )
                 .sum();
 
             value += sum_of_claims * final_value;
