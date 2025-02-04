@@ -8,7 +8,7 @@ use super::{sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 /// unknowns, stored via their evaluations at {0,1}^{num_variables}
 ///
 /// `evals` stores the evaluation in lexicographic order.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EvaluationsList<F> {
     evals: Vec<F>,
     num_variables: usize,

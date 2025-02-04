@@ -19,7 +19,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::coeffs::CoefficientList,
-    whir::{iopattern::WhirIOPattern, Statement},
+    whir::statement::{Statement, EvaluationWeights}
 };
 
 use serde::Serialize;
@@ -290,8 +290,11 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
+        let statement_new = Statement::<F>::new(num_variables);
+        let mut statement_verifier = Statement::<F>::new(num_variables);
+        
         let proof = prover
-            .prove(&mut merlin, Statement::default(), witness)
+            .prove(&mut merlin, &mut statement_new.clone(), witness, &mut statement_verifier)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -306,7 +309,7 @@ fn run_whir<F, MerkleConfig>(
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
             verifier
-                .verify(&mut arthur, &Statement::default(), &proof)
+                .verify(&mut arthur, &mut statement_new.clone(), &proof)
                 .unwrap();
         }
 
@@ -351,14 +354,16 @@ fn run_whir<F, MerkleConfig>(
         let points: Vec<_> = (0..args.num_evaluations)
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
             .collect();
-        let evaluations = points
-            .iter()
-            .map(|point| polynomial.evaluate_at_extension(point))
-            .collect();
-        let statement = Statement {
-            points,
-            evaluations,
-        };
+       
+
+        let mut statement = Statement::<F>::new(num_variables);
+        let mut statement_verifier = Statement::<F>::new(num_variables);
+
+        for point in &points {
+            let eval = polynomial.evaluate_at_extension(point);
+            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            statement.add_constraint(weights, eval);
+        }
 
         HashCounter::reset();
         let whir_prover_time = Instant::now();
@@ -369,7 +374,7 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+            .prove(&mut merlin, &mut statement.clone(), witness, &mut statement_verifier)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
@@ -383,7 +388,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier.verify(&mut arthur, &statement, &proof).unwrap();
+            verifier.verify(&mut arthur, &mut statement, &proof).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

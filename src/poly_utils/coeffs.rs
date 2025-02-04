@@ -42,7 +42,7 @@ where
 
     /// Evaluate the given polynomial at `point` from F^n.
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(self.num_variables, point.n_variables());
+        assert_eq!(self.num_variables, point.num_variables());
         eval_multivariate(&self.coeffs, &point.0)
     }
 
@@ -111,7 +111,7 @@ where
         &self,
         point: &MultilinearPoint<E>,
     ) -> E {
-        assert_eq!(self.num_variables, point.n_variables());
+        assert_eq!(self.num_variables, point.num_variables());
         Self::eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
@@ -237,7 +237,7 @@ where
     /// it partially evaluates f at the provided `folding_randomness`.
     /// Our ordering convention is to evaluate at the higher indices, i.e. we return f(X_0,X_1,..., folding_randomness[0], folding_randomness[1],...)
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
-        let folding_factor = folding_randomness.n_variables();
+        let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
         let coeffs = self
             .coeffs
