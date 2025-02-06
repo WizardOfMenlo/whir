@@ -3,7 +3,7 @@ use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
     parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations},
+    poly_utils::{self, fold::restructure_evaluations, univariate::naive_interpolation},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -198,79 +198,105 @@ where
         // PHASE 2:
         // OOD Sampling
         // These are the ri_out's from the paper.
-        let mut ri_outs = vec![F::ZERO; round_parameters.ood_samples];
+        let mut ood_sample_points = vec![F::ZERO; round_parameters.ood_samples];
         // These are the beta's from the paper.
         let mut betas = Vec::with_capacity(round_parameters.ood_samples);
         if round_parameters.ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ri_outs)?;
-            betas.extend(ri_outs.iter().map(|ood_point| g_poly.evaluate(ood_point)));
+            merlin.fill_challenge_scalars(&mut ood_sample_points)?;
+            betas.extend(
+                ood_sample_points
+                    .iter()
+                    .map(|ood_point| g_poly.evaluate(ood_point)),
+            );
             merlin.add_scalars(&betas)?;
         }
 
+        // PHASE 3:
         // STIR queries
         let mut stir_queries_seed = [0u8; 32];
         merlin.fill_challenge_bytes(&mut stir_queries_seed)?;
         let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
+
+        let size_of_folded_domain = round_state.domain.folded_size(self.0.folding_factor);
         // Obtain t random integers between 0 and size of the folded domain.
         // These are the r_shifts from the paper.
-        let stir_challenges_indexes =
-            utils::dedup((0..round_params.num_queries).map(|_| {
-                stir_gen.gen_range(0..round_state.domain.folded_size(self.0.folding_factor))
-            }));
-        // Obtain the generator of the folded domain.
-        let domain_scaled_gen = round_state
-            .domain
-            .backing_domain
-            .element(1 << self.0.folding_factor);
-        let domain_scaled_offset = round_state.domain.backing_domain.coset_offset();
-        // This is \mathcal{G}_i from the paper.
-        let stir_challenges: Vec<_> = ood_points
-            .into_iter()
-            .chain(
-                stir_challenges_indexes
-                    .iter()
-                    .map(|i| domain_scaled_offset * domain_scaled_gen.pow([*i as u64])),
-            )
+        let stir_challenges_indexes = utils::dedup(
+            (0..round_parameters.num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)),
+        );
+
+        let fold_size = 1 << self.0.folding_factor;
+        let l_k = round_state.domain.scale(fold_size).backing_domain;
+
+        let stir_challenges_points: Vec<F> = stir_challenges_indexes
+            .iter()
+            .map(|&i| l_k.element(i))
             .collect();
 
-        let merkle_proof = round_state
-            .prev_merkle
-            .generate_multi_proof(stir_challenges_indexes.clone())
-            .unwrap();
-        let fold_size = 1 << self.0.folding_factor;
-        // Create the virtual oracle for the concerned STIR queries.
-        let answers: Vec<_> = stir_challenges_indexes
+        // These are the virtual oracle domain points: the challenge field elements prior to evaluation.
+        let stir_challenges_virtual_points: Vec<Vec<F>> = stir_challenges_indexes
+            .iter()
+            .map(|&i| {
+                // Note: the domain has not been restructured the same way that the evaluations have.
+                (i..i + fold_size * size_of_folded_domain)
+                    .step_by(size_of_folded_domain)
+                    .map(|j| round_state.domain.backing_domain.element(j))
+                    .collect()
+            })
+            .collect();
+
+        // These are the virtual oracle evaluation points: the polynomial evaluated at domain point.
+        let stir_challenges_virtual_evals: Vec<Vec<F>> = stir_challenges_indexes
             .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
 
-        // Still not sure about this. Is this how the interpolation is done?
+        // Example assertion. Should be refined, but it's really just a sanity check.
+        assert!(stir_challenges_virtual_points
+            .iter()
+            .zip(stir_challenges_virtual_evals.iter())
+            .all(|(x, y)| x
+                .iter()
+                .zip(y.iter())
+                .all(|(a, b)| round_state.coefficients.evaluate(a).eq(b))));
+        assert!(stir_challenges_virtual_points
+            .iter()
+            .all(|v| v.len() == fold_size));
+        assert!(stir_challenges_virtual_evals
+            .iter()
+            .all(|v| v.len() == fold_size));
 
-        // Evaluate answers in the folding randomness.
-        let mut stir_evaluations = ood_answers.clone();
-        stir_evaluations.extend(answers.iter().map(|answers| {
-            DensePolynomial::from_coefficients_slice(answers)
-                .evaluate(&round_state.folding_randomness)
-        }));
+        // Merkle proof for the previous evaluations.
+        let stir_challenges_proof = round_state
+            .prev_merkle
+            .generate_multi_proof(stir_challenges_indexes.clone())
+            .unwrap();
 
-        round_state.merkle_proofs.push((merkle_proof, answers));
+        round_state
+            .merkle_proofs
+            .push((stir_challenges_proof, stir_challenges_virtual_evals));
+
+        let quotient_set: Vec<F> = ood_sample_points
+            .clone()
+            .into_iter()
+            .chain(stir_challenges_points.clone().into_iter())
+            .collect();
 
         // PoW
-        if round_params.pow_bits > 0. {
-            merlin.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+        if round_parameters.pow_bits > 0. {
+            merlin.challenge_pow::<PowStrategy>(round_parameters.pow_bits)?;
         }
 
         // Randomness for combination
-        let [combination_randomness_gen]: [F; 1] = merlin.challenge_scalars()?;
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, stir_challenges.len());
+        let [comb_rand]: [F; 1] = merlin.challenge_scalars()?;
+        let comb_rand_coeffs = std::iter::successors(Some(F::ONE), |&prev| Some(comb_rand * prev))
+            .take(quotient_set.len())
+            .collect();
 
         // The quotient polynomial is then computed
-        let quotient_polynomial =
-            poly_utils::univariate::poly_quotient(&folded_coefficients, &stir_challenges);
+        let quotient_polynomial = poly_utils::univariate::poly_quotient(&g_poly, &quotient_set);
 
         // This is the polynomial 1 + r * x + r^2 * x^2 + ... + r^n * x^n where n = |quotient_set|
-        let scaling_polynomial = DensePolynomial::from_coefficients_vec(combination_randomness);
+        let scaling_polynomial = DensePolynomial::from_coefficients_vec(comb_rand_coeffs);
 
         let new_coefficients = &quotient_polynomial * scaling_polynomial;
 
@@ -278,11 +304,11 @@ where
 
         let round_state = RoundState {
             round: round_state.round + 1,
-            domain: new_domain,
+            domain: g_domain,
             folding_randomness,
             coefficients: new_coefficients,
-            prev_merkle: merkle_tree,
-            prev_merkle_answers: folded_evals,
+            prev_merkle: g_merkle,
+            prev_merkle_answers: g_folded_evaluations,
             merkle_proofs: round_state.merkle_proofs,
         };
 
