@@ -76,7 +76,8 @@ where
         .expect("Should have found an appropriate domain");
 
         // TODO: Maybe here we should stop earlier
-        let final_log_degree = uv_parameters.log_degree % stir_parameters.folding_factor;
+        // let final_log_degree = uv_parameters.log_degree % stir_parameters.folding_factor;
+        let final_log_degree = 8;
         let num_rounds =
             ((uv_parameters.log_degree - final_log_degree) / stir_parameters.folding_factor) - 1;
 
@@ -114,6 +115,8 @@ where
                 log_next_eta,
                 field_size_bits,
             );
+
+            assert!(num_queries + ood_samples < (1 << log_degree) + 1);
 
             let query_error =
                 Self::rbr_queries(stir_parameters.soundness_type, log_inv_rate, num_queries);
