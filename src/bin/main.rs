@@ -48,6 +48,9 @@ struct Args {
     #[arg(long = "reps", default_value = "1000")]
     verifier_repetitions: usize,
 
+    #[arg(short = 'i', long = "initfold", default_value = "1")]
+    first_round_folding_factor: usize,
+
     #[arg(short = 'k', long = "fold", default_value = "4")]
     folding_factor: usize,
 
@@ -219,6 +222,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
+    let first_round_folding_factor = args.first_round_folding_factor;
     let folding_factor = args.folding_factor;
     let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
@@ -235,7 +239,10 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         initial_statement: false,
         security_level,
         pow_bits,
-        folding_factor,
+        folding_factor: FoldingFactor::ConstantFromSecondRound(
+            first_round_folding_factor,
+            folding_factor,
+        ),
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
@@ -326,6 +333,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
+    let first_round_folding_factor = args.first_round_folding_factor;
     let folding_factor = args.folding_factor;
     let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
@@ -343,7 +351,10 @@ fn run_whir_pcs<F, MerkleConfig>(
         initial_statement: true,
         security_level,
         pow_bits,
-        folding_factor,
+        folding_factor: FoldingFactor::ConstantFromSecondRound(
+            first_round_folding_factor,
+            folding_factor,
+        ),
         leaf_hash_params,
         two_to_one_params,
         soundness_type,

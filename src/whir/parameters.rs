@@ -7,7 +7,7 @@ use ark_ff::FftField;
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters},
+    parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
 };
 
 #[derive(Clone)]
@@ -27,7 +27,7 @@ where
     pub(crate) starting_log_inv_rate: usize,
     pub(crate) starting_folding_pow_bits: f64,
 
-    pub(crate) folding_factor: usize,
+    pub(crate) folding_factor: FoldingFactor,
     pub(crate) round_parameters: Vec<RoundConfig>,
     pub(crate) fold_optimisation: FoldType,
 
@@ -63,13 +63,10 @@ where
         mv_parameters: MultivariateParameters<F>,
         whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
-        // We need to fold at least some time
-        assert!(
-            whir_parameters.folding_factor > 0,
-            "folding factor should be non zero"
-        );
-        // If less, just send the damn polynomials
-        assert!(mv_parameters.num_variables >= whir_parameters.folding_factor);
+        whir_parameters
+            .folding_factor
+            .check_validity(mv_parameters.num_variables)
+            .unwrap();
 
         let protocol_security_level =
             0.max(whir_parameters.security_level - whir_parameters.pow_bits);
@@ -80,10 +77,9 @@ where
         )
         .expect("Should have found an appropriate domain - check Field 2 adicity?");
 
-        let final_sumcheck_rounds = mv_parameters.num_variables % whir_parameters.folding_factor;
-        let num_rounds = ((mv_parameters.num_variables - final_sumcheck_rounds)
-            / whir_parameters.folding_factor)
-            - 1;
+        let (num_rounds, final_sumcheck_rounds) = whir_parameters
+            .folding_factor
+            .compute_number_of_rounds(mv_parameters.num_variables);
 
         let field_size_bits = F::field_size_in_bits();
 
@@ -125,16 +121,26 @@ where
                     whir_parameters.soundness_type,
                     whir_parameters.starting_log_inv_rate,
                 ),
-            ) + (whir_parameters.folding_factor as f64).log2();
+            ) + (whir_parameters
+                .folding_factor
+                .get_folding_factor_of_round(0) as f64) // The starting_folding_pow_bits is affected only by the first folding factor, right?
+                .log2();
             0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
         };
 
         let mut round_parameters = Vec::with_capacity(num_rounds);
-        let mut num_variables = mv_parameters.num_variables - whir_parameters.folding_factor;
+        let mut num_variables = mv_parameters.num_variables
+            - whir_parameters
+                .folding_factor
+                .get_folding_factor_of_round(0);
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
-        for _ in 0..num_rounds {
+        for round in 0..num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
-            let next_rate = log_inv_rate + (whir_parameters.folding_factor - 1);
+            let next_rate = log_inv_rate
+                + (whir_parameters
+                    .folding_factor
+                    .get_folding_factor_of_round(round)
+                    - 1);
 
             let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
             let num_queries = Self::queries(
@@ -184,7 +190,9 @@ where
                 log_inv_rate,
             });
 
-            num_variables -= whir_parameters.folding_factor;
+            num_variables -= whir_parameters
+                .folding_factor
+                .get_folding_factor_of_round(round + 1); // TODO: double check
             log_inv_rate = next_rate;
         }
 
@@ -438,7 +446,7 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.mv_parameters.fmt(f)?;
-        writeln!(f, ", folding factor: {}", self.folding_factor)?;
+        writeln!(f, ", folding factor: {:?}", self.folding_factor)?;
         writeln!(
             f,
             "Security level: {} bits using {} security and {} bits of PoW",
@@ -502,7 +510,7 @@ where
         );
         writeln!(
             f,
-            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+            "{:.1} bits -- (x{:?}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
             prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits,
             self.folding_factor,
             prox_gaps_error,
@@ -510,10 +518,11 @@ where
             self.starting_folding_pow_bits,
         )?;
 
-        num_variables -= self.folding_factor;
+        num_variables -= self.folding_factor.get_folding_factor_of_round(0);
 
-        for r in &self.round_parameters {
-            let next_rate = r.log_inv_rate + (self.folding_factor - 1);
+        for (round, r) in self.round_parameters.iter().enumerate() {
+            let next_rate =
+                r.log_inv_rate + (self.folding_factor.get_folding_factor_of_round(round) - 1);
             let log_eta = Self::log_eta(self.soundness_type, next_rate);
 
             if r.ood_samples > 0 {
@@ -567,7 +576,7 @@ where
 
             writeln!(
                 f,
-                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+                "{:.1} bits -- (x{:?}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
                 prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
                 self.folding_factor,
                 prox_gaps_error,
@@ -575,7 +584,8 @@ where
                 r.folding_pow_bits,
             )?;
 
-            num_variables -= self.folding_factor;
+            num_variables -= self.folding_factor.get_folding_factor_of_round(round + 1);
+            // TODO: double check
         }
 
         let query_error = Self::rbr_queries(
