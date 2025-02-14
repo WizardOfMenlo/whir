@@ -563,8 +563,8 @@ where
             .evaluate_at_univariate(&parsed.final_randomness_points);
         if !final_folds
             .iter()
-            .zip(&final_evaluations)
-            .all(|(&fold, eval)| fold == *eval)
+            .zip(final_evaluations)
+            .all(|(&fold, eval)| fold == eval)
         {
             return Err(ProofError::InvalidProof);
         }
