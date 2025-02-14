@@ -129,7 +129,7 @@ where
                 ),
             ) + (whir_parameters
                 .folding_factor
-                .get_folding_factor_of_round(0) as f64)
+                .at_round(0) as f64)
                 .log2();
             0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
         };
@@ -138,14 +138,14 @@ where
         let mut num_variables = mv_parameters.num_variables
             - whir_parameters
                 .folding_factor
-                .get_folding_factor_of_round(0);
+                .at_round(0);
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         for round in 0..num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate
                 + (whir_parameters
                     .folding_factor
-                    .get_folding_factor_of_round(round)
+                    .at_round(round)
                     - 1);
 
             let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
@@ -198,7 +198,7 @@ where
 
             num_variables -= whir_parameters
                 .folding_factor
-                .get_folding_factor_of_round(round + 1);
+                .at_round(round + 1);
             log_inv_rate = next_rate;
         }
 
@@ -524,11 +524,11 @@ where
             self.starting_folding_pow_bits,
         )?;
 
-        num_variables -= self.folding_factor.get_folding_factor_of_round(0);
+        num_variables -= self.folding_factor.at_round(0);
 
         for (round, r) in self.round_parameters.iter().enumerate() {
             let next_rate =
-                r.log_inv_rate + (self.folding_factor.get_folding_factor_of_round(round) - 1);
+                r.log_inv_rate + (self.folding_factor.at_round(round) - 1);
             let log_eta = Self::log_eta(self.soundness_type, next_rate);
 
             if r.ood_samples > 0 {
@@ -590,7 +590,7 @@ where
                 r.folding_pow_bits,
             )?;
 
-            num_variables -= self.folding_factor.get_folding_factor_of_round(round + 1);
+            num_variables -= self.folding_factor.at_round(round + 1);
         }
 
         let query_error = Self::rbr_queries(

@@ -55,13 +55,13 @@ where
             self = self
                 .challenge_scalars(1, "initial_combination_randomness")
                 .add_sumcheck(
-                    params.folding_factor.get_folding_factor_of_round(0),
+                    params.folding_factor.at_round(0),
                     params.starting_folding_pow_bits,
                 );
         } else {
             self = self
                 .challenge_scalars(
-                    params.folding_factor.get_folding_factor_of_round(0),
+                    params.folding_factor.at_round(0),
                     "folding_randomness",
                 )
                 .pow(params.starting_folding_pow_bits);
@@ -70,7 +70,7 @@ where
         let mut domain_size = params.starting_domain.size();
         for (round, r) in params.round_parameters.iter().enumerate() {
             let folded_domain_size =
-                domain_size >> params.folding_factor.get_folding_factor_of_round(round);
+                domain_size >> params.folding_factor.at_round(round);
             let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
             self = self
                 .add_digest("merkle_digest")
@@ -79,7 +79,7 @@ where
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(
-                    params.folding_factor.get_folding_factor_of_round(round + 1),
+                    params.folding_factor.at_round(round + 1),
                     r.folding_pow_bits,
                 );
             domain_size >>= 1;
@@ -88,7 +88,7 @@ where
         let folded_domain_size = domain_size
             >> params
                 .folding_factor
-                .get_folding_factor_of_round(params.round_parameters.len());
+                .at_round(params.round_parameters.len());
         let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
 
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")

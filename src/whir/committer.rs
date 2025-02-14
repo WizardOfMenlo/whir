@@ -55,13 +55,13 @@ where
         // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
         // They also partially overlap and undo one another. We should merge them.
         let folded_evals =
-            utils::stack_evaluations(evals, self.0.folding_factor.get_folding_factor_of_round(0));
+            utils::stack_evaluations(evals, self.0.folding_factor.at_round(0));
         let folded_evals = restructure_evaluations(
             folded_evals,
             self.0.fold_optimisation,
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
-            self.0.folding_factor.get_folding_factor_of_round(0),
+            self.0.folding_factor.at_round(0),
         );
 
         // Convert to extension field.
@@ -74,7 +74,7 @@ where
             .collect::<Vec<_>>();
 
         // Group folds together as a leaf.
-        let fold_size = 1 << self.0.folding_factor.get_folding_factor_of_round(0);
+        let fold_size = 1 << self.0.folding_factor.at_round(0);
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = folded_evals.chunks_exact(fold_size);
         #[cfg(feature = "parallel")]

@@ -103,7 +103,7 @@ pub enum FoldingFactor {
 }
 
 impl FoldingFactor {
-    pub fn get_folding_factor_of_round(&self, round: usize) -> usize {
+    pub fn at_round(&self, round: usize) -> usize {
         match self {
             FoldingFactor::Constant(factor) => *factor,
             FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
