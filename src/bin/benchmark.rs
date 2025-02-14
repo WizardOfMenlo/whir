@@ -49,7 +49,7 @@ struct Args {
     #[arg(long = "reps", default_value = "1000")]
     verifier_repetitions: usize,
 
-    #[arg(short = 'i', long = "initfold", default_value = "1")]
+    #[arg(short = 'i', long = "initfold", default_value = "4")]
     first_round_folding_factor: usize,
 
     #[arg(short = 'k', long = "fold", default_value = "4")]
