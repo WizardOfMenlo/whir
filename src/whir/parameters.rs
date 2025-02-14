@@ -22,6 +22,12 @@ where
     pub(crate) max_pow_bits: usize,
 
     pub(crate) committment_ood_samples: usize,
+    // The WHIR protocol can prove either:
+    // 1. The commitment is a valid low degree polynomial. In that case, the
+    //    initial statement is set to false.
+    // 2. The commitment is a valid folded polynomial, and an additional
+    //    polynomial evaluation statement. In that case, the initial statement
+    //    is set to true.
     pub(crate) initial_statement: bool,
     pub(crate) starting_domain: Domain<F>,
     pub(crate) starting_log_inv_rate: usize,
@@ -123,7 +129,7 @@ where
                 ),
             ) + (whir_parameters
                 .folding_factor
-                .get_folding_factor_of_round(0) as f64) // The starting_folding_pow_bits is affected only by the first folding factor, right?
+                .get_folding_factor_of_round(0) as f64)
                 .log2();
             0_f64.max(whir_parameters.security_level as f64 - prox_gaps_error)
         };
@@ -192,7 +198,7 @@ where
 
             num_variables -= whir_parameters
                 .folding_factor
-                .get_folding_factor_of_round(round + 1); // TODO: double check
+                .get_folding_factor_of_round(round + 1);
             log_inv_rate = next_rate;
         }
 
@@ -585,7 +591,6 @@ where
             )?;
 
             num_variables -= self.folding_factor.get_folding_factor_of_round(round + 1);
-            // TODO: double check
         }
 
         let query_error = Self::rbr_queries(

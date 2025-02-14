@@ -158,7 +158,7 @@ where
         };
 
         let mut prev_root = parsed_commitment.root.clone();
-        let domain_gen = self.params.starting_domain.backing_domain.group_gen();
+        let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
         let mut exp_domain_gen =
             domain_gen.pow([1 << self.params.folding_factor.get_folding_factor_of_round(0)]);
         let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
@@ -180,9 +180,7 @@ where
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
-                self.params
-                    .folding_factor
-                    .get_folding_factor_of_round(r + 1), // TODO: double check
+                self.params.folding_factor.get_folding_factor_of_round(r),
                 round_params.num_queries,
                 arthur,
             )?;
@@ -253,7 +251,12 @@ where
             folding_randomness = new_folding_randomness;
 
             prev_root = new_root.clone();
-            exp_domain_gen = exp_domain_gen * exp_domain_gen;
+            domain_gen = domain_gen * domain_gen;
+            exp_domain_gen = domain_gen.pow([1
+                << self
+                    .params
+                    .folding_factor
+                    .get_folding_factor_of_round(r + 1)]);
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
             domain_size /= 2;
         }
@@ -358,7 +361,7 @@ where
             num_variables -= self
                 .params
                 .folding_factor
-                .get_folding_factor_of_round(round + 1); // TODO: double check
+                .get_folding_factor_of_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
             let ood_points = &round_proof.ood_points;
@@ -396,11 +399,15 @@ where
 
     fn compute_folds_full(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
         let mut domain_size = self.params.starting_domain.backing_domain.size();
-        let coset_domain_size = 1 << self.params.folding_factor.get_folding_factor_of_round(0);
 
         let mut result = Vec::new();
 
         for (round_index, round) in parsed.rounds.iter().enumerate() {
+            let coset_domain_size = 1
+                << self
+                    .params
+                    .folding_factor
+                    .get_folding_factor_of_round(round_index);
             // This is such that coset_generator^coset_domain_size = F::ONE
             //let _coset_generator = domain_gen.pow(&[(domain_size / coset_domain_size) as u64]);
             let coset_generator_inv = round
@@ -424,7 +431,7 @@ where
                         self.two_inv,
                         self.params
                             .folding_factor
-                            .get_folding_factor_of_round(round_index + 1),
+                            .get_folding_factor_of_round(round_index),
                     )
                 })
                 .collect();
@@ -432,6 +439,11 @@ where
             domain_size /= 2;
         }
 
+        let coset_domain_size = 1
+            << self
+                .params
+                .folding_factor
+                .get_folding_factor_of_round(parsed.rounds.len());
         let domain_gen_inv = parsed.final_domain_gen_inv;
 
         // Final round
@@ -582,8 +594,8 @@ where
             .evaluate_at_univariate(&parsed.final_randomness_points);
         if !final_folds
             .iter()
-            .zip(final_evaluations)
-            .all(|(&fold, eval)| fold == eval)
+            .zip(&final_evaluations)
+            .all(|(&fold, eval)| fold == *eval)
         {
             return Err(ProofError::InvalidProof);
         }

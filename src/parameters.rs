@@ -180,6 +180,19 @@ impl FoldingFactor {
             }
         }
     }
+
+    /// Compute folding_factor(0) + ... + folding_factor(n_rounds)
+    pub fn total_number(&self, n_rounds: usize) -> usize {
+        match self {
+            FoldingFactor::Constant(factor) => {
+                // It's checked that factor > 0 and factor <= num_variables
+                factor * (n_rounds + 1)
+            }
+            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+                first_round_factor + factor * n_rounds
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
