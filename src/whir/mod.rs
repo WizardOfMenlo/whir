@@ -4,11 +4,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::poly_utils::MultilinearPoint;
 
 pub mod committer;
+pub mod fs_utils;
 pub mod iopattern;
 pub mod parameters;
 pub mod prover;
 pub mod verifier;
-pub mod fs_utils;
 
 #[derive(Debug, Clone, Default)]
 pub struct Statement<F> {
@@ -41,7 +41,9 @@ mod tests {
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
+    use crate::parameters::{
+        FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+    };
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
     use crate::whir::Statement;
@@ -56,7 +58,7 @@ mod tests {
 
     fn make_whir_things(
         num_variables: usize,
-        folding_factor: usize,
+        folding_factor: FoldingFactor,
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
@@ -140,7 +142,7 @@ mod tests {
                             for pow_bits in pow_bits {
                                 make_whir_things(
                                     num_variables,
-                                    folding_factor,
+                                    FoldingFactor::Constant(folding_factor),
                                     num_points,
                                     soundness_type,
                                     pow_bits,
