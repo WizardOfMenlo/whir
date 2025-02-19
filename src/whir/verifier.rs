@@ -125,7 +125,6 @@ where
             );
 
 
-            println!("{:?}", parsed_commitment.ood_points.len());
             // Initial sumcheck
             sumcheck_rounds.reserve_exact(self.params.folding_factor);
             for _ in 0..self.params.folding_factor {
@@ -496,7 +495,6 @@ where
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
         let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
-        println!("evaluations {:?}", evaluations);
 
         let parsed = self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
 
@@ -621,7 +619,6 @@ where
         if prev_sumcheck_poly_eval
             != evaluation_of_v_poly
         {
-            println!("this 2 failed");
             return Err(ProofError::InvalidProof);
         }
 
