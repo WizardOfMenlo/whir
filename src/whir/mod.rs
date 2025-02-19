@@ -1,20 +1,14 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::poly_utils::MultilinearPoint;
-
 pub mod committer;
+pub mod fs_utils;
 pub mod iopattern;
 pub mod parameters;
 pub mod prover;
+pub mod statement;
 pub mod verifier;
-pub mod fs_utils;
 
-#[derive(Debug, Clone, Default)]
-pub struct Statement<F> {
-    pub points: Vec<MultilinearPoint<F>>,
-    pub evaluations: Vec<F>,
-}
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -44,7 +38,7 @@ mod tests {
     use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
-    use crate::whir::Statement;
+    use crate::whir::statement::{Statement, EvaluationWeights};
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -90,13 +84,14 @@ mod tests {
             .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
             .collect();
 
-        let statement = Statement {
-            points: points.clone(),
-            evaluations: points
-                .iter()
-                .map(|point| polynomial.evaluate(point))
-                .collect(),
-        };
+        let mut statement = Statement::<F>::new(num_variables);
+        let mut statement_verifier = Statement::<F>::new(num_variables);
+
+        for point in &points {
+            let eval = polynomial.evaluate(point);
+            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            statement.add_constraint(weights, eval);
+        }
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
@@ -111,12 +106,12 @@ mod tests {
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+            .prove(&mut merlin, &mut statement.clone(), witness, &mut statement_verifier)
             .unwrap();
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &statement, &proof).is_ok());
+        assert!(verifier.verify(&mut arthur, &mut statement_verifier, &proof).is_ok());
     }
 
     #[test]
@@ -133,13 +128,13 @@ mod tests {
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
-            for num_variables in num_variables {
+            for num_variable in num_variables {
                 for fold_type in fold_types {
                     for num_points in num_points {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
                                 make_whir_things(
-                                    num_variables,
+                                    num_variable,
                                     folding_factor,
                                     num_points,
                                     soundness_type,
