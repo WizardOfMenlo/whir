@@ -111,7 +111,8 @@ mod tests {
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &mut statement, &proof).is_ok());
+        println!("does this work? {:?} {:?}", &statement, &statement_verifier);
+        assert!(verifier.verify(&mut arthur, &mut statement_verifier, &proof).is_ok());
     }
 
     #[test]
@@ -128,13 +129,14 @@ mod tests {
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
-            for num_variables in num_variables {
+            for num_variable in num_variables {
                 for fold_type in fold_types {
                     for num_points in num_points {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
+                                println!("folding_factor {:?} num_variables {:?} num_points {:?} pow_bits {:?} soundness_type {:?} fold_type {:?}", folding_factor, num_variable, num_points, pow_bits, soundness_type, fold_type);
                                 make_whir_things(
-                                    num_variables,
+                                    num_variable,
                                     folding_factor,
                                     num_points,
                                     soundness_type,

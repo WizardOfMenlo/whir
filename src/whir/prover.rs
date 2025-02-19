@@ -1,4 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, statement::{EvaluationWeights, Statement}, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{EvaluationWeights, Statement, Weights}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -78,13 +78,14 @@ where
         assert!(self.validate_statement(&statement_new));
         assert!(self.validate_witness(&witness));
 
-       let statement = statement_new.clone();
+        let statement = statement_new.clone();
+        let mut new_constraints = Vec::new();
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
-            let weights: Box<EvaluationWeights<F>> = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
-            statement_new.add_constraint_in_front(weights.clone(), evaluation);
+            let weights: Box<dyn Weights<F>> = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
+            new_constraints.push((weights, evaluation));
         }
+        statement_new.add_constraints_in_front(new_constraints);
 
-        
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             let [combination_randomness_gen] = merlin.challenge_scalars()?;

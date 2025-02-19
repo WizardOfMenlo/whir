@@ -113,6 +113,12 @@ impl<F: Field> Statement<F> {
         assert_eq!(weights.num_variables(), self.num_variables());
         self.constraints.insert(0, (weights, sum));
     }
+    pub fn add_constraints_in_front(&mut self, constraints: Vec<(Box<dyn Weights<F>>, F)>) {
+        for (weights, _) in &constraints {
+            assert_eq!(weights.num_variables(), self.num_variables());
+        }
+        self.constraints.splice(0..0, constraints);
+    }
 
     /// Combine all linear constraints into a single dense linear constraint.
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
@@ -132,7 +138,7 @@ impl<F: Field> Statement<F> {
 
         (combined_evals, combined_sum)
     }
-    
+
     fn compute(&self, _: F, _: &MultilinearPoint<F>) -> F {
         F::ONE
     }

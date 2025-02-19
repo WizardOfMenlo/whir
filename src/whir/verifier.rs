@@ -9,7 +9,7 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use super::{parameters::WhirConfig, statement::Statement, statement::EvaluationWeights, WhirProof};
+use super::{parameters::WhirConfig, statement::{EvaluationWeights, Statement, Weights}, WhirProof};
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
@@ -118,12 +118,14 @@ where
         let initial_combination_randomness;
         if self.params.initial_statement {
             // Derive combination randomness and first sumcheck polynomial
-            let [mut combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
+            let [combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
             initial_combination_randomness = expand_randomness(
                 combination_randomness_gen,
                 parsed_commitment.ood_points.len() + statement_points_len,
             );
 
+
+            println!("{:?}", parsed_commitment.ood_points.len());
             // Initial sumcheck
             sumcheck_rounds.reserve_exact(self.params.folding_factor);
             for _ in 0..self.params.folding_factor {
@@ -331,10 +333,12 @@ where
                 .collect(),
         );
 
+        let mut new_constraints: Vec<(Box<dyn Weights<F>>, F)> = Vec::new();
         for (point, evaluation) in parsed_commitment.ood_points.clone().into_iter().zip(parsed_commitment.ood_answers.clone()) {
-            let weights = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, num_variables)));
-            statement.add_constraint_in_front(weights.clone(), evaluation);
+            let weights = EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, num_variables));
+            new_constraints.push((Box::new(weights), evaluation));
         }
+        statement.add_constraints_in_front(new_constraints);
     
         let mut value : F = statement.constraints
             .iter()
@@ -492,6 +496,7 @@ where
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
         let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
+        println!("evaluations {:?}", evaluations);
 
         let parsed = self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
 
@@ -616,6 +621,7 @@ where
         if prev_sumcheck_poly_eval
             != evaluation_of_v_poly
         {
+            println!("this 2 failed");
             return Err(ProofError::InvalidProof);
         }
 
