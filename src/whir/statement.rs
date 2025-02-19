@@ -37,9 +37,7 @@ pub trait Weights<F: Field>: Debug {
     fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         assert_eq!(accumulator.num_variables(), self.num_variables());
         for (corner, acc) in accumulator.evals_mut().iter_mut().enumerate() {
-            println!("corner {:?} acc before {:?}", corner, acc);
             *acc += factor * self.evaluate_cube(corner);
-            println!("corner {:?} acc after {:?}", corner, acc);
         }
     }
 
@@ -123,24 +121,19 @@ impl<F: Field> Statement<F> {
         let mut combined_sum = F::ZERO;
 
         let mut challenge_power = F::ONE;
-        println!("combined_evals {:?}", combined_evals);
 
         for (weights, sum) in &self.constraints {
-            println!("weights for accumulation {:?}", weights);
             weights.accumulate(&mut combined_evals, challenge_power);
 
-            println!("combined_evals {:?}", combined_evals);
-            println!("sum {:?} challenge_power {:?}", sum, challenge_power);
             combined_sum += *sum * challenge_power;
 
             challenge_power *= challenge;
         }
-        println!("combined sum {:?}", combined_sum);
 
         (combined_evals, combined_sum)
     }
-
-    fn compute(&self, value: F, folding_randomness: &MultilinearPoint<F>) -> F {
+    
+    fn compute(&self, _: F, _: &MultilinearPoint<F>) -> F {
         F::ONE
     }
 }
@@ -176,42 +169,31 @@ impl<F: Field> Weights<F> for EvaluationWeights<F> {
     }
 
     fn compute(&self, value: F, folding_randomness: &MultilinearPoint<F>) -> F {
-        println!("In EvaluationWeights value {:?} point {:?} folding {:?}", value, self.point, folding_randomness);
         value * eq_poly_outside(&self.point, &folding_randomness)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct AffineClaimWeights<F: Field> {
-    input: EvaluationsList<F>,
-    constant_term: EvaluationsList<F>,
-    linear_term: EvaluationsList<F>,
+    weight: EvaluationsList<F>,
 }
 
 impl<F: Field> AffineClaimWeights<F> {
-    pub fn new(input: EvaluationsList<F>, constant_term: EvaluationsList<F>, linear_term: EvaluationsList<F>) -> Self {
-        assert!(input.num_variables() == constant_term.num_variables());
-        assert!(constant_term.num_variables() == linear_term.num_variables());
+    pub fn new(weight: EvaluationsList<F>) -> Self {
         Self {
-            input,
-            constant_term,
-            linear_term
+            weight
         }
     }
 }
 
 impl<F: Field> Weights<F> for AffineClaimWeights<F> {
     fn num_variables(&self) -> usize {
-        self.input.num_variables()
+        self.weight.num_variables()
     }
 
     fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(point.num_variables(), self.input.num_variables());
-        let mut acc = F::ZERO;
-        for l in point.0.clone() {
-            acc += self.linear_term.evaluate(point) * self.input.evaluate(point) + self.constant_term.evaluate(point) * l
-        }
-        acc
+        assert_eq!(point.num_variables(), self.weight.num_variables());
+        self.weight.evaluate(point)
     }
 
     fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
@@ -227,30 +209,27 @@ impl<F: Field> Weights<F> for AffineClaimWeights<F> {
         let mut sum = F::ZERO;
         for (corner, poly) in poly.evals().iter().enumerate() {
             let point = self.convert_to_multilinear_point(corner);
-            println!("input {:?} constant {:?}  linear term {:?} poly {:?}", self.input.evaluate(&point), self.constant_term.evaluate(&point), self.linear_term.evaluate(&point), poly);
-            sum += self.input.evaluate(&point) * self.constant_term.evaluate(&point) + self.linear_term.evaluate(&point) * poly;
+            sum += self.weight.evaluate(&point) * poly;
         }
         sum
     }
 
     fn get_statement_for_verifier(&self, point: &MultilinearPoint<F>) -> Option<AffineClaimVerifier<F>> {
-        Some(AffineClaimVerifier::new(self.input.clone(), self.constant_term.evaluate(point), self.linear_term.evaluate(point)))
+        Some(AffineClaimVerifier::new(self.weight.num_variables(), self.weight.evaluate(point)))
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct AffineClaimVerifier<F: Field> {
-    input: EvaluationsList<F>,
-    constant_term: F,
-    linear_term: F,
+    num_variables: usize,
+    term: F,
 }
 
 impl<F: Field> AffineClaimVerifier<F> {
-    pub fn new(input: EvaluationsList<F>, constant_term: F, linear_term: F) -> Self {
+    pub fn new(num_variables: usize, term: F) -> Self {
         Self {
-            input,
-            constant_term,
-            linear_term,
+            num_variables,
+            term
         }
     }
 }
@@ -258,16 +237,11 @@ impl<F: Field> AffineClaimVerifier<F> {
 
 impl<F: Field> Weights<F> for AffineClaimVerifier<F> {
     fn num_variables(&self) -> usize {
-        self.input.num_variables()
+        self.num_variables
     }
 
     fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(point.num_variables(), self.input.num_variables());
-        let mut acc = F::ZERO;
-        for l in point.0.clone() {
-            acc += self.linear_term * self.input.evaluate(point) + self.constant_term * l
-        }
-        acc
+        self.term
     }
 
     fn get_point_if_evaluation(&self) -> Option<MultilinearPoint<F>> {
@@ -279,23 +253,14 @@ impl<F: Field> Weights<F> for AffineClaimVerifier<F> {
     }
 
     fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
-        assert_eq!(poly.num_variables(), self.num_variables());
-        let mut sum = F::ZERO;
-        for (corner, poly) in poly.evals().iter().enumerate() {
-            let point = self.convert_to_multilinear_point(corner);
-            println!("input {:?} constant {:?}  linear term {:?} poly {:?}", self.input.evaluate(&point), self.constant_term, self.linear_term, poly);
-            sum += self.input.evaluate(&point) * self.constant_term + self.linear_term * poly;
-        }
-        sum
+        self.term //* poly.evaluate(0)
     }
 
     fn get_statement_for_verifier(&self, point: &MultilinearPoint<F>) -> Option<AffineClaimVerifier<F>> {
-        Some(AffineClaimVerifier::new(self.input.clone(), self.constant_term.clone(), self.linear_term.clone()))
+        Some(AffineClaimVerifier::new(self.num_variables(), self.term.clone()))
     }
 
     fn compute(&self, value: F, folding_randomness: &MultilinearPoint<F>) -> F {
-        println!("In AffineClaimVerifier constant {:?} input.evaluate {:?} linear {:?}, final_value {:?}", self.constant_term, folding_randomness, self.linear_term, value);
-
-        self.constant_term * self.input.evaluate(folding_randomness) + self.linear_term * value
+        self.term * value
     }
 }

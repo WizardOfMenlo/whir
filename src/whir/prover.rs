@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use super::{committer::Witness, parameters::WhirConfig, statement::{AffineClaimVerifier, Statement}, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{EvaluationWeights, Statement}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -11,7 +9,7 @@ use crate::{
         MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::{self, expand_randomness}, whir::statement::{AffineClaimWeights, EvaluationWeights},
+    utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -201,13 +199,16 @@ where
                     )?;
             }
 
+            let mut randomness_vec_rev = randomness_vec.clone();
+            randomness_vec_rev.reverse();
+
             for (weights, value) in &prover_statement.constraints {
                 match weights.get_point_if_evaluation() {
                     Some(point) => {
                         verifier_statement.add_constraint(Box::new(EvaluationWeights::new(point.clone())), value.clone());
                     }
                     None => {
-                        let affine_claim_verifier = weights.get_statement_for_verifier(&MultilinearPoint(randomness_vec.clone()));
+                        let affine_claim_verifier = weights.get_statement_for_verifier(&MultilinearPoint(randomness_vec_rev.clone()));
                         if let Some(affine_claim_verifier) = affine_claim_verifier {
                             verifier_statement.add_constraint(Box::new(affine_claim_verifier), value.clone());
                         }

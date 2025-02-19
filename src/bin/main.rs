@@ -15,7 +15,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
-    whir::statement::{AffineClaimVerifier, AffineClaimWeights, EvaluationWeights, Statement, Weights}
+    whir::statement::{AffineClaimWeights, Statement, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -274,8 +274,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
+    let mut statement = Statement::default();
+    let mut statement_verifier = Statement::default();
+
     let proof = prover
-        .prove(&mut merlin, &mut Statement::default(), witness, &mut Statement::default())
+        .prove(&mut merlin, &mut statement, witness, &mut statement_verifier)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -296,7 +299,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     for _ in 0..reps {
         let mut arthur = io.to_arthur(&transcript);
         verifier
-            .verify(&mut arthur, &mut Statement::default(), &proof)
+            .verify(&mut arthur, &mut statement_verifier, &proof)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -375,39 +378,33 @@ fn run_whir_pcs<F, MerkleConfig>(
             .map(<F as Field>::BasePrimeField::from)
             .collect(),
     );
-    println!("polynomial coefficients {:?}", polynomial);
-    let poly = CoefficientList::new(vec![F::BasePrimeField::from(3),F::BasePrimeField::from(2),F::BasePrimeField::from(4),F::BasePrimeField::from(1)]);
     let whir_prover_time = Instant::now();
 
     let committer = Committer::new(params.clone());
     let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
-    let points: Vec<_> = (0..num_evaluations)
-    .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
-    .collect();
-
     let mut statement = Statement::<F>::new(num_variables);
     let mut statement_verifier= Statement::<F>::new(num_variables);
 
-    // Uncomment this block below if you want to see it working:
-
-    // for point in &points {
-    //     let eval = polynomial.evaluate_at_extension(point);
-    //     let ev_weights = EvaluationWeights::new(point.clone());
-    //     let weights = Box::new(ev_weights);
-    //     statement.add_constraint(weights.clone(), eval);
-    // }
-
-    // BEGIN (comment this) This part is currently developed:
     let input = EvaluationsList::new(vec![F::from(2), F::from(1), F::from(3), F::from(7)]);
-    let constant = EvaluationsList::new(vec![F::from(4), F::from(4),F::from(2),F::from(8)]);
-    let linear = EvaluationsList::new(vec![F::from(6), F::from(5), F::from(2), F::from(1)]);
-    let affine_claim_weight = AffineClaimWeights::new(input.clone(), constant ,linear);
-    let poly = EvaluationsList::new(vec![F::from(3), F::from(5), F::from(7), F::from(10)]);
+    let affine_claim_weight = AffineClaimWeights::new(input.clone());
+    
+    let computed_evals: Vec<F> = (0..num_coeffs)
+        .map(|i| {
+            let mut bits = Vec::with_capacity(num_variables);
+            for j in 0..num_variables {
+                bits.push(if ((i >> j) & 1) == 1 { F::ONE } else { F::ZERO });
+            }
+            bits.reverse();
+            let point = MultilinearPoint(bits);
+            polynomial.evaluate_at_extension(&point)
+        })
+        .collect();
+    let poly = EvaluationsList::new(computed_evals);
+
     let sum = affine_claim_weight.weighted_sum(&poly);
     let weights = Box::new(affine_claim_weight);
     statement.add_constraint(weights, sum);
-    // END
 
     
     let prover = Prover(params.clone());

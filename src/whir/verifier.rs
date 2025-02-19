@@ -218,7 +218,6 @@ where
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
                 if round_params.folding_pow_bits > 0. {
-                    println!("pow");
                     arthur.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
                 }
             }
@@ -341,10 +340,7 @@ where
             .iter()
             .zip(&proof.initial_combination_randomness)
             .map(|((weight, _), randomness)|
-            {
-                println!("weight {:?} randomness {:?}", weight, randomness);
                 *randomness * weight.compute(final_value, &folding_randomness)
-            }
             )
            .sum();
 
@@ -515,14 +511,6 @@ where
                     .map(|(ans, rand)| ans * rand)
                     .sum()
             {
-                let ans : F = parsed_commitment
-                .ood_answers
-                .iter()
-                .copied()
-                .chain(evaluations)
-                .zip(&parsed.initial_combination_randomness)
-                .map(|(ans, rand)| ans * rand)
-                .sum();
                 return Err(ProofError::InvalidProof);
             }
 
@@ -628,7 +616,6 @@ where
         if prev_sumcheck_poly_eval
             != evaluation_of_v_poly
         {
-            println!("left {:?}   right {:?}", prev_sumcheck_poly_eval, evaluation_of_v_poly);
             return Err(ProofError::InvalidProof);
         }
 
