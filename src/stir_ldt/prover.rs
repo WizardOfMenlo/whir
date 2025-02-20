@@ -229,13 +229,13 @@ where
         let fold_size = 1 << self.0.folding_factor;
         let l_k = round_state.domain.scale(fold_size).backing_domain;
 
-        let stir_challenges_cosets: Vec<F> = stir_challenges_indexes
+        let stir_challenges_points: Vec<F> = stir_challenges_indexes
             .iter()
             .map(|&i| l_k.element(i))
             .collect();
 
         // These are the virtual oracle domain points: the challenge field elements prior to evaluation.
-        let stir_challenges_virtual_points: Vec<Vec<F>> = stir_challenges_indexes
+        let stir_challenges_cosets: Vec<Vec<F>> = stir_challenges_indexes
             .iter()
             .map(|&i| {
                 // Note: the domain has not been restructured the same way that the evaluations have.
@@ -254,16 +254,14 @@ where
 
         // Example assertion. Should be refined, but it's really just a sanity check. Eventually
         // these should go.
-        assert!(stir_challenges_virtual_points
+        assert!(stir_challenges_cosets
             .iter()
             .zip(stir_challenges_virtual_evals.iter())
             .all(|(x, y)| x
                 .iter()
                 .zip(y.iter())
                 .all(|(a, b)| round_state.coefficients.evaluate(a).eq(b))));
-        assert!(stir_challenges_virtual_points
-            .iter()
-            .all(|v| v.len() == fold_size));
+        assert!(stir_challenges_cosets.iter().all(|v| v.len() == fold_size));
         assert!(stir_challenges_virtual_evals
             .iter()
             .all(|v| v.len() == fold_size));
