@@ -289,9 +289,7 @@ where
 
         // Randomness for combination
         let [comb_rand]: [F; 1] = merlin.challenge_scalars()?;
-        let comb_rand_coeffs = std::iter::successors(Some(F::ONE), |&prev| Some(comb_rand * prev))
-            .take(quotient_set.len())
-            .collect();
+        let comb_rand_coeffs = expand_randomness(comb_rand, quotient_set.len());
 
         // The quotient polynomial is then computed
         let quotient_polynomial = poly_utils::univariate::poly_quotient(&g_poly, &quotient_set);

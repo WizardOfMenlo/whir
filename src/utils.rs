@@ -33,14 +33,18 @@ pub fn base_decomposition(value: usize, base: u8, n_bits: usize) -> Vec<u8> {
 }
 
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
-    let mut res = Vec::with_capacity(len);
-    let mut acc = F::ONE;
-    for _ in 0..len {
-        res.push(acc);
-        acc *= base;
-    }
+    return std::iter::successors(Some(F::ONE), |&prev| Some(base * prev))
+        .take(len)
+        .collect();
 
-    res
+    // let mut res = Vec::with_capacity(len);
+    // let mut acc = F::ONE;
+    // for _ in 0..len {
+    //     res.push(acc);
+    //     acc *= base;
+    // }
+
+    // res
 }
 
 // Deduplicates AND orders a vector
