@@ -279,7 +279,7 @@ where
         let quotient_set: Vec<F> = ood_sample_points
             .clone()
             .into_iter()
-            .chain(stir_challenges_cosets.clone().into_iter())
+            .chain(stir_challenges_points.clone().into_iter())
             .collect();
 
         // PoW

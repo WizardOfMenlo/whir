@@ -36,15 +36,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     return std::iter::successors(Some(F::ONE), |&prev| Some(base * prev))
         .take(len)
         .collect();
-
-    // let mut res = Vec::with_capacity(len);
-    // let mut acc = F::ONE;
-    // for _ in 0..len {
-    //     res.push(acc);
-    //     acc *= base;
-    // }
-
-    // res
 }
 
 // Deduplicates AND orders a vector
