@@ -75,11 +75,8 @@ where
         )
         .expect("Should have found an appropriate domain");
 
-        // TODO: Maybe here we should stop earlier
-        // let final_log_degree = uv_parameters.log_degree % stir_parameters.folding_factor;
-        let final_log_degree = 8;
-        let num_rounds =
-            ((uv_parameters.log_degree - final_log_degree) / stir_parameters.folding_factor) - 1;
+        // Upper bound on the number of rounds.
+        let max_num_rounds = ((uv_parameters.log_degree) / stir_parameters.folding_factor) - 1;
 
         let field_size_bits = F::field_size_in_bits();
 
@@ -93,10 +90,10 @@ where
         let starting_folding_pow_bits =
             0_f64.max(stir_parameters.security_level as f64 - prox_gaps_error);
 
-        let mut round_parameters = Vec::with_capacity(num_rounds);
+        let mut round_parameters = Vec::with_capacity(max_num_rounds);
         let mut log_degree = uv_parameters.log_degree - stir_parameters.folding_factor;
         let mut log_inv_rate = stir_parameters.starting_log_inv_rate;
-        for _ in 0..num_rounds {
+        for _ in 0..max_num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate + (stir_parameters.folding_factor - 1);
 
@@ -116,7 +113,10 @@ where
                 field_size_bits,
             );
 
-            assert!(num_queries + ood_samples < (1 << log_degree) + 1);
+            // This determines the stopping degree.
+            if !(num_queries + ood_samples >= (1 << log_degree) + 1) {
+                break;
+            }
 
             let query_error =
                 Self::rbr_queries(stir_parameters.soundness_type, log_inv_rate, num_queries);
@@ -143,6 +143,8 @@ where
             log_degree -= stir_parameters.folding_factor;
             log_inv_rate = next_rate;
         }
+
+        let final_log_degree = log_degree;
 
         let final_queries = Self::queries(
             stir_parameters.soundness_type,

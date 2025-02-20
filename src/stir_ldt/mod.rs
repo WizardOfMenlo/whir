@@ -134,7 +134,7 @@ mod tests {
 
     // This test is ignored because currently the parameters do not satisfy required bounds.
     // We keep the code of this test because it is a good idea to test it this way in the future.
-    #[ignore]
+    // #[ignore]
     #[test]
     fn test_stir_ldt() {
         let folding_factors = [1, 2, 3, 4];

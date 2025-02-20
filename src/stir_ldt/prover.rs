@@ -37,8 +37,10 @@ where
         self.0.round_parameters.iter().fold(
             1 << self.0.uv_parameters.log_degree,
             |degree, round_parameters| {
-                // TODO: Maybe the '+ 1' should be removed and replaced the number of ood samples.
-                assert!(round_parameters.num_queries + 1 <= degree / (1 << self.0.folding_factor));
+                assert!(
+                    round_parameters.num_queries + round_parameters.ood_samples
+                        <= degree / (1 << self.0.folding_factor)
+                );
                 degree / (1 << self.0.folding_factor)
             },
         );
