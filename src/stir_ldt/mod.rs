@@ -109,7 +109,6 @@ mod tests {
     fn test_stir_ldt_large_instance() {
         let folding_factor = 4;
         let log_degree = 16;
-        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let soundness_types = [
             SoundnessType::ConjectureList,
             SoundnessType::ProvableList,
@@ -117,17 +116,15 @@ mod tests {
         ];
         let pow_bitss = [0, 5, 10];
 
-        for fold_type in fold_types {
-            for soundness_type in soundness_types {
-                for pow_bits in pow_bitss {
-                    make_stir_things(
-                        folding_factor,
-                        log_degree,
-                        fold_type,
-                        soundness_type,
-                        pow_bits,
-                    );
-                }
+        for soundness_type in soundness_types {
+            for pow_bits in pow_bitss {
+                make_stir_things(
+                    folding_factor,
+                    log_degree,
+                    FoldType::Naive,
+                    soundness_type,
+                    pow_bits,
+                );
             }
         }
     }

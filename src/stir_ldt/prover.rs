@@ -229,7 +229,7 @@ where
         let fold_size = 1 << self.0.folding_factor;
         let l_k = round_state.domain.scale(fold_size).backing_domain;
 
-        let stir_challenges_points: Vec<F> = stir_challenges_indexes
+        let stir_challenges_cosets: Vec<F> = stir_challenges_indexes
             .iter()
             .map(|&i| l_k.element(i))
             .collect();
@@ -252,7 +252,8 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
 
-        // Example assertion. Should be refined, but it's really just a sanity check.
+        // Example assertion. Should be refined, but it's really just a sanity check. Eventually
+        // these should go.
         assert!(stir_challenges_virtual_points
             .iter()
             .zip(stir_challenges_virtual_evals.iter())
@@ -280,7 +281,7 @@ where
         let quotient_set: Vec<F> = ood_sample_points
             .clone()
             .into_iter()
-            .chain(stir_challenges_points.clone().into_iter())
+            .chain(stir_challenges_cosets.clone().into_iter())
             .collect();
 
         // PoW

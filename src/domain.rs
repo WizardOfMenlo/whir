@@ -64,7 +64,7 @@ where
         Self {
             root_of_unity: self.root_of_unity,
             root_of_unity_inv: self.root_of_unity_inv,
-            base_domain: None, // TODO why?
+            base_domain: None, // `base_domain` is only used for the initial commit, later on we only commit using the backing domain.
             backing_domain: self.scale_generator_with_offset(power),
         }
     }
