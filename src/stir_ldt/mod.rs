@@ -49,18 +49,18 @@ mod tests {
     type F = Field64;
 
     fn make_stir_things(
-        log_degree: usize,
         folding_factor: usize,
+        log_degree: usize,
+        fold_type: FoldType,
         soundness_type: SoundnessType,
         pow_bits: usize,
-        fold_type: FoldType,
     ) {
         dbg!((
-            log_degree,
             folding_factor,
+            log_degree,
+            fold_type,
             soundness_type,
             pow_bits,
-            fold_type
         ));
 
         let num_coeffs = 1 << log_degree;
@@ -106,6 +106,33 @@ mod tests {
     }
 
     #[test]
+    fn test_stir_ldt_large_instance() {
+        let folding_factor = 4;
+        let log_degree = 16;
+        let soundness_types = [
+            SoundnessType::ConjectureList,
+            SoundnessType::ProvableList,
+            SoundnessType::UniqueDecoding,
+        ];
+        let pow_bitss = [0, 5, 10];
+
+        for soundness_type in soundness_types {
+            for pow_bits in pow_bitss {
+                make_stir_things(
+                    folding_factor,
+                    log_degree,
+                    FoldType::Naive,
+                    soundness_type,
+                    pow_bits,
+                );
+            }
+        }
+    }
+
+    // This test is ignored because currently the parameters do not satisfy required bounds.
+    // We keep the code of this test because it is a good idea to test it this way in the future.
+    // #[ignore]
+    #[test]
     fn test_stir_ldt() {
         let folding_factors = [1, 2, 3, 4];
         let fold_types = [FoldType::Naive, FoldType::ProverHelps];
@@ -123,11 +150,11 @@ mod tests {
                     for soundness_type in soundness_type {
                         for pow_bits in pow_bits {
                             make_stir_things(
-                                num_variables,
                                 folding_factor,
+                                num_variables,
+                                fold_type,
                                 soundness_type,
                                 pow_bits,
-                                fold_type,
                             );
                         }
                     }

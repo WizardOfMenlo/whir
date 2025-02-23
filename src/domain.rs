@@ -8,6 +8,8 @@ pub struct Domain<F>
 where
     F: FftField,
 {
+    pub root_of_unity: F,
+    pub root_of_unity_inv: F, // TODO maybe remove
     pub base_domain: Option<GeneralEvaluationDomain<F::BasePrimeField>>, // The domain (in the base
     // field) for the initial FFT
     pub backing_domain: GeneralEvaluationDomain<F>,
@@ -22,7 +24,20 @@ where
         let base_domain = GeneralEvaluationDomain::new(size)?;
         let backing_domain = Self::to_extension_domain(&base_domain);
 
+        // TODO check what is base_domain and extension domain.
+        let root_of_unity: F = match backing_domain {
+            GeneralEvaluationDomain::Radix2(r2) => r2.group_gen,
+            GeneralEvaluationDomain::MixedRadix(mr) => mr.group_gen,
+        };
+
+        let root_of_unity_inv = match backing_domain {
+            GeneralEvaluationDomain::Radix2(r2) => r2.group_gen_inv,
+            GeneralEvaluationDomain::MixedRadix(mr) => mr.group_gen_inv,
+        };
+
         Some(Self {
+            root_of_unity,
+            root_of_unity_inv,
             backing_domain,
             base_domain: Some(base_domain),
         })
@@ -38,8 +53,19 @@ where
 
     pub fn scale(&self, power: usize) -> Self {
         Self {
+            root_of_unity: self.root_of_unity,
+            root_of_unity_inv: self.root_of_unity_inv,
             backing_domain: self.scale_generator_by(power),
             base_domain: None, // Set to zero because we only care for the initial
+        }
+    }
+
+    pub fn scale_with_offset(&self, power: usize) -> Self {
+        Self {
+            root_of_unity: self.root_of_unity,
+            root_of_unity_inv: self.root_of_unity_inv,
+            base_domain: None, // `base_domain` is only used for the initial commit, later on we only commit using the backing domain.
+            backing_domain: self.scale_generator_with_offset(power),
         }
     }
 
@@ -133,6 +159,54 @@ where
                     offset,
                     offset_inv,
                     offset_pow_size,
+                })
+            }
+        }
+    }
+
+    fn scale_generator_with_offset(&self, power: usize) -> GeneralEvaluationDomain<F> {
+        let starting_size = self.size();
+        assert_eq!(starting_size % power, 0);
+        let new_size = starting_size / power;
+        let log_size_of_group = new_size.trailing_zeros();
+        let size_as_field_element = F::from(new_size as u64);
+        match self.backing_domain {
+            GeneralEvaluationDomain::Radix2(r2) => {
+                let group_gen = r2.group_gen.pow([power as u64]);
+                let group_gen_inv = r2.group_gen_inv.pow([power as u64]);
+
+                let offset = r2.offset.pow([power as u64]) * self.root_of_unity;
+                let offset_inv = r2.offset_inv.pow([power as u64]) * self.root_of_unity_inv;
+
+                GeneralEvaluationDomain::Radix2(Radix2EvaluationDomain {
+                    size: new_size as u64,
+                    log_size_of_group,
+                    size_as_field_element,
+                    size_inv: size_as_field_element.inverse().unwrap(),
+                    group_gen,
+                    group_gen_inv,
+                    offset,
+                    offset_inv,
+                    offset_pow_size: offset.pow([new_size as u64]),
+                })
+            }
+            GeneralEvaluationDomain::MixedRadix(mr) => {
+                let group_gen = mr.group_gen.pow([power as u64]);
+                let group_gen_inv = mr.group_gen_inv.pow([power as u64]);
+
+                let offset = mr.offset.pow([power as u64]) * self.root_of_unity;
+                let offset_inv = mr.offset_inv.pow([power as u64]) * self.root_of_unity_inv;
+
+                GeneralEvaluationDomain::MixedRadix(MixedRadixEvaluationDomain {
+                    size: new_size as u64,
+                    log_size_of_group,
+                    size_as_field_element,
+                    size_inv: size_as_field_element.inverse().unwrap(),
+                    group_gen,
+                    group_gen_inv,
+                    offset,
+                    offset_inv,
+                    offset_pow_size: offset.pow([new_size as u64]),
                 })
             }
         }
