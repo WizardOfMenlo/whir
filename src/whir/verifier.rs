@@ -4,8 +4,8 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
-    plugins::ark::{FieldChallenges, FieldReader}
-    , ByteChallenges, ByteReader, ProofError, ProofResult,
+    plugins::ark::{FieldChallenges, FieldReader},
+    ByteChallenges, ByteReader, ProofError, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -106,7 +106,12 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
-        Arthur: FieldReader<F> + FieldChallenges<F> + PoWChallenge + ByteReader + ByteChallenges + DigestReader<MerkleConfig>,
+        Arthur: FieldReader<F>
+            + FieldChallenges<F>
+            + PoWChallenge
+            + ByteReader
+            + ByteChallenges
+            + DigestReader<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness: MultilinearPoint<F>;
@@ -120,8 +125,8 @@ where
             );
 
             // Initial sumcheck
-            sumcheck_rounds.reserve_exact(self.params.folding_factor);
-            for _ in 0..self.params.folding_factor {
+            sumcheck_rounds.reserve_exact(self.params.folding_factor.at_round(0));
+            for _ in 0..self.params.folding_factor.at_round(0) {
                 let sumcheck_poly_evals: [F; 3] = arthur.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 let [folding_randomness_single] = arthur.challenge_scalars()?;
@@ -140,7 +145,7 @@ where
 
             initial_combination_randomness = vec![F::ONE];
 
-            let mut folding_randomness_vec = vec![F::ZERO; self.params.folding_factor];
+            let mut folding_randomness_vec = vec![F::ZERO; self.params.folding_factor.at_round(0)];
             arthur.fill_challenge_scalars(&mut folding_randomness_vec)?;
             folding_randomness = MultilinearPoint(folding_randomness_vec);
 
@@ -151,8 +156,8 @@ where
         };
 
         let mut prev_root = parsed_commitment.root.clone();
-        let domain_gen = self.params.starting_domain.backing_domain.group_gen();
-        let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor]);
+        let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
+        let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(0)]);
         let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
         let mut domain_size = self.params.starting_domain.size();
         let mut rounds = vec![];
@@ -172,7 +177,7 @@ where
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
-                self.params.folding_factor,
+                self.params.folding_factor.at_round(r),
                 round_params.num_queries,
                 arthur,
             )?;
@@ -205,8 +210,9 @@ where
                 stir_challenges_indexes.len() + round_params.ood_samples,
             );
 
-            let mut sumcheck_rounds = Vec::with_capacity(self.params.folding_factor);
-            for _ in 0..self.params.folding_factor {
+            let mut sumcheck_rounds =
+                Vec::with_capacity(self.params.folding_factor.at_round(r + 1));
+            for _ in 0..self.params.folding_factor.at_round(r + 1) {
                 let sumcheck_poly_evals: [F; 3] = arthur.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 let [folding_randomness_single] = arthur.challenge_scalars()?;
@@ -235,7 +241,8 @@ where
             folding_randomness = new_folding_randomness;
 
             prev_root = new_root.clone();
-            exp_domain_gen = exp_domain_gen * exp_domain_gen;
+            domain_gen = domain_gen * domain_gen;
+            exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(r + 1)]);
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
             domain_size /= 2;
         }
@@ -247,7 +254,7 @@ where
         // Final queries verify
         let final_randomness_indexes = get_challenge_stir_queries(
             domain_size,
-            self.params.folding_factor,
+            self.params.folding_factor.at_round(self.params.n_rounds()),
             self.params.final_queries,
             arthur,
         )?;
@@ -334,8 +341,8 @@ where
             .map(|(point, randomness)| *randomness * eq_poly_outside(&point, &folding_randomness))
             .sum();
 
-        for round_proof in &proof.rounds {
-            num_variables -= self.params.folding_factor;
+        for (round, round_proof) in proof.rounds.iter().enumerate() {
+            num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
             let ood_points = &round_proof.ood_points;
@@ -373,11 +380,11 @@ where
 
     fn compute_folds_full(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
         let mut domain_size = self.params.starting_domain.backing_domain.size();
-        let coset_domain_size = 1 << self.params.folding_factor;
 
         let mut result = Vec::new();
 
-        for round in &parsed.rounds {
+        for (round_index, round) in parsed.rounds.iter().enumerate() {
+            let coset_domain_size = 1 << self.params.folding_factor.at_round(round_index);
             // This is such that coset_generator^coset_domain_size = F::ONE
             //let _coset_generator = domain_gen.pow(&[(domain_size / coset_domain_size) as u64]);
             let coset_generator_inv = round
@@ -399,7 +406,7 @@ where
                         coset_offset_inv,
                         coset_generator_inv,
                         self.two_inv,
-                        self.params.folding_factor,
+                        self.params.folding_factor.at_round(round_index),
                     )
                 })
                 .collect();
@@ -407,6 +414,7 @@ where
             domain_size /= 2;
         }
 
+        let coset_domain_size = 1 << self.params.folding_factor.at_round(parsed.rounds.len());
         let domain_gen_inv = parsed.final_domain_gen_inv;
 
         // Final round
@@ -426,7 +434,7 @@ where
                     coset_offset_inv,
                     coset_generator_inv,
                     self.two_inv,
-                    self.params.folding_factor,
+                    self.params.folding_factor.at_round(parsed.rounds.len()),
                 )
             })
             .collect();
@@ -469,7 +477,12 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
     where
-        Arthur: FieldChallenges<F> + FieldReader<F> + ByteChallenges + ByteReader + PoWChallenge + DigestReader<MerkleConfig>,
+        Arthur: FieldChallenges<F>
+            + FieldReader<F>
+            + ByteChallenges
+            + ByteReader
+            + PoWChallenge
+            + DigestReader<MerkleConfig>,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
