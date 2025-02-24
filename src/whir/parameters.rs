@@ -505,9 +505,9 @@ where
         );
         writeln!(
             f,
-            "{:.1} bits -- (x{:?}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
             prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits,
-            self.folding_factor,
+            self.folding_factor.at_round(0),
             prox_gaps_error,
             sumcheck_error,
             self.starting_folding_pow_bits,
@@ -570,9 +570,9 @@ where
 
             writeln!(
                 f,
-                "{:.1} bits -- (x{:?}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
                 prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
-                self.folding_factor,
+                self.folding_factor.at_round(round + 1),
                 prox_gaps_error,
                 sumcheck_error,
                 r.folding_pow_bits,
