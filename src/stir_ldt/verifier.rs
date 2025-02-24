@@ -35,8 +35,10 @@ struct ParsedCommitment<D> {
 struct ParsedProof<F: Field> {
     rounds: Vec<ParsedRound<F>>,
     final_domain_gen: F,
+    final_offset: F,
     final_randomness_indexes: Vec<usize>,
     final_randomness_points: Vec<F>,
+    final_randomness_cosets: Vec<Vec<F>>,
     final_randomness_answers: Vec<Vec<F>>,
     final_folding_randomness: F,
     final_coefficients: DensePolynomial<F>,
@@ -49,10 +51,12 @@ struct ParsedRound<F> {
     ood_answers: Vec<F>,
     stir_challenges_indexes: Vec<usize>,
     stir_challenges_points: Vec<F>,
+    stir_challenges_cosets: Vec<Vec<F>>,
     stir_challenges_answers: Vec<Vec<F>>,
     combination_randomness: F,
     domain_gen: F,
     domain_gen_inv: F,
+    domain_offset: F,
     folded_domain_size: usize,
 }
 
@@ -93,9 +97,13 @@ where
             arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
         }
 
+        let fold_size = 1 << self.params.folding_factor;
         let mut prev_root = parsed_commitment.root.clone();
         let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
         let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor]);
+        let root_of_unity = self.params.starting_domain.backing_domain.group_gen();
+        let mut domain_offset = F::ONE;
+        let mut exp_domain_offset = F::ONE;
         let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
         let mut domain_size = self.params.starting_domain.size();
         let mut rounds = vec![];
@@ -106,6 +114,7 @@ where
 
             let new_root: [u8; 32] = arthur.next_bytes()?;
 
+            // PHASE 2:
             let mut ood_points = vec![F::ZERO; round_params.ood_samples];
             let mut ood_answers = vec![F::ZERO; round_params.ood_samples];
             if round_params.ood_samples > 0 {
@@ -113,6 +122,7 @@ where
                 arthur.fill_next_scalars(&mut ood_answers)?;
             }
 
+            // PHASE 3:
             let mut stir_queries_seed = [0u8; 32];
             arthur.fill_challenge_bytes(&mut stir_queries_seed)?;
             let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(stir_queries_seed);
@@ -122,7 +132,18 @@ where
             );
             let stir_challenges_points = stir_challenges_indexes
                 .iter()
-                .map(|index| exp_domain_gen.pow([*index as u64]))
+                .map(|index| exp_domain_offset * exp_domain_gen.pow([*index as u64]))
+                .collect();
+
+            let stir_challenges_cosets: Vec<Vec<F>> = stir_challenges_indexes
+                .iter()
+                .map(|&i| {
+                    // Note: the domain has not been restructured the same way that the evaluations have.
+                    (i..i + fold_size * folded_domain_size)
+                        .step_by(folded_domain_size)
+                        .map(|j| domain_offset * domain_gen.pow([j as u64]))
+                        .collect()
+                })
                 .collect();
 
             if !merkle_proof
@@ -151,10 +172,12 @@ where
                 ood_answers,
                 stir_challenges_indexes,
                 stir_challenges_points,
+                stir_challenges_cosets,
                 stir_challenges_answers: answers.to_vec(),
                 combination_randomness,
                 domain_gen,
                 domain_gen_inv,
+                domain_offset,
                 folded_domain_size,
             });
 
@@ -162,6 +185,8 @@ where
 
             prev_root = new_root.into();
             exp_domain_gen = exp_domain_gen * exp_domain_gen;
+            domain_offset = domain_offset * domain_offset * root_of_unity;
+            exp_domain_offset = domain_offset.pow([1 << self.params.folding_factor]);
             domain_gen = domain_gen * domain_gen;
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
             domain_size /= 2;
@@ -181,7 +206,18 @@ where
         );
         let final_randomness_points = final_randomness_indexes
             .iter()
-            .map(|index| exp_domain_gen.pow([*index as u64]))
+            .map(|index| exp_domain_offset * exp_domain_gen.pow([*index as u64]))
+            .collect();
+
+        let final_randomness_cosets: Vec<Vec<F>> = final_randomness_indexes
+            .iter()
+            .map(|&i| {
+                // Note: the domain has not been restructured the same way that the evaluations have.
+                (i..i + fold_size * folded_domain_size)
+                    .step_by(folded_domain_size)
+                    .map(|j| domain_offset * domain_gen.pow([j as u64]))
+                    .collect()
+            })
             .collect();
 
         let (final_merkle_proof, final_randomness_answers) =
@@ -206,11 +242,13 @@ where
         Ok(ParsedProof {
             rounds,
             final_domain_gen: domain_gen,
-            final_folding_randomness: folding_randomness,
+            final_offset: domain_offset,
             final_randomness_indexes,
-            final_randomness_answers: final_randomness_answers.to_vec(),
-            final_coefficients,
             final_randomness_points,
+            final_randomness_cosets,
+            final_randomness_answers: final_randomness_answers.to_vec(),
+            final_folding_randomness: folding_randomness,
+            final_coefficients,
         })
     }
 
@@ -219,12 +257,23 @@ where
         arthur: &mut Arthur,
         stir_proof: &StirProof<MerkleConfig, F>,
     ) -> ProofResult<()> {
-        // We first do a pass in which we rederive all the FS challenges
+        // PHASE 1:
+        // We first do a pass in which we rederive all the FS challenges and verify Merkle paths.
+        // We take care of all the crytpo here.
         let parsed_commitment = self.parse_commitment(arthur)?;
         let parsed = self.parse_proof(arthur, &parsed_commitment, stir_proof)?;
 
+        // PHASE 2:
         // We do a pass which at each point defines and update a virtual function
-        let committed_functions_answers: Vec<_> = parsed
+        let committed_functions_cosets: Vec<Vec<Vec<F>>> = parsed
+            .rounds
+            .iter()
+            .map(|r| &r.stir_challenges_cosets)
+            .chain(iter::once(&parsed.final_randomness_cosets))
+            .cloned()
+            .collect();
+
+        let committed_functions_answers: Vec<Vec<Vec<F>>> = parsed
             .rounds
             .iter()
             .map(|r| &r.stir_challenges_answers)
@@ -239,6 +288,13 @@ where
             .chain(iter::once(parsed.final_domain_gen))
             .collect();
 
+        let domain_offsets: Vec<_> = parsed
+            .rounds
+            .iter()
+            .map(|r| r.domain_offset)
+            .chain(iter::once(parsed.final_offset))
+            .collect();
+
         // We first compute the evaluations of the first function
         let initial_folding_randomness = if parsed.rounds.is_empty() {
             parsed.final_folding_randomness
@@ -247,10 +303,12 @@ where
         };
 
         // This array is the evaluations of the current function (already includes the virtual evaluations!)
-        let mut evaluations: Vec<_> = committed_functions_answers[0]
+        let mut evaluations: Vec<_> = committed_functions_cosets[0]
             .iter()
-            .map(|answers| {
-                DensePolynomial::from_coefficients_vec(answers.to_vec())
+            .zip(committed_functions_answers[0].iter())
+            .map(|(points, evals)| {
+                // Here we need to interpolate
+                naive_interpolation(points.iter().copied().zip(evals.iter().copied()))
                     .evaluate(&initial_folding_randomness)
             })
             .collect();
@@ -258,10 +316,15 @@ where
         let mut domain_size = self.params.starting_domain.backing_domain.size();
         let coset_domain_size = 1 << self.params.folding_factor;
 
-        for (r_num, (r, domain_gen)) in parsed
+        for (r_num, (r, (domain_gen, domain_offset))) in parsed
             .rounds
             .iter()
-            .zip(domain_gens.iter().skip(1))
+            .zip(
+                domain_gens
+                    .iter()
+                    .skip(1)
+                    .zip(domain_offsets.iter().skip(1)),
+            )
             .enumerate()
         {
             // The next virtual function is defined by the following
@@ -304,12 +367,12 @@ where
             for (index, answer) in evaluation_indexes.into_iter().zip(committed_answers) {
                 // Coset eval is the evaluations of the virtual function on the coset
                 let mut coset_evals = Vec::with_capacity(1 << self.params.folding_factor);
-                let coset_offset_inv = r.domain_gen_inv.pow([index as u64]);
+                let coset_offset_inv = r.domain_gen_inv.pow([index as u64]); // What does this do?
                 #[allow(clippy::needless_range_loop)]
                 for j in 0..1 << self.params.folding_factor {
                     // TODO: Optimize
-                    let evaluation_point =
-                        domain_gen.pow([(index + j * r.folded_domain_size) as u64]);
+                    let evaluation_point = *domain_offset
+                        * domain_gen.pow([(index + j * r.folded_domain_size) as u64]);
 
                     let numerator = answer[j] - ans_polynomial.evaluate(&evaluation_point);
 
@@ -358,11 +421,16 @@ where
             .final_randomness_points
             .iter()
             .map(|point| parsed.final_coefficients.evaluate(point));
+        let final_evaluations: Vec<_> = final_evaluations.collect();
         if !final_folds
             .iter()
-            .zip(final_evaluations)
-            .all(|(&fold, eval)| fold == eval)
+            .zip(&final_evaluations)
+            .all(|(&fold, &eval)| fold == eval)
         {
+            for (a, b) in final_folds.iter().zip(final_evaluations) {
+                println!("{}\t{}", a, b);
+            }
+            dbg!("Error path 3");
             return Err(ProofError::InvalidProof);
         }
 
