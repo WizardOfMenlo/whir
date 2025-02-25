@@ -19,7 +19,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::coeffs::CoefficientList,
-    whir::statement::{Statement, EvaluationWeights}
+    whir::statement::{Statement, StatementVerifier, Weights}
 };
 
 use serde::Serialize;
@@ -291,14 +291,14 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
-        let mut statement_verifier = Statement::<F>::new(num_variables);
+        let statement_verifier = StatementVerifier::<F>::new(num_variables);
         
         let proof = prover
-            .prove(&mut merlin, &mut statement_new.clone(), witness, &mut statement_verifier)
+            .prove(&mut merlin, &statement_new.clone(), witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof, statement_new.constraints.len());
         let whir_ldt_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -309,7 +309,7 @@ fn run_whir<F, MerkleConfig>(
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
             verifier
-                .verify(&mut arthur, &mut statement_new.clone(), &proof)
+                .verify(&mut arthur, &statement_verifier, &proof)
                 .unwrap();
         }
 
@@ -357,11 +357,11 @@ fn run_whir<F, MerkleConfig>(
        
 
         let mut statement = Statement::<F>::new(num_variables);
-        let mut statement_verifier = Statement::<F>::new(num_variables);
+        let mut statement_verifier = StatementVerifier::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate_at_extension(point);
-            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
         }
 
@@ -374,11 +374,11 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, &mut statement.clone(), witness, &mut statement_verifier)
+            .prove(&mut merlin, &mut statement.clone(), witness)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
-        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof, statement.constraints.len());
         let whir_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -388,7 +388,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier.verify(&mut arthur, &mut statement, &proof).unwrap();
+            verifier.verify(&mut arthur, &mut statement_verifier, &proof).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

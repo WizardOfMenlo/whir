@@ -282,7 +282,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, sequential_lag_poly::LagrangePolynomialIterator,
             MultilinearPoint,
-        }, whir::statement::{AffineClaimWeights, EvaluationWeights, Weights},
+        }, whir::statement::Weights,
     };
     use ark_ff::AdditiveGroup;
 
@@ -330,7 +330,7 @@ mod tests {
         let mut prover = SumcheckSingle::new(polynomial);
 
         let mut statement = Statement::new(eval_point.num_variables());
-        let weights = Box::new(EvaluationWeights::new(eval_point));
+        let weights = Weights::evaluation(eval_point);
         statement.add_constraint(weights.clone(), eval);
 
         prover.add_weighted_sum(&statement, F::from(1));

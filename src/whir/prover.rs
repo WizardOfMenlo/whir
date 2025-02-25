@@ -1,4 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, statement::{EvaluationWeights, Statement, Weights}, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{Weights::Evaluation, Statement, Weights}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -62,9 +62,8 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement_new: &mut Statement<F>,
+        statement: &Statement<F>,
         witness: Witness<F, MerkleConfig>,
-        verifier_statement: &mut Statement<F>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -75,16 +74,16 @@ where
             + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
-        assert!(self.validate_statement(&statement_new));
+        assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
 
-        let statement = statement_new.clone();
+        let mut statement = statement.clone();
         let mut new_constraints = Vec::new();
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
-            let weights: Box<dyn Weights<F>> = Box::new(EvaluationWeights::new(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables)));
+            let weights: Weights<F> = crate::whir::statement::Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
             new_constraints.push((weights, evaluation));
         }
-        statement_new.add_constraints_in_front(new_constraints);
+        statement.add_constraints_in_front(new_constraints);
 
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
@@ -92,7 +91,7 @@ where
             sumcheck_prover = {
                 let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
                 sumcheck.add_weighted_sum(
-                    statement_new,
+                    &statement,
                     combination_randomness_gen
                 );
 
@@ -130,7 +129,7 @@ where
             merkle_proofs: vec![],
         };
 
-        self.round(merlin, round_state, &statement, verifier_statement, &mut randomness_vec)
+        self.round(merlin, round_state, &statement, &mut randomness_vec)
     }
 
     fn round<Merlin>(
@@ -138,7 +137,6 @@ where
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
         prover_statement: &Statement<F>,
-        verifier_statement: &mut Statement<F>,
         randomness_vec: &mut Vec<F>
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -203,20 +201,18 @@ where
             let mut randomness_vec_rev = randomness_vec.clone();
             randomness_vec_rev.reverse();
 
-            for (weights, value) in &prover_statement.constraints {
-                match weights.get_point_if_evaluation() {
-                    Some(point) => {
-                        verifier_statement.add_constraint(Box::new(EvaluationWeights::new(point.clone())), value.clone());
-                    }
-                    None => {
-                        let affine_claim_verifier = weights.get_statement_for_verifier(&MultilinearPoint(randomness_vec_rev.clone()));
-                        if let Some(affine_claim_verifier) = affine_claim_verifier {
-                            verifier_statement.add_constraint(Box::new(affine_claim_verifier), value.clone());
-                        }
-                    }
+            let mut statement_values_at_random_point = vec![];
+            for (weights, _) in &prover_statement.constraints {
+                match weights {
+                    Weights::Linear { weight } => {
+                        statement_values_at_random_point.push(
+                            weight.evaluate(&MultilinearPoint(randomness_vec_rev.clone()))
+                        );
+                    },
+                    _ => {}
                 }
             }
-            return Ok(WhirProof(round_state.merkle_proofs));
+            return Ok(WhirProof{merkle_paths: round_state.merkle_proofs, statement_values_at_random_point: statement_values_at_random_point})
         }
 
         let round_params = &self.0.round_parameters[round_state.round];
@@ -381,7 +377,7 @@ where
             merkle_proofs: round_state.merkle_proofs,
         };
 
-        self.round(merlin, round_state, prover_statement, verifier_statement, randomness_vec)
+        self.round(merlin, round_state, prover_statement, randomness_vec)
     }
 }
 

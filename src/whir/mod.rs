@@ -12,20 +12,25 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct WhirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    pub statement_values_at_random_point: Vec<F>,
+}
 
 pub fn whir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
+    statement_len: usize,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes) + statement_len * std::mem::size_of::<F>()
 }
 
 #[cfg(test)]
@@ -38,7 +43,7 @@ mod tests {
     use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
-    use crate::whir::statement::{Statement, EvaluationWeights};
+    use crate::whir::statement::{Statement, StatementVerifier, Weights};
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -85,11 +90,11 @@ mod tests {
             .collect();
 
         let mut statement = Statement::<F>::new(num_variables);
-        let mut statement_verifier = Statement::<F>::new(num_variables);
+        let statement_verifier = StatementVerifier::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate(point);
-            let weights = Box::new(EvaluationWeights::new(point.clone()));
+            let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
         }
 
@@ -106,12 +111,12 @@ mod tests {
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, &mut statement.clone(), witness, &mut statement_verifier)
+            .prove(&mut merlin, &statement.clone(), witness)
             .unwrap();
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &mut statement_verifier, &proof).is_ok());
+        assert!(verifier.verify(&mut arthur, &statement_verifier, &proof).is_ok());
     }
 
     #[test]

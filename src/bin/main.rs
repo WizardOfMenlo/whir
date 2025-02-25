@@ -15,7 +15,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
-    whir::statement::{AffineClaimWeights, Statement, Weights}
+    whir::statement::{Statement, StatementVerifier, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -274,11 +274,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let mut statement = Statement::default();
-    let mut statement_verifier = Statement::default();
+    let statement = Statement::new(num_variables);
+    let statement_verifier = StatementVerifier::new(num_variables);
 
     let proof = prover
-        .prove(&mut merlin, &mut statement, witness, &mut statement_verifier)
+        .prove(&mut merlin, &statement, witness)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -299,7 +299,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     for _ in 0..reps {
         let mut arthur = io.to_arthur(&transcript);
         verifier
-            .verify(&mut arthur, &mut statement_verifier, &proof)
+            .verify(&mut arthur, &statement_verifier, &proof)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -384,10 +384,14 @@ fn run_whir_pcs<F, MerkleConfig>(
     let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
     let mut statement = Statement::<F>::new(num_variables);
-    let mut statement_verifier= Statement::<F>::new(num_variables);
+    let mut statement_verifier= StatementVerifier::<F>::new(num_variables);
 
-    let input = EvaluationsList::new(vec![F::from(2), F::from(1), F::from(3), F::from(7)]);
-    let affine_claim_weight = AffineClaimWeights::new(input.clone());
+    let input = EvaluationsList::new(
+        (0..num_coeffs)
+            .map(F::from)
+            .collect()
+        );
+    let linear_claim_weight = Weights::linear(input.clone());
     
     let computed_evals: Vec<F> = (0..num_coeffs)
         .map(|i| {
@@ -402,21 +406,20 @@ fn run_whir_pcs<F, MerkleConfig>(
         .collect();
     let poly = EvaluationsList::new(computed_evals);
 
-    let sum = affine_claim_weight.weighted_sum(&poly);
-    let weights = Box::new(affine_claim_weight);
-    statement.add_constraint(weights, sum);
+    let sum = linear_claim_weight.weighted_sum(&poly);
+    statement.add_constraint(linear_claim_weight, sum);
+    statement_verifier.add_constraint(None, sum);
 
-    
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut merlin, &mut statement, witness, &mut statement_verifier)
+        .prove(&mut merlin, &statement, witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
+        whir_proof_size(merlin.transcript(), &proof, statement.constraints.len()) as f64 / 1024.0
     );
 
     // Just not to count that initial inversion (which could be precomputed)
@@ -426,7 +429,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut arthur = io.to_arthur(merlin.transcript());
-        verifier.verify(&mut arthur, &mut statement_verifier, &proof).unwrap();
+        verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
     }
     println!(
         "Verifier time: {:.1?}",
