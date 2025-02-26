@@ -88,26 +88,26 @@ where
             [x, tail @ ..] => {
                 let (f0, f1) = evals.split_at(evals.len() / 2);
                 // let mid = evals.len() / 2;
-                // #[cfg(not(feature = "parallel"))]
+                 #[cfg(not(feature = "parallel"))]
                 let (f0, f1) = (
                     self.eval_multilinear(f0, tail),
                     self.eval_multilinear(f1, tail),
                 );
-                // #[cfg(feature = "parallel")]
-                // let (f0, f1) = {
-                //     let work_size: usize = (1 << 15) / std::mem::size_of::<F>();
-                //     if evals.len() > work_size {
-                //         rayon::join(
-                //             || self.eval_multilinear(f0, tail),
-                //             || self.eval_multilinear(f1, tail),
-                //         )
-                //     } else {
-                //         (
-                //             self.eval_multilinear(f0, tail),
-                //             self.eval_multilinear(f1, tail),
-                //         )
-                //     }
-                // };
+                #[cfg(feature = "parallel")]
+                let (f0, f1) = {
+                    let work_size: usize = (1 << 15) / std::mem::size_of::<F>();
+                    if evals.len() > work_size {
+                        rayon::join(
+                            || self.eval_multilinear(f0, tail),
+                            || self.eval_multilinear(f1, tail),
+                        )
+                    } else {
+                        (
+                            self.eval_multilinear(f0, tail),
+                            self.eval_multilinear(f1, tail),
+                        )
+                    }
+                };
                 f0 * (one - *x) + f1 * *x
             }
         }
