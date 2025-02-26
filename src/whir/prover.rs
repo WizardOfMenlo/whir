@@ -213,7 +213,7 @@ where
                 match weights {
                     Weights::Linear { weight } => {
                         statement_values_at_random_point.push(
-                            weight.evaluate(&MultilinearPoint(randomness_vec_rev.clone()))
+                            weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone()))
                         );
                     },
                     _ => {}

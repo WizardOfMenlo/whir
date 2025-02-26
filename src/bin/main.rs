@@ -392,20 +392,8 @@ fn run_whir_pcs<F, MerkleConfig>(
             .collect()
         );
     let linear_claim_weight = Weights::linear(input.clone());
+    let poly = EvaluationsList::from(polynomial.to_extension());
     
-    let computed_evals: Vec<F> = (0..num_coeffs)
-        .map(|i| {
-            let mut bits = Vec::with_capacity(num_variables);
-            for j in 0..num_variables {
-                bits.push(if ((i >> j) & 1) == 1 { F::ONE } else { F::ZERO });
-            }
-            bits.reverse();
-            let point = MultilinearPoint(bits);
-            polynomial.evaluate_at_extension(&point)
-        })
-        .collect();
-    let poly = EvaluationsList::new(computed_evals);
-
     let sum = linear_claim_weight.weighted_sum(&poly);
     statement.add_constraint(linear_claim_weight, sum);
     statement_verifier.add_constraint(None, sum);

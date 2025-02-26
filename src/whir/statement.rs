@@ -37,30 +37,30 @@ impl<F: Field> Weights<F> {
         }
     }
 
+    pub fn ev_linear(&self, weight: &EvaluationsList<F>, point: &MultilinearPoint<F>) -> F {
+        assert_eq!(point.num_variables(), weight.num_variables());
+        weight.eval_extension(&point)
+    }
+
+    pub fn ev_regular(&self, eval_point: &MultilinearPoint<F>, point: &MultilinearPoint<F>) -> F {
+        assert_eq!(point.num_variables(), eval_point.num_variables());
+        let mut acc = F::ONE;
+        for (&l, &r) in eval_point.0.iter().zip(&point.0) {
+            if acc == F::ZERO {
+                return F::ZERO;
+            } 
+            acc *= l * r + (F::ONE - l) * (F::ONE - r);
+        }
+        acc
+    }
+
     pub fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
         match self {
             Self::Evaluation { point: eval_point } => {
-                #[cfg(feature = "parallel")]
-                {
-                    use rayon::prelude::*;
-                    assert_eq!(point.num_variables(), eval_point.num_variables());
-                    eval_point.0.par_iter().zip(&point.0)
-                        .map(|(&l, &r)| l * r + (F::ONE - l) * (F::ONE - r))
-                        .reduce(|| F::ONE, |a, b| a * b)
-                }
-                #[cfg(not(feature = "parallel"))]
-                {
-                    assert_eq!(point.num_variables(), eval_point.num_variables());
-                    let mut acc = F::ONE;
-                    for (&l, &r) in eval_point.0.iter().zip(&point.0) {
-                        acc *= l * r + (F::ONE - l) * (F::ONE - r);
-                    }
-                    acc
-                }
+                self.ev_regular(eval_point, point)
             },
             Self::Linear { weight } => {
-                assert_eq!(point.num_variables(), weight.num_variables());
-                weight.evaluate(point)
+                self.ev_linear(weight, point)
             },
             Self::LinearVerifier { term, .. } => *term,
         }
@@ -99,7 +99,7 @@ impl<F: Field> Weights<F> {
                 let mut sum = F::ZERO;
                 for (corner, poly) in poly.evals().iter().enumerate() {
                     let point = self.convert_to_multilinear_point(corner);
-                    sum += weight.evaluate(&point) * poly;
+                    sum += weight.eval_extension(&point) * poly;
                 }
                 sum
             },
