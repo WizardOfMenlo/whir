@@ -9,7 +9,7 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use super::{parameters::WhirConfig, statement::{Statement, StatementVerifier, Weights}, WhirProof};
+use super::{parameters::WhirConfig, statement::{StatementVerifier, Weights}, WhirProof};
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
@@ -347,7 +347,7 @@ where
         let mut value : F = new_constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
-            .map(|((weight, _), randomness)|
+            .map(|((weight, _), randomness)| 
                 *randomness * weight.compute(&folding_randomness)
             )
            .sum();

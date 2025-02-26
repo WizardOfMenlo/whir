@@ -116,7 +116,9 @@ where
             MultilinearPoint(folding_randomness)
         };
         let mut randomness_vec = vec![F::ZERO; self.0.mv_parameters.num_variables];
-        randomness_vec[..folding_randomness.0.len()].copy_from_slice(&folding_randomness.0);
+        let mut arr = folding_randomness.clone().0;
+        arr.reverse();
+        randomness_vec[..folding_randomness.0.len()].copy_from_slice(&arr);
 
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
@@ -188,7 +190,7 @@ where
 
             // Final sumcheck
             if self.0.final_sumcheck_rounds > 0 {
-                round_state
+                let final_folding_randomness = round_state
                     .sumcheck_prover
                     .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone()))
                     .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
@@ -196,6 +198,11 @@ where
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
+                    let start_idx = (round_state.round + 1) * self.0.folding_factor;
+                    let mut arr = final_folding_randomness.clone().0;
+                    arr.reverse();
+                    randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
+                        .copy_from_slice(&arr);
             }
 
             let mut randomness_vec_rev = randomness_vec.clone();
@@ -363,8 +370,10 @@ where
             )?;
 
         let start_idx = (round_state.round + 1) * self.0.folding_factor;
+        let mut arr = folding_randomness.clone().0;
+        arr.reverse();
         randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
-            .copy_from_slice(&folding_randomness.0);
+            .copy_from_slice(&arr);
  
         let round_state = RoundState {
             round: round_state.round + 1,

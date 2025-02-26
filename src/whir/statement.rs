@@ -40,12 +40,23 @@ impl<F: Field> Weights<F> {
     pub fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
         match self {
             Self::Evaluation { point: eval_point } => {
-                assert_eq!(point.num_variables(), eval_point.num_variables());
-                let mut acc = F::ONE;
-                for (&l, &r) in eval_point.0.iter().zip(&point.0) {
-                    acc *= l * r + (F::ONE - l) * (F::ONE - r);
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+                    assert_eq!(point.num_variables(), eval_point.num_variables());
+                    eval_point.0.par_iter().zip(&point.0)
+                        .map(|(&l, &r)| l * r + (F::ONE - l) * (F::ONE - r))
+                        .reduce(|| F::ONE, |a, b| a * b)
                 }
-                acc
+                #[cfg(not(feature = "parallel"))]
+                {
+                    assert_eq!(point.num_variables(), eval_point.num_variables());
+                    let mut acc = F::ONE;
+                    for (&l, &r) in eval_point.0.iter().zip(&point.0) {
+                        acc *= l * r + (F::ONE - l) * (F::ONE - r);
+                    }
+                    acc
+                }
             },
             Self::Linear { weight } => {
                 assert_eq!(point.num_variables(), weight.num_variables());
