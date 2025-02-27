@@ -9,7 +9,7 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use super::{parameters::WhirConfig, statement::{StatementVerifier, Weights}, WhirProof};
+use super::{parameters::WhirConfig, statement::{StatementVerifier, VerifierWeights}, WhirProof};
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
@@ -335,17 +335,25 @@ where
                 .collect(),
         );
 
-        let mut new_constraints: Vec<(Weights<F>, F)> = Vec::new();
+        let mut new_constraints: Vec<(VerifierWeights<F>, F)> = Vec::new();
         for (point, evaluation) in parsed_commitment.ood_points.clone().into_iter().zip(parsed_commitment.ood_answers.clone()) {
-            let weights = Weights::evaluation(MultilinearPoint::expand_from_univariate(point, num_variables));
+            let weights = VerifierWeights::evaluation(MultilinearPoint::expand_from_univariate(point, num_variables));
             new_constraints.push((weights, evaluation));
         }
-
-        for (term, value) in proof.statement_values_at_random_point.iter().zip(statement.constraints.iter()) {
-            let weights = Weights::linear_verifier(num_variables, *term);
-            new_constraints.push((weights, value.1));
+        let mut proof_values_iter = proof.statement_values_at_random_point.iter();
+        for constraint in statement.constraints.iter() {
+            match &constraint.0 {
+                VerifierWeights::Evaluation { point } => {
+                    new_constraints.push((VerifierWeights::evaluation(point.clone()), constraint.1));
+                }
+                VerifierWeights::Linear { .. } => {
+                    let term = proof_values_iter
+                        .next()
+                        .expect("Not enough proof statement values for linear constraints");
+                    new_constraints.push((VerifierWeights::linear(num_variables, Some(*term)), constraint.1));
+                }
+            }
         }
-    
         let mut value : F = new_constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
@@ -503,7 +511,6 @@ where
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
         let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
-
         let parsed = self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
 
         let computed_folds = self.compute_folds(&parsed);

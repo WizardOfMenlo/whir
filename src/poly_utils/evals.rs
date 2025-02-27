@@ -1,7 +1,6 @@
 use std::ops::Index;
 
 use ark_ff::Field;
-use rayon::prelude::*;
 
 use super::{sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 

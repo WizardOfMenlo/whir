@@ -45,7 +45,7 @@ mod tests {
     };
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
-    use crate::whir::statement::{Statement, StatementVerifier, Weights};
+    use crate::whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights};
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -92,12 +92,14 @@ mod tests {
             .collect();
 
         let mut statement = Statement::<F>::new(num_variables);
-        let statement_verifier = StatementVerifier::<F>::new(num_variables);
+        let mut statement_verifier = StatementVerifier::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate(point);
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
+            let weights_verifier = VerifierWeights::evaluation(point.clone());
+            statement_verifier.add_constraint(weights_verifier, eval);
         }
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
@@ -141,7 +143,7 @@ mod tests {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
                                 make_whir_things(
-                                    num_variables,
+                                    num_variable,
                                     FoldingFactor::Constant(folding_factor),
                                     num_points,
                                     soundness_type,

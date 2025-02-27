@@ -14,8 +14,8 @@ use whir::{
         merkle_tree::{self, HashCounter},
     },
     parameters::*,
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, Weights}
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList},
+    whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -403,11 +403,12 @@ fn run_whir_pcs<F, MerkleConfig>(
             .collect()
         );
     let linear_claim_weight = Weights::linear(input.clone());
+    let linear_claim_weight_verifier = VerifierWeights::linear(num_variables, None);
     let poly = EvaluationsList::from(polynomial.to_extension());
     
     let sum = linear_claim_weight.weighted_sum(&poly);
     statement.add_constraint(linear_claim_weight, sum);
-    statement_verifier.add_constraint(None, sum);
+    statement_verifier.add_constraint(linear_claim_weight_verifier, sum);
 
     let prover = Prover(params.clone());
 

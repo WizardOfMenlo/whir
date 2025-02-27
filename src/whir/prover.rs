@@ -1,4 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, statement::{Weights::Evaluation, Statement, Weights}, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{Statement, Weights}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -83,8 +83,9 @@ where
             let weights: Weights<F> = crate::whir::statement::Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
             new_constraints.push((weights, evaluation));
         }
-        statement.add_constraints_in_front(new_constraints);
 
+        statement.add_constraints_in_front(new_constraints);
+        
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             // If there is initial statement, then we run the sum-check for
