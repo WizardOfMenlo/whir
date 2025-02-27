@@ -79,6 +79,7 @@ where
 
         let mut statement = statement.clone();
         let mut new_constraints = Vec::new();
+
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
             let weights: Weights<F> = crate::whir::statement::Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
             new_constraints.push((weights, evaluation));

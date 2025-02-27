@@ -1,6 +1,6 @@
-use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, MultilinearPoint};
+use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 use ark_ff::Field;
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Index};
 
 #[derive(Clone, Debug)]
 pub enum Weights<F: Field> {
@@ -98,8 +98,7 @@ impl<F: Field> Weights<F> {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 let mut sum = F::ZERO;
                 for (corner, poly) in poly.evals().iter().enumerate() {
-                    let point = self.convert_to_multilinear_point(corner);
-                    sum += weight.eval_extension(&point) * poly;
+                    sum += *weight.index(corner) * poly;
                 }
                 sum
             },
@@ -173,7 +172,19 @@ impl<F: Field> Statement<F> {
         let mut challenge_power = F::ONE;
 
         for (weights, sum) in &self.constraints {
-            weights.accumulate(&mut combined_evals, challenge_power);
+            match weights {
+                Weights::Evaluation { point } => {
+                    for (prefix, lag) in LagrangePolynomialIterator::new(point) {
+                        combined_evals.evals_mut()[prefix.0] += challenge_power * lag;
+                    }
+                }
+                Weights::Linear { weight } => {
+                    for (corner, acc) in combined_evals.evals_mut().iter_mut().enumerate() {
+                        *acc += challenge_power * weight.index(corner);
+                    }
+                }
+                _ => {}
+            }
             combined_sum += *sum * challenge_power;
             challenge_power *= challenge;
         }
