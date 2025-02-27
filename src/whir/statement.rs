@@ -45,21 +45,40 @@ impl<F: Field> Weights<F> {
         }
     }
 
+
+    #[cfg(feature = "parallel")]
+    fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
+        use rayon::join;
+
+        const PARALLEL_THRESHOLD: usize = 10;
+        debug_assert_eq!(out.len(), 1 << eval.len());
+        if let Some((&x, tail)) = eval.split_first() {
+            let (low, high) = out.split_at_mut(out.len() / 2);
+            // Update scalars using a single mul. Note that this causes a data dependency,
+            // so for small fields it might be better to use two muls.
+            // This data dependency should go away once we implement parallel point evaluation.
+            let s1 = scalar * x;
+            let s0 = scalar - s1;
+            if tail.len() > PARALLEL_THRESHOLD {
+                join(
+                    || Self::eval_eq(tail, low, s0),
+                    || Self::eval_eq(tail, high, s1),
+                );
+            } else {
+                Self::eval_eq(tail, low, s0);
+                Self::eval_eq(tail, high, s1);
+            }
+        } else {
+            out[0] += scalar;
+        }
+    }
+
     #[cfg(feature = "parallel")]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         assert_eq!(accumulator.num_variables(), self.num_variables());
         match self {
             Weights::Evaluation { point } => {
-                let contributions: Vec<(usize, F)> = LagrangePolynomialIterator::new(point)
-                    .par_bridge()
-                    .map(|(prefix, lag)| {
-                        (prefix.0, factor * lag)
-                    })
-                    .collect();
-                let evals = accumulator.evals_mut();
-                for (i, val) in contributions {
-                    evals[i] += val;
-                }
+                Self::eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Weights::Linear { weight } => {
                 accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {

@@ -14,7 +14,7 @@ use whir::{
         merkle_tree::{self, HashCounter},
     },
     parameters::*,
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList},
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
     whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
 };
 
@@ -397,6 +397,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let mut statement = Statement::<F>::new(num_variables);
     let mut statement_verifier= StatementVerifier::<F>::new(num_variables);
 
+    // Linear constraint
     let input = EvaluationsList::new(
         (0..num_coeffs)
             .map(F::from)
@@ -409,7 +410,20 @@ fn run_whir_pcs<F, MerkleConfig>(
     let sum = linear_claim_weight.weighted_sum(&poly);
     statement.add_constraint(linear_claim_weight, sum);
     statement_verifier.add_constraint(linear_claim_weight_verifier, sum);
+    // Evaluation constraint
+    // let points: Vec<_> = (0..1)
+    // .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
+    // .collect();
 
+    // for point in &points {
+    //     let eval = polynomial.evaluate_at_extension(point);
+    //     let weights = Weights::evaluation(point.clone());
+    //     statement.add_constraint(weights, eval);
+    //     let weights_verifier = VerifierWeights::evaluation(point.clone());
+    //     statement_verifier.add_constraint(weights_verifier, eval);
+    // }
+
+    
     let prover = Prover(params.clone());
 
     let proof = prover

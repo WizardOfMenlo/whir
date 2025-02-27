@@ -529,6 +529,7 @@ where
                     .map(|(ans, rand)| ans * rand)
                     .sum()
             {
+                println!("Initial sumcheck failed");
                 return Err(ProofError::InvalidProof);
             }
 

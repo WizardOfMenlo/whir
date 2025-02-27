@@ -85,7 +85,6 @@ where
         }
 
         statement.add_constraints_in_front(new_constraints);
-        
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             // If there is initial statement, then we run the sum-check for
