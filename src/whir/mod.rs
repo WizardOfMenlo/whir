@@ -111,7 +111,7 @@ mod tests {
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, &statement.clone(), witness)
+            .prove(&mut merlin, &mut statement, witness)
             .unwrap();
 
         let verifier = Verifier::new(params);

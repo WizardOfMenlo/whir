@@ -62,7 +62,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement: &Statement<F>,
+        statement: &mut Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -77,7 +77,6 @@ where
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
 
-        let mut statement = statement.clone();
         let mut new_constraints = Vec::new();
 
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {

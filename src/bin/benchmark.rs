@@ -290,11 +290,11 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
-        let statement_new = Statement::<F>::new(num_variables);
+        let mut statement_new = Statement::<F>::new(num_variables);
         let statement_verifier = StatementVerifier::<F>::new(num_variables);
         
         let proof = prover
-            .prove(&mut merlin, &statement_new.clone(), witness)
+            .prove(&mut merlin, &mut statement_new, witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();

@@ -38,58 +38,45 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    pub fn ev_linear(&self, weight: &EvaluationsList<F>, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(point.num_variables(), weight.num_variables());
-        weight.eval_extension(&point)
-    }
-
-    pub fn ev_regular(&self, eval_point: &MultilinearPoint<F>, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(point.num_variables(), eval_point.num_variables());
-        let mut acc = F::ONE;
-        for (&l, &r) in eval_point.0.iter().zip(&point.0) {
-            if acc == F::ZERO {
-                return F::ZERO;
-            } 
-            acc *= l * r + (F::ONE - l) * (F::ONE - r);
-        }
-        acc
-    }
-
-    pub fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
+    #[cfg(not(feature = "parallel"))]
+    pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         match self {
-            Self::Evaluation { point: eval_point } => {
-                self.ev_regular(eval_point, point)
-            },
-            Self::Linear { weight } => {
-                self.ev_linear(weight, point)
-            },
-            Self::LinearVerifier { term, .. } => *term,
+            Weights::Evaluation { point } => {
+                for (prefix, lag) in LagrangePolynomialIterator::new(point) {
+                    accumulator.evals_mut()[prefix.0] += factor * lag;
+                }
+            }
+            Weights::Linear { weight } => {
+                accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {
+                    *acc += factor * weight.index(corner);
+                });
+            }
+            _ => {}
         }
     }
 
-    fn convert_to_multilinear_point(&self, corner: usize) -> MultilinearPoint<F> {
-        let mut bits = (0..self.num_variables())
-            .map(|b| {
-                if (corner >> b) & 1 == 1 {
-                    F::ONE
-                } else {
-                    F::ZERO
-                }
-            })
-            .collect::<Vec<_>>();
-        bits.reverse();
-        MultilinearPoint(bits)
-    }
-
-    pub fn evaluate_cube(&self, corner: usize) -> F {
-        let point = self.convert_to_multilinear_point(corner);
-        self.evaluate_mle(&point)
-    }
-
+    #[cfg(feature = "parallel")]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         assert_eq!(accumulator.num_variables(), self.num_variables());
-        for (corner, acc) in accumulator.evals_mut().iter_mut().enumerate() {
-            *acc += factor * self.evaluate_cube(corner);
+        match self {
+            Weights::Evaluation { point } => {
+                let contributions: Vec<(usize, F)> = LagrangePolynomialIterator::new(point)
+                    .par_bridge()
+                    .map(|(prefix, lag)| {
+                        (prefix.0, factor * lag)
+                    })
+                    .collect();
+                let evals = accumulator.evals_mut();
+                for (i, val) in contributions {
+                    evals[i] += val;
+                }
+            }
+            Weights::Linear { weight } => {
+                accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {
+                    *acc += factor * weight.index(corner);
+                });
+            }
+            _ => {}
         }
     }
 
@@ -97,20 +84,26 @@ impl<F: Field> Weights<F> {
         match self {
             Self::Linear { weight } => {
                 assert_eq!(poly.num_variables(), weight.num_variables());
-                let mut sum = F::ZERO;
-                for (corner, poly) in poly.evals().iter().enumerate() {
-                    sum += *weight.index(corner) * poly;
+                #[cfg(not(feature = "parallel"))]
+                {
+                    let mut sum = F::ZERO;
+                    for (corner, poly) in poly.evals().iter().enumerate() {
+                        sum += *weight.index(corner) * poly;
+                    }
+                    sum
                 }
-                sum
+                #[cfg(feature = "parallel")]
+                {
+                    poly.evals()
+                        .par_iter()
+                        .enumerate()
+                        .map(|(corner, poly)| *weight.index(corner) * *poly)
+                        .sum()
+                }
             },
             Self::LinearVerifier { term, .. } => *term,
-            _ => {
-                assert_eq!(poly.num_variables(), self.num_variables());
-                let mut sum = F::ZERO;
-                for (corner, poly) in poly.evals().iter().enumerate() {
-                    sum += self.evaluate_cube(corner) * poly;
-                }
-                sum
+            Self::Evaluation { point } => {
+                poly.eval_extension(point)
             }
         }
     }
@@ -173,77 +166,12 @@ impl<F: Field> Statement<F> {
         let mut challenge_power = F::ONE;
 
         for (weights, sum) in &self.constraints {
-            match weights {
-                Weights::Evaluation { point } => {
-                    for (prefix, lag) in LagrangePolynomialIterator::new(point) {
-                        combined_evals.evals_mut()[prefix.0] += challenge_power * lag;
-                    }
-                }
-                Weights::Linear { weight } => {
-                    for (corner, acc) in combined_evals.evals_mut().iter_mut().enumerate() {
-                        *acc += challenge_power * weight.index(corner);
-                    }
-                }
-                _ => {}
-            }
+            weights.accumulate(&mut combined_evals, challenge_power);           
             combined_sum += *sum * challenge_power;
             challenge_power *= challenge;
         }
 
         (combined_evals, combined_sum)
-    }
-
-    pub fn combine_parallel(&self, challenge: F) -> (EvaluationsList<F>, F) {
-        let n = 1 << self.num_variables;
-        // Precompute challenge powers sequentially because each one depends on the previous.
-        let challenge_powers: Vec<F> = self
-            .constraints
-            .iter()
-            .scan(F::ONE, |cp, _| {
-                let current = *cp;
-                *cp = *cp * challenge;
-                Some(current)
-            })
-            .collect();
-
-        // Use Rayon's parallel iterator: each constraint (paired with its challenge power)
-        // computes a full contribution vector "evals" and a partial sum.
-        let (partial_evals, partial_sum) = self
-            .constraints
-            .par_iter()
-            .zip(challenge_powers.par_iter())
-            .map(|(constraint, &cp)| {
-                let (weights, sum) = constraint;
-                let mut evals = vec![F::ZERO; n];
-
-                match weights {
-                    Weights::Evaluation { point } => {
-                        for (prefix, lag) in LagrangePolynomialIterator::new(point) {
-                            evals[prefix.0] += cp * lag;
-                        }
-                    }
-                    Weights::Linear { weight } => {
-                        for (corner, acc) in evals.iter_mut().enumerate() {
-                            *acc += cp * weight.index(corner);
-                        }
-                    }
-                    _ => {}
-                }
-                let s = *sum * cp;
-                (evals, s)
-            })
-            // Reduce all the (evals, sum) pairs into a single pair by doing element-wise addition.
-            .reduce(
-                || (vec![F::ZERO; n], F::ZERO),
-                |(mut evals_a, sum_a), (evals_b, sum_b)| {
-                    for (a, b) in evals_a.iter_mut().zip(evals_b.into_iter()) {
-                        *a += b;
-                    }
-                    (evals_a, sum_a + sum_b)
-                },
-            );
-
-        (EvaluationsList::new(partial_evals), partial_sum)
     }
 }
 
