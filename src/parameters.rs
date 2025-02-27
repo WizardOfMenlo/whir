@@ -96,6 +96,105 @@ impl Display for FoldType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FoldingFactor {
+    Constant(usize),                       // Use the same folding factor for all rounds
+    ConstantFromSecondRound(usize, usize), // Use the same folding factor for all rounds, but the first round uses a different folding factor
+}
+
+impl FoldingFactor {
+    pub fn at_round(&self, round: usize) -> usize {
+        match self {
+            FoldingFactor::Constant(factor) => *factor,
+            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+                if round == 0 {
+                    *first_round_factor
+                } else {
+                    *factor
+                }
+            }
+        }
+    }
+
+    pub fn check_validity(&self, num_variables: usize) -> Result<(), String> {
+        match self {
+            FoldingFactor::Constant(factor) => {
+                if *factor > num_variables {
+                    Err(format!(
+                        "Folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
+                        factor, num_variables
+                    ))
+                } else if *factor == 0 {
+                    // We should at least fold some time
+                    Err(format!("Folding factor shouldn't be zero."))
+                } else {
+                    Ok(())
+                }
+            }
+            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+                if *first_round_factor > num_variables {
+                    Err(format!(
+                        "First round folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
+                        first_round_factor, num_variables
+                    ))
+                } else if *factor > num_variables {
+                    Err(format!(
+                        "Folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
+                        factor, num_variables
+                    ))
+                } else if *factor == 0 || *first_round_factor == 0 {
+                    // We should at least fold some time
+                    Err(format!("Folding factor shouldn't be zero."))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    /// Compute the number of WHIR rounds and the number of rounds in the final
+    /// sumcheck.
+    pub fn compute_number_of_rounds(&self, num_variables: usize) -> (usize, usize) {
+        match self {
+            FoldingFactor::Constant(factor) => {
+                // It's checked that factor > 0 and factor <= num_variables
+                let final_sumcheck_rounds = num_variables % factor;
+                (
+                    (num_variables - final_sumcheck_rounds) / factor - 1,
+                    final_sumcheck_rounds,
+                )
+            }
+            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+                let nv_except_first_round = num_variables - *first_round_factor;
+                if nv_except_first_round < *factor {
+                    // This case is equivalent to Constant(first_round_factor)
+                    return (0, nv_except_first_round);
+                }
+                let final_sumcheck_rounds = nv_except_first_round % *factor;
+                (
+                    // No need to minus 1 because the initial round is already
+                    // excepted out
+                    (nv_except_first_round - final_sumcheck_rounds) / factor,
+                    final_sumcheck_rounds,
+                )
+            }
+        }
+    }
+
+    /// Compute folding_factor(0) + ... + folding_factor(n_rounds)
+    pub fn total_number(&self, n_rounds: usize) -> usize {
+        match self {
+            FoldingFactor::Constant(factor) => {
+                // It's checked that factor > 0 and factor <= num_variables
+                factor * (n_rounds + 1)
+            }
+            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+                first_round_factor + factor * n_rounds
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct WhirParameters<MerkleConfig, PowStrategy>
 where
@@ -103,7 +202,7 @@ where
 {
     pub initial_statement: bool,
     pub starting_log_inv_rate: usize,
-    pub folding_factor: usize,
+    pub folding_factor: FoldingFactor,
     pub soundness_type: SoundnessType,
     pub security_level: usize,
     pub pow_bits: usize,
@@ -130,7 +229,7 @@ where
         )?;
         writeln!(
             f,
-            "Starting rate: 2^-{}, folding_factor: {}, fold_opt_type: {}",
+            "Starting rate: 2^-{}, folding_factor: {:?}, fold_opt_type: {}",
             self.starting_log_inv_rate, self.folding_factor, self.fold_optimisation,
         )
     }

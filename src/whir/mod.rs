@@ -40,7 +40,9 @@ mod tests {
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, WhirParameters};
+    use crate::parameters::{
+        FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+    };
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::MultilinearPoint;
     use crate::whir::statement::{Statement, StatementVerifier, Weights};
@@ -55,7 +57,7 @@ mod tests {
 
     fn make_whir_things(
         num_variables: usize,
-        folding_factor: usize,
+        folding_factor: FoldingFactor,
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
@@ -139,8 +141,8 @@ mod tests {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
                                 make_whir_things(
-                                    num_variable,
-                                    folding_factor,
+                                    num_variables,
+                                    FoldingFactor::Constant(folding_factor),
                                     num_points,
                                     soundness_type,
                                     pow_bits,
