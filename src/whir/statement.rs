@@ -1,6 +1,7 @@
 use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
+use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub enum Weights<F: Field> {
@@ -190,6 +191,59 @@ impl<F: Field> Statement<F> {
         }
 
         (combined_evals, combined_sum)
+    }
+
+    pub fn combine_parallel(&self, challenge: F) -> (EvaluationsList<F>, F) {
+        let n = 1 << self.num_variables;
+        // Precompute challenge powers sequentially because each one depends on the previous.
+        let challenge_powers: Vec<F> = self
+            .constraints
+            .iter()
+            .scan(F::ONE, |cp, _| {
+                let current = *cp;
+                *cp = *cp * challenge;
+                Some(current)
+            })
+            .collect();
+
+        // Use Rayon's parallel iterator: each constraint (paired with its challenge power)
+        // computes a full contribution vector "evals" and a partial sum.
+        let (partial_evals, partial_sum) = self
+            .constraints
+            .par_iter()
+            .zip(challenge_powers.par_iter())
+            .map(|(constraint, &cp)| {
+                let (weights, sum) = constraint;
+                let mut evals = vec![F::ZERO; n];
+
+                match weights {
+                    Weights::Evaluation { point } => {
+                        for (prefix, lag) in LagrangePolynomialIterator::new(point) {
+                            evals[prefix.0] += cp * lag;
+                        }
+                    }
+                    Weights::Linear { weight } => {
+                        for (corner, acc) in evals.iter_mut().enumerate() {
+                            *acc += cp * weight.index(corner);
+                        }
+                    }
+                    _ => {}
+                }
+                let s = *sum * cp;
+                (evals, s)
+            })
+            // Reduce all the (evals, sum) pairs into a single pair by doing element-wise addition.
+            .reduce(
+                || (vec![F::ZERO; n], F::ZERO),
+                |(mut evals_a, sum_a), (evals_b, sum_b)| {
+                    for (a, b) in evals_a.iter_mut().zip(evals_b.into_iter()) {
+                        *a += b;
+                    }
+                    (evals_a, sum_a + sum_b)
+                },
+            );
+
+        (EvaluationsList::new(partial_evals), partial_sum)
     }
 }
 

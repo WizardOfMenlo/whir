@@ -38,7 +38,7 @@ where
     pub fn num_variables(&self) -> usize {
         self.evaluation_of_p.num_variables()
     }
-
+    #[cfg(not(feature = "parallel"))]
     pub fn add_weighted_sum(
         &mut self,
         statement: &Statement<F>,
@@ -46,6 +46,16 @@ where
     ) {
         assert_eq!(statement.num_variables(), self.num_variables());
         (self.weights, self.sum) = statement.combine(combination_randomness_gen);
+    }
+    
+    #[cfg(feature = "parallel")]
+    pub fn add_weighted_sum(
+        &mut self,
+        statement: &Statement<F>,
+        combination_randomness_gen : F
+    ) {
+        assert_eq!(statement.num_variables(), self.num_variables());
+        (self.weights, self.sum) = statement.combine_parallel(combination_randomness_gen);
     }
 
     /// Compute the polynomial that represents the sum in the first variable.
