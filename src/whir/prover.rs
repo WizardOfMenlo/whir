@@ -78,14 +78,7 @@ where
         assert!(self.validate_witness(&witness));
 
         let mut new_constraints = Vec::new();
-        if !self.0.initial_statement {
-            // It is ensured that if there is no initial statement, the
-            // number of ood samples is also zero.
-            assert!(
-                initial_answers.is_empty(),
-                "Can not have initial answers without initial statement"
-            );
-        }
+
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
             let weights: Weights<F> = crate::whir::statement::Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
             new_constraints.push((weights, evaluation));
@@ -214,7 +207,7 @@ where
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
-                    let start_idx = (round_state.round + 1) * self.0.folding_factor;
+                    let start_idx = (round_state.round + 1) * self.0.folding_factor.at_round(round_state.round);
                     let mut arr = final_folding_randomness.clone().0;
                     arr.reverse();
                     randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
@@ -417,7 +410,7 @@ where
                 round_params.folding_pow_bits,
             )?;
 
-        let start_idx = (round_state.round + 1) * self.0.folding_factor;
+        let start_idx = (round_state.round + 1) * self.0.folding_factor.at_round(round_state.round);
         let mut arr = folding_randomness.clone().0;
         arr.reverse();
         randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
