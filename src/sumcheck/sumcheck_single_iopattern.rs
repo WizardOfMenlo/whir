@@ -1,12 +1,12 @@
 use crate::fs_utils::WhirPoWIOPattern;
 use ark_ff::Field;
-use nimue::{plugins::ark::FieldIOPattern, IOPattern};
+use nimue::plugins::ark::FieldIOPattern;
 
 pub trait SumcheckSingleIOPattern<F: Field> {
     fn add_sumcheck(self, folding_factor: usize, pow_bits: f64) -> Self;
 }
 
-impl<F> SumcheckSingleIOPattern<F> for IOPattern
+impl<F, IOPattern> SumcheckSingleIOPattern<F> for IOPattern
 where
     F: Field,
     IOPattern: FieldIOPattern<F> + WhirPoWIOPattern,

@@ -45,7 +45,7 @@ impl FromStr for SoundnessType {
 
 #[derive(Debug, Clone, Copy)]
 pub struct MultivariateParameters<F> {
-    pub(crate) num_variables: usize,
+    pub num_variables: usize,
     _field: PhantomData<F>,
 }
 
