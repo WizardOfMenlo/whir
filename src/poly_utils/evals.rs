@@ -134,6 +134,12 @@ where
     pub fn num_variables(&self) -> usize {
         self.num_variables
     }
+
+    pub fn to_coeffs(&self) -> crate::poly_utils::coeffs::CoefficientList<F> {
+        let mut coeffs = self.evals.clone();
+        crate::ntt::inverse_wavelet_transform(&mut coeffs);
+        crate::poly_utils::coeffs::CoefficientList::new(coeffs)
+    }
 }
 
 impl<F> Index<usize> for EvaluationsList<F> {

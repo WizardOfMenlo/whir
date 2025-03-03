@@ -8,14 +8,10 @@ use ark_ff::FftField;
 use ark_serialize::CanonicalSerialize;
 use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use whir::{
-    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
-    crypto::{
+    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{self, HashCounter},
-    },
-    parameters::*,
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
+    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList}, whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -398,11 +394,17 @@ fn run_whir_pcs<F, MerkleConfig>(
     let mut statement_verifier= StatementVerifier::<F>::new(num_variables);
 
     // Linear constraint
-    let input = EvaluationsList::new(
+
+
+    let input = CoefficientList::new(
         (0..num_coeffs)
             .map(F::from)
-            .collect()
-        );
+            .collect(),
+    );
+    let input : EvaluationsList<F> = input.clone().into();
+    // let coeffs : CoefficientList<F> = input.to_coeffs();
+
+ 
     let linear_claim_weight = Weights::linear(input.clone());
     let linear_claim_weight_verifier = VerifierWeights::linear(num_variables, None);
     let poly = EvaluationsList::from(polynomial.to_extension());
