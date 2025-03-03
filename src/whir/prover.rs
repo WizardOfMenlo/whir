@@ -207,7 +207,9 @@ where
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
-                    let start_idx = (round_state.round + 1) * self.0.folding_factor.at_round(round_state.round);
+                    let start_idx = (0..=round_state.round)
+                        .map(|r| self.0.folding_factor.at_round(r))
+                        .sum::<usize>();
                     let mut arr = final_folding_randomness.clone().0;
                     arr.reverse();
                     randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
@@ -410,7 +412,9 @@ where
                 round_params.folding_pow_bits,
             )?;
 
-        let start_idx = (round_state.round + 1) * self.0.folding_factor.at_round(round_state.round);
+        let start_idx = (0..=round_state.round)
+            .map(|r| self.0.folding_factor.at_round(r))
+            .sum::<usize>();
         let mut arr = folding_randomness.clone().0;
         arr.reverse();
         randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
