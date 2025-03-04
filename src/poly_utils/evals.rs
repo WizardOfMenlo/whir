@@ -52,37 +52,37 @@ where
         let one = F::one();
         match point {
             [] => evals[0],
-            [x] => evals[0] * (one - *x) + evals[1] * *x,
+            [x] => evals[0] + (evals[1] - evals[0]) * *x,
             [x0, x1] => {
-                let a0 = evals[0] * (one - *x1) + evals[1] * *x1;
-                let a1 = evals[2] * (one - *x1) + evals[3] * *x1;
-                a0 * (one - *x0) + a1 * *x0
+                let a0 = evals[0] + (evals[1] - evals[0]) * *x1;
+                let a1 = evals[2] + (evals[3] - evals[2]) * *x1;
+                a0 + (a1 - a0) * *x0
             }
             [x0, x1, x2] => {
-                let a00 = evals[0] * (one - *x2) + evals[1] * *x2;
-                let a01 = evals[2] * (one - *x2) + evals[3] * *x2;
-                let a10 = evals[4] * (one - *x2) + evals[5] * *x2;
-                let a11 = evals[6] * (one - *x2) + evals[7] * *x2;
-                let a0 = a00 * (one - *x1) + a01 * *x1;
-                let a1 = a10 * (one - *x1) + a11 * *x1;
-                a0 * (one - *x0) + a1 * *x0
+                let a00 = evals[0] + (evals[1] - evals[0]) * *x2;
+                let a01 = evals[2] + (evals[3] - evals[2]) * *x2;
+                let a10 = evals[4] + (evals[5] - evals[4]) * *x2;
+                let a11 = evals[6] + (evals[7] - evals[6]) * *x2;
+                let a0 = a00 + (a01 - a00) * *x1;
+                let a1 = a10 + (a11 - a10) * *x1;
+                a0 + (a1 - a0) * *x0
             }
             [x0, x1, x2, x3] => {
-                let a000 = evals[0] * (one - *x3) + evals[1] * *x3;
-                let a001 = evals[2] * (one - *x3) + evals[3] * *x3;
-                let a010 = evals[4] * (one - *x3) + evals[5] * *x3;
-                let a011 = evals[6] * (one - *x3) + evals[7] * *x3;
-                let a100 = evals[8] * (one - *x3) + evals[9] * *x3;
-                let a101 = evals[10] * (one - *x3) + evals[11] * *x3;
-                let a110 = evals[12] * (one - *x3) + evals[13] * *x3;
-                let a111 = evals[14] * (one - *x3) + evals[15] * *x3;
-                let a00 = a000 * (one - *x2) + a001 * *x2;
-                let a01 = a010 * (one - *x2) + a011 * *x2;
-                let a10 = a100 * (one - *x2) + a101 * *x2;
-                let a11 = a110 * (one - *x2) + a111 * *x2;
-                let a0 = a00 * (one - *x1) + a01 * *x1;
-                let a1 = a10 * (one - *x1) + a11 * *x1;
-                a0 * (one - *x0) + a1 * *x0
+                let a000 = evals[0] + (evals[1] - evals[0]) * *x3;
+                let a001 = evals[2] + (evals[3] - evals[2]) * *x3;
+                let a010 = evals[4] + (evals[5] - evals[4]) * *x3;
+                let a011 = evals[6] + (evals[7] - evals[6]) * *x3;
+                let a100 = evals[8] + (evals[9] - evals[8]) * *x3;
+                let a101 = evals[10] + (evals[11] - evals[10]) * *x3;
+                let a110 = evals[12] + (evals[13] - evals[12]) * *x3;
+                let a111 = evals[14] + (evals[15] - evals[14]) * *x3;
+                let a00 = a000 + (a001 - a000) * *x2;
+                let a01 = a010 + (a011 - a010) * *x2;
+                let a10 = a100 + (a101 - a100) * *x2;
+                let a11 = a110 + (a111 - a110) * *x2;
+                let a0 = a00 + (a01 - a00) * *x1;
+                let a1 = a10 + (a11 - a10) * *x1;
+                a0 + (a1 - a0) * *x0
             }
             [x, tail @ ..] => {
                 let (f0, f1) = evals.split_at(evals.len() / 2);
@@ -107,7 +107,7 @@ where
                         )
                     }
                 };
-                f0 * (one - *x) + f1 * *x
+                f0 + (f1 - f0) * *x
             }
         }
     }
