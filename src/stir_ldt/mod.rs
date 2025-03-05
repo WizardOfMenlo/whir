@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
@@ -98,11 +98,11 @@ mod tests {
 
         let prover = Prover(params.clone());
 
-        let proof = prover.prove(&mut merlin, witness).unwrap();
+        let proof = prover.prove(&mut merlin, &witness).unwrap();
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &proof).is_ok());
+        assert!(verifier.verify(&mut arthur, &proof,).is_ok());
     }
 
     #[test]
