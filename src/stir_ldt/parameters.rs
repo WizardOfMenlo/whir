@@ -165,7 +165,7 @@ where
             round_parameters,
             final_queries,
             final_pow_bits,
-            pow_strategy: PhantomData::default(),
+            pow_strategy: PhantomData,
             final_log_inv_rate: log_inv_rate,
             final_log_degree,
             leaf_hash_params: stir_parameters.leaf_hash_params,
@@ -199,14 +199,10 @@ where
         log_eta: f64,
     ) -> f64 {
         match soundness_type {
-            SoundnessType::ConjectureList => {
-                let result = (num_variables + log_inv_rate) as f64 - log_eta;
-                result
-            }
+            SoundnessType::ConjectureList => (num_variables + log_inv_rate) as f64 - log_eta,
             SoundnessType::ProvableList => {
                 let log_inv_sqrt_rate: f64 = log_inv_rate as f64 / 2.;
-                let result = log_inv_sqrt_rate - (1. + log_eta);
-                result
+                log_inv_sqrt_rate - (1. + log_eta)
             }
             SoundnessType::UniqueDecoding => 0.0,
         }
@@ -335,7 +331,7 @@ where
         num_queries: usize,
     ) -> f64 {
         let num_queries = num_queries as f64;
-        let bits_of_sec_queries = match soundness_type {
+        match soundness_type {
             SoundnessType::UniqueDecoding => {
                 let rate = 1. / ((1 << log_inv_rate) as f64);
                 let denom = -(0.5 * (1. + rate)).log2();
@@ -344,9 +340,7 @@ where
             }
             SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate as f64,
             SoundnessType::ConjectureList => num_queries * log_inv_rate as f64,
-        };
-
-        bits_of_sec_queries
+        }
     }
 }
 
@@ -398,7 +392,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- prox gaps: {:.1}, pow: {:.1}",
-            prox_gaps_error + self.starting_folding_pow_bits as f64,
+            prox_gaps_error + self.starting_folding_pow_bits,
             prox_gaps_error,
             self.starting_folding_pow_bits,
         )?;
@@ -428,7 +422,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-                query_error + r.pow_bits as f64,
+                query_error + r.pow_bits,
                 query_error,
                 r.pow_bits,
             )?;
@@ -451,7 +445,7 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits as f64,
+                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
                 self.folding_factor,
                 prox_gaps_error,
                 sumcheck_error,
@@ -469,7 +463,7 @@ where
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-            query_error + self.final_pow_bits as f64,
+            query_error + self.final_pow_bits,
             query_error,
             self.final_pow_bits,
         )?;
