@@ -39,8 +39,11 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
 }
 
 // Deduplicates AND orders a vector
-pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
-    Vec::from_iter(BTreeSet::from_iter(v))
+pub fn dedup<T: Ord>(iter: impl IntoIterator<Item = T>) -> Vec<T> {
+    let mut vec = Vec::from_iter(iter);
+    vec.sort_unstable();
+    vec.dedup();
+    vec
 }
 
 // Takes the vector of evaluations (assume that evals[i] = f(omega^i))
