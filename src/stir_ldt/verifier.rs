@@ -363,6 +363,7 @@ where
             domain_gen_invs[0].pow([
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
+
         let mut r_shift_evals: Vec<F> = all_r_shift_indexes[0]
             .iter()
             .zip(all_r_shift_virtual_evals[0].iter())
@@ -385,12 +386,14 @@ where
             // TODO: This actually is just a single value that we need
             let r_num = r_index + 1;
             let r_comb = round.r_comb;
+
             let quotient_set: Vec<_> = round
                 .ood_points
                 .iter()
                 .chain(&round.r_shift_points)
                 .copied()
                 .collect();
+
             let quotient_answers: Vec<_> = round
                 .ood_evals
                 .iter()
