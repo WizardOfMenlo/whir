@@ -316,7 +316,7 @@ struct RoundContext<F: FftField, MerkleConfig: Config> {
     r_fold: F,
     f_poly: DensePolynomial<F>,
     // NOTE: merkle and eval refer to f in the first round
-    // and to g_i in every following round i
+    // and to g_{i-1} in every following round i
     merkle: MerkleTree<MerkleConfig>,
     evals: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
