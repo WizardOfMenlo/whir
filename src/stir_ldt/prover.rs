@@ -86,10 +86,8 @@ where
             f_domain: self.0.starting_domain.clone(),
             r_fold,
             f_poly: witness.polynomial.clone(),
-            merkle_and_eval: MerkleAndEval::F {
-                merkle: witness.merkle_tree.clone(),
-                evals: witness.merkle_leaves.clone(),
-            },
+            merkle: witness.merkle_tree.clone(),
+            evals: witness.merkle_leaves.clone(),
             merkle_proofs: vec![],
         };
 
@@ -180,19 +178,15 @@ where
         let r_shift_indexes =
             utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
 
-        let (merkle, evals) = match &ctx.merkle_and_eval {
-            MerkleAndEval::F { merkle, evals } => (merkle, evals),
-            MerkleAndEval::G { merkle, evals } => (merkle, evals),
-        };
-
         let virtual_evals = self.indexes_to_coset_evaluations(
             r_shift_indexes.clone(),
             1 << self.0.folding_factor,
-            evals,
+            &ctx.evals,
         );
 
         // Merkle proof for the previous evaluations.
-        let merkle_proof = merkle
+        let merkle_proof = ctx
+            .merkle
             .generate_multi_proof(r_shift_indexes.clone())
             .unwrap();
 
@@ -265,10 +259,8 @@ where
         ctx.f_domain = g_domain;
         ctx.r_fold = new_folding_randomness;
         ctx.f_poly = f_prime_poly;
-        ctx.merkle_and_eval = MerkleAndEval::G {
-            merkle: g_merkle,
-            evals: g_evals_folded,
-        };
+        ctx.merkle = g_merkle;
+        ctx.evals = g_evals_folded;
 
         Ok(())
     }
@@ -323,21 +315,9 @@ struct RoundContext<F: FftField, MerkleConfig: Config> {
     f_domain: Domain<F>,
     r_fold: F,
     f_poly: DensePolynomial<F>,
-    merkle_and_eval: MerkleAndEval<F, MerkleConfig>,
+    // NOTE: merkle and eval refer to f in the first round
+    // and to g_i in every following round i
+    merkle: MerkleTree<MerkleConfig>,
+    evals: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-}
-
-enum MerkleAndEval<F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config,
-{
-    F {
-        merkle: MerkleTree<MerkleConfig>,
-        evals: Vec<F>,
-    },
-    G {
-        merkle: MerkleTree<MerkleConfig>,
-        evals: Vec<F>,
-    },
 }
