@@ -1,4 +1,8 @@
-use super::{committer::Witness, parameters::StirConfig, StirProof};
+use super::{
+    committer::Witness,
+    parameters::{RoundConfig, StirConfig},
+    StirProof,
+};
 use crate::{
     domain::Domain,
     parameters::FoldType,
@@ -147,6 +151,45 @@ where
         (g_domain, g_evals_folded, g_merkle)
     }
 
+    // TODO: rename
+    fn round_part(
+        &self,
+        merlin: &mut Merlin,
+        round_state: &mut RoundState<F, MerkleConfig>,
+        num_queries: usize,
+    ) -> ProofResult<Vec<usize>> {
+        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
+        let size_of_folded_domain = round_state.f_domain.folded_size(self.0.folding_factor);
+        // Obtain t random integers between 0 and size of the folded domain.
+        // These are the r_shifts from the paper.
+
+        // TODO: this could return fewer than `round_parameters.num_queries` elements
+        let r_shift_indexes =
+            utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
+
+        let (merkle, evals) = match &round_state.merkle_and_eval {
+            MerkleAndEval::F { merkle, evals } => (merkle, evals),
+            MerkleAndEval::G { merkle, evals } => (merkle, evals),
+        };
+
+        let virtual_evals = self.indexes_to_coset_evaluations(
+            r_shift_indexes.clone(),
+            1 << self.0.folding_factor,
+            &evals,
+        );
+
+        // Merkle proof for the previous evaluations.
+        let merkle_proof = merkle
+            .generate_multi_proof(r_shift_indexes.clone())
+            .unwrap();
+
+        round_state
+            .merkle_proofs
+            .push((merkle_proof, virtual_evals));
+
+        Ok(r_shift_indexes)
+    }
+
     fn round(
         &self,
         merlin: &mut Merlin,
@@ -159,7 +202,7 @@ where
             self.0.folding_factor,
         );
 
-        // Base case
+        // Final round
         if round_state.round == self.0.n_rounds() {
             // Coefficients of the final polynomial p
             let mut p_poly = g_poly.coeffs; // One last fold of the f function. If log_initial_degree % folding_factor = 0, then this is constant.
@@ -167,32 +210,7 @@ where
             // Send the coefficients directly
             merlin.add_scalars(&p_poly)?;
 
-            // Final verifier queries and answers
-            let mut final_shift_queries_seed = [0u8; 32];
-            merlin.fill_challenge_bytes(&mut final_shift_queries_seed)?;
-
-            let final_gen = &mut ChaCha20Rng::from_seed(final_shift_queries_seed);
-            let size_of_folded_domain = round_state.f_domain.folded_size(self.0.folding_factor);
-            let final_r_shift_indexes = utils::dedup(
-                (0..self.0.final_queries).map(|_| final_gen.gen_range(0..size_of_folded_domain)),
-            );
-
-            let (merkle, evals) = match round_state.merkle_and_eval {
-                MerkleAndEval::F { merkle, evals } => (merkle, evals),
-                MerkleAndEval::G { merkle, evals } => (merkle, evals),
-            };
-
-            let virtual_evals = self.indexes_to_coset_evaluations(
-                final_r_shift_indexes.clone(),
-                1 << self.0.folding_factor,
-                &evals,
-            );
-            let merkle_proof = merkle
-                .generate_multi_proof(final_r_shift_indexes.clone())
-                .unwrap();
-            round_state
-                .merkle_proofs
-                .push((merkle_proof, virtual_evals));
+            self.round_part(merlin, &mut round_state, self.0.final_queries)?;
 
             // PoW
             if self.0.final_pow_bits > 0. {
@@ -229,39 +247,17 @@ where
 
         // PHASE 3:
         // STIR queries
-        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
-        let size_of_folded_domain = round_state.f_domain.folded_size(self.0.folding_factor);
-        // Obtain t random integers between 0 and size of the folded domain.
-        // These are the r_shifts from the paper.
-
-        // TODO: this could return fewer than `round_parameters.num_queries` elements
-        let r_shift_indexes = utils::dedup(
-            (0..round_parameters.num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)),
-        );
-
-        let fold_size = 1 << self.0.folding_factor;
-        let l_k = round_state.f_domain.scale(fold_size).backing_domain;
-
-        let r_shift_points: Vec<F> = r_shift_indexes.iter().map(|&i| l_k.element(i)).collect();
-
-        let (merkle, evals) = match round_state.merkle_and_eval {
-            MerkleAndEval::F { merkle, evals } => (merkle, evals),
-            MerkleAndEval::G { merkle, evals } => (merkle, evals),
-        };
-
-        let r_shift_virtual_evals =
-            self.indexes_to_coset_evaluations(r_shift_indexes.clone(), fold_size, &evals);
-
-        // Merkle proof for the previous evaluations.
-        let shift_challenges_proof = merkle
-            .generate_multi_proof(r_shift_indexes.clone())
-            .unwrap();
-
-        round_state
-            .merkle_proofs
-            .push((shift_challenges_proof, r_shift_virtual_evals));
-
-        let quotient_set: Vec<F> = ood_points.iter().chain(&r_shift_points).copied().collect();
+        let r_shift_indexes =
+            self.round_part(merlin, &mut round_state, round_parameters.num_queries)?;
+        let l_k = round_state
+            .f_domain
+            .scale(1 << self.0.folding_factor)
+            .backing_domain;
+        let quotient_set: Vec<_> = ood_points
+            .iter()
+            .copied()
+            .chain(r_shift_indexes.iter().map(|&i| l_k.element(i)))
+            .collect();
 
         // PoW
         if round_parameters.pow_bits > 0. {
