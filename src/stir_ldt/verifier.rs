@@ -1,6 +1,6 @@
 use std::iter;
 
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::{FftField, Field};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
 use nimue::{
@@ -16,7 +16,10 @@ use crate::{
     utils,
 };
 
-use super::{parameters::StirConfig, StirProof};
+use super::{
+    parameters::{RoundConfig, StirConfig},
+    StirProof,
+};
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
 where
@@ -87,24 +90,19 @@ where
 
     fn parse_round(
         &self,
-        r: usize, // TODO: replace with actual iteration values
-        stir_proof: &StirProof<F, MerkleConfig>,
+        round_config: &RoundConfig,
+        merkle_proof: &MultiPath<MerkleConfig>,
+        virtual_evals: &[Vec<F>],
         arthur: &mut Arthur,
         ctx: &mut ParseProofContext<F, MerkleConfig::InnerDigest>,
     ) -> ProofResult<()> {
-        // Get the proof of the queries to the function. Is the first round it is directly the
-        // function f. Is subsequent rounds it is the function g, which is the fold of the
-        // previous function f.
-        let (merkle_proof, virtual_evals) = &stir_proof.merkle_proofs[r];
-        let round_parameters = &self.params.round_parameters[r];
-
         // TODO: does this have to happen before the other arthur calls?
         let next_root: [u8; 32] = arthur.next_bytes()?;
 
         // PHASE 2:
-        let mut ood_points = vec![F::ZERO; round_parameters.ood_samples];
-        let mut ood_evals = vec![F::ZERO; round_parameters.ood_samples];
-        if round_parameters.ood_samples > 0 {
+        let mut ood_points = vec![F::ZERO; round_config.ood_samples];
+        let mut ood_evals = vec![F::ZERO; round_config.ood_samples];
+        if round_config.ood_samples > 0 {
             arthur.fill_challenge_scalars(&mut ood_points)?;
             arthur.fill_next_scalars(&mut ood_evals)?;
         }
@@ -115,7 +113,7 @@ where
         let mut stir_gen = ChaCha20Rng::from_seed(shift_queries_seed);
         let folded_domain_size = ctx.domain_size / (1 << self.params.folding_factor);
         let r_shift_indexes = utils::dedup(
-            (0..round_parameters.num_queries).map(|_| stir_gen.gen_range(0..folded_domain_size)),
+            (0..round_config.num_queries).map(|_| stir_gen.gen_range(0..folded_domain_size)),
         );
 
         // Gen the points in L^k at which we're querying.
@@ -137,8 +135,8 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        if round_parameters.pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(round_parameters.pow_bits)?;
+        if round_config.pow_bits > 0. {
+            arthur.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
         }
 
         let [r_comb] = arthur.challenge_scalars()?;
@@ -177,10 +175,10 @@ where
         Ok(())
     }
 
-    // TODO: rename
-    fn parse_proof_finish(
+    fn parse_final_round(
         &self,
-        stir_proof: &StirProof<F, MerkleConfig>,
+        final_merkle_proof: &MultiPath<MerkleConfig>,
+        final_virtual_evals: &[Vec<F>],
         arthur: &mut Arthur,
         ctx: ParseProofContext<F, MerkleConfig::InnerDigest>,
     ) -> ProofResult<ParsedProof<F>> {
@@ -201,8 +199,6 @@ where
             .map(|index| ctx.domain_offset_exp * ctx.domain_gen_exp.pow([*index as u64]))
             .collect();
 
-        let (final_merkle_proof, final_virtual_evals) =
-            &stir_proof.merkle_proofs[self.params.n_rounds()];
         if !final_merkle_proof
             .verify(
                 &self.params.leaf_hash_params,
@@ -240,6 +236,11 @@ where
         parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
         stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<ParsedProof<F>> {
+        assert_eq!(
+            stir_proof.merkle_proofs.len(),
+            self.params.round_parameters.len() + 1
+        );
+
         // Derive initial combination randomness
         let [r_fold] = arthur.challenge_scalars()?;
 
@@ -270,11 +271,20 @@ where
             rounds: vec![],
         };
 
-        for r in 0..self.params.n_rounds() {
-            self.parse_round(r, stir_proof, arthur, &mut ctx)?;
+        // In the first round, the proof is directly the function f.
+        // In subsequent rounds, it is the function g, which is the fold of the
+        // previous function f.
+        for (round_config, (merkle_proof, virtual_evals)) in self
+            .params
+            .round_parameters
+            .iter()
+            .zip(&stir_proof.merkle_proofs)
+        {
+            self.parse_round(round_config, merkle_proof, virtual_evals, arthur, &mut ctx)?;
         }
 
-        self.parse_proof_finish(stir_proof, arthur, ctx)
+        let (final_merkle_proof, final_virtual_evals) = stir_proof.merkle_proofs.last().unwrap();
+        self.parse_final_round(final_merkle_proof, final_virtual_evals, arthur, ctx)
     }
 
     pub fn verify(
