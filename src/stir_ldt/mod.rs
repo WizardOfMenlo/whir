@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
@@ -107,24 +107,28 @@ mod tests {
 
     #[test]
     fn test_stir_ldt_large_instance() {
-        let folding_factor = 4;
+        let folding_factors = [4, 5];
         let log_degree = 16;
         let soundness_types = [
             SoundnessType::ConjectureList,
             SoundnessType::ProvableList,
             SoundnessType::UniqueDecoding,
         ];
+        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let pow_bitss = [0, 5, 10];
-
-        for soundness_type in soundness_types {
-            for pow_bits in pow_bitss {
-                make_stir_things(
-                    folding_factor,
-                    log_degree,
-                    FoldType::Naive,
-                    soundness_type,
-                    pow_bits,
-                );
+        for folding_factor in folding_factors {
+            for soundness_type in soundness_types {
+                for fold_type in fold_types {
+                    for pow_bits in pow_bitss {
+                        make_stir_things(
+                            folding_factor,
+                            log_degree,
+                            fold_type,
+                            soundness_type,
+                            pow_bits,
+                        );
+                    }
+                }
             }
         }
     }
