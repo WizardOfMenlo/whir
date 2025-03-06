@@ -93,6 +93,7 @@ where
         let mut round_parameters = Vec::with_capacity(max_num_rounds);
         let mut log_degree = uv_parameters.log_degree - stir_parameters.folding_factor;
         let mut log_inv_rate = stir_parameters.starting_log_inv_rate;
+        dbg!(max_num_rounds);
         for _ in 0..max_num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate + (stir_parameters.folding_factor - 1);
@@ -112,11 +113,6 @@ where
                 log_next_eta,
                 field_size_bits,
             );
-
-            // This determines the stopping degree.
-            if !(num_queries + ood_samples >= (1 << log_degree) + 1) {
-                break;
-            }
 
             let query_error =
                 Self::rbr_queries(stir_parameters.soundness_type, log_inv_rate, num_queries);
@@ -145,7 +141,7 @@ where
         }
 
         let final_log_degree = log_degree;
-
+        dbg!(final_log_degree);
         let final_queries = Self::queries(
             stir_parameters.soundness_type,
             protocol_security_level,
