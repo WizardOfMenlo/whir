@@ -88,7 +88,7 @@ where
         &self,
         arthur: &mut Arthur,
         parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
-        stir_proof: &StirProof<MerkleConfig, F>,
+        stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<ParsedProof<F>> {
         // Derive initial combination randomness
         let [mut r_fold] = arthur.challenge_scalars()?;
@@ -255,7 +255,7 @@ where
     pub fn verify(
         &self,
         arthur: &mut Arthur,
-        stir_proof: &StirProof<MerkleConfig, F>,
+        stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<()> {
         // PHASE 1:
         // We first do a pass in which we rederive all the FS challenges and verify Merkle paths.
