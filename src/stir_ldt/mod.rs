@@ -10,6 +10,7 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+// TODO: StirProof<F, MerkleConfig>
 pub struct StirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,

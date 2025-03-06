@@ -173,6 +173,7 @@ where
         }
     }
 
+    // TODO: remove
     pub fn n_rounds(&self) -> usize {
         self.round_parameters.len()
     }
