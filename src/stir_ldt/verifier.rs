@@ -1,6 +1,6 @@
 use std::iter;
 
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::{FftField, Field};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
 use nimue::{
@@ -9,13 +9,17 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 
 use crate::{
     poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
     utils,
 };
 
-use super::{parameters::StirConfig, StirProof};
+use super::{
+    parameters::{RoundConfig, StirConfig},
+    StirProof,
+};
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
 where
@@ -70,8 +74,8 @@ where
 {
     pub fn new(params: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Verifier {
-            params,
             two_inv: F::from(2).inverse().unwrap(),
+            params,
         }
     }
 
@@ -84,124 +88,100 @@ where
         Ok(ParsedCommitment { root: root.into() })
     }
 
-    fn parse_proof(
+    fn parse_round(
         &self,
+        round_config: &RoundConfig,
+        merkle_proof: &MultiPath<MerkleConfig>,
+        virtual_evals: &[Vec<F>],
         arthur: &mut Arthur,
-        parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
-        stir_proof: &StirProof<MerkleConfig, F>,
+        ctx: &mut ParseProofContext<F, MerkleConfig::InnerDigest>,
+    ) -> ProofResult<()> {
+        // TODO: does this have to happen before the other arthur calls?
+        let next_root: [u8; 32] = arthur.next_bytes()?;
+
+        // PHASE 2:
+        let mut ood_points = vec![F::ZERO; round_config.ood_samples];
+        let mut ood_evals = vec![F::ZERO; round_config.ood_samples];
+        if round_config.ood_samples > 0 {
+            arthur.fill_challenge_scalars(&mut ood_points)?;
+            arthur.fill_next_scalars(&mut ood_evals)?;
+        }
+
+        // PHASE 3:
+        let mut shift_queries_seed = [0u8; 32];
+        arthur.fill_challenge_bytes(&mut shift_queries_seed)?;
+        let mut stir_gen = ChaCha20Rng::from_seed(shift_queries_seed);
+        let folded_domain_size = ctx.domain_size / (1 << self.params.folding_factor);
+        let r_shift_indexes = utils::dedup(
+            (0..round_config.num_queries).map(|_| stir_gen.gen_range(0..folded_domain_size)),
+        );
+
+        // Gen the points in L^k at which we're querying.
+        // TODO: Check if this is really necessary
+        let r_shift_points = r_shift_indexes
+            .iter()
+            .map(|index| ctx.domain_offset_exp * ctx.domain_gen_exp.pow([*index as u64]))
+            .collect();
+
+        if !merkle_proof
+            .verify(
+                &self.params.leaf_hash_params,
+                &self.params.two_to_one_params,
+                &ctx.prev_root,
+                virtual_evals.iter().map(|a| a.as_ref()),
+            )
+            .unwrap()
+        {
+            return Err(ProofError::InvalidProof);
+        }
+
+        if round_config.pow_bits > 0. {
+            arthur.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
+        }
+
+        let [r_comb] = arthur.challenge_scalars()?;
+
+        ctx.rounds.push(ParsedRound {
+            r_fold: ctx.r_fold,
+            ood_points,
+            ood_evals,
+            r_shift_indexes,
+            r_shift_points,
+            r_shift_virtual_evals: virtual_evals.to_vec(), // f in first round, g later.
+            r_comb,
+            domain_gen: ctx.domain_gen, // generator of the coset L at a given round.
+            domain_gen_inv: ctx.domain_gen_inv, // inverse of `domain_gen` of the coset L at a given round.
+            domain_offset: ctx.domain_offset,
+            domain_offset_inv: ctx.domain_offset_inv,
+            folded_domain_size,
+        });
+
+        // Update context
+        let [new_r_fold] = arthur.challenge_scalars()?;
+        ctx.r_fold = new_r_fold;
+
+        ctx.prev_root = next_root.into();
+
+        ctx.domain_gen *= ctx.domain_gen;
+        ctx.domain_gen_inv *= ctx.domain_gen_inv;
+        ctx.domain_gen_exp *= ctx.domain_gen_exp;
+
+        ctx.domain_offset *= ctx.domain_offset * ctx.root_of_unity;
+        ctx.domain_offset_inv *= ctx.domain_offset_inv * ctx.root_of_unity_inv;
+        ctx.domain_offset_exp *= ctx.domain_offset_exp * ctx.root_of_unity_exp;
+
+        ctx.domain_size /= 2;
+
+        Ok(())
+    }
+
+    fn parse_final_round(
+        &self,
+        final_merkle_proof: &MultiPath<MerkleConfig>,
+        final_virtual_evals: &[Vec<F>],
+        arthur: &mut Arthur,
+        ctx: ParseProofContext<F, MerkleConfig::InnerDigest>,
     ) -> ProofResult<ParsedProof<F>> {
-        // Derive initial combination randomness
-        let [mut r_fold] = arthur.challenge_scalars()?;
-
-        // PoW
-        if self.params.starting_folding_pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
-        }
-
-        let mut prev_root = parsed_commitment.root.clone();
-
-        let root_of_unity = self.params.starting_domain.backing_domain.group_gen();
-        let root_of_unity_inv = root_of_unity.inverse().unwrap();
-        let root_of_unity_exp = root_of_unity.pow([1 << self.params.folding_factor]);
-
-        let mut domain_gen = root_of_unity;
-        let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
-        let mut domain_gen_exp = domain_gen.pow([1 << self.params.folding_factor]);
-
-        let mut domain_offset = self.params.starting_domain.backing_domain.coset_offset();
-        let mut domain_offset_inv = self
-            .params
-            .starting_domain
-            .backing_domain
-            .coset_offset_inv();
-        let mut domain_offset_exp = domain_offset.pow([1 << self.params.folding_factor]);
-
-        let mut domain_size = self.params.starting_domain.size();
-        let mut rounds = vec![];
-
-        for r in 0..self.params.n_rounds() {
-            // Get the proof of the queries to the function. Is the first round it is directly the
-            // function f. Is subsequent rounds it is the function g, which is the fold of the
-            // previous function f.
-            let (merkle_proof, virtual_evals) = &stir_proof.merkle_proofs[r];
-            let round_parameters = &self.params.round_parameters[r];
-
-            let next_root: [u8; 32] = arthur.next_bytes()?;
-
-            // PHASE 2:
-            let mut ood_points = vec![F::ZERO; round_parameters.ood_samples];
-            let mut ood_evals = vec![F::ZERO; round_parameters.ood_samples];
-            if round_parameters.ood_samples > 0 {
-                arthur.fill_challenge_scalars(&mut ood_points)?;
-                arthur.fill_next_scalars(&mut ood_evals)?;
-            }
-
-            // PHASE 3:
-            let mut shift_queries_seed = [0u8; 32];
-            arthur.fill_challenge_bytes(&mut shift_queries_seed)?;
-            let mut stir_gen = rand_chacha::ChaCha20Rng::from_seed(shift_queries_seed);
-            let folded_domain_size = domain_size / (1 << self.params.folding_factor);
-            let r_shift_indexes = utils::dedup(
-                (0..round_parameters.num_queries)
-                    .map(|_| stir_gen.gen_range(0..folded_domain_size)),
-            );
-
-            // Gen the points in L^k at which we're querying.
-            // TODO: Check if this is really necessary
-            let r_shift_points = r_shift_indexes
-                .iter()
-                .map(|index| domain_offset_exp * domain_gen_exp.pow([*index as u64]))
-                .collect();
-
-            if !merkle_proof
-                .verify(
-                    &self.params.leaf_hash_params,
-                    &self.params.two_to_one_params,
-                    &prev_root,
-                    virtual_evals.iter().map(|a| a.as_ref()),
-                )
-                .unwrap()
-            {
-                return Err(ProofError::InvalidProof);
-            }
-
-            if round_parameters.pow_bits > 0. {
-                arthur.challenge_pow::<PowStrategy>(round_parameters.pow_bits)?;
-            }
-
-            let [r_comb] = arthur.challenge_scalars()?;
-            let [new_r_fold] = arthur.challenge_scalars()?;
-
-            rounds.push(ParsedRound {
-                r_fold,
-                ood_points,
-                ood_evals,
-                r_shift_indexes,
-                r_shift_points,
-                r_shift_virtual_evals: virtual_evals.to_vec(), // f in first round, g later.
-                r_comb,
-                domain_gen,     // generator of the coset L at a given round.
-                domain_gen_inv, // inverse of `domain_gen` of the coset L at a given round.
-                domain_offset,
-                domain_offset_inv,
-                folded_domain_size,
-            });
-
-            r_fold = new_r_fold;
-
-            prev_root = next_root.into();
-
-            domain_gen = domain_gen * domain_gen;
-            domain_gen_inv = domain_gen_inv * domain_gen_inv;
-            domain_gen_exp = domain_gen_exp * domain_gen_exp;
-
-            domain_offset = domain_offset * domain_offset * root_of_unity;
-            domain_offset_inv = domain_offset_inv * domain_offset_inv * root_of_unity_inv;
-            domain_offset_exp = domain_offset_exp * domain_offset_exp * root_of_unity_exp;
-
-            domain_size /= 2;
-        }
-
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_log_degree];
         arthur.fill_next_scalars(&mut final_coefficients)?;
         let p_poly = DensePolynomial::from_coefficients_vec(final_coefficients);
@@ -209,23 +189,21 @@ where
         // Final queries verify
         let mut final_shift_queries_seed = [0u8; 32];
         arthur.fill_challenge_bytes(&mut final_shift_queries_seed)?;
-        let mut final_gen = rand_chacha::ChaCha20Rng::from_seed(final_shift_queries_seed);
-        let folded_domain_size = domain_size / (1 << self.params.folding_factor);
+        let mut final_gen = ChaCha20Rng::from_seed(final_shift_queries_seed);
+        let folded_domain_size = ctx.domain_size / (1 << self.params.folding_factor);
         let final_r_shift_indexes = utils::dedup(
             (0..self.params.final_queries).map(|_| final_gen.gen_range(0..folded_domain_size)),
         );
         let final_r_shift_points = final_r_shift_indexes
             .iter()
-            .map(|index| domain_offset_exp * domain_gen_exp.pow([*index as u64]))
+            .map(|index| ctx.domain_offset_exp * ctx.domain_gen_exp.pow([*index as u64]))
             .collect();
 
-        let (final_merkle_proof, final_virtual_evals) =
-            &stir_proof.merkle_proofs[self.params.n_rounds()];
         if !final_merkle_proof
             .verify(
                 &self.params.leaf_hash_params,
                 &self.params.two_to_one_params,
-                &prev_root,
+                &ctx.prev_root,
                 final_virtual_evals.iter().map(|a| a.as_ref()),
             )
             .unwrap()
@@ -239,23 +217,80 @@ where
         }
 
         Ok(ParsedProof {
-            rounds,
-            final_domain_gen: domain_gen,
-            final_domain_gen_inv: domain_gen_inv,
-            final_domain_offset: domain_offset,
-            final_domain_offset_inv: domain_offset_inv,
+            rounds: ctx.rounds,
+            final_domain_gen: ctx.domain_gen,
+            final_domain_gen_inv: ctx.domain_gen_inv,
+            final_domain_offset: ctx.domain_offset,
+            final_domain_offset_inv: ctx.domain_offset_inv,
             final_r_shift_indexes,
             final_r_shift_points,
             final_r_shift_virtual_evals: final_virtual_evals.to_vec(),
-            final_r_fold: r_fold,
+            final_r_fold: ctx.r_fold,
             p_poly,
         })
+    }
+
+    fn parse_proof(
+        &self,
+        arthur: &mut Arthur,
+        parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
+        stir_proof: &StirProof<F, MerkleConfig>,
+    ) -> ProofResult<ParsedProof<F>> {
+        assert_eq!(
+            stir_proof.merkle_proofs.len(),
+            self.params.round_parameters.len() + 1
+        );
+
+        // Derive initial combination randomness
+        let [r_fold] = arthur.challenge_scalars()?;
+
+        // PoW
+        if self.params.starting_folding_pow_bits > 0. {
+            arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+        }
+
+        let root_of_unity = self.params.starting_domain.backing_domain.group_gen();
+        let domain_offset = self.params.starting_domain.backing_domain.coset_offset();
+        let mut ctx = ParseProofContext {
+            r_fold,
+            domain_size: self.params.starting_domain.size(),
+            root_of_unity,
+            root_of_unity_inv: root_of_unity.inverse().unwrap(),
+            root_of_unity_exp: root_of_unity.pow([1 << self.params.folding_factor]),
+            domain_gen: root_of_unity,
+            domain_gen_inv: self.params.starting_domain.backing_domain.group_gen_inv(),
+            domain_gen_exp: root_of_unity.pow([1 << self.params.folding_factor]),
+            domain_offset,
+            domain_offset_inv: self
+                .params
+                .starting_domain
+                .backing_domain
+                .coset_offset_inv(),
+            domain_offset_exp: domain_offset.pow([1 << self.params.folding_factor]),
+            prev_root: parsed_commitment.root.clone(),
+            rounds: vec![],
+        };
+
+        // In the first round, the proof is directly the function f.
+        // In subsequent rounds, it is the function g, which is the fold of the
+        // previous function f.
+        for (round_config, (merkle_proof, virtual_evals)) in self
+            .params
+            .round_parameters
+            .iter()
+            .zip(&stir_proof.merkle_proofs)
+        {
+            self.parse_round(round_config, merkle_proof, virtual_evals, arthur, &mut ctx)?;
+        }
+
+        let (final_merkle_proof, final_virtual_evals) = stir_proof.merkle_proofs.last().unwrap();
+        self.parse_final_round(final_merkle_proof, final_virtual_evals, arthur, ctx)
     }
 
     pub fn verify(
         &self,
         arthur: &mut Arthur,
-        stir_proof: &StirProof<MerkleConfig, F>,
+        stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<()> {
         // PHASE 1:
         // We first do a pass in which we rederive all the FS challenges and verify Merkle paths.
@@ -328,6 +363,7 @@ where
             domain_gen_invs[0].pow([
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
+
         let mut r_shift_evals: Vec<F> = all_r_shift_indexes[0]
             .iter()
             .zip(all_r_shift_virtual_evals[0].iter())
@@ -350,12 +386,14 @@ where
             // TODO: This actually is just a single value that we need
             let r_num = r_index + 1;
             let r_comb = round.r_comb;
+
             let quotient_set: Vec<_> = round
                 .ood_points
                 .iter()
                 .chain(&round.r_shift_points)
                 .copied()
                 .collect();
+
             let quotient_answers: Vec<_> = round
                 .ood_evals
                 .iter()
@@ -451,4 +489,20 @@ where
 
         Ok(())
     }
+}
+
+struct ParseProofContext<F, D> {
+    r_fold: F,
+    domain_size: usize,
+    root_of_unity: F,
+    root_of_unity_inv: F,
+    root_of_unity_exp: F,
+    domain_gen: F,
+    domain_gen_inv: F,
+    domain_gen_exp: F,
+    domain_offset: F,
+    domain_offset_inv: F,
+    domain_offset_exp: F,
+    prev_root: D,
+    rounds: Vec<ParsedRound<F>>,
 }

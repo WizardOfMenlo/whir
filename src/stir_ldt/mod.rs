@@ -10,21 +10,21 @@ pub mod verifier;
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct StirProof<MerkleConfig, F>
+pub struct StirProof<F, MerkleConfig>
 where
-    MerkleConfig: Config<Leaf = [F]>,
     F: Field + Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+    MerkleConfig: Config<Leaf = [F]>,
 {
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 }
 
 pub fn stir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
-    stir_proof: &StirProof<MerkleConfig, F>,
+    stir_proof: &StirProof<F, MerkleConfig>,
 ) -> usize
 where
-    MerkleConfig: Config<Leaf = [F]>,
     F: Field + Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+    MerkleConfig: Config<Leaf = [F]>,
 {
     transcript.len() + stir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
@@ -96,7 +96,7 @@ mod tests {
         let committer = Committer::new(params.clone());
         let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
-        let prover = Prover(params.clone());
+        let prover = Prover::new(params.clone());
 
         let proof = prover.prove(&mut merlin, &witness).unwrap();
 
