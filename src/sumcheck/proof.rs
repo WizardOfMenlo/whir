@@ -22,8 +22,8 @@ impl<F> SumcheckPolynomial<F>
 where
     F: Field,
 {
-    pub fn new(evaluations: Vec<F>, n_variables: usize) -> Self {
-        SumcheckPolynomial {
+    pub const fn new(evaluations: Vec<F>, n_variables: usize) -> Self {
+        Self {
             evaluations,
             n_variables,
         }

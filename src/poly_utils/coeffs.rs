@@ -138,7 +138,7 @@ impl<F> CoefficientList<F> {
         assert!(len.is_power_of_two());
         let num_variables = len.ilog2();
 
-        CoefficientList {
+        Self {
             coeffs,
             num_variables: num_variables as usize,
         }
@@ -148,7 +148,7 @@ impl<F> CoefficientList<F> {
         &self.coeffs
     }
 
-    pub fn num_variables(&self) -> usize {
+    pub const fn num_variables(&self) -> usize {
         self.num_variables
     }
 
@@ -251,7 +251,7 @@ where
             .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
             .collect();
 
-        CoefficientList {
+        Self {
             coeffs,
             num_variables: self.num_variables() - folding_factor,
         }
@@ -263,7 +263,7 @@ where
     F: Field,
 {
     fn from(value: CoefficientList<F>) -> Self {
-        DensePolynomial::from_coefficients_vec(value.coeffs)
+        Self::from_coefficients_vec(value.coeffs)
     }
 }
 
@@ -272,7 +272,7 @@ where
     F: Field,
 {
     fn from(value: DensePolynomial<F>) -> Self {
-        CoefficientList::new(value.coeffs)
+        Self::new(value.coeffs)
     }
 }
 
@@ -283,7 +283,7 @@ where
     fn from(value: CoefficientList<F>) -> Self {
         let mut evals = value.coeffs;
         wavelet_transform(&mut evals);
-        EvaluationsList::new(evals)
+        Self::new(evals)
     }
 }
 
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(
             coeffs_list.evaluate(&MultilinearPoint(vec![alpha, beta])),
             folded.evaluate(&MultilinearPoint(vec![alpha]))
-        )
+        );
     }
 
     #[test]
@@ -434,6 +434,6 @@ mod tests {
         assert_eq!(
             uv_poly.evaluate(&eval_point),
             mv_poly.evaluate(&MultilinearPoint::expand_from_univariate(eval_point, 4))
-        )
+        );
     }
 }

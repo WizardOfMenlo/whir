@@ -22,9 +22,9 @@ pub struct MatrixMut<'a, T> {
     _lifetime: PhantomData<&'a mut T>,
 }
 
-unsafe impl<'a, T: Send> Send for MatrixMut<'_, T> {}
+unsafe impl<T: Send> Send for MatrixMut<'_, T> {}
 
-unsafe impl<'a, T: Sync> Sync for MatrixMut<'_, T> {}
+unsafe impl<T: Sync> Sync for MatrixMut<'_, T> {}
 
 impl<'a, T> MatrixMut<'a, T> {
     /// creates a MatrixMut from `slice`, where slice is the concatenations of `rows` rows, each consisting of `cols` many entries.
@@ -42,17 +42,17 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 
     /// returns the number of rows
-    pub fn rows(&self) -> usize {
+    pub const fn rows(&self) -> usize {
         self.rows
     }
 
     /// returns the number of columns
-    pub fn cols(&self) -> usize {
+    pub const fn cols(&self) -> usize {
         self.cols
     }
 
     /// checks whether the matrix is a square matrix
-    pub fn is_square(&self) -> bool {
+    pub const fn is_square(&self) -> bool {
         self.rows == self.cols
     }
 
@@ -133,13 +133,13 @@ impl<'a, T> MatrixMut<'a, T> {
             unsafe {
                 let a = self.ptr_at_mut(a.0, a.1);
                 let b = self.ptr_at_mut(b.0, b.1);
-                ptr::swap_nonoverlapping(a, b, 1)
+                ptr::swap_nonoverlapping(a, b, 1);
             }
         }
     }
 
     /// returns an immutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
-    unsafe fn ptr_at(&self, row: usize, col: usize) -> *const T {
+    const unsafe fn ptr_at(&self, row: usize, col: usize) -> *const T {
         // Safe to call under the following assertion (checked by caller)
         // assert!(row < self.rows);
         // assert!(col < self.cols);
@@ -150,7 +150,7 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 
     /// returns a mutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
-    unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
+    const unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
         // Safe to call under the following assertion (checked by caller)
         //
         // assert!(row < self.rows);

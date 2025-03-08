@@ -13,7 +13,7 @@ use rayon::prelude::*;
 ///   [1 1]
 pub fn wavelet_transform<F: Field>(values: &mut [F]) {
     debug_assert!(values.len().is_power_of_two());
-    wavelet_transform_batch(values, values.len())
+    wavelet_transform_batch(values, values.len());
 }
 
 pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
@@ -32,7 +32,7 @@ pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
         0 | 1 => {}
         2 => {
             for v in values.chunks_exact_mut(2) {
-                v[1] += v[0]
+                v[1] += v[0];
             }
         }
         4 => {

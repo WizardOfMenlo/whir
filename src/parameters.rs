@@ -3,7 +3,7 @@ use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::Serialize;
 
-pub fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
+pub const fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
     num_variables + log_inv_rate - 3
 }
 
@@ -20,9 +20,9 @@ impl Display for SoundnessType {
             f,
             "{}",
             match &self {
-                SoundnessType::ProvableList => "ProvableList",
-                SoundnessType::ConjectureList => "ConjectureList",
-                SoundnessType::UniqueDecoding => "UniqueDecoding",
+                Self::ProvableList => "ProvableList",
+                Self::ConjectureList => "ConjectureList",
+                Self::UniqueDecoding => "UniqueDecoding",
             }
         )
     }
@@ -32,11 +32,11 @@ impl FromStr for SoundnessType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "ProvableList" {
-            Ok(SoundnessType::ProvableList)
+            Ok(Self::ProvableList)
         } else if s == "ConjectureList" {
-            Ok(SoundnessType::ConjectureList)
+            Ok(Self::ConjectureList)
         } else if s == "UniqueDecoding" {
-            Ok(SoundnessType::UniqueDecoding)
+            Ok(Self::UniqueDecoding)
         } else {
             Err(format!("Invalid soundness specification: {}", s))
         }
@@ -50,7 +50,7 @@ pub struct MultivariateParameters<F> {
 }
 
 impl<F> MultivariateParameters<F> {
-    pub fn new(num_variables: usize) -> Self {
+    pub const fn new(num_variables: usize) -> Self {
         Self {
             num_variables,
             _field: PhantomData,
@@ -74,9 +74,9 @@ impl FromStr for FoldType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "Naive" {
-            Ok(FoldType::Naive)
+            Ok(Self::Naive)
         } else if s == "ProverHelps" {
-            Ok(FoldType::ProverHelps)
+            Ok(Self::ProverHelps)
         } else {
             Err(format!("Invalid fold type specification: {}", s))
         }
@@ -89,8 +89,8 @@ impl Display for FoldType {
             f,
             "{}",
             match self {
-                FoldType::Naive => "Naive",
-                FoldType::ProverHelps => "ProverHelps",
+                Self::Naive => "Naive",
+                Self::ProverHelps => "ProverHelps",
             }
         )
     }
@@ -103,10 +103,10 @@ pub enum FoldingFactor {
 }
 
 impl FoldingFactor {
-    pub fn at_round(&self, round: usize) -> usize {
+    pub const fn at_round(&self, round: usize) -> usize {
         match self {
-            FoldingFactor::Constant(factor) => *factor,
-            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+            Self::Constant(factor) => *factor,
+            Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 if round == 0 {
                     *first_round_factor
                 } else {
@@ -118,7 +118,7 @@ impl FoldingFactor {
 
     pub fn check_validity(&self, num_variables: usize) -> Result<(), String> {
         match self {
-            FoldingFactor::Constant(factor) => {
+            Self::Constant(factor) => {
                 if *factor > num_variables {
                     Err(format!(
                         "Folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
@@ -131,7 +131,7 @@ impl FoldingFactor {
                     Ok(())
                 }
             }
-            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+            Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 if *first_round_factor > num_variables {
                     Err(format!(
                         "First round folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
@@ -156,7 +156,7 @@ impl FoldingFactor {
     /// sumcheck.
     pub fn compute_number_of_rounds(&self, num_variables: usize) -> (usize, usize) {
         match self {
-            FoldingFactor::Constant(factor) => {
+            Self::Constant(factor) => {
                 // It's checked that factor > 0 and factor <= num_variables
                 let final_sumcheck_rounds = num_variables % factor;
                 (
@@ -164,7 +164,7 @@ impl FoldingFactor {
                     final_sumcheck_rounds,
                 )
             }
-            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+            Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 let nv_except_first_round = num_variables - *first_round_factor;
                 if nv_except_first_round < *factor {
                     // This case is equivalent to Constant(first_round_factor)
@@ -184,11 +184,11 @@ impl FoldingFactor {
     /// Compute folding_factor(0) + ... + folding_factor(n_rounds)
     pub fn total_number(&self, n_rounds: usize) -> usize {
         match self {
-            FoldingFactor::Constant(factor) => {
+            Self::Constant(factor) => {
                 // It's checked that factor > 0 and factor <= num_variables
                 factor * (n_rounds + 1)
             }
-            FoldingFactor::ConstantFromSecondRound(first_round_factor, factor) => {
+            Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 first_round_factor + factor * n_rounds
             }
         }

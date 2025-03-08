@@ -361,14 +361,14 @@ where
                             self.0.folding_factor.at_round(round_state.round),
                         )
                     },
-                ))
+                ));
             }
             FoldType::ProverHelps => stir_evaluations.extend(answers.iter().map(|answers| {
                 // In the ProverHelps mode, the oracle values have been linearly
                 // transformed such that they are exactly the coefficients of the
                 // multilinear polynomial whose evaluation at the folding randomness
                 // is just the folding of f evaluated at the folded point.
-                CoefficientList::new(answers.to_vec()).evaluate(&round_state.folding_randomness)
+                CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
             })),
         }
         round_state.merkle_proofs.push((merkle_proof, answers));

@@ -102,8 +102,7 @@ mod tests {
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
-            .clone();
+            .add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 

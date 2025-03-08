@@ -81,7 +81,7 @@ where
         // Reverse so higher power is first
         res.reverse();
 
-        MultilinearPoint(res)
+        Self(res)
     }
 }
 
@@ -91,14 +91,14 @@ where
     Standard: Distribution<F>,
 {
     pub fn rand(rng: &mut impl RngCore, num_variables: usize) -> Self {
-        MultilinearPoint((0..num_variables).map(|_| rng.gen()).collect())
+        Self((0..num_variables).map(|_| rng.gen()).collect())
     }
 }
 
 /// creates a MultilinearPoint of length 1 from a single field element
 impl<F> From<F> for MultilinearPoint<F> {
     fn from(value: F) -> Self {
-        MultilinearPoint(vec![value])
+        Self(vec![value])
     }
 }
 

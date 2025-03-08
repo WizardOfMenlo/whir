@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(
             poly_3.sum_over_hypercube(),
             combination_randomness * poly_2.evaluate_at_point(&folding_randomness)
-        )
+        );
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
                         + epsilon_2 * eq_poly_outside(&full_folding, &statement_point))
                     + combination_randomness[1]
                         * eq_poly_outside(&folding_randomness_2, &fold_point))
-        )
+        );
     }
 
     #[test]
@@ -250,7 +250,7 @@ mod tests {
         prover.add_new_equality(&[fold_point_2.clone()], &combination_randomness_2[1..]);
 
         let sumcheck_poly_3 = prover.compute_sumcheck_polynomial(folding_factor);
-        let final_coeff = folded_poly_2.fold(&folding_randomness_3.clone()).coeffs()[0];
+        let final_coeff = folded_poly_2.fold(&folding_randomness_3).coeffs()[0];
 
         // Compute all evaluations
         let ood_answer = polynomial.evaluate(&ood_point);
@@ -314,6 +314,6 @@ mod tests {
                             ))
                     + combination_randomness_2[1]
                         * eq_poly_outside(&folding_randomness_3, &fold_point_2))
-        )
+        );
     }
 }

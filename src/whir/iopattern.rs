@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use nimue::plugins::ark::*;
+use nimue::plugins::ark::{ByteIOPattern, FieldIOPattern};
 
 use crate::{
     fs_utils::{OODIOPattern, WhirPoWIOPattern},
@@ -60,18 +60,14 @@ where
                 );
         } else {
             self = self
-                .challenge_scalars(
-                    params.folding_factor.at_round(0),
-                    "folding_randomness",
-                )
+                .challenge_scalars(params.folding_factor.at_round(0), "folding_randomness")
                 .pow(params.starting_folding_pow_bits);
         }
 
         let mut domain_size = params.starting_domain.size();
         for (round, r) in params.round_parameters.iter().enumerate() {
-            let folded_domain_size =
-                domain_size >> params.folding_factor.at_round(round);
-            let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
+            let folded_domain_size = domain_size >> params.folding_factor.at_round(round);
+            let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
             self = self
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
@@ -89,7 +85,7 @@ where
             >> params
                 .folding_factor
                 .at_round(params.round_parameters.len());
-        let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
+        let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")
             .challenge_bytes(domain_size_bytes * params.final_queries, "final_queries")

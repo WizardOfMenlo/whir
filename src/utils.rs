@@ -3,8 +3,8 @@ use ark_ff::Field;
 use std::collections::BTreeSet;
 
 // checks whether the given number n is a power of two.
-pub fn is_power_of_two(n: usize) -> bool {
-    n != 0 && (n & (n - 1) == 0)
+pub const fn is_power_of_two(n: usize) -> bool {
+    n != 0 && n.is_power_of_two()
 }
 
 /// performs big-endian binary decomposition of `value` and returns the result.
