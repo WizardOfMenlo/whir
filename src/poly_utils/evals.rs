@@ -27,7 +27,7 @@ where
         assert!(len.is_power_of_two());
         let num_variables = len.ilog2();
 
-        EvaluationsList {
+        Self {
             evals,
             num_variables: num_variables as usize,
         }
@@ -41,7 +41,7 @@ where
 
         let mut sum = F::ZERO;
         for (b, lag) in LagrangePolynomialIterator::new(point) {
-            sum += lag * self.evals[b.0]
+            sum += lag * self.evals[b.0];
         }
 
         sum
@@ -59,7 +59,7 @@ where
         self.evals.len()
     }
 
-    pub fn num_variables(&self) -> usize {
+    pub const fn num_variables(&self) -> usize {
         self.num_variables
     }
 }

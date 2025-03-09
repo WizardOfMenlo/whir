@@ -10,7 +10,9 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use nimue::{Arthur, ByteIOPattern, ByteReader, ByteWriter, IOPattern, Merlin, ProofError, ProofResult};
+use nimue::{
+    Arthur, ByteIOPattern, ByteReader, ByteWriter, IOPattern, Merlin, ProofError, ProofResult,
+};
 use rand::RngCore;
 
 #[derive(
@@ -144,7 +146,7 @@ impl<F: Field> DigestWriter<MerkleTreeParams<F>> for Merlin {
     }
 }
 
-impl <'a, F: Field> DigestReader<MerkleTreeParams<F>> for Arthur<'a> {
+impl<F: Field> DigestReader<MerkleTreeParams<F>> for Arthur<'_> {
     fn read_digest(&mut self) -> ProofResult<Blake3Digest> {
         let mut digest = [0; 32];
         self.fill_next_bytes(&mut digest)?;

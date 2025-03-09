@@ -275,16 +275,14 @@ fn run_whir<F, MerkleConfig>(
             initial_statement: false,
             ..whir_params.clone()
         };
-        let params =
-            WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
-            .clone();
+            .add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 
@@ -350,8 +348,7 @@ fn run_whir<F, MerkleConfig>(
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
-            .clone();
+            .add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 
@@ -371,7 +368,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_prover_time = Instant::now();
 
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
         let prover = Prover(params.clone());
 

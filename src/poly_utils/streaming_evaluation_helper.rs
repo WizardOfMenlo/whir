@@ -64,9 +64,10 @@ impl<F: Field> Iterator for TermPolynomialIterator<F> {
         for bit_index in (0..low_index_of_prefix).rev() {
             let last_element = self.stack.last().unwrap();
             let next_bit: bool = (next_position & (1 << bit_index)) != 0;
-            self.stack.push(match next_bit {
-                true => *last_element * self.point[bit_index],
-                false => *last_element,
+            self.stack.push(if next_bit {
+                *last_element * self.point[bit_index]
+            } else {
+                *last_element
             });
         }
 

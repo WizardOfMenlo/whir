@@ -205,7 +205,7 @@ where
         let final_folding_pow_bits =
             0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
 
-        WhirConfig {
+        Self {
             security_level: whir_parameters.security_level,
             max_pow_bits: whir_parameters.pow_bits,
             initial_statement: whir_parameters.initial_statement,
@@ -384,7 +384,7 @@ where
     ) -> usize {
         let num_queries_f = match soundness_type {
             SoundnessType::UniqueDecoding => {
-                let rate = 1. / ((1 << log_inv_rate) as f64);
+                let rate = 1. / f64::from(1 << log_inv_rate);
                 let denom = (0.5 * (1. + rate)).log2();
 
                 -(protocol_security_level as f64) / denom
@@ -407,7 +407,7 @@ where
 
         match soundness_type {
             SoundnessType::UniqueDecoding => {
-                let rate = 1. / ((1 << log_inv_rate) as f64);
+                let rate = 1. / f64::from(1 << log_inv_rate);
                 let denom = -(0.5 * (1. + rate)).log2();
 
                 num_queries * denom

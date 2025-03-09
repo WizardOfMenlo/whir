@@ -18,7 +18,7 @@ pub struct BinaryHypercube {
 impl BinaryHypercube {
     pub fn new(num_variables: usize) -> Self {
         debug_assert!(num_variables < usize::BITS as usize); // Note that we need strictly smaller, since some code would overflow otherwise.
-        BinaryHypercube {
+        Self {
             pos: 0,
             num_variables,
         }

@@ -69,7 +69,7 @@ impl<F: FftField> NttEngine<F> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
         if let Some(engine) = cache.get(&type_id) {
-            engine.clone().downcast::<NttEngine<F>>().unwrap()
+            engine.clone().downcast::<Self>().unwrap()
         } else {
             let engine = Arc::new(NttEngine::new_from_fftfield());
             cache.insert(type_id, engine.clone());
@@ -99,7 +99,7 @@ impl<F: Field> NttEngine<F> {
         // TODO: Assert that omega factors into 2s and 3s.
         assert_eq!(omega_order.pow([order as u64]), F::ONE);
         assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
-        let mut res = NttEngine {
+        let mut res = Self {
             order,
             omega_order,
             half_omega_3_1_plus_2: F::ZERO,
@@ -135,7 +135,7 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn ntt(&self, values: &mut [F]) {
-        self.ntt_batch(values, values.len())
+        self.ntt_batch(values, values.len());
     }
 
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
@@ -262,12 +262,7 @@ impl<F: Field> NttEngine<F> {
         debug_assert_eq!(values.len() % (rows * cols), 0);
         if values.len() > workload_size::<F>() {
             let size = rows * cols;
-            if values.len() != size {
-                let workload_size = size * max(1, workload_size::<F>() / size);
-                values.par_chunks_mut(workload_size).for_each(|values| {
-                    self.apply_twiddles(values, roots, rows, cols);
-                });
-            } else {
+            if values.len() == size {
                 let step = roots.len() / (rows * cols);
                 values
                     .par_chunks_exact_mut(cols)
@@ -282,6 +277,11 @@ impl<F: Field> NttEngine<F> {
                             index += step;
                         }
                     });
+            } else {
+                let workload_size = size * max(1, workload_size::<F>() / size);
+                values.par_chunks_mut(workload_size).for_each(|values| {
+                    self.apply_twiddles(values, roots, rows, cols);
+                });
             }
         } else {
             let step = roots.len() / (rows * cols);

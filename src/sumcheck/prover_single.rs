@@ -29,7 +29,7 @@ where
         assert_eq!(points.len(), evaluations.len());
         let num_variables = coeffs.num_variables();
 
-        let mut prover = SumcheckSingle {
+        let mut prover = Self {
             evaluation_of_p: coeffs.into(),
             evaluation_of_equality: EvaluationsList::new(vec![F::ZERO; 1 << num_variables]),
             num_variables,
@@ -287,7 +287,7 @@ fn test_eval_eq() {
     SumcheckSingle::eval_eq(&eval, &mut out, F::ONE);
     dbg!(&out);
 
-    let point = MultilinearPoint(eval.clone());
+    let point = MultilinearPoint(eval);
     let mut expected = vec![F::ZERO; 4];
     for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
         expected[prefix.0] = lag;

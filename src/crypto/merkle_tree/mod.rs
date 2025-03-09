@@ -6,17 +6,15 @@ use std::{borrow::Borrow, marker::PhantomData, sync::atomic::AtomicUsize};
 
 use ark_crypto_primitives::{crh::CRHScheme, merkle_tree::DigestConverter, Error};
 use ark_serialize::CanonicalSerialize;
-use lazy_static::lazy_static;
 use rand::RngCore;
+use std::sync::LazyLock;
 
 #[derive(Debug, Default)]
 pub struct HashCounter {
     counter: AtomicUsize,
 }
 
-lazy_static! {
-    static ref HASH_COUNTER: HashCounter = HashCounter::default();
-}
+static HASH_COUNTER: LazyLock<HashCounter> = LazyLock::new(HashCounter::default);
 
 impl HashCounter {
     pub(crate) fn add() -> usize {
@@ -28,7 +26,7 @@ impl HashCounter {
     pub fn reset() {
         HASH_COUNTER
             .counter
-            .store(0, std::sync::atomic::Ordering::SeqCst)
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn get() -> usize {

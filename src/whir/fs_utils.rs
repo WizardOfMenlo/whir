@@ -15,7 +15,7 @@ where
     // How many bytes do we need to represent an index in the folded domain?
     // domain_size_bytes = log2(folded_domain_size) / 8
     // (both operations are rounded up)
-    let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize + 7) / 8;
+    let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
     // We need these many bytes to represent the query indices
     let mut queries = vec![0u8; num_queries * domain_size_bytes];
     transcript.fill_challenge_bytes(&mut queries)?;

@@ -32,7 +32,7 @@ where
         assert_eq!(points.len(), combination_randomness.len());
         let num_variables = coeffs.num_variables();
 
-        let mut prover = SumcheckCore {
+        let mut prover = Self {
             evaluation_of_p: coeffs.into(), // transform coefficient form -> evaluation form
             evaluation_of_equality: EvaluationsList::new(vec![F::ZERO; 1 << num_variables]),
             num_variables,

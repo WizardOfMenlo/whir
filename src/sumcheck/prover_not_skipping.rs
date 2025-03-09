@@ -97,7 +97,7 @@ where
         evaluations: &[F],
     ) {
         self.sumcheck_prover
-            .add_new_equality(points, combination_randomness, evaluations)
+            .add_new_equality(points, combination_randomness, evaluations);
     }
 }
 
