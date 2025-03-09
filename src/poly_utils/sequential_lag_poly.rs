@@ -5,7 +5,6 @@ use ark_ff::Field;
 use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
 
 /// There is an alternative (possibly more efficient) implementation that iterates over the x in Gray code ordering.
-
 ///
 /// LagrangePolynomialIterator for a given multilinear n-dimensional `point` iterates over pairs (x, y)
 /// where x ranges over all possible {0,1}^n
