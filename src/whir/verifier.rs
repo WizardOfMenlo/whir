@@ -494,7 +494,7 @@ where
         if let Some(round) = parsed.initial_sumcheck_rounds.first() {
             // Check the first polynomial
             let (mut prev_poly, mut randomness) = round.clone();
-            if prev_poly.sum_over_hypercube()
+            if prev_poly.sum_over_binary_hypercube()
                 != parsed_commitment
                     .ood_answers
                     .iter()
@@ -509,7 +509,7 @@ where
 
             // Check the rest of the rounds
             for (sumcheck_poly, new_randomness) in &parsed.initial_sumcheck_rounds[1..] {
-                if sumcheck_poly.sum_over_hypercube()
+                if sumcheck_poly.sum_over_binary_hypercube()
                     != prev_poly.evaluate_at_point(&randomness.into())
                 {
                     return Err(ProofError::InvalidProof);
@@ -537,7 +537,7 @@ where
                     .map(|(val, rand)| val * rand)
                     .sum::<F>();
 
-            if sumcheck_poly.sum_over_hypercube() != claimed_sum {
+            if sumcheck_poly.sum_over_binary_hypercube() != claimed_sum {
                 return Err(ProofError::InvalidProof);
             }
 
@@ -546,7 +546,7 @@ where
             // Check the rest of the round
             for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds[1..] {
                 let (prev_poly, randomness) = prev.unwrap();
-                if sumcheck_poly.sum_over_hypercube()
+                if sumcheck_poly.sum_over_binary_hypercube()
                     != prev_poly.evaluate_at_point(&randomness.into())
                 {
                     return Err(ProofError::InvalidProof);
@@ -578,7 +578,7 @@ where
             let (sumcheck_poly, new_randomness) = &parsed.final_sumcheck_rounds[0].clone();
             let claimed_sum = prev_sumcheck_poly_eval;
 
-            if sumcheck_poly.sum_over_hypercube() != claimed_sum {
+            if sumcheck_poly.sum_over_binary_hypercube() != claimed_sum {
                 return Err(ProofError::InvalidProof);
             }
 
@@ -587,7 +587,7 @@ where
             // Check the rest of the round
             for (sumcheck_poly, new_randomness) in &parsed.final_sumcheck_rounds[1..] {
                 let (prev_poly, randomness) = prev.unwrap();
-                if sumcheck_poly.sum_over_hypercube()
+                if sumcheck_poly.sum_over_binary_hypercube()
                     != prev_poly.evaluate_at_point(&randomness.into())
                 {
                     return Err(ProofError::InvalidProof);

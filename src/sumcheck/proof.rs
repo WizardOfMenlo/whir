@@ -36,28 +36,6 @@ where
         &self.evaluations
     }
 
-    // TODO(Gotti): Rename to sum_over_binary_hypercube for clarity?
-    // TODO(Gotti): Make more efficient; the base_decomposition and filtering is unneccessary.
-
-    /// Returns the sum of evaluations of f, when summed only over {0,1}^n_variables
-    ///
-    /// (and not over {0,1,2}^n_variable)
-    pub fn sum_over_hypercube(&self) -> F {
-        let num_evaluation_points = 3_usize.pow(self.n_variables as u32);
-
-        let mut sum = F::ZERO;
-        for point in 0..num_evaluation_points {
-            if base_decomposition(point, 3, self.n_variables)
-                .into_iter()
-                .all(|v| matches!(v, 0 | 1))
-            {
-                sum += self.evaluations[point];
-            }
-        }
-
-        sum
-    }
-
     /// Returns the sum of evaluations of f, when summed only over {0,1}^n_variables
     /// Avoids enumerating 3^n, instead only iterates 2^n
     pub fn sum_over_binary_hypercube(&self) -> F {
@@ -129,33 +107,5 @@ mod tests {
             let point = MultilinearPoint(decomp.into_iter().map(F::from).collect());
             assert_eq!(poly.evaluate_at_point(&point), poly.evaluations()[i]);
         }
-    }
-
-    #[test]
-    fn test_sum_over_hypercube_correctness_and_bench() {
-        let n = 6;
-        let evaluations: Vec<F> = (0..(3_usize.pow(n as u32)) as u64).map(F::from).collect();
-        let poly = SumcheckPolynomial::new(evaluations, n);
-
-        let sum_orig = poly.sum_over_hypercube();
-        let sum_improved = poly.sum_over_binary_hypercube();
-        assert_eq!(sum_orig, sum_improved);
-
-        let loop_count = 10;
-
-        let start = Instant::now();
-        for _ in 0..loop_count {
-            let _ = poly.sum_over_hypercube();
-        }
-        let dur_orig = start.elapsed();
-
-        let start = Instant::now();
-        for _ in 0..loop_count {
-            let _ = poly.sum_over_binary_hypercube();
-        }
-        let dur_improved = start.elapsed();
-
-        println!("  sum_over_hypercube (original) total time: {:?}", dur_orig);
-        println!("  sum_over_hypercube_improved     total time: {:?}", dur_improved);
     }
 }
