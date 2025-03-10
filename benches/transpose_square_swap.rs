@@ -11,7 +11,8 @@ fn create_matrix(rows: usize) -> Vec<(usize, usize)> {
 
 /// Benchmark function for `transpose_square_swap_parallel`
 fn benchmark_transpose_square_swap(c: &mut Criterion) {
-    let size = 1024; // Adjust for different test sizes
+    // To be adjusted for different test sizes
+    let size = 1024;
     let mut matrix_a = create_matrix(size);
     let mut matrix_b = create_matrix(size);
 
