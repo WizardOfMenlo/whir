@@ -3,8 +3,8 @@ name = "whir"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 default-run = "main"
+rust-version = "1.83.0"
 
 [dependencies]
 ark-std = { version = "0.5", features = ["std"] }
