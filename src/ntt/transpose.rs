@@ -191,7 +191,7 @@ fn transpose_square_swap<F: Sized + Send>(a: MatrixMut<F>, b: MatrixMut<F>) {
 ///
 /// The size must be a power of two.
 #[cfg(feature = "parallel")]
-pub fn transpose_square_swap_parallel<F: Sized + Send>(
+fn transpose_square_swap_parallel<F: Sized + Send>(
     mut a: MatrixMut<'_, F>,
     mut b: MatrixMut<'_, F>,
 ) {
