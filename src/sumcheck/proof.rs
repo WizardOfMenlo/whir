@@ -58,6 +58,37 @@ where
         sum
     }
 
+    /// Returns the sum of evaluations of f, when summed only over {0,1}^n_variables
+    /// Avoids enumerating 3^n, instead only iterates 2^n
+    pub fn sum_over_binary_hypercube(&self) -> F {
+        let binary_points = 2_usize.pow(self.n_variables as u32);
+        let mut sum = F::ZERO;
+
+        for point in 0..binary_points {
+            let ternary_index = self.binary_to_ternary_index(point);
+            sum += self.evaluations[ternary_index];
+        }
+        sum
+    }
+
+    /// Converts a binary index (0..2^n) to its corresponding ternary index (0..3^n).
+    fn binary_to_ternary_index(&self, binary_index: usize) -> usize {
+        let mut ternary_index = 0;
+        let mut factor = 3_usize.pow((self.n_variables - 1) as u32);
+
+        // Read bits from the most significant to the least, assigning them to descending powers of 3
+        for i in 0..self.n_variables {
+            let shift = self.n_variables - 1 - i;
+            let bit = (binary_index >> shift) & 1;
+            ternary_index += bit * factor;
+            if i < self.n_variables - 1 {
+                factor /= 3;
+            }
+        }
+
+        ternary_index
+    }
+
     /// evaluates the polynomial at an arbitrary point, not neccessarily in {0,1,2}^n_variables.
     ///
     /// We assert that point.n_variables() == self.n_variables
@@ -80,6 +111,7 @@ mod tests {
     use crate::{crypto::fields::Field64, poly_utils::MultilinearPoint, utils::base_decomposition};
 
     use super::SumcheckPolynomial;
+    use std::time::Instant;
 
     type F = Field64;
 
@@ -97,5 +129,33 @@ mod tests {
             let point = MultilinearPoint(decomp.into_iter().map(F::from).collect());
             assert_eq!(poly.evaluate_at_point(&point), poly.evaluations()[i]);
         }
+    }
+
+    #[test]
+    fn test_sum_over_hypercube_correctness_and_bench() {
+        let n = 6;
+        let evaluations: Vec<F> = (0..(3_usize.pow(n as u32)) as u64).map(F::from).collect();
+        let poly = SumcheckPolynomial::new(evaluations, n);
+
+        let sum_orig = poly.sum_over_hypercube();
+        let sum_improved = poly.sum_over_binary_hypercube();
+        assert_eq!(sum_orig, sum_improved);
+
+        let loop_count = 10;
+
+        let start = Instant::now();
+        for _ in 0..loop_count {
+            let _ = poly.sum_over_hypercube();
+        }
+        let dur_orig = start.elapsed();
+
+        let start = Instant::now();
+        for _ in 0..loop_count {
+            let _ = poly.sum_over_binary_hypercube();
+        }
+        let dur_improved = start.elapsed();
+
+        println!("  sum_over_hypercube (original) total time: {:?}", dur_orig);
+        println!("  sum_over_hypercube_improved     total time: {:?}", dur_improved);
     }
 }
