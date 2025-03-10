@@ -89,7 +89,6 @@ mod tests {
     use crate::{crypto::fields::Field64, poly_utils::MultilinearPoint, utils::base_decomposition};
 
     use super::SumcheckPolynomial;
-    use std::time::Instant;
 
     type F = Field64;
 
