@@ -14,7 +14,6 @@ use std::{
 /// The invariant this data structure maintains is that `data` has lifetime
 /// `'a` and points to a collection of `rows` rowws, at intervals `row_stride`,
 /// each of length `cols`.
-#[derive(Clone)]
 pub struct MatrixMut<'a, T> {
     data: *mut T,
     rows: usize,

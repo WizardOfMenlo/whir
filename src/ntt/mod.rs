@@ -1,8 +1,8 @@
 //! NTT and related algorithms.
 
-pub mod matrix;
+mod matrix;
 mod ntt;
-pub mod transpose;
+mod transpose;
 mod utils;
 mod wavelet;
 
