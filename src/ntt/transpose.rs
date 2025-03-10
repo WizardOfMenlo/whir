@@ -85,6 +85,7 @@ fn transpose_copy_parallel<F: Sized + Copy + Send>(
 
 /// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
 /// This is the non-parallel version
+#[cfg(not(feature = "parallel"))]
 fn transpose_copy_not_parallel<F: Sized + Copy>(src: MatrixMut<'_, F>, mut dst: MatrixMut<'_, F>) {
     assert_eq!(src.rows(), dst.cols());
     assert_eq!(src.cols(), dst.rows());
@@ -153,6 +154,7 @@ fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
 
 /// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
 /// This is the non-parallel version.
+#[cfg(not(feature = "parallel"))]
 fn transpose_square_non_parallel<F: Sized>(mut m: MatrixMut<F>) {
     debug_assert!(m.is_square());
     debug_assert!(m.rows().is_power_of_two());
@@ -225,6 +227,7 @@ fn transpose_square_swap_parallel<F: Sized + Send>(mut a: MatrixMut<F>, mut b: M
 }
 
 /// Transpose and swap two square size matrices, whose sizes are a power of two (non-parallel version)
+#[cfg(not(feature = "parallel"))]
 fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: MatrixMut<F>) {
     debug_assert!(a.is_square());
     debug_assert_eq!(a.rows(), b.cols());
@@ -260,36 +263,29 @@ mod tests {
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
 
-    // create a vector (intended to be viewed as a matrix) whose (i,j)'th entry is the pair (i,j) itself.
-    // This is useful to debug transposition algorithms.
+    /// Creates a `rows x columns` matrix stored as a flat vector.
+    /// Each element `(i, j)` represents its row and column position.
     fn make_example_matrix(rows: usize, columns: usize) -> Vec<Pair> {
-        let mut v: Vec<Pair> = vec![(0, 0); rows * columns];
-        let mut view = MatrixMut::from_mut_slice(&mut v, rows, columns);
-        for i in 0..rows {
-            for j in 0..columns {
-                view[(i, j)] = (i, j);
-            }
-        }
-        v
+        (0..rows)
+            .flat_map(|i| (0..columns).map(move |j| (i, j)))
+            .collect()
     }
 
-    // create a vector (intended to be viewed as a sequence of `instances` of matrices) where (i,j)'th entry of the `index`th matrix
-    // is the triple (index, i,j).
+    /// Creates a sequence of `instances` matrices, each of size `rows x columns`.
+    ///
+    /// Each element in the `index`-th matrix is `(index, row, col)`, stored in a flat vector.
     fn make_example_matrices(rows: usize, columns: usize, instances: usize) -> Vec<Triple> {
-        let mut v: Vec<Triple> = vec![(0, 0, 0); rows * columns * instances];
+        let mut matrices = Vec::with_capacity(rows * columns * instances);
+
         for index in 0..instances {
-            let mut view = MatrixMut::from_mut_slice(
-                &mut v[rows * columns * index..rows * columns * (index + 1)],
-                rows,
-                columns,
-            );
-            for i in 0..rows {
-                for j in 0..columns {
-                    view[(i, j)] = (index, i, j);
+            for row in 0..rows {
+                for col in 0..columns {
+                    matrices.push((index, row, col));
                 }
             }
         }
-        v
+
+        matrices
     }
 
     #[test]
@@ -297,6 +293,7 @@ mod tests {
         // iterate over both parallel and non-parallel implementation.
         // Needs HRTB, otherwise it won't work.
         let mut funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, Pair>, MatrixMut<'b, Pair>)> = vec![
+            #[cfg(not(feature = "parallel"))]
             &transpose_copy_not_parallel::<Pair>,
             &transpose_copy::<Pair>,
         ];
@@ -328,6 +325,7 @@ mod tests {
         // iterate over parallel and non-parallel variants:
         let mut funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, Triple>, MatrixMut<'a, Triple>)> = vec![
             &transpose_square_swap::<Triple>,
+            #[cfg(not(feature = "parallel"))]
             &transpose_square_swap_non_parallel::<Triple>,
         ];
         #[cfg(feature = "parallel")]
