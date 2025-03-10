@@ -38,7 +38,7 @@ where
 
     /// Returns the sum of evaluations of f, when summed only over {0,1}^n_variables
     /// Avoids enumerating 3^n, instead only iterates 2^n
-    pub fn sum_over_binary_hypercube(&self) -> F {
+    pub fn sum_over_boolean_hypercube(&self) -> F {
         let binary_points = 2_usize.pow(self.n_variables as u32);
         let mut sum = F::ZERO;
 

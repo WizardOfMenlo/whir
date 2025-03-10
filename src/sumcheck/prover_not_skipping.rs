@@ -179,12 +179,12 @@ mod tests {
         let [folding_randomness_12]: [F; 1] = arthur.challenge_scalars()?;
 
         assert_eq!(
-            sumcheck_poly_11.sum_over_binary_hypercube(),
+            sumcheck_poly_11.sum_over_boolean_hypercube(),
             epsilon_1 * ood_answer + epsilon_2 * statement_answer
         );
 
         assert_eq!(
-            sumcheck_poly_12.sum_over_binary_hypercube(),
+            sumcheck_poly_12.sum_over_boolean_hypercube(),
             sumcheck_poly_11.evaluate_at_point(&folding_randomness_11.into())
         );
 
@@ -286,23 +286,23 @@ mod tests {
         let [folding_randomness_22]: [F; 1] = arthur.challenge_scalars()?;
 
         assert_eq!(
-            sumcheck_poly_11.sum_over_binary_hypercube(),
+            sumcheck_poly_11.sum_over_boolean_hypercube(),
             epsilon_1 * ood_answer + epsilon_2 * statement_answer
         );
 
         assert_eq!(
-            sumcheck_poly_12.sum_over_binary_hypercube(),
+            sumcheck_poly_12.sum_over_boolean_hypercube(),
             sumcheck_poly_11.evaluate_at_point(&folding_randomness_11.into())
         );
 
         assert_eq!(
-            sumcheck_poly_21.sum_over_binary_hypercube(),
+            sumcheck_poly_21.sum_over_boolean_hypercube(),
             sumcheck_poly_12.evaluate_at_point(&folding_randomness_12.into())
                 + combination_randomness[0] * fold_answer
         );
 
         assert_eq!(
-            sumcheck_poly_22.sum_over_binary_hypercube(),
+            sumcheck_poly_22.sum_over_boolean_hypercube(),
             sumcheck_poly_21.evaluate_at_point(&folding_randomness_21.into())
         );
 

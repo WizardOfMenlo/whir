@@ -260,7 +260,7 @@ mod tests {
         let poly_1 = prover.compute_sumcheck_polynomial();
 
         // First, check that is sums to the right value over the hypercube
-        assert_eq!(poly_1.sum_over_binary_hypercube(), claimed_value);
+        assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
@@ -270,7 +270,7 @@ mod tests {
         let poly_2 = prover.compute_sumcheck_polynomial();
 
         assert_eq!(
-            poly_2.sum_over_binary_hypercube(),
+            poly_2.sum_over_boolean_hypercube(),
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
