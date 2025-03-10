@@ -150,7 +150,7 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 
     /// returns a mutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
-    pub(crate) const unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
+    pub(crate) unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
         // Safe to call under the following assertion (checked by caller)
         //
         // assert!(row < self.rows);
