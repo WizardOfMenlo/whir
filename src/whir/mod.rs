@@ -43,8 +43,9 @@ mod tests {
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
     use crate::poly_utils::coeffs::CoefficientList;
+    use crate::poly_utils::evals::EvaluationsList;
     use crate::poly_utils::MultilinearPoint;
-    use crate::whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights};
+    use crate::whir::statement::{Statement, StatementVerifier, Weights};
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -97,6 +98,19 @@ mod tests {
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
         }
+
+        let input = CoefficientList::new(
+            (0..1<<num_variables)
+                .map(F::from)
+                .collect(),
+        );
+        let input : EvaluationsList<F> = input.clone().into();
+ 
+        let linear_claim_weight = Weights::linear(input.clone());
+        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        
+        let sum = linear_claim_weight.weighted_sum(&poly);
+        statement.add_constraint(linear_claim_weight, sum);
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)

@@ -91,12 +91,7 @@ where
             // this initial statement.
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
             sumcheck_prover = {
-                let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone(), &statement, combination_randomness_gen);
-                // sumcheck.add_weighted_sum(
-                //     &statement,
-                //     combination_randomness_gen
-                // );
-
+                let sumcheck = SumcheckSingle::new(witness.polynomial.clone(), &statement, combination_randomness_gen);
                 Some(sumcheck)
             };
 

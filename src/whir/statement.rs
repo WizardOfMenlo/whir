@@ -1,7 +1,11 @@
 use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
+#[cfg(not(feature = "parallel"))]
+use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
+
 use rayon::prelude::*;
+
 
 #[derive(Clone, Debug)]
 pub enum Weights<F: Field> {
@@ -45,7 +49,6 @@ impl<F: Field> Weights<F> {
         }
     }
 
-
     #[cfg(feature = "parallel")]
     fn eval_eq(eval: &[F], out: &mut [F], scalar: F) {
         use rayon::join;
@@ -88,41 +91,6 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    fn convert_to_multilinear_point(&self, corner: usize) -> MultilinearPoint<F> {
-        let mut bits = (0..self.num_variables())
-        .map(|b| {
-            if (corner >> b) & 1 == 1 {
-                F::ONE
-            } else {
-                F::ZERO
-            }
-        })
-        .collect::<Vec<_>>();
-        bits.reverse();
-        MultilinearPoint(
-            bits
-        )
-    }
-
-    fn evaluate_cube(&self, corner: usize) -> F {
-        let point = self.convert_to_multilinear_point(corner);
-        self.evaluate_mle(&point)
-    }
-
-    fn evaluate_mle(&self, point: &MultilinearPoint<F>) -> F {
-        match self {
-            Weights::Evaluation { point: p } => {
-                assert_eq!(point.num_variables(), p.num_variables());
-                let mut acc = F::ONE;
-                for (&l, &r) in p.0.iter().zip(&point.0) {
-                    acc *= l * r + (F::ONE - l) * (F::ONE - r);
-                }
-                acc
-            },
-            _ => F::ZERO,
-        }
-    }
-
     pub fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
         match self {
             Self::Linear { weight } => {
@@ -145,11 +113,7 @@ impl<F: Field> Weights<F> {
                 }
             },
             Self::Evaluation { point } => {
-                let mut sum = F::ZERO;
-                for (corner, poly) in poly.evals().iter().enumerate() {
-                    sum += self.evaluate_cube(corner) * poly;
-                }
-                sum
+               poly.eval_extension(point)
             }
         }
     }
