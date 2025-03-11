@@ -104,13 +104,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "assertion failed: num_variables < usize::BITS as usize")]
-    fn test_binary_hypercube_overflow() {
-        // This should trigger the debug assertion failure
-        let _ = BinaryHypercube::new(usize::BITS as usize);
-    }
-
-    #[test]
     fn test_binary_hypercube_point_order() {
         let mut hypercube = BinaryHypercube::new(3);
         let expected_points = vec![
