@@ -102,7 +102,7 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         for (point, rand) in points.iter().zip(combination_randomness) {
-            for (prefix, lag) in LagrangePolynomialIterator::new(point) {
+            for (prefix, lag) in LagrangePolynomialIterator::from(point) {
                 self.evaluation_of_equality.evals_mut()[prefix.0] += *rand * lag;
             }
         }
