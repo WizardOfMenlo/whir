@@ -305,7 +305,7 @@ fn run_whir<F, MerkleConfig>(
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof, statement_new.constraints.len());
+        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
         let whir_ldt_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -386,7 +386,7 @@ fn run_whir<F, MerkleConfig>(
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
-        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof, statement.constraints.len());
+        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
         let whir_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)

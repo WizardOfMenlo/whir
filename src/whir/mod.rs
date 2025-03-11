@@ -24,13 +24,12 @@ where
 pub fn whir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
-    statement_len: usize,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes) + statement_len * std::mem::size_of::<F>()
+    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]

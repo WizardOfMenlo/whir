@@ -80,7 +80,7 @@ where
         let mut new_constraints = Vec::new();
 
         for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
-            let weights: Weights<F> = crate::whir::statement::Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
+            let weights: Weights<F> = Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
             new_constraints.push((weights, evaluation));
         }
 
@@ -134,9 +134,10 @@ where
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
             merkle_proofs: vec![],
+            randomness_vec: randomness_vec.clone(),
         };
 
-        self.round(merlin, round_state, &statement, &mut randomness_vec)
+        self.round(merlin, round_state, &statement)
     }
 
     fn round<Merlin>(
@@ -144,7 +145,7 @@ where
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
         prover_statement: &Statement<F>,
-        randomness_vec: &mut Vec<F>
+        // randomness_vec: &mut Vec<F>
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -207,16 +208,14 @@ where
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
-                    let start_idx = (0..=round_state.round)
-                        .map(|r| self.0.folding_factor.at_round(r))
-                        .sum::<usize>();
+                    let start_idx = self.0.folding_factor.total_number(round_state.round);
                     let mut arr = final_folding_randomness.clone().0;
                     arr.reverse();
-                    randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
+                    round_state.randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
                         .copy_from_slice(&arr);
             }
 
-            let mut randomness_vec_rev = randomness_vec.clone();
+            let mut randomness_vec_rev = round_state.randomness_vec.clone();
             randomness_vec_rev.reverse();
 
             let mut statement_values_at_random_point = vec![];
@@ -412,12 +411,11 @@ where
                 round_params.folding_pow_bits,
             )?;
 
-        let start_idx = (0..=round_state.round)
-            .map(|r| self.0.folding_factor.at_round(r))
-            .sum::<usize>();
+        let start_idx = self.0.folding_factor.total_number(round_state.round);
         let mut arr = folding_randomness.clone().0;
         arr.reverse();
-        randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
+        
+        round_state.randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
             .copy_from_slice(&arr);
  
         let round_state = RoundState {
@@ -429,9 +427,10 @@ where
             prev_merkle: merkle_tree,
             prev_merkle_answers: folded_evals,
             merkle_proofs: round_state.merkle_proofs,
+            randomness_vec: round_state.randomness_vec.clone(),
         };
 
-        self.round(merlin, round_state, prover_statement, randomness_vec)
+        self.round(merlin, round_state, prover_statement)
     }
 }
 
@@ -448,4 +447,5 @@ where
     prev_merkle: MerkleTree<MerkleConfig>,
     prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    randomness_vec: Vec<F>,
 }

@@ -44,11 +44,11 @@ where
     pub final_folding_pow_bits: f64,
 
     // PoW parameters
-    pub(crate) pow_strategy: PhantomData<PowStrategy>,
+    pub pow_strategy: PhantomData<PowStrategy>,
 
     // Merkle tree parameters
-    pub(crate) leaf_hash_params: LeafParam<MerkleConfig>,
-    pub(crate) two_to_one_params: TwoToOneParam<MerkleConfig>,
+    pub leaf_hash_params: LeafParam<MerkleConfig>,
+    pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
 #[derive(Debug, Clone)]

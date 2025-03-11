@@ -439,7 +439,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(merlin.transcript(), &proof, statement.constraints.len()) as f64 / 1024.0
+        whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
     );
 
     // Just not to count that initial inversion (which could be precomputed)
