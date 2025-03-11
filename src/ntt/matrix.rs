@@ -57,6 +57,7 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 
     /// returns a mutable reference to the `row`'th row of the MatrixMut
+    #[allow(dead_code)]
     pub fn row(&mut self, row: usize) -> &mut [T] {
         assert!(row < self.rows);
         // Safety: The structure invariant guarantees that at offset `row * self.row_stride`

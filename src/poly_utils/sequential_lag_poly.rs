@@ -161,9 +161,9 @@ mod tests {
         let point = MultilinearPoint(vec![
             F::from(414151),
             F::from(109849018),
-            F::from(033184190),
-            F::from(033184190),
-            F::from(033184190),
+            F::from(33184190),
+            F::from(33184190),
+            F::from(33184190),
         ]);
 
         let mut last_b = None;
