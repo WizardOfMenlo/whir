@@ -64,7 +64,7 @@ where
 
         self.evals
             .iter()
-            .zip(LagrangePolynomialIterator::new(point))
+            .zip(LagrangePolynomialIterator::from(point))
             .map(|(eval, (_, lag))| *eval * lag)
             .sum()
     }
@@ -197,7 +197,7 @@ mod tests {
         let result = evals.evaluate(&point);
 
         // The result should be computed using Lagrange interpolation.
-        let expected = LagrangePolynomialIterator::new(&point)
+        let expected = LagrangePolynomialIterator::from(&point)
             .map(|(b, lag)| lag * evals[b.0])
             .sum();
 
