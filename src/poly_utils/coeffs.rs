@@ -23,7 +23,7 @@ use {
 /// - `coeffs[0]` → Constant term (1)
 /// - `coeffs[1]` → Coefficient of `X₂`
 /// - `coeffs[2]` → Coefficient of `X₁`
-/// - `coeffs[4]` → Coefficient of `X₀`
+/// - `coeffs[3]` → Coefficient of `X₀`
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
     /// List of coefficients, stored in **lexicographic order**.
