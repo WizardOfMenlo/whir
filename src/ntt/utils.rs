@@ -6,23 +6,6 @@ pub const fn workload_size<T: Sized>() -> usize {
     CACHE_SIZE / size_of::<T>()
 }
 
-/// Cast a slice into chunks of size N.
-///
-/// TODO: Replace with `slice::as_chunks` when stable.
-pub fn as_chunks_exact_mut<T, const N: usize>(slice: &mut [T]) -> &mut [[T; N]] {
-    assert!(N != 0, "chunk size must be non-zero");
-    assert_eq!(
-        slice.len() % N,
-        0,
-        "slice length must be a multiple of chunk size"
-    );
-    // SAFETY: Caller must guarantee that `N` is nonzero and exactly divides the slice length
-    let new_len = slice.len() / N;
-    // SAFETY: We cast a slice of `new_len * N` elements into
-    // a slice of `new_len` many `N` elements chunks.
-    unsafe { std::slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), new_len) }
-}
-
 /// Compute the largest factor of `n` that is ≤ sqrt(n).
 /// Assumes `n` is of the form `2^k * {1,3,9}`.
 pub fn sqrt_factor(n: usize) -> usize {
@@ -93,6 +76,7 @@ pub const fn gcd(mut a: usize, mut b: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{as_chunks_exact_mut, gcd, lcm, sqrt_factor};
+      use super::{gcd, lcm, sqrt_factor};
     use proptest::prelude::*;
 
     /// Computes the largest factor of `x` that is ≤ sqrt(x).
@@ -170,39 +154,5 @@ mod tests {
             let expected = get_largest_divisor_up_to_sqrt(n);
             prop_assert_eq!(sqrt_factor(n), expected);
         }
-    }
-
-    #[test]
-    fn test_as_chunks_exact_mut() {
-        let v = &mut [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        assert_eq!(
-            as_chunks_exact_mut::<_, 12>(v),
-            &[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
-        );
-        assert_eq!(
-            as_chunks_exact_mut::<_, 6>(v),
-            &[[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]]
-        );
-        assert_eq!(
-            as_chunks_exact_mut::<_, 1>(v),
-            &[
-                [1],
-                [2],
-                [3],
-                [4],
-                [5],
-                [6],
-                [7],
-                [8],
-                [9],
-                [10],
-                [11],
-                [12]
-            ]
-        );
-        let should_not_work = std::panic::catch_unwind(|| {
-            as_chunks_exact_mut::<_, 2>(&mut [1, 2, 3]);
-        });
-        assert!(should_not_work.is_err());
     }
 }
