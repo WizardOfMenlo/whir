@@ -367,8 +367,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)
-        .add_whir_proof(&params)
-        ;
+        .add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
