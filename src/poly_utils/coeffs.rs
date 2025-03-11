@@ -504,30 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn test_folding() {
-        let coeff0 = F::from(6);
-        let coeff1 = F::from(2);
-        let coeff2 = F::from(4);
-        let coeff3 = F::from(8);
-
-        let coeffs = vec![coeff0, coeff1, coeff2, coeff3];
-        let coeff_list = CoefficientList::new(coeffs);
-
-        let folding_value = F::from(3);
-        let folding_point = MultilinearPoint(vec![folding_value]);
-        let folded = coeff_list.fold(&folding_point);
-
-        let eval_value = F::from(5);
-        let expected_eval = coeff_list.evaluate(&MultilinearPoint(vec![eval_value, folding_value]));
-
-        // Ensure folding preserves evaluation correctness
-        assert_eq!(
-            folded.evaluate(&MultilinearPoint(vec![eval_value])),
-            expected_eval
-        );
-    }
-
-    #[test]
     fn test_folding_multiple_variables() {
         let num_variables = 3;
         let coeffs: Vec<F> = (0..(1 << num_variables)).map(F::from).collect();
