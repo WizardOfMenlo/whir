@@ -28,7 +28,7 @@ mod tests {
         let poly_1 = prover.compute_sumcheck_polynomial(folding_factor);
 
         // First, check that is sums to the right value over the hypercube
-        assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
+        assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
@@ -38,7 +38,7 @@ mod tests {
         let poly_2 = prover.compute_sumcheck_polynomial(folding_factor);
 
         assert_eq!(
-            poly_2.sum_over_hypercube(),
+            poly_2.sum_over_boolean_hypercube(),
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
@@ -67,7 +67,7 @@ mod tests {
         let poly_1 = prover.compute_sumcheck_polynomial(folding_factor);
 
         assert_eq!(
-            poly_1.sum_over_hypercube(),
+            poly_1.sum_over_boolean_hypercube(),
             epsilon_1 * ood_answer + epsilon_2 * statement_answer
         );
 
@@ -97,7 +97,7 @@ mod tests {
         let poly_1 = prover.compute_sumcheck_polynomial(folding_factor);
 
         // First, check that is sums to the right value over the hypercube
-        assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
+        assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
         let combination_randomness = [F::from(293), F::from(42)];
         let folding_randomness = MultilinearPoint(vec![F::from(335), F::from(222)]);
@@ -116,7 +116,7 @@ mod tests {
         let poly_2 = prover.compute_sumcheck_polynomial(folding_factor);
 
         assert_eq!(
-            poly_2.sum_over_hypercube(),
+            poly_2.sum_over_boolean_hypercube(),
             combination_randomness[0] * poly_1.evaluate_at_point(&folding_randomness)
                 + combination_randomness[1] * new_fold_eval
         );
@@ -127,7 +127,7 @@ mod tests {
         let poly_3 = prover.compute_sumcheck_polynomial(folding_factor);
 
         assert_eq!(
-            poly_3.sum_over_hypercube(),
+            poly_3.sum_over_boolean_hypercube(),
             combination_randomness * poly_2.evaluate_at_point(&folding_randomness)
         );
     }
@@ -171,14 +171,14 @@ mod tests {
         let statement_answer = polynomial.evaluate(&statement_point);
 
         assert_eq!(
-            sumcheck_poly_1.sum_over_hypercube(),
+            sumcheck_poly_1.sum_over_boolean_hypercube(),
             epsilon_1 * ood_answer + epsilon_2 * statement_answer
         );
 
         let fold_answer = folded_poly_1.evaluate(&fold_point);
 
         assert_eq!(
-            sumcheck_poly_2.sum_over_hypercube(),
+            sumcheck_poly_2.sum_over_boolean_hypercube(),
             combination_randomness[0] * sumcheck_poly_1.evaluate_at_point(&folding_randomness_1)
                 + combination_randomness[1] * fold_answer
         );
@@ -260,19 +260,19 @@ mod tests {
         let fold_answer_2 = folded_poly_2.evaluate(&fold_point_2);
 
         assert_eq!(
-            sumcheck_poly_1.sum_over_hypercube(),
+            sumcheck_poly_1.sum_over_boolean_hypercube(),
             epsilon_1 * ood_answer + epsilon_2 * statement_answer
         );
 
         assert_eq!(
-            sumcheck_poly_2.sum_over_hypercube(),
+            sumcheck_poly_2.sum_over_boolean_hypercube(),
             combination_randomness_1[0] * sumcheck_poly_1.evaluate_at_point(&folding_randomness_1)
                 + combination_randomness_1[1] * fold_answer_11
                 + combination_randomness_1[2] * fold_answer_12
         );
 
         assert_eq!(
-            sumcheck_poly_3.sum_over_hypercube(),
+            sumcheck_poly_3.sum_over_boolean_hypercube(),
             combination_randomness_2[0] * sumcheck_poly_2.evaluate_at_point(&folding_randomness_2)
                 + combination_randomness_2[1] * fold_answer_2
         );

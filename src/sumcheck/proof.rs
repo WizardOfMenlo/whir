@@ -1,9 +1,6 @@
 use ark_ff::Field;
 
-use crate::{
-    poly_utils::{eq_poly3, MultilinearPoint},
-    utils::base_decomposition,
-};
+use crate::poly_utils::{eq_poly3, MultilinearPoint};
 
 // Stored in evaluation form
 #[derive(Debug, Clone)]
@@ -36,26 +33,35 @@ where
         &self.evaluations
     }
 
-    // TODO(Gotti): Rename to sum_over_binary_hypercube for clarity?
-    // TODO(Gotti): Make more efficient; the base_decomposition and filtering is unneccessary.
-
     /// Returns the sum of evaluations of f, when summed only over {0,1}^n_variables
-    ///
-    /// (and not over {0,1,2}^n_variable)
-    pub fn sum_over_hypercube(&self) -> F {
-        let num_evaluation_points = 3_usize.pow(self.n_variables as u32);
-
+    /// Avoids enumerating 3^n, instead only iterates 2^n
+    pub fn sum_over_boolean_hypercube(&self) -> F {
+        let binary_points = 2_usize.pow(self.n_variables as u32);
         let mut sum = F::ZERO;
-        for point in 0..num_evaluation_points {
-            if base_decomposition(point, 3, self.n_variables)
-                .into_iter()
-                .all(|v| matches!(v, 0 | 1))
-            {
-                sum += self.evaluations[point];
+
+        for point in 0..binary_points {
+            let ternary_index = self.binary_to_ternary_index(point);
+            sum += self.evaluations[ternary_index];
+        }
+        sum
+    }
+
+    /// Converts a binary index (0..2^n) to its corresponding ternary index (0..3^n).
+    fn binary_to_ternary_index(&self, binary_index: usize) -> usize {
+        let mut ternary_index = 0;
+        let mut factor = 3_usize.pow((self.n_variables - 1) as u32);
+
+        // Read bits from the most significant to the least, assigning them to descending powers of 3
+        for i in 0..self.n_variables {
+            let shift = self.n_variables - 1 - i;
+            let bit = (binary_index >> shift) & 1;
+            ternary_index += bit * factor;
+            if i < self.n_variables - 1 {
+                factor /= 3;
             }
         }
 
-        sum
+        ternary_index
     }
 
     /// evaluates the polynomial at an arbitrary point, not neccessarily in {0,1,2}^n_variables.
