@@ -40,7 +40,7 @@ where
         }
 
         let mut sum = F::ZERO;
-        for (b, lag) in LagrangePolynomialIterator::new(point) {
+        for (b, lag) in LagrangePolynomialIterator::from(point) {
             sum += lag * self.evals[b.0];
         }
 

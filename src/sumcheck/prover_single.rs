@@ -291,7 +291,7 @@ fn test_eval_eq() {
 
     let point = MultilinearPoint(eval);
     let mut expected = vec![F::ZERO; 4];
-    for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
+    for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
         expected[prefix.0] = lag;
     }
     dbg!(&expected);
