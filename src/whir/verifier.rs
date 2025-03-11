@@ -10,12 +10,15 @@ use nimue::{
 use nimue_pow::{self, PoWChallenge};
 
 use super::{parameters::WhirConfig, Statement, WhirProof};
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
-    poly_utils::{coeffs::CoefficientList, eq_poly_outside, fold::compute_fold, MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, fold::compute_fold},
     sumcheck::proof::SumcheckPolynomial,
     utils::expand_randomness,
+};
+use crate::{
+    poly_utils::multilinear::MultilinearPoint,
+    whir::fs_utils::{get_challenge_stir_queries, DigestReader},
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
@@ -338,7 +341,7 @@ where
             .map(|ood_point| MultilinearPoint::expand_from_univariate(*ood_point, num_variables))
             .chain(statement.points.clone())
             .zip(&proof.initial_combination_randomness)
-            .map(|(point, randomness)| *randomness * eq_poly_outside(&point, &folding_randomness))
+            .map(|(point, randomness)| *randomness * point.eq_poly_outside(&folding_randomness))
             .sum();
 
         for (round, round_proof) in proof.rounds.iter().enumerate() {
@@ -359,7 +362,7 @@ where
 
             let sum_of_claims: F = stir_challenges
                 .into_iter()
-                .map(|point| eq_poly_outside(&point, &folding_randomness))
+                .map(|point| point.eq_poly_outside(&folding_randomness))
                 .zip(&round_proof.combination_randomness)
                 .map(|(point, rand)| point * rand)
                 .sum();

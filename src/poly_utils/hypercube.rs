@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 // TODO (Gotti): Should pos rather be a u64? usize is platform-dependent, giving a platform-dependent limit on the number of variables.
 // num_variables may be smaller as well.
@@ -8,6 +10,20 @@
 ///
 /// The point is encoded via the n least significant bits of a usize in big endian order and we do not store n.
 pub struct BinaryHypercubePoint(pub usize);
+
+impl Deref for BinaryHypercubePoint {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for BinaryHypercubePoint {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 /// An iterator over all points of the binary hypercube `{0,1}^n`.
 ///

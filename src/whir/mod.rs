@@ -1,7 +1,7 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::poly_utils::MultilinearPoint;
+use crate::poly_utils::multilinear::MultilinearPoint;
 
 pub mod committer;
 pub mod fs_utils;
@@ -45,7 +45,7 @@ mod tests {
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
     use crate::poly_utils::coeffs::CoefficientList;
-    use crate::poly_utils::MultilinearPoint;
+    use crate::poly_utils::multilinear::MultilinearPoint;
     use crate::whir::Statement;
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,

@@ -2,7 +2,7 @@
 
 use ark_ff::Field;
 
-use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
+use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 
 /// There is an alternative (possibly more efficient) implementation that iterates over the x in Gray code ordering.
 ///
@@ -109,7 +109,7 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
 mod tests {
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{eq_poly, hypercube::BinaryHypercubePoint, MultilinearPoint},
+        poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
 
     use super::LagrangePolynomialIterator;
@@ -149,7 +149,7 @@ mod tests {
 
         let mut last_b = None;
         for (b, lag) in LagrangePolynomialIterator::new(&point) {
-            assert_eq!(eq_poly(&point, b), lag);
+            assert_eq!(point.eq_poly(b), lag);
             assert!(b.0 < 1 << 3);
             last_b = Some(b);
         }
@@ -168,7 +168,7 @@ mod tests {
 
         let mut last_b = None;
         for (b, lag) in LagrangePolynomialIterator::new(&point) {
-            assert_eq!(eq_poly(&point, b), lag);
+            assert_eq!(point.eq_poly(b), lag);
             last_b = Some(b);
         }
         assert_eq!(last_b, Some(BinaryHypercubePoint(31)));

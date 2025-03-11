@@ -1,7 +1,9 @@
 use super::parameters::WhirConfig;
 use crate::{
     ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations, MultilinearPoint},
+    poly_utils::{
+        coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
+    },
     utils,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};

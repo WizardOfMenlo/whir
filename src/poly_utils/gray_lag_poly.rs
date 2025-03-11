@@ -2,7 +2,7 @@
 
 use ark_ff::{batch_inversion, Field};
 
-use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
+use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 
 pub struct LagrangePolynomialGray<F: Field> {
     position_bin: usize,
@@ -89,10 +89,9 @@ mod tests {
     use crate::{
         crypto::fields::Field64,
         poly_utils::{
-            eq_poly,
             gray_lag_poly::{gray_decode, LagrangePolynomialGray},
             hypercube::BinaryHypercubePoint,
-            MultilinearPoint,
+            multilinear::MultilinearPoint,
         },
     };
 
@@ -142,7 +141,7 @@ mod tests {
 
         let eq_poly_res: BTreeSet<_> = (0..(1 << 3))
             .map(BinaryHypercubePoint)
-            .map(|b| (b, eq_poly(&point, b)))
+            .map(|b| (b, point.eq_poly(b)))
             .collect();
 
         let gray_res: BTreeSet<_> = LagrangePolynomialGray::new(&point).collect();

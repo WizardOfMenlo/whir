@@ -6,7 +6,7 @@ use crate::{
     poly_utils::{
         coeffs::CoefficientList,
         fold::{compute_fold, restructure_evaluations},
-        MultilinearPoint,
+        multilinear::MultilinearPoint,
     },
     sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
     utils::{self, expand_randomness},

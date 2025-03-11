@@ -2,7 +2,7 @@
 
 use ark_ff::Field;
 
-use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
+use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 
 pub struct TermPolynomialIterator<F: Field> {
     last_position: Option<usize>,

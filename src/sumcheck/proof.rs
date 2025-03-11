@@ -1,6 +1,6 @@
 use ark_ff::Field;
 
-use crate::poly_utils::{eq_poly3, MultilinearPoint};
+use crate::poly_utils::multilinear::MultilinearPoint;
 
 // Stored in evaluation form
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ where
         let mut evaluation = F::ZERO;
 
         for index in 0..num_evaluation_points {
-            evaluation += self.evaluations[index] * eq_poly3(point, index);
+            evaluation += self.evaluations[index] * point.eq_poly3(index);
         }
 
         evaluation
@@ -83,7 +83,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{crypto::fields::Field64, poly_utils::MultilinearPoint, utils::base_decomposition};
+    use crate::{
+        crypto::fields::Field64, poly_utils::multilinear::MultilinearPoint,
+        utils::base_decomposition,
+    };
 
     use super::SumcheckPolynomial;
 

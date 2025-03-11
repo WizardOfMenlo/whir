@@ -1,5 +1,7 @@
 use super::proof::SumcheckPolynomial;
-use crate::poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint};
+use crate::poly_utils::{
+    coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::{join, prelude::*};
@@ -239,7 +241,7 @@ where
 mod tests {
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
 
     use super::SumcheckSingle;

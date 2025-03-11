@@ -7,7 +7,7 @@ pub mod prover_single;
 mod tests {
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, eq_poly_outside, MultilinearPoint},
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
 
     use super::prover_core::SumcheckCore;
@@ -74,8 +74,8 @@ mod tests {
         let folding_randomness = MultilinearPoint(vec![F::from(400000), F::from(800000)]);
 
         let poly_eval = polynomial.evaluate(&folding_randomness);
-        let v_eval = epsilon_1 * eq_poly_outside(&ood_point, &folding_randomness)
-            + epsilon_2 * eq_poly_outside(&statement_point, &folding_randomness);
+        let v_eval = epsilon_1 * ood_point.eq_poly_outside(&folding_randomness)
+            + epsilon_2 * statement_point.eq_poly_outside(&folding_randomness);
 
         assert_eq!(
             poly_1.evaluate_at_point(&folding_randomness),
@@ -190,10 +190,10 @@ mod tests {
             sumcheck_poly_2.evaluate_at_point(&folding_randomness_2),
             eval_coeff
                 * (combination_randomness[0]
-                    * (epsilon_1 * eq_poly_outside(&full_folding, &ood_point)
-                        + epsilon_2 * eq_poly_outside(&full_folding, &statement_point))
+                    * (epsilon_1 * full_folding.eq_poly_outside(&ood_point)
+                        + epsilon_2 * full_folding.eq_poly_outside(&statement_point))
                     + combination_randomness[1]
-                        * eq_poly_outside(&folding_randomness_2, &fold_point))
+                        * folding_randomness_2.eq_poly_outside(&fold_point))
         );
     }
 
@@ -291,29 +291,22 @@ mod tests {
             final_coeff
                 * (combination_randomness_2[0]
                     * (combination_randomness_1[0]
-                        * (epsilon_1 * eq_poly_outside(&full_folding, &ood_point)
-                            + epsilon_2 * eq_poly_outside(&full_folding, &statement_point))
+                        * (epsilon_1 * full_folding.eq_poly_outside(&ood_point)
+                            + epsilon_2 * full_folding.eq_poly_outside(&statement_point))
                         + combination_randomness_1[1]
-                            * eq_poly_outside(
-                                &fold_point_11,
-                                &MultilinearPoint(
-                                    [
-                                        folding_randomness_3.0.clone(),
-                                        folding_randomness_2.0.clone()
-                                    ]
-                                    .concat()
-                                )
-                            )
-                        + combination_randomness_1[2]
-                            * eq_poly_outside(
-                                &fold_point_12,
-                                &MultilinearPoint(
-                                    [folding_randomness_3.0.clone(), folding_randomness_2.0]
-                                        .concat()
-                                )
+                            * fold_point_11.eq_poly_outside(&MultilinearPoint(
+                                [
+                                    folding_randomness_3.0.clone(),
+                                    folding_randomness_2.0.clone()
+                                ]
+                                .concat()
                             ))
+                        + combination_randomness_1[2]
+                            * fold_point_12.eq_poly_outside(&MultilinearPoint(
+                                [folding_randomness_3.0.clone(), folding_randomness_2.0].concat()
+                            )))
                     + combination_randomness_2[1]
-                        * eq_poly_outside(&folding_randomness_3, &fold_point_2))
+                        * folding_randomness_3.eq_poly_outside(&fold_point_2))
         );
     }
 }

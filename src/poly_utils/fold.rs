@@ -105,7 +105,7 @@ mod tests {
 
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         utils::stack_evaluations,
     };
 

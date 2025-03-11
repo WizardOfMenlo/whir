@@ -18,7 +18,7 @@ use whir::{
         merkle_tree::{self, HashCounter},
     },
     parameters::*,
-    poly_utils::coeffs::CoefficientList,
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::Statement,
 };
 
@@ -335,7 +335,6 @@ fn run_whir<F, MerkleConfig>(
         whir_verifier_hashes,
     ) = {
         // Run PCS
-        use whir::poly_utils::MultilinearPoint;
         use whir::whir::{
             committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
             verifier::Verifier, whir_proof_size,
