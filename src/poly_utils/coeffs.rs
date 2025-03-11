@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_evaluation_conversion() {
-        let coeffs = vec![F::from(22), F::from(05), F::from(10), F::from(97)];
+        let coeffs = vec![F::from(22), F::from(5), F::from(10), F::from(97)];
         let coeffs_list = CoefficientList::new(coeffs.clone());
 
         let evaluations = EvaluationsList::from(coeffs_list);
@@ -340,6 +340,22 @@ mod tests {
         assert_eq!(
             evaluations[3],
             coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]
+        );
+    }
+
+    #[test]
+    fn test_folding() {
+        let coeffs = vec![F::from(22), F::from(5), F::from(00), F::from(00)];
+        let coeffs_list = CoefficientList::new(coeffs);
+
+        let alpha = F::from(100);
+        let beta = F::from(32);
+
+        let folded = coeffs_list.fold(&MultilinearPoint(vec![beta]));
+
+        assert_eq!(
+            coeffs_list.evaluate(&MultilinearPoint(vec![alpha, beta])),
+            folded.evaluate(&MultilinearPoint(vec![alpha]))
         );
     }
 

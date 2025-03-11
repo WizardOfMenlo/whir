@@ -198,14 +198,6 @@ fn transpose_square_non_parallel<F: Sized>(mut m: MatrixMut<F>) {
     }
 }
 
-/// Transpose and swap two square size matrices. Sizes must be equal and a power of two.
-fn transpose_square_swap<F: Sized + Send>(a: MatrixMut<F>, b: MatrixMut<F>) {
-    #[cfg(feature = "parallel")]
-    transpose_square_swap_parallel(a, b);
-    #[cfg(not(feature = "parallel"))]
-    transpose_square_swap_non_parallel(a, b);
-}
-
 /// Transpose and swap two square size matrices (parallel version).
 ///
 /// The size must be a power of two.
@@ -334,10 +326,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn test_transpose_copy() {
         // iterate over both parallel and non-parallel implementation.
         // Needs HRTB, otherwise it won't work.
-        let mut funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, Pair>, MatrixMut<'b, Pair>)> = vec![
+        let mut funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, _>, MatrixMut<'b, _>)> = vec![
             #[cfg(not(feature = "parallel"))]
             &transpose_copy_not_parallel::<Pair>,
             &transpose_copy::<Pair>,
@@ -368,8 +361,7 @@ mod tests {
     #[test]
     fn test_transpose_square_swap() {
         // iterate over parallel and non-parallel variants:
-        let mut funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, Triple>, MatrixMut<'a, Triple>)> = vec![
-            &transpose_square_swap::<Triple>,
+        let mut funs = vec![
             #[cfg(not(feature = "parallel"))]
             &transpose_square_swap_non_parallel::<Triple>,
         ];
