@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_evaluation_conversion() {
-        let coeffs = vec![F::from(22), F::from(05), F::from(10), F::from(97)];
+        let coeffs = vec![F::from(22), F::from(5), F::from(10), F::from(97)];
         let coeffs_list = CoefficientList::new(coeffs.clone());
 
         let evaluations = EvaluationsList::from(coeffs_list);
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_folding() {
-        let coeffs = vec![F::from(22), F::from(05), F::from(00), F::from(00)];
+        let coeffs = vec![F::from(22), F::from(5), F::from(00), F::from(00)];
         let coeffs_list = CoefficientList::new(coeffs);
 
         let alpha = F::from(100);

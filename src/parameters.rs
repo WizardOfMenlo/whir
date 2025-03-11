@@ -126,7 +126,7 @@ impl FoldingFactor {
                     ))
                 } else if *factor == 0 {
                     // We should at least fold some time
-                    Err(format!("Folding factor shouldn't be zero."))
+                    Err("Folding factor shouldn't be zero.".to_string())
                 } else {
                     Ok(())
                 }
@@ -144,7 +144,7 @@ impl FoldingFactor {
                     ))
                 } else if *factor == 0 || *first_round_factor == 0 {
                     // We should at least fold some time
-                    Err(format!("Folding factor shouldn't be zero."))
+                    Err("Folding factor shouldn't be zero.".to_string())
                 } else {
                     Ok(())
                 }
