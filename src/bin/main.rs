@@ -11,7 +11,7 @@ use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{self, HashCounter},
-    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList}, whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
+    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -37,6 +37,9 @@ struct Args {
 
     #[arg(short = 'e', long = "evaluations", default_value = "1")]
     num_evaluations: usize,
+
+    #[arg(long = "linear_constraints", default_value = "0")]
+    num_linear_constraints: usize,
 
     #[arg(short = 'r', long, default_value = "1")]
     rate: usize,
@@ -277,11 +280,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let mut statement = Statement::new(num_variables);
+    let statement = Statement::new(num_variables);
     let statement_verifier = StatementVerifier::new(num_variables);
 
     let proof = prover
-        .prove(&mut merlin, &mut statement, witness)
+        .prove(&mut merlin, statement, witness)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -337,6 +340,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
     let num_evaluations = args.num_evaluations;
+    let num_linear_constraints = args.num_linear_constraints;
 
     if num_evaluations == 0 {
         println!("Warning: running as PCS but no evaluations specified.");
@@ -393,43 +397,43 @@ fn run_whir_pcs<F, MerkleConfig>(
     let mut statement = Statement::<F>::new(num_variables);
     let mut statement_verifier= StatementVerifier::<F>::new(num_variables);
 
-    // Linear constraint
-
-
-    let input = CoefficientList::new(
-        (0..num_coeffs)
-            .map(F::from)
-            .collect(),
-    );
-    let input : EvaluationsList<F> = input.clone().into();
-    // let coeffs : CoefficientList<F> = input.to_coeffs();
-
- 
-    let linear_claim_weight = Weights::linear(input.clone());
-    let linear_claim_weight_verifier = VerifierWeights::linear(num_variables, None);
-    let poly = EvaluationsList::from(polynomial.to_extension());
-    
-    let sum = linear_claim_weight.weighted_sum(&poly);
-    statement.add_constraint(linear_claim_weight, sum);
-    statement_verifier.add_constraint(linear_claim_weight_verifier, sum);
     // Evaluation constraint
-    // let points: Vec<_> = (0..1)
-    // .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
-    // .collect();
+    let points: Vec<_> = (0..num_evaluations)
+    .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
+    .collect();
+ 
+    for point in &points {
+         let eval = polynomial.evaluate_at_extension(point);
+         let weights = Weights::evaluation(point.clone());
+         statement.add_constraint(weights, eval);
+         let weights_verifier = VerifierWeights::evaluation(point.clone());
+         statement_verifier.add_constraint(weights_verifier, eval);
+    }
 
-    // for point in &points {
-    //     let eval = polynomial.evaluate_at_extension(point);
-    //     let weights = Weights::evaluation(point.clone());
-    //     statement.add_constraint(weights, eval);
-    //     let weights_verifier = VerifierWeights::evaluation(point.clone());
-    //     statement_verifier.add_constraint(weights_verifier, eval);
-    // }
-
+    // Linear constraint
+    println!("Number of linear constraints: {}", num_linear_constraints);
+    for _ in 0..num_linear_constraints {
+        let input = CoefficientList::new(
+            (0..num_coeffs)
+                .map(F::from)
+                .collect(),
+        );
+        let input : EvaluationsList<F> = input.clone().into();
+ 
+        let linear_claim_weight = Weights::linear(input.clone());
+        let linear_claim_weight_verifier = VerifierWeights::linear(num_variables, None);
+        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        
+        let sum = linear_claim_weight.weighted_sum(&poly);
+        statement.add_constraint(linear_claim_weight, sum);
+        statement_verifier.add_constraint(linear_claim_weight_verifier, sum);
+    }
+    
     
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut merlin, &mut statement, witness)
+        .prove(&mut merlin, statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());

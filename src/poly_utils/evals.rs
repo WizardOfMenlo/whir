@@ -49,7 +49,6 @@ where
     
     fn eval_multilinear(&self, evals: &[F], point: &[F]) -> F {
         debug_assert_eq!(evals.len(), 1 << point.len());
-        let one = F::one();
         match point {
             [] => evals[0],
             [x] => evals[0] + (evals[1] - evals[0]) * *x,

@@ -1,4 +1,4 @@
-use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
+use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
 use rayon::prelude::*;

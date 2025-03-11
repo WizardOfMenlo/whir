@@ -62,7 +62,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement: &mut Statement<F>,
+        mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
