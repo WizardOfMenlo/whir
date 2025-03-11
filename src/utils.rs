@@ -7,20 +7,6 @@ pub const fn is_power_of_two(n: usize) -> bool {
     n != 0 && n.is_power_of_two()
 }
 
-/// performs big-endian binary decomposition of `value` and returns the result.
-///
-/// `n_bits` must be at must usize::BITS. If it is strictly smaller, the most significant bits of `value` are ignored.
-/// The returned vector v ends with the least significant bit of `value` and always has exactly `n_bits` many elements.
-pub fn to_binary(value: usize, n_bits: usize) -> Vec<bool> {
-    // Ensure that n is within the bounds of the input integer type
-    assert!(n_bits <= usize::BITS as usize);
-    let mut result = vec![false; n_bits];
-    for i in 0..n_bits {
-        result[n_bits - 1 - i] = (value & (1 << i)) != 0;
-    }
-    result
-}
-
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
 // Currently, we compute the decomposition of value % (base^n_bits).
@@ -87,7 +73,7 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 mod tests {
     use crate::utils::base_decomposition;
 
-    use super::{is_power_of_two, stack_evaluations, to_binary};
+    use super::{is_power_of_two, stack_evaluations};
 
     #[test]
     fn test_evaluations_stack() {
@@ -108,15 +94,6 @@ mod tests {
                 assert_eq!(fold[j], F::from((i + j * num / fold_size) as u64));
             }
         }
-    }
-
-    #[test]
-    fn test_to_binary() {
-        assert_eq!(to_binary(0b10111, 5), vec![true, false, true, true, true]);
-        assert_eq!(to_binary(0b11001, 2), vec![false, true]); // truncate
-        let empty_vec: Vec<bool> = vec![]; // just for the explicit bool type.
-        assert_eq!(to_binary(1, 0), empty_vec);
-        assert_eq!(to_binary(0, 0), empty_vec);
     }
 
     #[test]

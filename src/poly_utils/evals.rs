@@ -2,7 +2,7 @@ use std::ops::Index;
 
 use ark_ff::Field;
 
-use super::{sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint};
+use super::{multilinear::MultilinearPoint, sequential_lag_poly::LagrangePolynomialIterator};
 
 /// An EvaluationsList models a multi-linear polynomial f in `num_variables`
 /// unknowns, stored via their evaluations at {0,1}^{num_variables}

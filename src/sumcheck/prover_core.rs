@@ -2,8 +2,8 @@ use ark_ff::Field;
 
 use crate::{
     poly_utils::{
-        coeffs::CoefficientList, evals::EvaluationsList,
-        sequential_lag_poly::LagrangePolynomialIterator, MultilinearPoint,
+        coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        sequential_lag_poly::LagrangePolynomialIterator,
     },
     utils::base_decomposition,
 };

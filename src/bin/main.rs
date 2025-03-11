@@ -14,7 +14,7 @@ use whir::{
         merkle_tree::{self, HashCounter},
     },
     parameters::*,
-    poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::Statement,
 };
 

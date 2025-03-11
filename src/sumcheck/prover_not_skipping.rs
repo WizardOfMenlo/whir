@@ -7,7 +7,7 @@ use nimue_pow::{PoWChallenge, PowStrategy};
 
 use crate::{
     fs_utils::WhirPoWIOPattern,
-    poly_utils::{coeffs::CoefficientList, MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
 };
 
 use super::prover_single::SumcheckSingle;
@@ -112,7 +112,7 @@ mod tests {
 
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, eq_poly_outside, MultilinearPoint},
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         sumcheck::{proof::SumcheckPolynomial, prover_not_skipping::SumcheckProverNotSkipping},
     };
 
@@ -194,8 +194,8 @@ mod tests {
         assert_eq!(
             sumcheck_poly_12.evaluate_at_point(&folding_randomness_12.into()),
             eval_coeff
-                * (epsilon_1 * eq_poly_outside(&full_folding, &ood_point)
-                    + epsilon_2 * eq_poly_outside(&full_folding, &statement_point))
+                * (epsilon_1 * full_folding.eq_poly_outside(&ood_point)
+                    + epsilon_2 * full_folding.eq_poly_outside(&statement_point))
         );
 
         Ok(())
@@ -319,9 +319,9 @@ mod tests {
         assert_eq!(
             sumcheck_poly_22.evaluate_at_point(&folding_randomness_22.into()),
             eval_coeff
-                * ((epsilon_1 * eq_poly_outside(&full_folding, &ood_point)
-                    + epsilon_2 * eq_poly_outside(&full_folding, &statement_point))
-                    + combination_randomness[0] * eq_poly_outside(&partial_folding, &fold_point))
+                * ((epsilon_1 * full_folding.eq_poly_outside(&ood_point)
+                    + epsilon_2 * full_folding.eq_poly_outside(&statement_point))
+                    + combination_randomness[0] * partial_folding.eq_poly_outside(&fold_point))
         );
 
         Ok(())

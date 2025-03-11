@@ -1,5 +1,5 @@
-use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
-use crate::ntt::wavelet_transform;
+use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint};
+use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]
@@ -343,7 +343,9 @@ mod tests {
 
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
     };
 
     type F = Field64;
