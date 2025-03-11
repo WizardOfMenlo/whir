@@ -7,7 +7,6 @@ use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 /// Iterator for evaluating the Lagrange polynomial over the hypercube `{0,1}^n`.
 ///
 /// This efficiently computes values of the equality polynomial at every binary point.
-/// Instead of iterating in numerical order, it follows **Gray code ordering** to minimize updates.
 ///
 /// Given a multilinear point `(c_1, ..., c_n)`, it iterates over all binary vectors `(x_1, ...,
 /// x_n)` and computes:
@@ -19,7 +18,6 @@ use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 /// This means `y = eq_poly(c, x)`, where `eq_poly` is the **equality polynomial**.
 ///
 /// # Properties
-/// - **Efficient updates**: Gray code ensures only **one** bit changes per iteration.
 /// - **Precomputed negations**: We store `1 - c_i` to avoid recomputation.
 #[derive(Debug)]
 pub struct LagrangePolynomialIterator<F> {
@@ -61,7 +59,7 @@ impl<F: Field> From<&MultilinearPoint<F>> for LagrangePolynomialIterator<F> {
             stack.push(running_product);
         }
 
-        // Reverse point vectors for more efficient access in Gray code iteration
+        // Reverse point vectors for more efficient access
         point.reverse();
         point_negated.reverse();
 
@@ -80,7 +78,7 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
     /// Computes the next `(x, y)` pair where `y = eq_poly(c, x)`.
     ///
     /// - The first iteration **outputs** `(0, y_1 ... y_n)`, where `y_i = (1 - c_i)`.
-    /// - Subsequent iterations **update** `y` using Gray code ordering, minimizing recomputations.
+    /// - Subsequent iterations **update** `y` using binary code ordering, minimizing recomputations.
     fn next(&mut self) -> Option<Self::Item> {
         // a) Check if this is the first iteration
         if self.last_position.is_none() {
