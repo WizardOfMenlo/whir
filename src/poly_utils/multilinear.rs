@@ -24,7 +24,7 @@ where
     /// This maps each bit in the binary integer to `F::ONE` (1) or `F::ZERO` (0) in the field.
     ///
     /// Given `point = b_{n-1} ... b_1 b_0` (big-endian), it produces:
-    /// ```
+    /// ```ignore
     /// [b_{n-1}, b_{n-2}, ..., b_1, b_0]
     /// ```
     pub fn from_binary_hypercube_point(point: BinaryHypercubePoint, num_variables: usize) -> Self {
@@ -45,7 +45,7 @@ where
     /// Converts `MultilinearPoint` to a `BinaryHypercubePoint`, assuming values are binary.
     ///
     /// The point is interpreted as a binary number:
-    /// ```
+    /// ```ignore
     /// b_{n-1} * 2^{n-1} + b_{n-2} * 2^{n-2} + ... + b_1 * 2^1 + b_0 * 2^0
     /// ```
     /// Returns `None` if any coordinate is non-binary.
@@ -67,11 +67,11 @@ where
     /// Converts a univariate evaluation point into a multilinear one.
     ///
     /// Uses the bijection:
-    /// ```
+    /// ```ignore
     /// f(x_1, ..., x_n) <-> g(y) := f(y^(2^(n-1)), ..., y^4, y^2, y)
     /// ```
     /// Meaning:
-    /// ```
+    /// ```ignore
     /// x_1^i_1 * ... * x_n^i_n <-> y^i
     /// ```
     /// where `(i_1, ..., i_n)` is the **big-endian** binary decomposition of `i`.
@@ -93,7 +93,7 @@ where
     /// Computes the equality polynomial `eq(c, p)`, where `p` is binary.
     ///
     /// The **equality polynomial** is defined as:
-    /// ```
+    /// ```ignore
     /// eq(c, p) = ∏ (c_i * p_i + (1 - c_i) * (1 - p_i))
     /// ```
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
@@ -117,7 +117,7 @@ where
     /// Computes `eq(c, p)`, where `p` is a general `MultilinearPoint` (not necessarily binary).
     ///
     /// The **equality polynomial** for two `MultilinearPoint`s `c` and `p` is:
-    /// ```
+    /// ```ignore
     /// eq(c, p) = ∏ (c_i * p_i + (1 - c_i) * (1 - p_i))
     /// ```
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
@@ -139,7 +139,7 @@ where
     ///
     /// `eq3(c, p)` is the unique polynomial of **degree ≤ 2** in each variable,
     /// such that:
-    /// ```
+    /// ```ignore
     /// eq3(c, p) = 1  if c == p
     ///           = 0  otherwise
     /// ```
