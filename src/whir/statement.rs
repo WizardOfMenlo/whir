@@ -248,7 +248,7 @@ impl<F: Field> Statement<F> {
 }
 
 impl<F: Field> StatementVerifier<F> {
-    pub fn new(num_variables: usize) -> Self {
+    fn new(num_variables: usize) -> Self {
         Self {
             num_variables,
             constraints: Vec::new(),
@@ -276,4 +276,22 @@ impl<F: Field> StatementVerifier<F> {
         self.constraints.splice(0..0, constraints);
     }
 
+}
+impl<F: Field> StatementVerifier<F> {
+    pub fn from_statement(statement: &Statement<F>) -> Self {
+        let mut verifier = StatementVerifier::new(statement.num_variables());
+        for (weights, sum) in &statement.constraints {
+            match weights {
+                Weights::Linear { weight, .. } => {
+                    let weights = VerifierWeights::linear(weight.num_variables(), None);
+                    verifier.add_constraint(weights.clone(), *sum);
+                }
+                Weights::Evaluation { point } => {
+                    let weights = VerifierWeights::evaluation(point.clone());
+                    verifier.add_constraint(weights.clone(), *sum);
+                }
+            }
+        }
+        verifier
+    }
 }

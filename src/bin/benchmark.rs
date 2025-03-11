@@ -298,7 +298,7 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
-        let statement_verifier = StatementVerifier::<F>::new(num_variables);
+        let statement_verifier = StatementVerifier::from_statement(&statement_new);
         
         let proof = prover
             .prove(&mut merlin, statement_new.clone(), witness)
@@ -364,14 +364,14 @@ fn run_whir<F, MerkleConfig>(
        
 
         let mut statement = Statement::<F>::new(num_variables);
-        let mut statement_verifier = StatementVerifier::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate_at_extension(point);
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
-            // statement_verifier.add_constraint(weights, eval);
         }
+
+        let statement_verifier = StatementVerifier::from_statement(&statement);
 
         HashCounter::reset();
         let whir_prover_time = Instant::now();

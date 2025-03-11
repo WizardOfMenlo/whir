@@ -22,30 +22,21 @@ impl<F> SumcheckSingle<F>
 where
     F: Field,
 {
-    // Get the coefficient of polynomial p and a list of points
-    // and initialises the table of the initial polynomial
-    // v(X_1, ..., X_n) = p(X_1, ... X_n) * (epsilon_1 eq_z_1(X) + epsilon_2 eq_z_2(X) ...)
-    pub fn new(coeffs: CoefficientList<F>) -> Self {
-        let weights = EvaluationsList::new(vec![F::ZERO; 1 << coeffs.num_variables()]);
-           
+    // Get the coefficient of polynomial p, statements and combination randomness element
+    // and initialise tables of polynomial evaluations and a random linear combination of
+    // statements using the combination randomness element
+    pub fn new(coeffs: CoefficientList<F>, statement: &Statement<F>, combination_randomness_gen: F) -> Self {           
+        let (weights, sum) = statement.combine(combination_randomness_gen);
+        
         SumcheckSingle {
             evaluation_of_p: coeffs.into(),
-            weights,
-            sum: F::ZERO,
+            weights: weights,
+            sum: sum,
         }
     }
 
     pub fn num_variables(&self) -> usize {
         self.evaluation_of_p.num_variables()
-    }
-   
-    pub fn add_weighted_sum(
-        &mut self,
-        statement: &Statement<F>,
-        combination_randomness_gen : F
-    ) {
-        assert_eq!(statement.num_variables(), self.num_variables());
-        (self.weights, self.sum) = statement.combine(combination_randomness_gen);
     }
 
     /// Compute the polynomial that represents the sum in the first variable.
@@ -295,8 +286,11 @@ mod tests {
         let claimed_value = polynomial.evaluate(&eval_point);
 
         let eval = polynomial.evaluate(&eval_point);
-        let mut prover = SumcheckSingle::new(polynomial);
-        prover.add_new_equality(&[eval_point], &[eval], &[F::from(1)]);
+        let mut statement = Statement::new(eval_point.num_variables());
+        let weights = Weights::evaluation(eval_point);
+        statement.add_constraint(weights, eval);
+
+        let mut prover = SumcheckSingle::new(polynomial, &statement, F::from(1));
 
         let poly_1 = prover.compute_sumcheck_polynomial();
 
@@ -327,13 +321,12 @@ mod tests {
         let claimed_value: ark_ff::Fp<ark_ff::MontBackend<crate::crypto::fields::FConfig64, 1>, 1> = polynomial.evaluate(&eval_point);
 
         let eval = polynomial.evaluate(&eval_point);
-        let mut prover = SumcheckSingle::new(polynomial);
 
         let mut statement = Statement::new(eval_point.num_variables());
         let weights = Weights::evaluation(eval_point);
         statement.add_constraint(weights.clone(), eval);
 
-        prover.add_weighted_sum(&statement, F::from(1));
+        let mut prover = SumcheckSingle::new(polynomial, &statement, F::from(1));
 
         let poly_1 = prover.compute_sumcheck_polynomial();
         // First, check that is sums to the right value over the hypercube

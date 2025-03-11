@@ -91,11 +91,11 @@ where
             // this initial statement.
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
             sumcheck_prover = {
-                let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone());
-                sumcheck.add_weighted_sum(
-                    &statement,
-                    combination_randomness_gen
-                );
+                let mut sumcheck = SumcheckSingle::new(witness.polynomial.clone(), &statement, combination_randomness_gen);
+                // sumcheck.add_weighted_sum(
+                //     &statement,
+                //     combination_randomness_gen
+                // );
 
                 Some(sumcheck)
             };
@@ -135,17 +135,16 @@ where
             prev_merkle_answers: witness.merkle_leaves,
             merkle_proofs: vec![],
             randomness_vec: randomness_vec.clone(),
+            statement,
         };
 
-        self.round(merlin, round_state, &statement)
+        self.round(merlin, round_state)
     }
 
     fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
         mut round_state: RoundState<F, MerkleConfig>,
-        prover_statement: &Statement<F>,
-        // randomness_vec: &mut Vec<F>
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         Merlin: FieldChallenges<F>
@@ -202,7 +201,7 @@ where
             if self.0.final_sumcheck_rounds > 0 {
                 let final_folding_randomness = round_state
                     .sumcheck_prover
-                    .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone()))
+                    .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::from(1)))
                     .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                         merlin,
                         self.0.final_sumcheck_rounds,
@@ -219,7 +218,7 @@ where
             randomness_vec_rev.reverse();
 
             let mut statement_values_at_random_point = vec![];
-            for (weights, _) in &prover_statement.constraints {
+            for (weights, _) in &round_state.statement.constraints {
                 match weights {
                     Weights::Linear { weight } => {
                         statement_values_at_random_point.push(
@@ -395,13 +394,13 @@ where
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                let mut sumcheck = SumcheckSingle::new(folded_coefficients.clone());
-                sumcheck.add_new_equality(
-                    &stir_challenges,
-                    &stir_evaluations,
-                    &combination_randomness,
-                );
-                sumcheck
+                let mut statement: Statement<F> = Statement::<F>::new(folded_coefficients.num_variables());
+
+                for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
+                    let weights = Weights::evaluation(point.clone());
+                    statement.add_constraint(weights, eval);
+                }
+                SumcheckSingle::new(folded_coefficients.clone(), &statement, combination_randomness[1])
             });
 
         let folding_randomness = sumcheck_prover
@@ -428,9 +427,10 @@ where
             prev_merkle_answers: folded_evals,
             merkle_proofs: round_state.merkle_proofs,
             randomness_vec: round_state.randomness_vec.clone(),
+            statement: round_state.statement,
         };
 
-        self.round(merlin, round_state, prover_statement)
+        self.round(merlin, round_state)
     }
 }
 
@@ -448,4 +448,5 @@ where
     prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
     randomness_vec: Vec<F>,
+    statement: Statement<F>,
 }

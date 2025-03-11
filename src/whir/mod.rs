@@ -91,14 +91,11 @@ mod tests {
             .collect();
 
         let mut statement = Statement::<F>::new(num_variables);
-        let mut statement_verifier = StatementVerifier::<F>::new(num_variables);
 
         for point in &points {
             let eval = polynomial.evaluate(point);
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
-            let weights_verifier = VerifierWeights::evaluation(point.clone());
-            statement_verifier.add_constraint(weights_verifier, eval);
         }
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
@@ -112,6 +109,7 @@ mod tests {
         let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
         let prover = Prover(params.clone());
+        let statement_verifier = StatementVerifier::from_statement(&statement);
 
         let proof = prover
             .prove(&mut merlin, statement, witness)

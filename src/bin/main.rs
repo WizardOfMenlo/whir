@@ -11,7 +11,7 @@ use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{self, HashCounter},
-    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::{Statement, StatementVerifier, VerifierWeights, Weights}
+    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::{Statement, StatementVerifier, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -281,8 +281,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let statement = Statement::new(num_variables);
-    let statement_verifier = StatementVerifier::new(num_variables);
-
+    let statement_verifier = StatementVerifier::from_statement(&statement);
     let proof = prover
         .prove(&mut merlin, statement, witness)
         .unwrap();
@@ -394,8 +393,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let committer = Committer::new(params.clone());
     let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
-    let mut statement = Statement::<F>::new(num_variables);
-    let mut statement_verifier= StatementVerifier::<F>::new(num_variables);
+    let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
@@ -403,15 +401,12 @@ fn run_whir_pcs<F, MerkleConfig>(
     .collect();
  
     for point in &points {
-         let eval = polynomial.evaluate_at_extension(point);
-         let weights = Weights::evaluation(point.clone());
-         statement.add_constraint(weights, eval);
-         let weights_verifier = VerifierWeights::evaluation(point.clone());
-         statement_verifier.add_constraint(weights_verifier, eval);
+        let eval = polynomial.evaluate_at_extension(point);
+        let weights = Weights::evaluation(point.clone());
+        statement.add_constraint(weights, eval);
     }
 
     // Linear constraint
-    println!("Number of linear constraints: {}", num_linear_constraints);
     for _ in 0..num_linear_constraints {
         let input = CoefficientList::new(
             (0..num_coeffs)
@@ -421,12 +416,10 @@ fn run_whir_pcs<F, MerkleConfig>(
         let input : EvaluationsList<F> = input.clone().into();
  
         let linear_claim_weight = Weights::linear(input.clone());
-        let linear_claim_weight_verifier = VerifierWeights::linear(num_variables, None);
         let poly = EvaluationsList::from(polynomial.clone().to_extension());
         
         let sum = linear_claim_weight.weighted_sum(&poly);
         statement.add_constraint(linear_claim_weight, sum);
-        statement_verifier.add_constraint(linear_claim_weight_verifier, sum);
     }
     
     
@@ -442,6 +435,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
     );
 
+    let statement_verifier = StatementVerifier::from_statement(&statement);
     // Just not to count that initial inversion (which could be precomputed)
     let verifier = Verifier::new(params);
 
