@@ -157,7 +157,6 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
         }
         [x, tail @ ..] => {
             let (f0, f1) = evals.split_at(evals.len() / 2);
-            // let mid = evals.len() / 2;
             #[cfg(not(feature = "parallel"))]
             let (f0, f1) = (eval_multilinear(f0, tail), eval_multilinear(f1, tail));
             #[cfg(feature = "parallel")]
