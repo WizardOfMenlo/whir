@@ -2,11 +2,6 @@ use crate::ntt::transpose;
 use ark_ff::Field;
 use std::collections::BTreeSet;
 
-// checks whether the given number n is a power of two.
-pub const fn is_power_of_two(n: usize) -> bool {
-    n != 0 && n.is_power_of_two()
-}
-
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
 // Currently, we compute the decomposition of value % (base^n_bits).
@@ -73,7 +68,7 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 mod tests {
     use crate::utils::base_decomposition;
 
-    use super::{is_power_of_two, stack_evaluations};
+    use super::stack_evaluations;
 
     #[test]
     fn test_evaluations_stack() {
@@ -94,15 +89,6 @@ mod tests {
                 assert_eq!(f, F::from((i + j * num / fold_size) as u64));
             }
         }
-    }
-
-    #[test]
-    fn test_is_power_of_two() {
-        assert!(!is_power_of_two(0));
-        assert!(is_power_of_two(1));
-        assert!(is_power_of_two(2));
-        assert!(!is_power_of_two(3));
-        assert!(!is_power_of_two(usize::MAX));
     }
 
     #[test]
