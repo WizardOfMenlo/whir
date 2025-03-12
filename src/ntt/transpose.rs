@@ -1,4 +1,3 @@
-use super::super::utils::is_power_of_two;
 use super::{utils::workload_size, MatrixMut};
 use std::mem::swap;
 
@@ -13,8 +12,8 @@ use rayon::join;
 /// This algorithm assumes that both rows and cols are powers of two.
 pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: usize) {
     debug_assert_eq!(matrix.len() % (rows * cols), 0);
-    debug_assert!(is_power_of_two(rows));
-    debug_assert!(is_power_of_two(cols));
+    debug_assert!(rows.is_power_of_two());
+    debug_assert!(cols.is_power_of_two());
     // eprintln!(
     //     "Transpose {} x {rows} x {cols} matrix.",
     //     matrix.len() / (rows * cols)
@@ -209,7 +208,7 @@ fn transpose_square_swap_parallel<F: Sized + Send>(
     debug_assert!(a.is_square());
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
-    debug_assert!(is_power_of_two(a.rows()));
+    debug_assert!(a.rows().is_power_of_two());
     debug_assert!(workload_size::<F>() >= 2);
 
     let size = a.rows();
@@ -269,7 +268,7 @@ fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: Matr
     debug_assert!(a.is_square());
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
-    debug_assert!(is_power_of_two(a.rows()));
+    debug_assert!(a.rows().is_power_of_two());
     debug_assert!(workload_size::<F>() >= 2); // otherwise, we would recurse even if size == 1.
 
     let size = a.rows();

@@ -5,8 +5,29 @@ use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
-/// Compute the fold on that point
+/// Computes the folded value of a function evaluated on a coset.
+///
+/// This function applies a recursive folding transformation to a given set of function
+/// evaluations on a coset, progressively reducing the number of evaluations while incorporating
+/// randomness and coset transformations. The folding process is performed `folding_factor` times,
+/// halving the number of evaluations at each step.
+///
+/// Mathematical Formulation:
+/// Given an initial evaluation vector:
+/// \begin{equation}
+/// f(x) = [f_0, f_1, ..., f_{2^m - 1}]
+/// \end{equation}
+///
+/// Each folding step computes:
+/// \begin{equation}
+/// g_i = \frac{f_i + f_{i + N/2} + r \cdot (f_i - f_{i + N/2}) \cdot (o^{-1} \cdot g^{-i})}{2}
+/// \end{equation}
+///
+/// where:
+/// - \( r \) is the folding randomness
+/// - \( o^{-1} \) is the inverse coset offset
+/// - \( g^{-i} \) is the inverse generator raised to index \( i \)
+/// - The function is recursively applied until the vector reduces to size 1.
 pub fn compute_fold<F: Field>(
     answers: &[F],
     folding_randomness: &[F],
@@ -17,28 +38,32 @@ pub fn compute_fold<F: Field>(
 ) -> F {
     let mut answers = answers.to_vec();
 
-    // We recursively compute the fold, rec is where it is
+    // Perform the folding process `folding_factor` times.
     for rec in 0..folding_factor {
         let offset = answers.len() / 2;
-        let mut new_answers = vec![F::ZERO; offset];
         let mut coset_index_inv = F::ONE;
+
+        // Compute the new folded values, iterating over the first half of `answers`.
         for i in 0..offset {
-            let f_value_0 = answers[i];
-            let f_value_1 = answers[i + offset];
+            let f0 = answers[i];
+            let f1 = answers[i + offset];
             let point_inv = coset_offset_inv * coset_index_inv;
 
-            let left = f_value_0 + f_value_1;
-            let right = point_inv * (f_value_0 - f_value_1);
+            let left = f0 + f1;
+            let right = point_inv * (f0 - f1);
 
-            new_answers[i] =
+            // Apply the folding transformation with randomness
+            answers[i] =
                 two_inv * (left + folding_randomness[folding_randomness.len() - 1 - rec] * right);
             coset_index_inv *= coset_gen_inv;
         }
-        answers = new_answers;
 
-        // Update for next one
-        coset_offset_inv = coset_offset_inv * coset_offset_inv;
-        coset_gen_inv = coset_gen_inv * coset_gen_inv;
+        // Reduce answers to half its size without allocating a new vector
+        answers.truncate(offset);
+
+        // Update for next iteration
+        coset_offset_inv *= coset_offset_inv;
+        coset_gen_inv *= coset_gen_inv;
     }
 
     answers[0]
