@@ -166,7 +166,7 @@ where
         for (point, rand) in points.iter().zip(combination_randomness) {
             // TODO: We might want to do all points simultaneously so we
             // do only a single pass over the data.
-            Self::eval_eq(&point.0, self.weights.evals_mut(), *rand);
+            eval_eq(&point.0, self.weights.evals_mut(), *rand);
         }
         // Update the sum
         for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
