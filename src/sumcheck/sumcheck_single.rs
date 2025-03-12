@@ -163,7 +163,7 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         assert_eq!(combination_randomness.len(), evaluations.len());
-for (point, rand) in points.iter().zip(combination_randomness) {
+        for (point, rand) in points.iter().zip(combination_randomness) {
             // TODO: We might want to do all points simultaneously so we
             // do only a single pass over the data.
             Self::eval_eq(&point.0, self.weights.evals_mut(), *rand);
@@ -250,8 +250,8 @@ fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
         let (low, high) = out.split_at_mut(out.len() / 2);
         let s1 = scalar * x;
         let s0 = scalar - s1;
-        Self::eval_eq(tail, low, s0);
-        Self::eval_eq(tail, high, s1);
+        eval_eq(tail, low, s0);
+        eval_eq(tail, high, s1);
     } else {
         out[0] += scalar;
     }
