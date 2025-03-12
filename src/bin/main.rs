@@ -8,14 +8,12 @@ use ark_ff::FftField;
 use ark_serialize::CanonicalSerialize;
 use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use whir::{
-    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
-    crypto::{
+    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{self, HashCounter},
-    },
-    parameters::*,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    whir::Statement,
+    }, parameters::*,
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint}, 
+    whir::statement::{Statement, StatementVerifier, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -41,6 +39,9 @@ struct Args {
 
     #[arg(short = 'e', long = "evaluations", default_value = "1")]
     num_evaluations: usize,
+
+    #[arg(long = "linear_constraints", default_value = "0")]
+    num_linear_constraints: usize,
 
     #[arg(short = 'r', long, default_value = "1")]
     rate: usize,
@@ -281,8 +282,10 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
+    let statement = Statement::new(num_variables);
+    let statement_verifier = StatementVerifier::from_statement(&statement);
     let proof = prover
-        .prove(&mut merlin, Statement::default(), witness)
+        .prove(&mut merlin, statement, witness)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -303,7 +306,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     for _ in 0..reps {
         let mut arthur = io.to_arthur(&transcript);
         verifier
-            .verify(&mut arthur, &Statement::default(), &proof)
+            .verify(&mut arthur, &statement_verifier, &proof)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -324,7 +327,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 {
     use whir::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier, whir_proof_size, Statement,
+        verifier::Verifier, whir_proof_size, statement::Statement,
     };
 
     // Runs as a PCS
@@ -338,6 +341,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let fold_optimisation = args.fold_optimisation;
     let soundness_type = args.soundness_type;
     let num_evaluations = args.num_evaluations;
+    let num_linear_constraints = args.num_linear_constraints;
 
     if num_evaluations == 0 {
         println!("Warning: running as PCS but no evaluations specified.");
@@ -385,24 +389,41 @@ fn run_whir_pcs<F, MerkleConfig>(
             .map(<F as Field>::BasePrimeField::from)
             .collect(),
     );
-    let points: Vec<_> = (0..num_evaluations)
-        .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
-        .collect();
-    let evaluations = points
-        .iter()
-        .map(|point| polynomial.evaluate_at_extension(point))
-        .collect();
-
-    let statement = Statement {
-        points,
-        evaluations,
-    };
-
     let whir_prover_time = Instant::now();
 
     let committer = Committer::new(params.clone());
-    let witness = committer.commit(&mut merlin, polynomial).unwrap();
+    let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
+    let mut statement: Statement<F> = Statement::<F>::new(num_variables);
+
+    // Evaluation constraint
+    let points: Vec<_> = (0..num_evaluations)
+    .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
+    .collect();
+ 
+    for point in &points {
+        let eval = polynomial.evaluate_at_extension(point);
+        let weights = Weights::evaluation(point.clone());
+        statement.add_constraint(weights, eval);
+    }
+
+    // Linear constraint
+    for _ in 0..num_linear_constraints {
+        let input = CoefficientList::new(
+            (0..num_coeffs)
+                .map(F::from)
+                .collect(),
+        );
+        let input : EvaluationsList<F> = input.clone().into();
+ 
+        let linear_claim_weight = Weights::linear(input.clone());
+        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        
+        let sum = linear_claim_weight.weighted_sum(&poly);
+        statement.add_constraint(linear_claim_weight, sum);
+    }
+    
+    
     let prover = Prover(params.clone());
 
     let proof = prover
@@ -415,6 +436,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
     );
 
+    let statement_verifier = StatementVerifier::from_statement(&statement);
     // Just not to count that initial inversion (which could be precomputed)
     let verifier = Verifier::new(params);
 
@@ -422,7 +444,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut arthur = io.to_arthur(merlin.transcript());
-        verifier.verify(&mut arthur, &statement, &proof).unwrap();
+        verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
     }
     println!(
         "Verifier time: {:.1?}",

@@ -14,7 +14,7 @@ pub struct LagrangePolynomialGray<F: Field> {
 
 impl<F: Field> LagrangePolynomialGray<F> {
     pub fn new(point: &MultilinearPoint<F>) -> Self {
-        let num_variables = point.n_variables();
+        let num_variables = point.num_variables();
         // Limitation for bin hypercube
         assert!(point.0.iter().all(|&p| p != F::ZERO && p != F::ONE));
 

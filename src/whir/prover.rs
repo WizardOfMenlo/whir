@@ -1,4 +1,4 @@
-use super::{committer::Witness, parameters::WhirConfig, Statement, WhirProof};
+use super::{committer::Witness, parameters::WhirConfig, statement::{Statement, Weights}, WhirProof};
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -8,7 +8,7 @@ use crate::{
         fold::{compute_fold, restructure_evaluations},
         multilinear::MultilinearPoint,
     },
-    sumcheck::prover_not_skipping::SumcheckProverNotSkipping,
+    sumcheck::SumcheckSingle,
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -41,17 +41,11 @@ where
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        if statement.points.len() != statement.evaluations.len() {
-            return false;
-        }
-        if !statement
-            .points
-            .iter()
-            .all(|point| point.0.len() == self.0.mv_parameters.num_variables)
+        if !statement.num_variables() == self.0.mv_parameters.num_variables
         {
             return false;
         }
-        if !self.0.initial_statement && !statement.points.is_empty() {
+        if !self.0.initial_statement && !statement.constraints.is_empty() {
             return false;
         }
         true
@@ -68,7 +62,7 @@ where
     pub fn prove<Merlin>(
         &self,
         merlin: &mut Merlin,
-        statement: Statement<F>,
+        mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
@@ -83,46 +77,23 @@ where
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
 
-        let initial_claims: Vec<_> = witness
-            .ood_points
-            .into_iter()
-            .map(|ood_point| {
-                MultilinearPoint::expand_from_univariate(
-                    ood_point,
-                    self.0.mv_parameters.num_variables,
-                )
-            })
-            .chain(statement.points)
-            .collect();
-        let initial_answers: Vec<_> = witness
-            .ood_answers
-            .into_iter()
-            .chain(statement.evaluations)
-            .collect();
+        let mut new_constraints = Vec::new();
 
-        if !self.0.initial_statement {
-            // It is ensured that if there is no initial statement, the
-            // number of ood samples is also zero.
-            assert!(
-                initial_answers.is_empty(),
-                "Can not have initial answers without initial statement"
-            );
+        for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
+            let weights: Weights<F> = Weights::evaluation(MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables));
+            new_constraints.push((weights, evaluation));
         }
 
+        statement.add_constraints_in_front(new_constraints);
         let mut sumcheck_prover = None;
         let folding_randomness = if self.0.initial_statement {
             // If there is initial statement, then we run the sum-check for
             // this initial statement.
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
-            let combination_randomness =
-                expand_randomness(combination_randomness_gen, initial_claims.len());
-
-            sumcheck_prover = Some(SumcheckProverNotSkipping::new(
-                witness.polynomial.clone(),
-                &initial_claims,
-                &combination_randomness,
-                &initial_answers,
-            ));
+            sumcheck_prover = {
+                let sumcheck = SumcheckSingle::new(witness.polynomial.clone(), &statement, combination_randomness_gen);
+                Some(sumcheck)
+            };
 
             sumcheck_prover
                 .as_mut()
@@ -144,6 +115,10 @@ where
             }
             MultilinearPoint(folding_randomness)
         };
+        let mut randomness_vec = vec![F::ZERO; self.0.mv_parameters.num_variables];
+        let mut arr = folding_randomness.clone().0;
+        arr.reverse();
+        randomness_vec[..folding_randomness.0.len()].copy_from_slice(&arr);
 
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
@@ -154,6 +129,8 @@ where
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
             merkle_proofs: vec![],
+            randomness_vec: randomness_vec.clone(),
+            statement,
         };
 
         self.round(merlin, round_state)
@@ -217,19 +194,36 @@ where
 
             // Final sumcheck
             if self.0.final_sumcheck_rounds > 0 {
-                round_state
+                let final_folding_randomness = round_state
                     .sumcheck_prover
-                    .unwrap_or_else(|| {
-                        SumcheckProverNotSkipping::new(folded_coefficients.clone(), &[], &[], &[])
-                    })
+                    .unwrap_or_else(|| SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::from(1)))
                     .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
                         merlin,
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
+                    let start_idx = self.0.folding_factor.total_number(round_state.round);
+                    let mut arr = final_folding_randomness.clone().0;
+                    arr.reverse();
+                    round_state.randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
+                        .copy_from_slice(&arr);
             }
 
-            return Ok(WhirProof(round_state.merkle_proofs));
+            let mut randomness_vec_rev = round_state.randomness_vec.clone();
+            randomness_vec_rev.reverse();
+
+            let mut statement_values_at_random_point = vec![];
+            for (weights, _) in &round_state.statement.constraints {
+                match weights {
+                    Weights::Linear { weight } => {
+                        statement_values_at_random_point.push(
+                            weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone()))
+                        );
+                    },
+                    _ => {}
+                }
+            }
+            return Ok(WhirProof{merkle_paths: round_state.merkle_proofs, statement_values_at_random_point: statement_values_at_random_point})
         }
 
         let round_params = &self.0.round_parameters[round_state.round];
@@ -389,18 +383,19 @@ where
             .map(|mut sumcheck_prover| {
                 sumcheck_prover.add_new_equality(
                     &stir_challenges,
-                    &combination_randomness,
                     &stir_evaluations,
+                    &combination_randomness,
                 );
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                SumcheckProverNotSkipping::new(
-                    folded_coefficients.clone(),
-                    &stir_challenges,
-                    &combination_randomness,
-                    &stir_evaluations,
-                )
+                let mut statement: Statement<F> = Statement::<F>::new(folded_coefficients.num_variables());
+
+                for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
+                    let weights = Weights::evaluation(point.clone());
+                    statement.add_constraint(weights, eval);
+                }
+                SumcheckSingle::new(folded_coefficients.clone(), &statement, combination_randomness[1])
             });
 
         let folding_randomness = sumcheck_prover
@@ -410,6 +405,13 @@ where
                 round_params.folding_pow_bits,
             )?;
 
+        let start_idx = self.0.folding_factor.total_number(round_state.round);
+        let mut arr = folding_randomness.clone().0;
+        arr.reverse();
+        
+        round_state.randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
+            .copy_from_slice(&arr);
+ 
         let round_state = RoundState {
             round: round_state.round + 1,
             domain: new_domain,
@@ -419,6 +421,8 @@ where
             prev_merkle: merkle_tree,
             prev_merkle_answers: folded_evals,
             merkle_proofs: round_state.merkle_proofs,
+            randomness_vec: round_state.randomness_vec.clone(),
+            statement: round_state.statement,
         };
 
         self.round(merlin, round_state)
@@ -432,10 +436,12 @@ where
 {
     round: usize,
     domain: Domain<F>,
-    sumcheck_prover: Option<SumcheckProverNotSkipping<F>>,
+    sumcheck_prover: Option<SumcheckSingle<F>>,
     folding_randomness: MultilinearPoint<F>,
     coefficients: CoefficientList<F>,
     prev_merkle: MerkleTree<MerkleConfig>,
     prev_merkle_answers: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    randomness_vec: Vec<F>,
+    statement: Statement<F>,
 }

@@ -15,7 +15,7 @@ where
 {
     /// Returns the number of variables (dimension `n`).
     #[inline]
-    pub fn n_variables(&self) -> usize {
+    pub fn num_variables(&self) -> usize {
         self.0.len()
     }
 
@@ -100,7 +100,7 @@ where
     ///
     /// `p` is interpreted as a **big-endian** binary number.
     pub fn eq_poly(&self, mut point: BinaryHypercubePoint) -> F {
-        let n_variables = self.n_variables();
+        let n_variables = self.num_variables();
         assert!(*point < (1 << n_variables)); // Ensure correct length
 
         let mut acc = F::ONE;
@@ -122,7 +122,7 @@ where
     /// ```
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
     pub fn eq_poly_outside(&self, point: &Self) -> F {
-        assert_eq!(self.n_variables(), point.n_variables());
+        assert_eq!(self.num_variables(), point.num_variables());
 
         let mut acc = F::ONE;
 
@@ -148,7 +148,7 @@ where
         let two = F::ONE + F::ONE;
         let two_inv = two.inverse().unwrap();
 
-        let n_variables = self.n_variables();
+        let n_variables = self.num_variables();
         assert!(point < 3usize.pow(n_variables as u32));
 
         let mut acc = F::ONE;
@@ -204,7 +204,7 @@ mod tests {
     fn test_n_variables() {
         let point =
             MultilinearPoint::<Field64>(vec![Field64::from(1), Field64::from(0), Field64::from(1)]);
-        assert_eq!(point.n_variables(), 3);
+        assert_eq!(point.num_variables(), 3);
     }
 
     #[test]

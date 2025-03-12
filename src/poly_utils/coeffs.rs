@@ -67,7 +67,7 @@ where
     /// Ensures that:
     /// - `point` has the same number of variables as the polynomial (`n`).
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(self.num_variables, point.n_variables());
+        assert_eq!(self.num_variables, point.num_variables());
         eval_multivariate(&self.coeffs, &point.0)
     }
 
@@ -136,7 +136,7 @@ where
         &self,
         point: &MultilinearPoint<E>,
     ) -> E {
-        assert_eq!(self.num_variables, point.n_variables());
+        assert_eq!(self.num_variables, point.num_variables());
         Self::eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
@@ -169,7 +169,7 @@ where
     /// - The number of variables decreases: `m = n - k`
     /// - Uses multivariate evaluation over chunks of coefficients.
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
-        let folding_factor = folding_randomness.n_variables();
+        let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
         let coeffs = self
             .coeffs

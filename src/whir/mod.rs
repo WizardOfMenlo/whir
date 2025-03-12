@@ -1,27 +1,25 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::poly_utils::multilinear::MultilinearPoint;
-
 pub mod committer;
 pub mod fs_utils;
 pub mod iopattern;
 pub mod parameters;
 pub mod prover;
+pub mod statement;
 pub mod verifier;
 
-#[derive(Debug, Clone, Default)]
-pub struct Statement<F> {
-    pub points: Vec<MultilinearPoint<F>>,
-    pub evaluations: Vec<F>,
-}
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct WhirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    pub statement_values_at_random_point: Vec<F>,
+}
 
 pub fn whir_proof_size<MerkleConfig, F>(
     transcript: &[u8],
@@ -45,8 +43,10 @@ mod tests {
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
     use crate::poly_utils::coeffs::CoefficientList;
+    use crate::poly_utils::evals::EvaluationsList;
     use crate::poly_utils::multilinear::MultilinearPoint;
-    use crate::whir::Statement;
+    use crate::whir::statement::{Statement, StatementVerifier, Weights};
+
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -92,13 +92,26 @@ mod tests {
             .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
             .collect();
 
-        let statement = Statement {
-            points: points.clone(),
-            evaluations: points
-                .iter()
-                .map(|point| polynomial.evaluate(point))
+        let mut statement = Statement::<F>::new(num_variables);
+
+        for point in &points {
+            let eval = polynomial.evaluate(point);
+            let weights = Weights::evaluation(point.clone());
+            statement.add_constraint(weights, eval);
+        }
+
+        let input = CoefficientList::new(
+            (0..1<<num_variables)
+                .map(F::from)
                 .collect(),
-        };
+        );
+        let input : EvaluationsList<F> = input.clone().into();
+ 
+        let linear_claim_weight = Weights::linear(input.clone());
+        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        
+        let sum = linear_claim_weight.weighted_sum(&poly);
+        statement.add_constraint(linear_claim_weight, sum);
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
@@ -110,14 +123,15 @@ mod tests {
         let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
         let prover = Prover(params.clone());
+        let statement_verifier = StatementVerifier::from_statement(&statement);
 
         let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+            .prove(&mut merlin, statement, witness)
             .unwrap();
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &statement, &proof).is_ok());
+        assert!(verifier.verify(&mut arthur, &statement_verifier, &proof).is_ok());
     }
 
     #[test]
@@ -134,13 +148,13 @@ mod tests {
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
-            for num_variables in num_variables {
+            for num_variable in num_variables {
                 for fold_type in fold_types {
                     for num_points in num_points {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
                                 make_whir_things(
-                                    num_variables,
+                                    num_variable,
                                     FoldingFactor::Constant(folding_factor),
                                     num_points,
                                     soundness_type,

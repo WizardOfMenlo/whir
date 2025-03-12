@@ -16,48 +16,48 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
-    pub(crate) mv_parameters: MultivariateParameters<F>,
-    pub(crate) soundness_type: SoundnessType,
-    pub(crate) security_level: usize,
-    pub(crate) max_pow_bits: usize,
+    pub mv_parameters: MultivariateParameters<F>,
+    pub soundness_type: SoundnessType,
+    pub security_level: usize,
+    pub max_pow_bits: usize,
 
-    pub(crate) committment_ood_samples: usize,
+    pub committment_ood_samples: usize,
     // The WHIR protocol can prove either:
     // 1. The commitment is a valid low degree polynomial. In that case, the
     //    initial statement is set to false.
     // 2. The commitment is a valid folded polynomial, and an additional
     //    polynomial evaluation statement. In that case, the initial statement
     //    is set to true.
-    pub(crate) initial_statement: bool,
-    pub(crate) starting_domain: Domain<F>,
-    pub(crate) starting_log_inv_rate: usize,
-    pub(crate) starting_folding_pow_bits: f64,
+    pub initial_statement: bool,
+    pub starting_domain: Domain<F>,
+    pub starting_log_inv_rate: usize,
+    pub starting_folding_pow_bits: f64,
 
-    pub(crate) folding_factor: FoldingFactor,
-    pub(crate) round_parameters: Vec<RoundConfig>,
-    pub(crate) fold_optimisation: FoldType,
+    pub folding_factor: FoldingFactor,
+    pub round_parameters: Vec<RoundConfig>,
+    pub fold_optimisation: FoldType,
 
-    pub(crate) final_queries: usize,
-    pub(crate) final_pow_bits: f64,
-    pub(crate) final_log_inv_rate: usize,
-    pub(crate) final_sumcheck_rounds: usize,
-    pub(crate) final_folding_pow_bits: f64,
+    pub final_queries: usize,
+    pub final_pow_bits: f64,
+    pub final_log_inv_rate: usize,
+    pub final_sumcheck_rounds: usize,
+    pub final_folding_pow_bits: f64,
 
     // PoW parameters
-    pub(crate) pow_strategy: PhantomData<PowStrategy>,
+    pub pow_strategy: PhantomData<PowStrategy>,
 
     // Merkle tree parameters
-    pub(crate) leaf_hash_params: LeafParam<MerkleConfig>,
-    pub(crate) two_to_one_params: TwoToOneParam<MerkleConfig>,
+    pub leaf_hash_params: LeafParam<MerkleConfig>,
+    pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct RoundConfig {
-    pub(crate) pow_bits: f64,
-    pub(crate) folding_pow_bits: f64,
-    pub(crate) num_queries: usize,
-    pub(crate) ood_samples: usize,
-    pub(crate) log_inv_rate: usize,
+pub struct RoundConfig {
+    pub pow_bits: f64,
+    pub folding_pow_bits: f64,
+    pub num_queries: usize,
+    pub ood_samples: usize,
+    pub log_inv_rate: usize,
 }
 
 impl<F, MerkleConfig, PowStrategy> WhirConfig<F, MerkleConfig, PowStrategy>

@@ -4,7 +4,7 @@ use nimue::plugins::ark::{ByteIOPattern, FieldIOPattern};
 
 use crate::{
     fs_utils::{OODIOPattern, WhirPoWIOPattern},
-    sumcheck::prover_not_skipping::SumcheckNotSkippingIOPattern,
+    sumcheck::SumcheckSingleIOPattern,
 };
 
 use super::parameters::WhirConfig;
@@ -28,7 +28,7 @@ where
     MerkleConfig: Config,
     IOPattern: ByteIOPattern
         + FieldIOPattern<F>
-        + SumcheckNotSkippingIOPattern<F>
+        + SumcheckSingleIOPattern<F>
         + WhirPoWIOPattern
         + OODIOPattern<F>
         + DigestIOPattern<MerkleConfig>,

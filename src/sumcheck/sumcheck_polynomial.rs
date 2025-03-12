@@ -1,6 +1,5 @@
-use ark_ff::Field;
-
 use crate::poly_utils::multilinear::MultilinearPoint;
+use ark_ff::Field;
 
 /// Represents a polynomial stored in evaluation form over a ternary domain {0,1,2}^n.
 ///
@@ -12,7 +11,7 @@ use crate::poly_utils::multilinear::MultilinearPoint;
 #[derive(Debug, Clone)]
 pub struct SumcheckPolynomial<F> {
     /// Number of variables in the polynomial (defines the dimension of the evaluation domain).
-    n_variables: usize,
+    num_variables: usize,
     /// Vector of function evaluations at points in `{0,1,2}^n_variables`, stored in lexicographic
     /// order.
     evaluations: Vec<F>,
@@ -29,9 +28,9 @@ where
     /// - `n_variables`: The number of variables (determines the evaluation domain size).
     ///
     /// The vector `evaluations` **must** have a length of `3^n_variables`.
-    pub const fn new(evaluations: Vec<F>, n_variables: usize) -> Self {
+    pub const fn new(evaluations: Vec<F>, num_variables: usize) -> Self {
         Self {
-            n_variables,
+            num_variables,
             evaluations,
         }
     }
@@ -58,7 +57,7 @@ where
     /// sum = ∑ h(x_1, ..., x_n)  where  (x_1, ..., x_n) ∈ {0,1}^n
     /// ```
     pub fn sum_over_boolean_hypercube(&self) -> F {
-        (0..(1 << self.n_variables))
+        (0..(1 << self.num_variables))
             .map(|point| self.evaluations[self.binary_to_ternary_index(point)])
             .sum()
     }
@@ -87,7 +86,7 @@ where
         let mut ternary_index = 0;
         let mut factor = 1;
 
-        for _ in 0..self.n_variables {
+        for _ in 0..self.num_variables {
             ternary_index += (binary_index & 1) * factor;
             // Move to next bit
             binary_index >>= 1;
@@ -111,12 +110,17 @@ where
     /// # Constraints:
     /// - The input `point` must have `n_variables` dimensions.
     pub fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
-        assert_eq!(point.n_variables(), self.n_variables);
-        self.evaluations
-            .iter()
-            .enumerate()
-            .map(|(i, &eval)| eval * point.eq_poly3(i))
-            .sum()
+        assert!(point.num_variables() == self.num_variables);
+        let num_evaluation_points = 3_usize.pow(self.num_variables as u32);
+
+        let mut evaluation = F::ZERO;
+
+        for index in 0..num_evaluation_points {
+            evaluation += self.evaluations[index] * point.eq_poly3(index);
+        }
+
+        evaluation
+
     }
 }
 

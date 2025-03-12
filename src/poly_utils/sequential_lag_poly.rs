@@ -43,7 +43,7 @@ impl<F: Field> From<&MultilinearPoint<F>> for LagrangePolynomialIterator<F> {
     /// - Precomputes `1 - c_i` for each coordinate to avoid recomputation.
     /// - Constructs a **stack** for incremental computation.
     fn from(point: &MultilinearPoint<F>) -> Self {
-        let num_variables = point.n_variables();
+        let num_variables = point.num_variables();
 
         // Initialize stack with identity element
         let mut stack = vec![F::ONE];
