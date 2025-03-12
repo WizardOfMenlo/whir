@@ -55,7 +55,7 @@ where
     ///
     /// Mathematically, this computes:
     /// ```ignore
-    /// sum = ∑ f(x_1, ..., x_n)  where  (x_1, ..., x_n) ∈ {0,1}^n
+    /// sum = ∑ h(x_1, ..., x_n)  where  (x_1, ..., x_n) ∈ {0,1}^n
     /// ```
     pub fn sum_over_boolean_hypercube(&self) -> F {
         (0..(1 << self.n_variables))
