@@ -77,7 +77,7 @@ where
     /// ```
     ///
     /// # Example:
-    /// ```
+    /// ```ignore
     /// binary index 0b11  (3 in decimal)  →  ternary index 4
     /// binary index 0b10  (2 in decimal)  →  ternary index 3
     /// binary index 0b01  (1 in decimal)  →  ternary index 1
