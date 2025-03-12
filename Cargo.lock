@@ -247,17 +247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-test-curves"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cc137bb3271671a597ae79157030f88affe9fa7975207c3b781a01cb9ed0372"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-std",
-]
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1096,16 +1085,12 @@ dependencies = [
  "ark-poly",
  "ark-serialize",
  "ark-std",
- "ark-test-curves",
- "blake2",
  "blake3",
  "clap",
- "derivative",
  "nimue",
  "nimue-pow",
  "proptest",
  "rand",
- "rand_chacha",
  "rayon",
  "serde",
  "serde_json",
