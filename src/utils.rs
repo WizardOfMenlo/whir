@@ -24,8 +24,8 @@ pub fn base_decomposition(mut value: usize, base: u8, n_bits: usize) -> Vec<u8> 
     let mut result = vec![0u8; n_bits];
 
     // Compute the decomposition in reverse order (avoids shifting later)
-    for i in (0..n_bits).rev() {
-        result[i] = (value % (base as usize)) as u8;
+    for digit in result.iter_mut().rev() {
+        *digit = (value % (base as usize)) as u8;
         value /= base as usize;
     }
 
