@@ -142,21 +142,15 @@ mod tests {
     fn test_binary_to_ternary_index_three_vars() {
         let poly = SumcheckPolynomial::new(vec![Field64::ZERO; 27], 3);
 
-        let start = std::time::Instant::now();
-
-        for _ in 0..1000 {
-            // Check conversion for all binary points in {0,1}^3
-            assert_eq!(poly.binary_to_ternary_index(0b000), 0);
-            assert_eq!(poly.binary_to_ternary_index(0b001), 1);
-            assert_eq!(poly.binary_to_ternary_index(0b010), 3);
-            assert_eq!(poly.binary_to_ternary_index(0b011), 4);
-            assert_eq!(poly.binary_to_ternary_index(0b100), 9);
-            assert_eq!(poly.binary_to_ternary_index(0b101), 10);
-            assert_eq!(poly.binary_to_ternary_index(0b110), 12);
-            assert_eq!(poly.binary_to_ternary_index(0b111), 13);
-        }
-
-        println!("Conversion time: {:?}", start.elapsed());
+        // Check conversion for all binary points in {0,1}^3
+        assert_eq!(poly.binary_to_ternary_index(0b000), 0);
+        assert_eq!(poly.binary_to_ternary_index(0b001), 1);
+        assert_eq!(poly.binary_to_ternary_index(0b010), 3);
+        assert_eq!(poly.binary_to_ternary_index(0b011), 4);
+        assert_eq!(poly.binary_to_ternary_index(0b100), 9);
+        assert_eq!(poly.binary_to_ternary_index(0b101), 10);
+        assert_eq!(poly.binary_to_ternary_index(0b110), 12);
+        assert_eq!(poly.binary_to_ternary_index(0b111), 13);
     }
 
     #[test]
