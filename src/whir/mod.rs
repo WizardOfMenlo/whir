@@ -44,8 +44,9 @@ mod tests {
     };
     use crate::poly_utils::coeffs::CoefficientList;
     use crate::poly_utils::evals::EvaluationsList;
-    use crate::poly_utils::MultilinearPoint;
+    use crate::poly_utils::multilinear::MultilinearPoint;
     use crate::whir::statement::{Statement, StatementVerifier, Weights};
+
     use crate::whir::{
         committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
@@ -114,8 +115,7 @@ mod tests {
 
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
-            .clone();
+            .add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 

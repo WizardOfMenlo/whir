@@ -6,43 +6,67 @@ pub const fn workload_size<T: Sized>() -> usize {
     CACHE_SIZE / size_of::<T>()
 }
 
-/// Cast a slice into chunks of size N.
-///
-/// TODO: Replace with `slice::as_chunks` when stable.
-pub fn as_chunks_exact_mut<T, const N: usize>(slice: &mut [T]) -> &mut [[T; N]] {
-    assert!(N != 0, "chunk size must be non-zero");
-    assert_eq!(
-        slice.len() % N,
-        0,
-        "slice length must be a multiple of chunk size"
-    );
-    // SAFETY: Caller must guarantee that `N` is nonzero and exactly divides the slice length
-    let new_len = slice.len() / N;
-    // SAFETY: We cast a slice of `new_len * N` elements into
-    // a slice of `new_len` many `N` elements chunks.
-    unsafe { std::slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), new_len) }
-}
-
-/// Compute the largest factor of n that is <= sqrt(n).
-/// Assumes n is of the form 2^k * {1,3,9}.
+/// Compute the largest factor of `n` that is ≤ sqrt(n).
+/// Assumes `n` is of the form `2^k * {1,3,9}`.
 pub fn sqrt_factor(n: usize) -> usize {
+    // Count the number of trailing zeros in `n`, i.e., the power of 2 in `n`
     let twos = n.trailing_zeros();
-    match n >> twos {
+
+    // Divide `n` by the highest power of 2 to extract the base component
+    let base = n >> twos;
+
+    // Determine the largest factor ≤ sqrt(n) based on the extracted `base`
+    match base {
+        // Case: `n` is purely a power of 2 (base = 1)
+        // The largest factor ≤ sqrt(n) is 2^(twos/2)
         1 => 1 << (twos / 2),
-        3 | 9 => 3 << (twos / 2),
-        _ => panic!(),
+
+        // Case: `n = 2^k * 3`
+        3 => {
+            if twos == 0 {
+                // sqrt(3) ≈ 1.73, so the largest integer factor ≤ sqrt(3) is 1
+                1
+            } else {
+                // - If `twos` is even: The largest factor is `3 * 2^((twos - 1) / 2)`
+                // - If `twos` is odd: The largest factor is `2^((twos / 2))`
+                if twos % 2 == 0 {
+                    3 << ((twos - 1) / 2)
+                } else {
+                    2 << (twos / 2)
+                }
+            }
+        }
+
+        // Case: `n = 2^k * 9`
+        9 => {
+            if twos == 1 {
+                // sqrt(9 * 2^1) = sqrt(18) ≈ 4.24, largest factor ≤ sqrt(18) is 3
+                3
+            } else {
+                // - If `twos` is even: The largest factor is `3 * 2^(twos / 2)`
+                // - If `twos` is odd: The largest factor is `4 * 2^(twos / 2)`
+                if twos % 2 == 0 {
+                    3 << (twos / 2)
+                } else {
+                    4 << (twos / 2)
+                }
+            }
+        }
+
+        // If `base` is not in {1,3,9}, `n` is not in the expected form
+        _ => panic!("n is not in the form 2^k * {{1,3,9}}"),
     }
 }
 
 /// Least common multiple.
 ///
 /// Note that lcm(0,0) will panic (rather than give the correct answer 0).
-pub fn lcm(a: usize, b: usize) -> usize {
+pub const fn lcm(a: usize, b: usize) -> usize {
     a * (b / gcd(a, b))
 }
 
 /// Greatest common divisor.
-pub fn gcd(mut a: usize, mut b: usize) -> usize {
+pub const fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
         (a, b) = (b, a % b);
     }
@@ -51,7 +75,32 @@ pub fn gcd(mut a: usize, mut b: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{as_chunks_exact_mut, gcd, lcm, sqrt_factor};
+    use super::{gcd, lcm, sqrt_factor};
+    use proptest::prelude::*;
+
+    /// Computes the largest factor of `x` that is ≤ sqrt(x).
+    /// If `x` is 0, returns 0.
+    fn get_largest_divisor_up_to_sqrt(x: usize) -> usize {
+        if x == 0 {
+            return 0;
+        }
+
+        let mut result = 1;
+
+        // Compute integer square root of `x` using floating point arithmetic.
+        #[allow(clippy::cast_sign_loss)]
+        let isqrt_x = (x as f64).sqrt() as usize;
+
+        // Iterate from 1 to `isqrt_x` to find the largest factor of `x`.
+        for i in 1..=isqrt_x {
+            if x % i == 0 {
+                // Update `result` with the largest divisor found.
+                result = i;
+            }
+        }
+
+        result
+    }
 
     #[test]
     fn test_gcd() {
@@ -70,79 +119,39 @@ mod tests {
         assert_eq!(lcm(3, 7), 21);
         assert_eq!(lcm(0, 10), 0);
     }
+
     #[test]
     fn test_sqrt_factor() {
-        // naive brute-force search for largest divisor up to sqrt n.
-        // This is not supposed to be efficient, but optimized for "ease of convincing yourself it's correct (provided none of the asserts trigger)".
-        fn get_largest_divisor_up_to_sqrt(x: usize) -> usize {
-            if x == 0 {
-                return 0;
-            }
-            let mut result = 1;
-            let isqrt_of_x: usize = {
-                // use x.isqrt() once this is stabilized. That would be MUCH simpler.
+        // Cases where n = 2^k * 1
+        assert_eq!(sqrt_factor(1), 1); // 1 = 2^0 * 1
+        assert_eq!(sqrt_factor(4), 2); // 4 = 2^2 * 1
+        assert_eq!(sqrt_factor(16), 4); // 16 = 2^4 * 1
+        assert_eq!(sqrt_factor(32), 4); // 32 = 2^5 * 1
+        assert_eq!(sqrt_factor(64), 8); // 64 = 2^6 * 1
+        assert_eq!(sqrt_factor(256), 16); // 256 = 2^8 * 1
 
-                assert!(x < (1 << f64::MANTISSA_DIGITS)); // guarantees that each of {x, floor(sqrt(x)), ceil(sqrt(x))} can be represented exactly by f64.
-                let x_as_float = x as f64;
-                // sqrt is guaranteed to be the exact result, then rounded. Due to the above assert, the rounded value is between floor(sqrt(x)) and ceil(sqrt(x)).
-                let sqrt_x = x_as_float.sqrt();
-                // We return sqrt_x, rounded to 0; for correctness, we need to rule out that we rounded from a non-integer up to the integer ceil(sqrt(x)).
-                if sqrt_x.fract() == 0.0 {
-                    assert!(sqrt_x * sqrt_x == x_as_float);
-                }
-                unsafe { sqrt_x.to_int_unchecked() }
-            };
-            for i in 1..=isqrt_of_x {
-                if x % i == 0 {
-                    result = i;
-                }
-            }
-            result
-        }
+        // Cases where n = 2^k * 3
+        assert_eq!(sqrt_factor(3), 1); // 3 = 2^0 * 3
+        assert_eq!(sqrt_factor(12), 3); // 12 = 2^2 * 3
+        assert_eq!(sqrt_factor(48), 6); // 48 = 2^4 * 3
+        assert_eq!(sqrt_factor(192), 12); // 192 = 2^6 * 3
+        assert_eq!(sqrt_factor(768), 24); // 768 = 2^8 * 3
 
-        for i in 0..10 {
-            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
-        }
-        for i in 0..10 {
-            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
-        }
-
-        for i in 0..10 {
-            assert_eq!(sqrt_factor(1 << i), get_largest_divisor_up_to_sqrt(1 << i));
-        }
+        // Cases where n = 2^k * 9
+        assert_eq!(sqrt_factor(9), 3); // 9 = 2^0 * 9
+        assert_eq!(sqrt_factor(36), 6); // 36 = 2^2 * 9
+        assert_eq!(sqrt_factor(144), 12); // 144 = 2^4 * 9
+        assert_eq!(sqrt_factor(576), 24); // 576 = 2^6 * 9
+        assert_eq!(sqrt_factor(2304), 48); // 2304 = 2^8 * 9
     }
 
-    #[test]
-    fn test_as_chunks_exact_mut() {
-        let v = &mut [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        assert_eq!(
-            as_chunks_exact_mut::<_, 12>(v),
-            &[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
-        );
-        assert_eq!(
-            as_chunks_exact_mut::<_, 6>(v),
-            &[[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]]
-        );
-        assert_eq!(
-            as_chunks_exact_mut::<_, 1>(v),
-            &[
-                [1],
-                [2],
-                [3],
-                [4],
-                [5],
-                [6],
-                [7],
-                [8],
-                [9],
-                [10],
-                [11],
-                [12]
-            ]
-        );
-        let should_not_work = std::panic::catch_unwind(|| {
-            as_chunks_exact_mut::<_, 2>(&mut [1, 2, 3]);
-        });
-        assert!(should_not_work.is_err())
+    proptest! {
+        #[test]
+        fn proptest_sqrt_factor(k in 0usize..30, base in prop_oneof![Just(1), Just(3), Just(9)])
+        {
+            let n = (1 << k) * base;
+            let expected = get_largest_divisor_up_to_sqrt(n);
+            prop_assert_eq!(sqrt_factor(n), expected);
+        }
     }
 }

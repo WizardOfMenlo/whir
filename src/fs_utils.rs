@@ -24,7 +24,7 @@ pub trait WhirPoWIOPattern {
     fn pow(self, bits: f64) -> Self;
 }
 
-impl <IOPattern> WhirPoWIOPattern for IOPattern
+impl<IOPattern> WhirPoWIOPattern for IOPattern
 where
     IOPattern: PoWIOPattern,
 {

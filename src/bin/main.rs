@@ -11,7 +11,9 @@ use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{self, HashCounter},
-    }, parameters::*, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::{Statement, StatementVerifier, Weights}
+    }, parameters::*,
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint}, 
+    whir::statement::{Statement, StatementVerifier, Weights}
 };
 
 use nimue_pow::blake3::Blake3PoW;
@@ -193,7 +195,7 @@ fn run_whir<F, MerkleConfig>(
     match args.protocol_type {
         WhirType::PCS => run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params),
         WhirType::LDT => {
-            run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params)
+            run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params);
         }
     }
 }
@@ -250,7 +252,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params.clone());
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)
@@ -261,7 +263,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
     println!("Field: {:?} and MT: {:?}", args.field, args.merkle_tree);
-    println!("{}", params);
+    println!("{params}");
     if !params.check_pow_bits() {
         println!("WARN: more PoW bits required than what specified.");
     }
@@ -297,7 +299,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
-    let verifier = Verifier::new(params.clone());
+    let verifier = Verifier::new(params);
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
@@ -369,15 +371,14 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let io = IOPattern::<DefaultHash>::new("🌪️")
         .commit_statement(&params)
-        .add_whir_proof(&params)
-        .clone();
+        .add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
     println!("Field: {:?} and MT: {:?}", args.field, args.merkle_tree);
-    println!("{}", params);
+    println!("{params}");
     if !params.check_pow_bits() {
         println!("WARN: more PoW bits required than what specified.");
     }

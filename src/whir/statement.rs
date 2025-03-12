@@ -1,4 +1,4 @@
-use crate::poly_utils::{eq_poly_outside, evals::EvaluationsList, MultilinearPoint};
+use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
 #[cfg(not(feature = "parallel"))]
@@ -153,7 +153,7 @@ impl<F: Field> VerifierWeights<F> {
     }
     pub fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
         match self {
-            Self::Evaluation { point } => eq_poly_outside(point, folding_randomness),
+            Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),
             Self::Linear { term, .. } => term.unwrap(),
         }
     }

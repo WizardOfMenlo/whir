@@ -1,5 +1,6 @@
 use super::SumcheckPolynomial;
-use crate::{poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint}, whir::statement::Statement};
+use crate::{poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint}, whir::statement::Statement};
+
 use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
@@ -272,8 +273,9 @@ mod tests {
         crypto::fields::Field64 as F,
         poly_utils::{
             coeffs::CoefficientList, sequential_lag_poly::LagrangePolynomialIterator,
-            MultilinearPoint,
+            multilinear::MultilinearPoint,
         }, whir::statement::Weights,
+
     };
     use ark_ff::AdditiveGroup;
 
@@ -295,7 +297,7 @@ mod tests {
         let poly_1 = prover.compute_sumcheck_polynomial();
 
         // First, check that is sums to the right value over the hypercube
-        assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
+        assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
@@ -305,12 +307,10 @@ mod tests {
         let poly_2 = prover.compute_sumcheck_polynomial();
 
         assert_eq!(
-            poly_2.sum_over_hypercube(),
+            poly_2.sum_over_boolean_hypercube(),
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
-
-
 
     #[test]
     fn test_sumcheck_weighted_folding_factor_1() {
@@ -330,7 +330,7 @@ mod tests {
 
         let poly_1 = prover.compute_sumcheck_polynomial();
         // First, check that is sums to the right value over the hypercube
-        assert_eq!(poly_1.sum_over_hypercube(), claimed_value);
+        assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
         let combination_randomness = F::from(100101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
@@ -340,7 +340,7 @@ mod tests {
         let poly_2 = prover.compute_sumcheck_polynomial();
 
         assert_eq!(
-            poly_2.sum_over_hypercube(),
+            poly_2.sum_over_boolean_hypercube(),
             combination_randomness * poly_1.evaluate_at_point(&folding_randomness)
         );
     }
@@ -354,7 +354,7 @@ mod tests {
 
         let point = MultilinearPoint(eval.clone());
         let mut expected = vec![F::ZERO; 4];
-        for (prefix, lag) in LagrangePolynomialIterator::new(&point) {
+        for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
             expected[prefix.0] = lag;
         }
         dbg!(&expected);

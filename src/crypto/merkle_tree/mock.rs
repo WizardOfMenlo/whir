@@ -60,9 +60,7 @@ pub fn default_config<F: CanonicalSerialize + Send>(
 ) {
     <LeafH<F> as CRHScheme>::setup(rng).unwrap();
     {
-        <CompressH as TwoToOneCRHScheme>::setup(rng)
-        .unwrap();
-        
+        <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
     };
 
     ((), ())

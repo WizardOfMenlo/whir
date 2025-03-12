@@ -2,7 +2,7 @@
 
 use ark_ff::{batch_inversion, Field};
 
-use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
+use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 
 pub struct LagrangePolynomialGray<F: Field> {
     position_bin: usize,
@@ -21,7 +21,7 @@ impl<F: Field> LagrangePolynomialGray<F> {
         // This is negated[i] = eq_poly(z_i, 0) = 1 - z_i
         let negated_points: Vec<_> = point.0.iter().map(|z| F::ONE - z).collect();
         // This is points[i] = eq_poly(z_i, 1) = z_i
-        let points = point.0.to_vec();
+        let points = point.0.clone();
 
         let mut to_invert = [negated_points.clone(), points.clone()].concat();
         batch_inversion(&mut to_invert);
@@ -34,7 +34,7 @@ impl<F: Field> LagrangePolynomialGray<F> {
             precomputed[2 * n + 1] = negated_points[n] * denom_1[n];
         }
 
-        LagrangePolynomialGray {
+        Self {
             position_gray: gray_encode(0),
             position_bin: 0,
             value: negated_points.into_iter().product(),
@@ -44,7 +44,7 @@ impl<F: Field> LagrangePolynomialGray<F> {
     }
 }
 
-pub fn gray_encode(integer: usize) -> usize {
+pub const fn gray_encode(integer: usize) -> usize {
     (integer >> 1) ^ integer
 }
 
@@ -73,7 +73,7 @@ impl<F: Field> Iterator for LagrangePolynomialGray<F> {
         if self.position_bin < (1 << self.num_variables) {
             let diff = prev ^ self.position_gray;
             let i = (self.num_variables - 1) - diff.trailing_zeros() as usize;
-            let flip = (diff & self.position_gray == 0) as usize;
+            let flip = usize::from(diff & self.position_gray == 0);
 
             self.value *= self.precomputed[2 * i + flip];
         }
@@ -89,10 +89,9 @@ mod tests {
     use crate::{
         crypto::fields::Field64,
         poly_utils::{
-            eq_poly,
             gray_lag_poly::{gray_decode, LagrangePolynomialGray},
             hypercube::BinaryHypercubePoint,
-            MultilinearPoint,
+            multilinear::MultilinearPoint,
         },
     };
 
@@ -142,7 +141,7 @@ mod tests {
 
         let eq_poly_res: BTreeSet<_> = (0..(1 << 3))
             .map(BinaryHypercubePoint)
-            .map(|b| (b, eq_poly(&point, b)))
+            .map(|b| (b, point.eq_poly(b)))
             .collect();
 
         let gray_res: BTreeSet<_> = LagrangePolynomialGray::new(&point).collect();

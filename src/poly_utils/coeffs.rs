@@ -1,5 +1,5 @@
-use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint, MultilinearPoint};
-use crate::ntt::wavelet_transform;
+use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint};
+use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 use ark_ff::Field;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]
@@ -8,28 +8,44 @@ use {
     std::mem::size_of,
 };
 
-/// A CoefficientList models a (multilinear) polynomial in `num_variable` variables in coefficient form.
+/// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
-/// The order of coefficients follows the following convention: coeffs[j] corresponds to the monomial
-/// determined by the binary decomposition of j with an X_i-variable present if the
-/// i-th highest-significant bit among the `num_variables` least significant bits is set.
+/// The coefficients correspond to the **monomials** determined by the binary decomposition of their
+/// index. If `num_variables = n`, then `coeffs[j]` corresponds to the monomial:
 ///
-/// e.g. is `num_variables` is 3 with variables X_0, X_1, X_2, then
-///  - coeffs[0] is the coefficient of 1
-///  - coeffs[1] is the coefficient of X_2
-///  - coeffs[2] is the coefficient of X_1
-///  - coeffs[4] is the coefficient of X_0
+/// ```ignore
+/// coeffs[j] * X_0^{b_0} * X_1^{b_1} * ... * X_{n-1}^{b_{n-1}}
+/// ```
+/// where `(b_0, b_1, ..., b_{n-1})` is the binary representation of `j`, with `b_{n-1}` being
+/// the most significant bit.
+///
+/// **Example** (n = 3, variables X₀, X₁, X₂):
+/// - `coeffs[0]` → Constant term (1)
+/// - `coeffs[1]` → Coefficient of `X₂`
+/// - `coeffs[2]` → Coefficient of `X₁`
+/// - `coeffs[3]` → Coefficient of `X₀`
 #[derive(Debug, Clone)]
 pub struct CoefficientList<F> {
-    coeffs: Vec<F>, // list of coefficients. For multilinear polynomials, we have coeffs.len() == 1 << num_variables.
-    num_variables: usize, // number of variables
+    /// List of coefficients, stored in **lexicographic order**.
+    /// For `n` variables, `coeffs.len() == 2^n`.
+    coeffs: Vec<F>,
+    /// Number of variables in the polynomial.
+    num_variables: usize,
 }
 
 impl<F> CoefficientList<F>
 where
     F: Field,
 {
-    /// Evaluate the given polynomial at `point` from {0,1}^n
+    /// Evaluates the polynomial at a binary hypercube point `(0,1)^n`.
+    ///
+    /// This is a special case of evaluation where the input consists only of 0s and 1s.
+    ///
+    /// Ensures that:
+    /// - `point` is within the valid range `{0, ..., 2^n - 1}`
+    /// - The length of `coeffs` matches `2^n`
+    ///
+    /// Uses a **fast path** by converting the point to a `MultilinearPoint`.
     pub fn evaluate_hypercube(&self, point: BinaryHypercubePoint) -> F {
         assert_eq!(self.coeffs.len(), 1 << self.num_variables);
         assert!(point.0 < (1 << self.num_variables));
@@ -40,7 +56,16 @@ where
         ))
     }
 
-    /// Evaluate the given polynomial at `point` from F^n.
+    /// Evaluates the polynomial at an arbitrary point in `F^n`.
+    ///
+    /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field
+    /// elements.
+    ///
+    /// Uses multivariate Horner's method via `eval_multivariate()`, which recursively reduces
+    /// the evaluation.
+    ///
+    /// Ensures that:
+    /// - `point` has the same number of variables as the polynomial (`n`).
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.num_variables());
         eval_multivariate(&self.coeffs, &point.0)
@@ -130,6 +155,39 @@ where
             .map(|point| univariate.evaluate(point))
             .collect()
     }
+
+    /// Folds the polynomial along high-indexed variables, reducing its dimensionality.
+    ///
+    /// Given a multilinear polynomial `f(X₀, ..., X_{n-1})`, this partially evaluates it at
+    /// `folding_randomness`, returning a new polynomial in fewer variables:
+    ///
+    /// ```ignore
+    /// f(X₀, ..., X_{m-1}, r₀, r₁, ..., r_k) → g(X₀, ..., X_{m-1})
+    /// ```
+    /// where `r₀, ..., r_k` are values from `folding_randomness`.
+    ///
+    /// - The number of variables decreases: `m = n - k`
+    /// - Uses multivariate evaluation over chunks of coefficients.
+    pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
+        let folding_factor = folding_randomness.num_variables();
+        #[cfg(not(feature = "parallel"))]
+        let coeffs = self
+            .coeffs
+            .chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
+        #[cfg(feature = "parallel")]
+        let coeffs = self
+            .coeffs
+            .par_chunks_exact(1 << folding_factor)
+            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+            .collect();
+
+        Self {
+            coeffs,
+            num_variables: self.num_variables() - folding_factor,
+        }
+    }
 }
 
 impl<F> CoefficientList<F> {
@@ -138,7 +196,7 @@ impl<F> CoefficientList<F> {
         assert!(len.is_power_of_two());
         let num_variables = len.ilog2();
 
-        CoefficientList {
+        Self {
             coeffs,
             num_variables: num_variables as usize,
         }
@@ -148,7 +206,7 @@ impl<F> CoefficientList<F> {
         &self.coeffs
     }
 
-    pub fn num_variables(&self) -> usize {
+    pub const fn num_variables(&self) -> usize {
         self.num_variables
     }
 
@@ -158,7 +216,7 @@ impl<F> CoefficientList<F> {
 
     /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field extension of F.
     ///
-    /// NOte that this is currently restricted to the case where F is a prime field.
+    /// Note that this is currently restricted to the case where F is a prime field.
     pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
         CoefficientList::new(
             self.coeffs
@@ -227,43 +285,12 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     }
 }
 
-impl<F> CoefficientList<F>
-where
-    F: Field,
-{
-    /// fold folds the polynomial at the provided folding_randomness.
-    ///
-    /// Namely, when self is interpreted as a multi-linear polynomial f in X_0, ..., X_{n-1},
-    /// it partially evaluates f at the provided `folding_randomness`.
-    /// Our ordering convention is to evaluate at the higher indices, i.e. we return f(X_0,X_1,..., folding_randomness[0], folding_randomness[1],...)
-    pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
-        let folding_factor = folding_randomness.num_variables();
-        #[cfg(not(feature = "parallel"))]
-        let coeffs = self
-            .coeffs
-            .chunks_exact(1 << folding_factor)
-            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
-            .collect();
-        #[cfg(feature = "parallel")]
-        let coeffs = self
-            .coeffs
-            .par_chunks_exact(1 << folding_factor)
-            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
-            .collect();
-
-        CoefficientList {
-            coeffs,
-            num_variables: self.num_variables() - folding_factor,
-        }
-    }
-}
-
 impl<F> From<CoefficientList<F>> for DensePolynomial<F>
 where
     F: Field,
 {
     fn from(value: CoefficientList<F>) -> Self {
-        DensePolynomial::from_coefficients_vec(value.coeffs)
+        Self::from_coefficients_vec(value.coeffs)
     }
 }
 
@@ -272,7 +299,7 @@ where
     F: Field,
 {
     fn from(value: DensePolynomial<F>) -> Self {
-        CoefficientList::new(value.coeffs)
+        Self::new(value.coeffs)
     }
 }
 
@@ -283,74 +310,26 @@ where
     fn from(value: CoefficientList<F>) -> Self {
         let mut evals = value.coeffs;
         wavelet_transform(&mut evals);
-        EvaluationsList::new(evals)
+        Self::new(evals)
     }
 }
-
-/* Previous recursive version
-impl<F> From<CoefficientList<F>> for EvaluationsList<F>
-where
-    F: Field,
-{
-    fn from(value: CoefficientList<F>) -> Self {
-        let num_coeffs = value.num_coeffs();
-        // Base case
-        if num_coeffs == 1 {
-            return EvaluationsList::new(value.coeffs);
-        }
-
-        let half_coeffs = num_coeffs / 2;
-
-        // Left is polynomial with last variable set to 0
-        let mut left = Vec::with_capacity(half_coeffs);
-
-        // Right is polynomial with last variable set to 1
-        let mut right = Vec::with_capacity(half_coeffs);
-
-        for i in 0..half_coeffs {
-            left.push(value.coeffs[2 * i]);
-            right.push(value.coeffs[2 * i] + value.coeffs[2 * i + 1]);
-        }
-
-        let left_poly = CoefficientList {
-            coeffs: left,
-            num_variables: value.num_variables - 1,
-        };
-        let right_poly = CoefficientList {
-            coeffs: right,
-            num_variables: value.num_variables - 1,
-        };
-
-        // Compute evaluation of right and left
-        let left_eval = EvaluationsList::from(left_poly);
-        let right_eval = EvaluationsList::from(right_poly);
-
-        // Combine
-        let mut evaluation_list = Vec::with_capacity(num_coeffs);
-        for i in 0..half_coeffs {
-            evaluation_list.push(left_eval[i]);
-            evaluation_list.push(right_eval[i]);
-        }
-
-        EvaluationsList::new(evaluation_list)
-    }
-}
-*/
 
 #[cfg(test)]
 mod tests {
-    use ark_poly::{univariate::DensePolynomial, Polynomial};
-
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, MultilinearPoint},
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, hypercube::BinaryHypercubePoint,
+            multilinear::MultilinearPoint,
+        },
     };
+    use ark_poly::{univariate::DensePolynomial, Polynomial};
 
     type F = Field64;
 
     #[test]
     fn test_evaluation_conversion() {
-        let coeffs = vec![F::from(22), F::from(05), F::from(10), F::from(97)];
+        let coeffs = vec![F::from(22), F::from(5), F::from(10), F::from(97)];
         let coeffs_list = CoefficientList::new(coeffs.clone());
 
         let evaluations = EvaluationsList::from(coeffs_list);
@@ -366,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_folding() {
-        let coeffs = vec![F::from(22), F::from(05), F::from(00), F::from(00)];
+        let coeffs = vec![F::from(22), F::from(5), F::from(00), F::from(00)];
         let coeffs_list = CoefficientList::new(coeffs);
 
         let alpha = F::from(100);
@@ -377,7 +356,7 @@ mod tests {
         assert_eq!(
             coeffs_list.evaluate(&MultilinearPoint(vec![alpha, beta])),
             folded.evaluate(&MultilinearPoint(vec![alpha]))
-        )
+        );
     }
 
     #[test]
@@ -434,6 +413,158 @@ mod tests {
         assert_eq!(
             uv_poly.evaluate(&eval_point),
             mv_poly.evaluate(&MultilinearPoint::expand_from_univariate(eval_point, 4))
-        )
+        );
+    }
+
+    #[test]
+    fn test_coefficient_list_initialization() {
+        let coeffs = vec![F::from(3), F::from(1), F::from(4), F::from(1)];
+        let coeff_list = CoefficientList::new(coeffs.clone());
+
+        // Check that the coefficients are stored correctly
+        assert_eq!(coeff_list.coeffs(), &coeffs);
+        // Since len = 4 = 2^2, we expect num_variables = 2
+        assert_eq!(coeff_list.num_variables(), 2);
+    }
+
+    #[test]
+    fn test_evaluate_hypercube() {
+        let coeff0 = F::from(10);
+        let coeff1 = F::from(3);
+        let coeff2 = F::from(5);
+        let coeff3 = F::from(7);
+
+        let coeffs = vec![
+            coeff0, // Constant term
+            coeff1, // X_2 coefficient
+            coeff2, // X_1 coefficient
+            coeff3, // X_1 * X_2 coefficient
+        ];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        // Evaluations at hypercube points (expected values derived manually)
+        // f(0,0) = coeffs[0]
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b00)),
+            coeff0
+        );
+        // f(0,1) = coeffs[0] + coeffs[1]
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b01)),
+            coeff0 + coeff1
+        );
+        // f(1,0) = coeffs[0] + coeffs[2]
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b10)),
+            coeff0 + coeff2
+        );
+        // f(1,1) = coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b11)),
+            coeff0 + coeff1 + coeff2 + coeff3
+        );
+    }
+
+    #[test]
+    fn test_evaluate_multilinear() {
+        let coeff0 = F::from(8);
+        let coeff1 = F::from(2);
+        let coeff2 = F::from(3);
+        let coeff3 = F::from(1);
+
+        let coeffs = vec![coeff0, coeff1, coeff2, coeff3];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        let x0 = F::from(2);
+        let x1 = F::from(3);
+        let point = MultilinearPoint(vec![x0, x1]);
+
+        // Expected value based on multilinear evaluation
+        let expected_value = coeff0 + coeff1 * x1 + coeff2 * x0 + coeff3 * x0 * x1;
+        assert_eq!(coeff_list.evaluate(&point), expected_value);
+    }
+
+    #[test]
+    fn test_evaluate_single_variable() {
+        let coeff0 = F::from(4);
+        let coeff1 = F::from(7);
+
+        let coeffs = vec![coeff0, coeff1];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        // Single-variable polynomial evaluations
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0)),
+            coeff0
+        );
+        assert_eq!(
+            coeff_list.evaluate_hypercube(BinaryHypercubePoint(1)),
+            coeff0 + coeff1
+        );
+    }
+
+    #[test]
+    fn test_folding_multiple_variables() {
+        let num_variables = 3;
+        let coeffs: Vec<F> = (0..(1 << num_variables)).map(F::from).collect();
+        let coeff_list = CoefficientList::new(coeffs);
+
+        let fold_x1 = F::from(4);
+        let fold_x2 = F::from(2);
+        let folding_point = MultilinearPoint(vec![fold_x1, fold_x2]);
+
+        let folded = coeff_list.fold(&folding_point);
+
+        let eval_x0 = F::from(6);
+        let full_point = MultilinearPoint(vec![eval_x0, fold_x1, fold_x2]);
+        let expected_eval = coeff_list.evaluate(&full_point);
+
+        // Ensure correctness of folding and evaluation
+        assert_eq!(
+            folded.evaluate(&MultilinearPoint(vec![eval_x0])),
+            expected_eval
+        );
+    }
+
+    #[test]
+    fn test_coefficient_to_evaluations_conversion() {
+        let coeff0 = F::from(5);
+        let coeff1 = F::from(3);
+        let coeff2 = F::from(7);
+        let coeff3 = F::from(2);
+
+        let coeffs = vec![coeff0, coeff1, coeff2, coeff3];
+        let coeff_list = CoefficientList::new(coeffs.clone());
+
+        let evaluations = EvaluationsList::from(coeff_list);
+
+        // Expected results after wavelet transform (manually derived)
+        assert_eq!(evaluations[0], coeff0);
+        assert_eq!(evaluations[1], coeff0 + coeff1);
+        assert_eq!(evaluations[2], coeff0 + coeff2);
+        assert_eq!(evaluations[3], coeff0 + coeff1 + coeff2 + coeff3);
+    }
+
+    #[test]
+    fn test_num_variables_and_coeffs() {
+        // 8 = 2^3, so num_variables = 3
+        let coeffs = vec![F::from(1); 8];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        assert_eq!(coeff_list.num_variables(), 3);
+        assert_eq!(coeff_list.num_coeffs(), 8);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_coefficient_list_empty() {
+        let _coeff_list = CoefficientList::<F>::new(vec![]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_coefficient_list_invalid_size() {
+        // 7 is not a power of two
+        let _coeff_list = CoefficientList::new(vec![F::from(1); 7]);
     }
 }

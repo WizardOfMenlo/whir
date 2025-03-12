@@ -3,8 +3,8 @@ name = "whir"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 default-run = "main"
+rust-version = "1.83.0"
 
 [dependencies]
 ark-std = { version = "0.5", features = ["std"] }
@@ -24,8 +24,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 nimue = { git = "https://github.com/arkworks-rs/nimue", features = ["ark"] }
 nimue-pow = { git = "https://github.com/arkworks-rs/nimue" }
-lazy_static = "1.4"
 rayon = { version = "1.10.0", optional = true }
+
+[dev-dependencies]
+proptest = "1.0"
 
 [profile.release]
 debug = true
@@ -40,5 +42,3 @@ parallel = [
     "ark-crypto-primitives/parallel",
 ]
 rayon = ["dep:rayon"]
-
-

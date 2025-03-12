@@ -2,50 +2,67 @@
 
 use ark_ff::Field;
 
-use super::{hypercube::BinaryHypercubePoint, MultilinearPoint};
+use super::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint};
 
-/// There is an alternative (possibly more efficient) implementation that iterates over the x in Gray code ordering.
-
+/// Iterator for evaluating the Lagrange polynomial over the hypercube `{0,1}^n`.
 ///
-/// LagrangePolynomialIterator for a given multilinear n-dimensional `point` iterates over pairs (x, y)
-/// where x ranges over all possible {0,1}^n
-/// and y equals the product y_1 * ... * y_n where
+/// This efficiently computes values of the equality polynomial at every binary point.
 ///
-/// y_i = point[i] if x_i == 1
-/// y_i = 1-point[i] if x_i == 0
+/// Given a multilinear point `(c_1, ..., c_n)`, it iterates over all binary vectors `(x_1, ...,
+/// x_n)` and computes:
 ///
-/// This means that y == eq_poly(point, x)
-pub struct LagrangePolynomialIterator<F: Field> {
-    last_position: Option<usize>, // the previously output BinaryHypercubePoint (encoded as usize). None before the first output.
-    point: Vec<F>, // stores a copy of the `point` given when creating the iterator. For easier(?) bit-fiddling, we store in in reverse order.
-    point_negated: Vec<F>, // stores the precomputed values 1-point[i] in the same ordering as point.
-    /// stack Stores the n+1 values (in order) 1, y_1, y_1*y_2, y_1*y_2*y_3, ..., y_1*...*y_n for the previously output y.
-    /// Before the first iteration (if last_position == None), it stores the values for the next (i.e. first) output instead.
+/// \begin{equation}
+/// y = \prod_{i=1}^{n} \left( x_i c_i + (1 - x_i) (1 - c_i) \right)
+/// \end{equation}
+///
+/// This means `y = eq_poly(c, x)`, where `eq_poly` is the **equality polynomial**.
+///
+/// # Properties
+/// - **Precomputed negations**: We store `1 - c_i` to avoid recomputation.
+#[derive(Debug)]
+pub struct LagrangePolynomialIterator<F> {
+    /// The last binary point output (`None` before the first step).
+    last_position: Option<usize>,
+    /// The point `(c_1, ..., c_n)` stored in **reverse order** for efficient access.
+    point: Vec<F>,
+    /// Precomputed values `1 - c_i` stored in **reverse order**.
+    point_negated: Vec<F>,
+    /// Stack containing **partial products**:
+    /// - Before first iteration: `[1, y_1, y_1 y_2, ..., y_1 ... y_n]`
+    /// - After each iteration: updated values corresponding to the next `x`
     stack: Vec<F>,
-    num_variables: usize, // dimension
+    /// The number of variables `n` (i.e., dimension of the hypercube).
+    num_variables: usize,
 }
 
-impl<F: Field> LagrangePolynomialIterator<F> {
-    pub fn new(point: &MultilinearPoint<F>) -> Self {
-        let num_variables = point.0.len();
+impl<F: Field> From<&MultilinearPoint<F>> for LagrangePolynomialIterator<F> {
+    /// Initializes the iterator from a multilinear point `(c_1, ..., c_n)`.
+    ///
+    /// # Initialization:
+    /// - Stores `c_i` in reverse order for **efficient bit processing**.
+    /// - Precomputes `1 - c_i` for each coordinate to avoid recomputation.
+    /// - Constructs a **stack** for incremental computation.
+    fn from(point: &MultilinearPoint<F>) -> Self {
+        let num_variables = point.num_variables();
 
-        // Initialize a stack with capacity for messages/ message_hats and the identity element
-        let mut stack: Vec<F> = Vec::with_capacity(point.0.len() + 1);
-        stack.push(F::ONE);
+        // Initialize stack with identity element
+        let mut stack = vec![F::ONE];
 
+        // Clone point values and compute `1 - c_i` in parallel
         let mut point = point.0.clone();
-        let mut point_negated: Vec<_> = point.iter().map(|x| F::ONE - *x).collect();
-        // Iterate over the message_hats, update the running product, and push it onto the stack
-        let mut running_product: F = F::ONE;
-        for point_neg in &point_negated {
+        let mut point_negated: Vec<_> = point.iter().map(|&x| F::ONE - x).collect();
+
+        // Compute partial products for the first iteration
+        let mut running_product = F::ONE;
+        for &point_neg in &point_negated {
             running_product *= point_neg;
             stack.push(running_product);
         }
 
+        // Reverse point vectors for more efficient access
         point.reverse();
         point_negated.reverse();
 
-        // Return
         Self {
             num_variables,
             point,
@@ -58,7 +75,10 @@ impl<F: Field> LagrangePolynomialIterator<F> {
 
 impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
     type Item = (BinaryHypercubePoint, F);
-    // Iterator implementation for the struct
+    /// Computes the next `(x, y)` pair where `y = eq_poly(c, x)`.
+    ///
+    /// - The first iteration **outputs** `(0, y_1 ... y_n)`, where `y_i = (1 - c_i)`.
+    /// - Subsequent iterations **update** `y` using binary code ordering, minimizing recomputations.
     fn next(&mut self) -> Option<Self::Item> {
         // a) Check if this is the first iteration
         if self.last_position.is_none() {
@@ -88,9 +108,10 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
         for bit_index in (0..low_index_of_prefix).rev() {
             let last_element = self.stack.last().unwrap();
             let next_bit: bool = (next_position & (1 << bit_index)) != 0;
-            self.stack.push(match next_bit {
-                true => *last_element * self.point[bit_index],
-                false => *last_element * self.point_negated[bit_index],
+            self.stack.push(if next_bit {
+                *last_element * self.point[bit_index]
+            } else {
+                *last_element * self.point_negated[bit_index]
             });
         }
 
@@ -107,12 +128,12 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         crypto::fields::Field64,
-        poly_utils::{eq_poly, hypercube::BinaryHypercubePoint, MultilinearPoint},
+        poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
-
-    use super::LagrangePolynomialIterator;
+    use ark_ff::AdditiveGroup;
 
     type F = Field64;
 
@@ -122,7 +143,7 @@ mod tests {
         let (a, b) = (F::from(2), F::from(3));
         let point_1 = MultilinearPoint(vec![a, b]);
 
-        let mut lag_iterator = LagrangePolynomialIterator::new(&point_1);
+        let mut lag_iterator = LagrangePolynomialIterator::from(&point_1);
 
         assert_eq!(
             lag_iterator.next().unwrap(),
@@ -148,8 +169,8 @@ mod tests {
         let point = MultilinearPoint(vec![F::from(12), F::from(13), F::from(32)]);
 
         let mut last_b = None;
-        for (b, lag) in LagrangePolynomialIterator::new(&point) {
-            assert_eq!(eq_poly(&point, b), lag);
+        for (b, lag) in LagrangePolynomialIterator::from(&point) {
+            assert_eq!(point.eq_poly(b), lag);
             assert!(b.0 < 1 << 3);
             last_b = Some(b);
         }
@@ -161,16 +182,156 @@ mod tests {
         let point = MultilinearPoint(vec![
             F::from(414151),
             F::from(109849018),
-            F::from(033184190),
-            F::from(033184190),
-            F::from(033184190),
+            F::from(33184190),
+            F::from(33184190),
+            F::from(33184190),
         ]);
 
         let mut last_b = None;
-        for (b, lag) in LagrangePolynomialIterator::new(&point) {
-            assert_eq!(eq_poly(&point, b), lag);
+        for (b, lag) in LagrangePolynomialIterator::from(&point) {
+            assert_eq!(point.eq_poly(b), lag);
             last_b = Some(b);
         }
         assert_eq!(last_b, Some(BinaryHypercubePoint(31)));
+    }
+
+    #[test]
+    fn test_lagrange_iterator_single_variable() {
+        let point = MultilinearPoint(vec![F::from(3)]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Expected values: (0, 1 - p) and (1, p)
+        assert_eq!(
+            iter.next(),
+            Some((BinaryHypercubePoint(0), F::ONE - point.0[0]))
+        );
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(1), point.0[0])));
+        assert_eq!(iter.next(), None); // No more elements should be present
+    }
+
+    #[test]
+    fn test_lagrange_iterator_two_variables() {
+        let (a, b) = (F::from(2), F::from(3));
+        let point = MultilinearPoint(vec![a, b]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Expected values based on binary enumeration (big-endian)
+        assert_eq!(
+            iter.next(),
+            Some((BinaryHypercubePoint(0b00), (F::ONE - a) * (F::ONE - b)))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((BinaryHypercubePoint(0b01), (F::ONE - a) * b))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((BinaryHypercubePoint(0b10), a * (F::ONE - b)))
+        );
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b11), a * b)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_all_zeros() {
+        let point = MultilinearPoint(vec![F::ZERO; 3]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Expect all outputs to be 1 when x is all zeros and 0 otherwise
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b000), F::ONE)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b001), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b010), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b011), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b100), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b101), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b110), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b111), F::ZERO)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_all_ones() {
+        let point = MultilinearPoint(vec![F::ONE; 3]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Expect all outputs to be 1 when x is all ones and 0 otherwise
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b000), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b001), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b010), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b011), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b100), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b101), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b110), F::ZERO)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b111), F::ONE)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_mixed_values() {
+        let (a, b, c) = (F::from(2), F::from(3), F::from(4));
+        let point = MultilinearPoint(vec![a, b, c]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Verify correctness against eq_poly function
+        for (b, lag) in LagrangePolynomialIterator::from(&point) {
+            assert_eq!(point.eq_poly(b), lag);
+        }
+
+        // Ensure the iterator completes all 2^3 = 8 elements
+        let mut count = 0;
+        while iter.next().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 8);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_four_variables() {
+        let point = MultilinearPoint(vec![F::from(1), F::from(2), F::from(3), F::from(4)]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Ensure the iterator completes all 2^4 = 16 elements
+        let mut count = 0;
+        while iter.next().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 16);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_correct_order() {
+        let point = MultilinearPoint(vec![F::from(5), F::from(7)]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Expect values in **binary order**: 0b00, 0b01, 0b10, 0b11
+        let expected_order = [0b00, 0b01, 0b10, 0b11];
+
+        for &expected in &expected_order {
+            let (b, _) = iter.next().unwrap();
+            assert_eq!(b.0, expected);
+        }
+
+        // Ensure no extra values are generated
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_output_count() {
+        let num_vars = 5;
+        let point = MultilinearPoint(vec![F::from(3); num_vars]);
+        let iter = LagrangePolynomialIterator::from(&point);
+
+        // The iterator should yield exactly 2^num_vars elements
+        assert_eq!(iter.count(), 1 << num_vars);
+    }
+
+    #[test]
+    fn test_lagrange_iterator_empty() {
+        let point = MultilinearPoint::<F>(vec![]);
+        let mut iter = LagrangePolynomialIterator::from(&point);
+
+        // Only a single output should be generated
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0), F::ONE)));
+        assert_eq!(iter.next(), None);
     }
 }

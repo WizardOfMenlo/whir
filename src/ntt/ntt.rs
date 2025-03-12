@@ -69,7 +69,7 @@ impl<F: FftField> NttEngine<F> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
         if let Some(engine) = cache.get(&type_id) {
-            engine.clone().downcast::<NttEngine<F>>().unwrap()
+            engine.clone().downcast::<Self>().unwrap()
         } else {
             let engine = Arc::new(NttEngine::new_from_fftfield());
             cache.insert(type_id, engine.clone());
@@ -99,7 +99,7 @@ impl<F: Field> NttEngine<F> {
         // TODO: Assert that omega factors into 2s and 3s.
         assert_eq!(omega_order.pow([order as u64]), F::ONE);
         assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
-        let mut res = NttEngine {
+        let mut res = Self {
             order,
             omega_order,
             half_omega_3_1_plus_2: F::ZERO,
@@ -135,7 +135,7 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn ntt(&self, values: &mut [F]) {
-        self.ntt_batch(values, values.len())
+        self.ntt_batch(values, values.len());
     }
 
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
@@ -235,68 +235,9 @@ impl<F: Field> NttEngine<F> {
         transpose(values, n2, n1);
         // TODO: When (n1, n2) are coprime we can use the
         // Good-Thomas NTT algorithm and avoid the twiddle loop.
-        self.apply_twiddles(values, roots, n1, n2);
+        apply_twiddles(values, roots, n1, n2);
         self.ntt_dispatch(values, roots, n2);
         transpose(values, n1, n2);
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    fn apply_twiddles(&self, values: &mut [F], roots: &[F], rows: usize, cols: usize) {
-        debug_assert_eq!(values.len() % (rows * cols), 0);
-        let step = roots.len() / (rows * cols);
-        for values in values.chunks_exact_mut(rows * cols) {
-            for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
-                let step = (i * step) % roots.len();
-                let mut index = step;
-                for value in row.iter_mut().skip(1) {
-                    index %= roots.len();
-                    *value *= roots[index];
-                    index += step;
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "parallel")]
-    fn apply_twiddles(&self, values: &mut [F], roots: &[F], rows: usize, cols: usize) {
-        debug_assert_eq!(values.len() % (rows * cols), 0);
-        if values.len() > workload_size::<F>() {
-            let size = rows * cols;
-            if values.len() != size {
-                let workload_size = size * max(1, workload_size::<F>() / size);
-                values.par_chunks_mut(workload_size).for_each(|values| {
-                    self.apply_twiddles(values, roots, rows, cols);
-                });
-            } else {
-                let step = roots.len() / (rows * cols);
-                values
-                    .par_chunks_exact_mut(cols)
-                    .enumerate()
-                    .skip(1)
-                    .for_each(|(i, row)| {
-                        let step = (i * step) % roots.len();
-                        let mut index = step;
-                        for value in row.iter_mut().skip(1) {
-                            index %= roots.len();
-                            *value *= roots[index];
-                            index += step;
-                        }
-                    });
-            }
-        } else {
-            let step = roots.len() / (rows * cols);
-            for values in values.chunks_exact_mut(rows * cols) {
-                for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
-                    let step = (i * step) % roots.len();
-                    let mut index = step;
-                    for value in row.iter_mut().skip(1) {
-                        index %= roots.len();
-                        *value *= roots[index];
-                        index += step;
-                    }
-                }
-            }
-        }
     }
 
     fn ntt_dispatch(&self, values: &mut [F], roots: &[F], size: usize) {
@@ -403,6 +344,65 @@ impl<F: Field> NttEngine<F> {
                 }
             }
             size => self.ntt_recurse(values, roots, size),
+        }
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn apply_twiddles(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
+    debug_assert_eq!(values.len() % (rows * cols), 0);
+    let step = roots.len() / (rows * cols);
+    for values in values.chunks_exact_mut(rows * cols) {
+        for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
+            let step = (i * step) % roots.len();
+            let mut index = step;
+            for value in row.iter_mut().skip(1) {
+                index %= roots.len();
+                *value *= roots[index];
+                index += step;
+            }
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
+    let size = rows * cols;
+    debug_assert_eq!(values.len() % size, 0);
+    let step = roots.len() / size;
+
+    if values.len() > workload_size::<F>() {
+        if values.len() == size {
+            values
+                .par_chunks_exact_mut(cols)
+                .enumerate()
+                .skip(1)
+                .for_each(|(i, row)| {
+                    let step = (i * step) % roots.len();
+                    let mut index = step;
+                    for value in row.iter_mut().skip(1) {
+                        index %= roots.len();
+                        *value *= roots[index];
+                        index += step;
+                    }
+                });
+        } else {
+            let workload_size = size * max(1, workload_size::<F>() / size);
+            values.par_chunks_mut(workload_size).for_each(|values| {
+                apply_twiddles(values, roots, rows, cols);
+            });
+        }
+    } else {
+        for values in values.chunks_exact_mut(size) {
+            for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
+                let step = (i * step) % roots.len();
+                let mut index = step;
+                for value in row.iter_mut().skip(1) {
+                    index %= roots.len();
+                    *value *= roots[index];
+                    index += step;
+                }
+            }
         }
     }
 }
