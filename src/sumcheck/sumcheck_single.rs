@@ -163,14 +163,15 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         assert_eq!(combination_randomness.len(), evaluations.len());
-
-        points
-            .iter()
-            .zip(combination_randomness.iter().zip(evaluations))
-            .for_each(|(point, (&rand, &eval))| {
-                eval_eq(&point.0, self.weights.evals_mut(), rand);
-                self.sum += rand * eval;
-            });
+for (point, rand) in points.iter().zip(combination_randomness) {
+            // TODO: We might want to do all points simultaneously so we
+            // do only a single pass over the data.
+            Self::eval_eq(&point.0, self.weights.evals_mut(), *rand);
+        }
+        // Update the sum
+        for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
+            self.sum += *rand * eval;
+        }
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
