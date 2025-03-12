@@ -19,11 +19,11 @@ use whir::{
     },
     parameters::*,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, Weights}
+    whir::statement::{Statement, StatementVerifier, Weights},
 };
 
-use serde::Serialize;
 use clap::Parser;
+use serde::Serialize;
 use whir::whir::fs_utils::{DigestReader, DigestWriter};
 use whir::whir::iopattern::DigestIOPattern;
 
@@ -296,7 +296,7 @@ fn run_whir<F, MerkleConfig>(
 
         let statement_new = Statement::<F>::new(num_variables);
         let statement_verifier = StatementVerifier::from_statement(&statement_new);
-        
+
         let proof = prover
             .prove(&mut merlin, statement_new.clone(), witness)
             .unwrap();
@@ -356,7 +356,6 @@ fn run_whir<F, MerkleConfig>(
         let points: Vec<_> = (0..args.num_evaluations)
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
             .collect();
-       
 
         let mut statement = Statement::<F>::new(num_variables);
 
@@ -391,7 +390,9 @@ fn run_whir<F, MerkleConfig>(
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
+            verifier
+                .verify(&mut arthur, &statement_verifier, &proof)
+                .unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

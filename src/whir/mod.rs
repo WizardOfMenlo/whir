@@ -9,7 +9,6 @@ pub mod prover;
 pub mod statement;
 pub mod verifier;
 
-
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct WhirProof<MerkleConfig, F>
@@ -100,16 +99,12 @@ mod tests {
             statement.add_constraint(weights, eval);
         }
 
-        let input = CoefficientList::new(
-            (0..1<<num_variables)
-                .map(F::from)
-                .collect(),
-        );
-        let input : EvaluationsList<F> = input.clone().into();
- 
+        let input = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
+        let input: EvaluationsList<F> = input.clone().into();
+
         let linear_claim_weight = Weights::linear(input.clone());
         let poly = EvaluationsList::from(polynomial.clone().to_extension());
-        
+
         let sum = linear_claim_weight.weighted_sum(&poly);
         statement.add_constraint(linear_claim_weight, sum);
 
@@ -125,13 +120,13 @@ mod tests {
         let prover = Prover(params.clone());
         let statement_verifier = StatementVerifier::from_statement(&statement);
 
-        let proof = prover
-            .prove(&mut merlin, statement, witness)
-            .unwrap();
+        let proof = prover.prove(&mut merlin, statement, witness).unwrap();
 
         let verifier = Verifier::new(params);
         let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &statement_verifier, &proof).is_ok());
+        assert!(verifier
+            .verify(&mut arthur, &statement_verifier, &proof)
+            .is_ok());
     }
 
     #[test]
