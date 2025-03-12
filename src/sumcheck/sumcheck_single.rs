@@ -144,22 +144,11 @@ where
         Ok(MultilinearPoint(res))
     }
 
-    /// Adds new equality constraints to the polynomial.
-    ///
-    /// Computes:
-    ///
-    /// ```text
-    /// eq(X) = ∑ ε_i * eq_{z_i}(X)
-    /// ```
-    ///
-    /// where:
-    /// - `ε_i` are weighting factors.
-    /// - `eq_{z_i}(X)` is the equality polynomial ensuring `X = z_i`.
     pub fn add_new_equality(
         &mut self,
         points: &[MultilinearPoint<F>],
-        combination_randomness: &[F],
         evaluations: &[F],
+        combination_randomness: &[F],
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         assert_eq!(combination_randomness.len(), evaluations.len());
@@ -257,41 +246,19 @@ fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     }
 }
 
-/// Computes the equality polynomial evaluations efficiently.
-///
-/// Given an evaluation point vector `eval`, the function computes
-/// the equality polynomial recursively using the formula:
-///
-/// ```text
-/// eq(X) = ∏ (1 - X_i + 2X_i z_i)
-/// ```
-///
-/// where `z_i` are the constraint points.
+// Evaluate the eq function on a given point on the hypercube, and add
+// the result multiplied by the scalar to the output.
 #[cfg(feature = "parallel")]
 fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     const PARALLEL_THRESHOLD: usize = 10;
-
-    // Ensure that the output buffer size is correct:
-    // It should be of size `2^n`, where `n` is the number of variables.
     debug_assert_eq!(out.len(), 1 << eval.len());
-
-    // Base case: When there are no more variables to process, update the final value.
     if let Some((&x, tail)) = eval.split_first() {
-        // Divide the output buffer into two halves: one for `X_i = 0` and one for `X_i = 1`
         let (low, high) = out.split_at_mut(out.len() / 2);
-
-        // Compute weight updates for the two branches:
-        // - `s0` corresponds to the case when `X_i = 0`
-        // - `s1` corresponds to the case when `X_i = 1`
-        //
-        // Mathematically, this follows the recurrence:
-        // ```text
-        // eq_{X1, ..., Xn}(X) = (1 - X_1) * eq_{X2, ..., Xn}(X) + X_1 * eq_{X2, ..., Xn}(X)
-        // ```
-        let s1 = scalar * x; // Contribution when `X_i = 1`
-        let s0 = scalar - s1; // Contribution when `X_i = 0`
-
-        // Use parallel execution if the number of remaining variables is large.
+        // Update scalars using a single mul. Note that this causes a data dependency,
+        // so for small fields it might be better to use two muls.
+        // This data dependency should go away once we implement parallel point evaluation.
+        let s1 = scalar * x;
+        let s0 = scalar - s1;
         if tail.len() > PARALLEL_THRESHOLD {
             join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
         } else {
@@ -299,7 +266,6 @@ fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
             eval_eq(tail, high, s1);
         }
     } else {
-        // Leaf case: Add the accumulated scalar to the final output slot.
         out[0] += scalar;
     }
 }
