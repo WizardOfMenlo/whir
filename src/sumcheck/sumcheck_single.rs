@@ -79,15 +79,6 @@ where
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
-    /// Computes the sumcheck polynomial `S(X)`, which is quadratic.
-    ///
-    /// The sumcheck polynomial is given by:
-    ///
-    /// ```text
-    /// S(X) = ∑ p(β) * eq(β)
-    /// ```
-    ///
-    /// where `β` are points in `{0,1,2}^1`, and `S(X)` is a quadratic polynomial.
     #[cfg(feature = "parallel")]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables() >= 1);
@@ -363,8 +354,7 @@ mod tests {
         let polynomial =
             CoefficientList::new(vec![F::from(1), F::from(5), F::from(10), F::from(14)]);
 
-        let claimed_value: ark_ff::Fp<ark_ff::MontBackend<crate::crypto::fields::FConfig64, 1>, 1> =
-            polynomial.evaluate(&eval_point);
+        let claimed_value = polynomial.evaluate(&eval_point);
 
         let eval = polynomial.evaluate(&eval_point);
 
@@ -396,7 +386,6 @@ mod tests {
         let eval = vec![F::from(3), F::from(5)];
         let mut out = vec![F::ZERO; 4];
         eval_eq(&eval, &mut out, F::ONE);
-        dbg!(&out);
 
         let point = MultilinearPoint(eval.clone());
         let mut expected = vec![F::ZERO; 4];
