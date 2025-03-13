@@ -1,7 +1,7 @@
 //! NTT and related algorithms.
 
+mod cooley_tukey;
 mod matrix;
-mod ntt;
 mod transpose;
 mod utils;
 mod wavelet;
@@ -13,7 +13,7 @@ use ark_ff::FftField;
 use rayon::prelude::*;
 
 pub use self::{
-    ntt::{intt, intt_batch, ntt, ntt_batch},
+    cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
     wavelet::inverse_wavelet_transform,
     wavelet::wavelet_transform,
@@ -21,7 +21,7 @@ pub use self::{
 
 /// RS encode at a rate 1/`expansion`.
 pub fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> {
-    let engine = ntt::NttEngine::<F>::new_from_cache();
+    let engine = cooley_tukey::NttEngine::<F>::new_from_cache();
     let expanded_size = coeffs.len() * expansion;
     let mut result = Vec::with_capacity(expanded_size);
     // Note: We can also zero-extend the coefficients and do a larger NTT.
