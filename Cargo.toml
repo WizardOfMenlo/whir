@@ -38,3 +38,4 @@ parallel = [
     "ark-crypto-primitives/parallel",
 ]
 rayon = ["dep:rayon"]
+asm = ["ark-ff/asm"]
