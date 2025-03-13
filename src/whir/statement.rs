@@ -1,20 +1,15 @@
+#[cfg(not(feature = "parallel"))]
+use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
-#[cfg(not(feature = "parallel"))]
-use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
 
 use rayon::prelude::*;
 
-
 #[derive(Clone, Debug)]
 pub enum Weights<F: Field> {
-    Evaluation {
-        point: MultilinearPoint<F>,
-    },
-    Linear {
-        weight: EvaluationsList<F>,
-    }
+    Evaluation { point: MultilinearPoint<F> },
+    Linear { weight: EvaluationsList<F> },
 }
 
 impl<F: Field> Weights<F> {
@@ -42,9 +37,13 @@ impl<F: Field> Weights<F> {
                 }
             }
             Weights::Linear { weight } => {
-                accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {
-                    *acc += factor * weight.index(corner);
-                });
+                accumulator
+                    .evals_mut()
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
             }
         }
     }
@@ -84,9 +83,13 @@ impl<F: Field> Weights<F> {
                 Self::eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Weights::Linear { weight } => {
-                accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {
-                    *acc += factor * weight.index(corner);
-                });
+                accumulator
+                    .evals_mut()
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
             }
         }
     }
@@ -111,10 +114,8 @@ impl<F: Field> Weights<F> {
                         .map(|(corner, poly)| *weight.index(corner) * *poly)
                         .sum()
                 }
-            },
-            Self::Evaluation { point } => {
-               poly.eval_extension(point)
             }
+            Self::Evaluation { point } => poly.eval_extension(point),
         }
     }
 }
@@ -142,13 +143,16 @@ impl<F: Field> VerifierWeights<F> {
     }
 
     pub fn linear(num_variables: usize, term: Option<F>) -> Self {
-        Self::Linear { num_variables, term }
+        Self::Linear {
+            num_variables,
+            term,
+        }
     }
 
     pub fn num_variables(&self) -> usize {
         match self {
             Self::Evaluation { point } => point.num_variables(),
-            Self::Linear{ num_variables, .. } => *num_variables,
+            Self::Linear { num_variables, .. } => *num_variables,
         }
     }
     pub fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
@@ -202,7 +206,7 @@ impl<F: Field> Statement<F> {
         let mut challenge_power = F::ONE;
 
         for (weights, sum) in &self.constraints {
-            weights.accumulate(&mut combined_evals, challenge_power);           
+            weights.accumulate(&mut combined_evals, challenge_power);
             combined_sum += *sum * challenge_power;
             challenge_power *= challenge;
         }
@@ -218,7 +222,7 @@ impl<F: Field> StatementVerifier<F> {
             constraints: Vec::new(),
         }
     }
-    
+
     pub fn num_variables(&self) -> usize {
         self.num_variables
     }
@@ -239,7 +243,6 @@ impl<F: Field> StatementVerifier<F> {
         }
         self.constraints.splice(0..0, constraints);
     }
-
 }
 impl<F: Field> StatementVerifier<F> {
     pub fn from_statement(statement: &Statement<F>) -> Self {

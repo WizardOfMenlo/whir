@@ -69,76 +69,12 @@ where
             .map(|(eval, (_, lag))| *eval * lag)
             .sum()
     }
-    
-    fn eval_multilinear(&self, evals: &[F], point: &[F]) -> F {
-        debug_assert_eq!(evals.len(), 1 << point.len());
-        match point {
-            [] => evals[0],
-            [x] => evals[0] + (evals[1] - evals[0]) * *x,
-            [x0, x1] => {
-                let a0 = evals[0] + (evals[1] - evals[0]) * *x1;
-                let a1 = evals[2] + (evals[3] - evals[2]) * *x1;
-                a0 + (a1 - a0) * *x0
-            }
-            [x0, x1, x2] => {
-                let a00 = evals[0] + (evals[1] - evals[0]) * *x2;
-                let a01 = evals[2] + (evals[3] - evals[2]) * *x2;
-                let a10 = evals[4] + (evals[5] - evals[4]) * *x2;
-                let a11 = evals[6] + (evals[7] - evals[6]) * *x2;
-                let a0 = a00 + (a01 - a00) * *x1;
-                let a1 = a10 + (a11 - a10) * *x1;
-                a0 + (a1 - a0) * *x0
-            }
-            [x0, x1, x2, x3] => {
-                let a000 = evals[0] + (evals[1] - evals[0]) * *x3;
-                let a001 = evals[2] + (evals[3] - evals[2]) * *x3;
-                let a010 = evals[4] + (evals[5] - evals[4]) * *x3;
-                let a011 = evals[6] + (evals[7] - evals[6]) * *x3;
-                let a100 = evals[8] + (evals[9] - evals[8]) * *x3;
-                let a101 = evals[10] + (evals[11] - evals[10]) * *x3;
-                let a110 = evals[12] + (evals[13] - evals[12]) * *x3;
-                let a111 = evals[14] + (evals[15] - evals[14]) * *x3;
-                let a00 = a000 + (a001 - a000) * *x2;
-                let a01 = a010 + (a011 - a010) * *x2;
-                let a10 = a100 + (a101 - a100) * *x2;
-                let a11 = a110 + (a111 - a110) * *x2;
-                let a0 = a00 + (a01 - a00) * *x1;
-                let a1 = a10 + (a11 - a10) * *x1;
-                a0 + (a1 - a0) * *x0
-            }
-            [x, tail @ ..] => {
-                let (f0, f1) = evals.split_at(evals.len() / 2);
-                // let mid = evals.len() / 2;
-                 #[cfg(not(feature = "parallel"))]
-                let (f0, f1) = (
-                    self.eval_multilinear(f0, tail),
-                    self.eval_multilinear(f1, tail),
-                );
-                #[cfg(feature = "parallel")]
-                let (f0, f1) = {
-                    let work_size: usize = (1 << 15) / std::mem::size_of::<F>();
-                    if evals.len() > work_size {
-                        rayon::join(
-                            || self.eval_multilinear(f0, tail),
-                            || self.eval_multilinear(f1, tail),
-                        )
-                    } else {
-                        (
-                            self.eval_multilinear(f0, tail),
-                            self.eval_multilinear(f1, tail),
-                        )
-                    }
-                };
-                f0 + (f1 - f0) * *x
-            }
-        }
-    }
 
     pub fn eval_extension(&self, point: &MultilinearPoint<F>) -> F {
         if let Some(point) = point.to_hypercube() {
             return self.evals[point.0];
         }
-        self.eval_multilinear(&self.evals, &point.0)
+        eval_multilinear(&self.evals, &point.0)
     }
 
     /// Returns an immutable reference to the evaluations vector.
@@ -180,6 +116,60 @@ impl<F> Index<usize> for EvaluationsList<F> {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.evals[index]
+    }
+}
+
+fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
+    debug_assert_eq!(evals.len(), 1 << point.len());
+    match point {
+        [] => evals[0],
+        [x] => evals[0] + (evals[1] - evals[0]) * *x,
+        [x0, x1] => {
+            let a0 = evals[0] + (evals[1] - evals[0]) * *x1;
+            let a1 = evals[2] + (evals[3] - evals[2]) * *x1;
+            a0 + (a1 - a0) * *x0
+        }
+        [x0, x1, x2] => {
+            let a00 = evals[0] + (evals[1] - evals[0]) * *x2;
+            let a01 = evals[2] + (evals[3] - evals[2]) * *x2;
+            let a10 = evals[4] + (evals[5] - evals[4]) * *x2;
+            let a11 = evals[6] + (evals[7] - evals[6]) * *x2;
+            let a0 = a00 + (a01 - a00) * *x1;
+            let a1 = a10 + (a11 - a10) * *x1;
+            a0 + (a1 - a0) * *x0
+        }
+        [x0, x1, x2, x3] => {
+            let a000 = evals[0] + (evals[1] - evals[0]) * *x3;
+            let a001 = evals[2] + (evals[3] - evals[2]) * *x3;
+            let a010 = evals[4] + (evals[5] - evals[4]) * *x3;
+            let a011 = evals[6] + (evals[7] - evals[6]) * *x3;
+            let a100 = evals[8] + (evals[9] - evals[8]) * *x3;
+            let a101 = evals[10] + (evals[11] - evals[10]) * *x3;
+            let a110 = evals[12] + (evals[13] - evals[12]) * *x3;
+            let a111 = evals[14] + (evals[15] - evals[14]) * *x3;
+            let a00 = a000 + (a001 - a000) * *x2;
+            let a01 = a010 + (a011 - a010) * *x2;
+            let a10 = a100 + (a101 - a100) * *x2;
+            let a11 = a110 + (a111 - a110) * *x2;
+            let a0 = a00 + (a01 - a00) * *x1;
+            let a1 = a10 + (a11 - a10) * *x1;
+            a0 + (a1 - a0) * *x0
+        }
+        [x, tail @ ..] => {
+            let (f0, f1) = evals.split_at(evals.len() / 2);
+            #[cfg(not(feature = "parallel"))]
+            let (f0, f1) = (eval_multilinear(f0, tail), eval_multilinear(f1, tail));
+            #[cfg(feature = "parallel")]
+            let (f0, f1) = {
+                let work_size: usize = (1 << 15) / std::mem::size_of::<F>();
+                if evals.len() > work_size {
+                    rayon::join(|| eval_multilinear(f0, tail), || eval_multilinear(f1, tail))
+                } else {
+                    (eval_multilinear(f0, tail), eval_multilinear(f1, tail))
+                }
+            };
+            f0 + (f1 - f0) * *x
+        }
     }
 }
 
