@@ -1,3 +1,4 @@
+mod prover_core;
 mod sumcheck_polynomial;
 mod sumcheck_single;
 mod sumcheck_single_iopattern;

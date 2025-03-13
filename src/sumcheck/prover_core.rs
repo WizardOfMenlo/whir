@@ -1,9 +1,10 @@
-use super::proof::SumcheckPolynomial;
+#![allow(dead_code)]
 use crate::{
     poly_utils::{
         coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         sequential_lag_poly::LagrangePolynomialIterator,
     },
+    sumcheck::SumcheckPolynomial,
     utils::base_decomposition,
 };
 use ark_ff::Field;
@@ -156,7 +157,7 @@ where
         combination_randomness: F, // Scale the initial point
         folding_randomness: &MultilinearPoint<F>,
     ) {
-        assert_eq!(folding_randomness.n_variables(), folding_factor);
+        assert_eq!(folding_randomness.num_variables(), folding_factor);
         assert!(self.num_variables >= folding_factor);
 
         let suffix_len = 1 << folding_factor;
