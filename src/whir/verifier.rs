@@ -9,7 +9,11 @@ use nimue::{
 };
 use nimue_pow::{self, PoWChallenge};
 
-use super::{parameters::WhirConfig, statement::{StatementVerifier, VerifierWeights}, WhirProof};
+use super::{
+    parameters::WhirConfig,
+    statement::{StatementVerifier, VerifierWeights},
+    WhirProof,
+};
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
@@ -17,7 +21,6 @@ use crate::{
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
 };
-
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
 where
@@ -125,7 +128,6 @@ where
                 combination_randomness_gen,
                 parsed_commitment.ood_points.len() + statement_points_len,
             );
-
 
             // Initial sumcheck
             sumcheck_rounds.reserve_exact(self.params.folding_factor.at_round(0));
@@ -266,7 +268,8 @@ where
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
 
-        let (final_merkle_proof, final_randomness_answers) = &whir_proof.merkle_paths[whir_proof.merkle_paths.len() - 1];
+        let (final_merkle_proof, final_randomness_answers) =
+            &whir_proof.merkle_paths[whir_proof.merkle_paths.len() - 1];
         if !final_merkle_proof
             .verify(
                 &self.params.leaf_hash_params,
@@ -337,32 +340,42 @@ where
         );
 
         let mut new_constraints: Vec<(VerifierWeights<F>, F)> = Vec::new();
-        for (point, evaluation) in parsed_commitment.ood_points.clone().into_iter().zip(parsed_commitment.ood_answers.clone()) {
-            let weights = VerifierWeights::evaluation(MultilinearPoint::expand_from_univariate(point, num_variables));
+        for (point, evaluation) in parsed_commitment
+            .ood_points
+            .clone()
+            .into_iter()
+            .zip(parsed_commitment.ood_answers.clone())
+        {
+            let weights = VerifierWeights::evaluation(MultilinearPoint::expand_from_univariate(
+                point,
+                num_variables,
+            ));
             new_constraints.push((weights, evaluation));
         }
         let mut proof_values_iter = proof.statement_values_at_random_point.iter();
         for constraint in statement.constraints.iter() {
             match &constraint.0 {
                 VerifierWeights::Evaluation { point } => {
-                    new_constraints.push((VerifierWeights::evaluation(point.clone()), constraint.1));
+                    new_constraints
+                        .push((VerifierWeights::evaluation(point.clone()), constraint.1));
                 }
                 VerifierWeights::Linear { .. } => {
                     let term = proof_values_iter
                         .next()
                         .expect("Not enough proof statement values for linear constraints");
-                    new_constraints.push((VerifierWeights::linear(num_variables, Some(*term)), constraint.1));
+                    new_constraints.push((
+                        VerifierWeights::linear(num_variables, Some(*term)),
+                        constraint.1,
+                    ));
                 }
             }
         }
-        let mut value : F = new_constraints
+        let mut value: F = new_constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
-            .map(|((weight, _), randomness)| 
-                *randomness * weight.compute(&folding_randomness)
-            )
-           .sum();
-        
+            .map(|((weight, _), randomness)| *randomness * weight.compute(&folding_randomness))
+            .sum();
+
         for (round, round_proof) in proof.rounds.iter().enumerate() {
             num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
@@ -383,9 +396,7 @@ where
                 .into_iter()
                 .map(|point| point.eq_poly_outside(&folding_randomness))
                 .zip(&round_proof.combination_randomness)
-                .map(|(point, rand)|
-                    point * rand
-                )
+                .map(|(point, rand)| point * rand)
                 .sum();
 
             value += sum_of_claims;
@@ -510,8 +521,18 @@ where
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
-        let evaluations : Vec<_> = statement.clone().constraints.into_iter().map(|a| {a.1}).collect();
-        let parsed = self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
+        let evaluations: Vec<_> = statement
+            .clone()
+            .constraints
+            .into_iter()
+            .map(|a| a.1)
+            .collect();
+        let parsed = self.parse_proof(
+            arthur,
+            &parsed_commitment,
+            statement.constraints.len(),
+            whir_proof,
+        )?;
 
         let computed_folds = self.compute_folds(&parsed);
 
@@ -630,11 +651,11 @@ where
 
         // Check the final sumcheck evaluation
         let evaluation_of_v_poly = self.compute_w_poly(&parsed_commitment, statement, &parsed);
-        let final_value = parsed.final_coefficients.evaluate(&parsed.final_sumcheck_randomness);
+        let final_value = parsed
+            .final_coefficients
+            .evaluate(&parsed.final_sumcheck_randomness);
 
-        if prev_sumcheck_poly_eval
-            != evaluation_of_v_poly * final_value
-        {
+        if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
             return Err(ProofError::InvalidProof);
         }
 

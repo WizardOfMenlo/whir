@@ -15,8 +15,8 @@ use rayon::prelude::*;
 pub use self::{
     ntt::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
-    wavelet::wavelet_transform,
     wavelet::inverse_wavelet_transform,
+    wavelet::wavelet_transform,
 };
 
 /// RS encode at a rate 1/`expansion`.
