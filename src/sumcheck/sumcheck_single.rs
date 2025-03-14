@@ -288,11 +288,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
     use crate::{
         crypto::fields::Field64 as F,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         whir::statement::Weights,
     };
+    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_sumcheck_folding_factor_1() {
