@@ -410,7 +410,6 @@ mod tests {
         for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
             expected[prefix.0] = lag;
         }
-        dbg!(&expected);
 
         assert_eq!(&out, &expected);
     }
