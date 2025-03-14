@@ -70,11 +70,82 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
     evals
 }
 
+// Evaluate the eq function on for a given point on the hypercube, and add
+// the result multiplied by the scalar to the output.
+#[cfg(not(feature = "parallel"))]
+fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
+    debug_assert_eq!(out.len(), 1 << eval.len());
+    if let Some((&x, tail)) = eval.split_first() {
+        let (low, high) = out.split_at_mut(out.len() / 2);
+        let s1 = scalar * x;
+        let s0 = scalar - s1;
+        eval_eq(tail, low, s0);
+        eval_eq(tail, high, s1);
+    } else {
+        out[0] += scalar;
+    }
+}
+
+/// Computes the equality polynomial evaluations efficiently.
+///
+/// Given an evaluation point vector `eval`, the function computes
+/// the equality polynomial recursively using the formula:
+///
+/// ```text
+/// eq(X) = ∏ (1 - X_i + 2X_i z_i)
+/// ```
+///
+/// where `z_i` are the constraint points.
+#[cfg(feature = "parallel")]
+pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
+    use rayon::join;
+
+    const PARALLEL_THRESHOLD: usize = 10;
+    // Ensure that the output buffer size is correct:
+    // It should be of size `2^n`, where `n` is the number of variables.
+    debug_assert_eq!(out.len(), 1 << eval.len());
+
+    // Base case: When there are no more variables to process, update the final value.
+    if let Some((&x, tail)) = eval.split_first() {
+        // Divide the output buffer into two halves: one for `X_i = 0` and one for `X_i = 1`
+        let (low, high) = out.split_at_mut(out.len() / 2);
+
+        // Compute weight updates for the two branches:
+        // - `s0` corresponds to the case when `X_i = 0`
+        // - `s1` corresponds to the case when `X_i = 1`
+        //
+        // Mathematically, this follows the recurrence:
+        // ```text
+        // eq_{X1, ..., Xn}(X) = (1 - X_1) * eq_{X2, ..., Xn}(X) + X_1 * eq_{X2, ..., Xn}(X)
+        // ```
+        let s1 = scalar * x; // Contribution when `X_i = 1`
+        let s0 = scalar - s1; // Contribution when `X_i = 0`
+
+        // Use parallel execution if the number of remaining variables is large.
+        if tail.len() > PARALLEL_THRESHOLD {
+            join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
+        } else {
+            eval_eq(tail, low, s0);
+            eval_eq(tail, high, s1);
+        }
+    } else {
+        // Leaf case: Add the accumulated scalar to the final output slot.
+        out[0] += scalar;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{crypto::fields::Field64, utils::base_decomposition};
-
     use super::stack_evaluations;
+    use crate::{
+        crypto::fields::Field64,
+        poly_utils::{
+            multilinear::MultilinearPoint, sequential_lag_poly::LagrangePolynomialIterator,
+        },
+        utils::{base_decomposition, eval_eq},
+    };
+    use ark_ff::AdditiveGroup;
+    use ark_ff::Field;
 
     #[test]
     fn test_evaluations_stack() {
@@ -326,5 +397,21 @@ mod tests {
     fn test_base_decomposition_invalid_base() {
         // Base cannot be 0 or 1 (should panic)
         base_decomposition(10, 0, 5);
+    }
+
+    #[test]
+    fn test_eval_eq() {
+        let eval = vec![Field64::from(3), Field64::from(5)];
+        let mut out = vec![Field64::ZERO; 4];
+        eval_eq(&eval, &mut out, Field64::ONE);
+
+        let point = MultilinearPoint(eval.clone());
+        let mut expected = vec![Field64::ZERO; 4];
+        for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
+            expected[prefix.0] = lag;
+        }
+        dbg!(&expected);
+
+        assert_eq!(&out, &expected);
     }
 }

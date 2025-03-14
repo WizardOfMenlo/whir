@@ -71,64 +71,6 @@ where
         eval_multivariate(&self.coeffs, &point.0)
     }
 
-    #[inline]
-    fn eval_extension<E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
-        // explicit "return" just to simplify static code-analyzers' tasks (that can't figure out the cfg's are disjoint)
-        #[cfg(not(feature = "parallel"))]
-        return Self::eval_extension_nonparallel(coeff, eval, scalar);
-        #[cfg(feature = "parallel")]
-        return Self::eval_extension_parallel(coeff, eval, scalar);
-    }
-
-    // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
-    // You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
-    // The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
-
-    // recursive helper function for polynomial evaluation:
-    // Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
-
-    /// Recursively compute scalar * poly_eval(coeffs;eval) where poly_eval interprets coeffs as a polynomial and eval are the evaluation points.
-    fn eval_extension_nonparallel<E: Field<BasePrimeField = F>>(
-        coeff: &[F],
-        eval: &[E],
-        scalar: E,
-    ) -> E {
-        debug_assert_eq!(coeff.len(), 1 << eval.len());
-        if let Some((&x, tail)) = eval.split_first() {
-            let (low, high) = coeff.split_at(coeff.len() / 2);
-            let a = Self::eval_extension_nonparallel(low, tail, scalar);
-            let b = Self::eval_extension_nonparallel(high, tail, scalar * x);
-            a + b
-        } else {
-            scalar.mul_by_base_prime_field(&coeff[0])
-        }
-    }
-
-    #[cfg(feature = "parallel")]
-    fn eval_extension_parallel<E: Field<BasePrimeField = F>>(
-        coeff: &[F],
-        eval: &[E],
-        scalar: E,
-    ) -> E {
-        const PARALLEL_THRESHOLD: usize = 10;
-        debug_assert_eq!(coeff.len(), 1 << eval.len());
-        if let Some((&x, tail)) = eval.split_first() {
-            let (low, high) = coeff.split_at(coeff.len() / 2);
-            if tail.len() > PARALLEL_THRESHOLD {
-                let (a, b) = rayon::join(
-                    || Self::eval_extension_parallel(low, tail, scalar),
-                    || Self::eval_extension_parallel(high, tail, scalar * x),
-                );
-                a + b
-            } else {
-                Self::eval_extension_nonparallel(low, tail, scalar)
-                    + Self::eval_extension_nonparallel(high, tail, scalar * x)
-            }
-        } else {
-            scalar.mul_by_base_prime_field(&coeff[0])
-        }
-    }
-
     /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
     ///
     /// Note that we only support the case where F is a prime field.
@@ -137,7 +79,7 @@ where
         point: &MultilinearPoint<E>,
     ) -> E {
         assert_eq!(self.num_variables, point.num_variables());
-        Self::eval_extension(&self.coeffs, &point.0, E::ONE)
+        eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
     /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending i) and evaluates it at each point in `points`.
@@ -311,6 +253,64 @@ where
         let mut evals = value.coeffs;
         wavelet_transform(&mut evals);
         Self::new(evals)
+    }
+}
+
+#[inline]
+fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+    // explicit "return" just to simplify static code-analyzers' tasks (that can't figure out the cfg's are disjoint)
+    #[cfg(not(feature = "parallel"))]
+    return eval_extension_nonparallel(coeff, eval, scalar);
+    #[cfg(feature = "parallel")]
+    return eval_extension_parallel(coeff, eval, scalar);
+}
+
+// NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
+// You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
+// The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
+
+// recursive helper function for polynomial evaluation:
+// Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
+
+/// Recursively compute scalar * poly_eval(coeffs;eval) where poly_eval interprets coeffs as a polynomial and eval are the evaluation points.
+fn eval_extension_nonparallel<F: Field, E: Field<BasePrimeField = F>>(
+    coeff: &[F],
+    eval: &[E],
+    scalar: E,
+) -> E {
+    debug_assert_eq!(coeff.len(), 1 << eval.len());
+    if let Some((&x, tail)) = eval.split_first() {
+        let (low, high) = coeff.split_at(coeff.len() / 2);
+        let a = eval_extension_nonparallel(low, tail, scalar);
+        let b = eval_extension_nonparallel(high, tail, scalar * x);
+        a + b
+    } else {
+        scalar.mul_by_base_prime_field(&coeff[0])
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn eval_extension_parallel<F: Field, E: Field<BasePrimeField = F>>(
+    coeff: &[F],
+    eval: &[E],
+    scalar: E,
+) -> E {
+    const PARALLEL_THRESHOLD: usize = 10;
+    debug_assert_eq!(coeff.len(), 1 << eval.len());
+    if let Some((&x, tail)) = eval.split_first() {
+        let (low, high) = coeff.split_at(coeff.len() / 2);
+        if tail.len() > PARALLEL_THRESHOLD {
+            let (a, b) = rayon::join(
+                || eval_extension_parallel(low, tail, scalar),
+                || eval_extension_parallel(high, tail, scalar * x),
+            );
+            a + b
+        } else {
+            eval_extension_nonparallel(low, tail, scalar)
+                + eval_extension_nonparallel(high, tail, scalar * x)
+        }
+    } else {
+        scalar.mul_by_base_prime_field(&coeff[0])
     }
 }
 
