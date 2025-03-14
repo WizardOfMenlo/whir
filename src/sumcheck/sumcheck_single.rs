@@ -24,22 +24,22 @@ use rayon::{join, prelude::*};
 /// Given a multilinear polynomial `p(X1, ..., Xn)`, the sumcheck polynomial is computed as:
 ///
 /// \begin{equation}
-/// S(X) = \sum p(\beta) \cdot w(\beta) \cdot X
+/// h(X) = \sum_b p(b, X) \cdot w(b, X)
 /// \end{equation}
 ///
 /// where:
-/// - `\beta` ranges over evaluation points in `{0,1,2}^k` (with `k=1` in this implementation).
-/// - `w(\beta)` represents generic weights applied to `p(\beta)`.
-/// - The result `S(X)` is a quadratic polynomial in `X`.
+/// - `b` ranges over evaluation points in `{0,1,2}^k` (with `k=1` in this implementation).
+/// - `w(b, X)` represents generic weights applied to `p(b, X)`.
+/// - The result `h(X)` is a quadratic polynomial in `X`.
 ///
 /// The sumcheck protocol ensures that the claimed sum is correct.
 #[derive(Debug)]
 pub struct SumcheckSingle<F> {
     /// Evaluations of the polynomial `p(X)`.
     evaluation_of_p: EvaluationsList<F>,
-    /// Evaluations of the equality polynomial used for enforcing constraints.
+    /// Evaluations of the weight polynomial used for enforcing constraints.
     weights: EvaluationsList<F>,
-    /// Accumulated sum incorporating equality constraints.
+    /// Accumulated sum incorporating weighted constraints.
     sum: F,
 }
 
@@ -105,18 +105,18 @@ where
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
-    /// Computes the sumcheck polynomial `S(X)`, which is quadratic.
+    /// Computes the sumcheck polynomial `h(X)`, which is quadratic.
     ///
     /// The sumcheck polynomial is given by:
     ///
     /// \begin{equation}
-    /// S(X) = \sum p(\beta) \cdot w(\beta) \cdot X
+    /// h(X) = \sum_b p(b, X) \cdot w(b, X)
     /// \end{equation}
     ///
     /// where:
-    /// - `\beta` represents points in `{0,1,2}^1`.
-    /// - `w(\beta)` are the generic weights applied to `p(\beta)`.
-    /// - `S(X)` is a quadratic polynomial.
+    /// - `b` represents points in `{0,1,2}^1`.
+    /// - `w(b, X)` are the generic weights applied to `p(b, X)`.
+    /// - `h(X)` is a quadratic polynomial.
     #[cfg(feature = "parallel")]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables() >= 1);
