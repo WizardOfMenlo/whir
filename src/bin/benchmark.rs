@@ -18,7 +18,10 @@ use whir::{
         fields,
         merkle_tree::{self, HashCounter},
     },
-    parameters::*,
+    parameters::{
+        default_max_pow, FoldType, FoldingFactor, MultivariateParameters, SoundnessType,
+        WhirParameters,
+    },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::statement::{Statement, StatementVerifier, Weights},
 };
