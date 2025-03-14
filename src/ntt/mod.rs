@@ -215,7 +215,7 @@ mod tests {
         let expected_f14 = f12 + f13 * omega2 + f14 * omega4 + f15 * omega2;
         let expected_f15 = f12 + f13 * omega3 + f14 * omega2 + f15 * omega1;
 
-        // Step 3: Ensure correct NTT ordering
+        // Ensure correct NTT ordering
         let expected_values_transposed = vec![
             expected_f0,
             expected_f4,
