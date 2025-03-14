@@ -405,7 +405,7 @@ mod tests {
         let mut out = vec![Field64::ZERO; 4];
         eval_eq(&eval, &mut out, Field64::ONE);
 
-        let point = MultilinearPoint(eval.clone());
+        let point = MultilinearPoint(eval);
         let mut expected = vec![Field64::ZERO; 4];
         for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
             expected[prefix.0] = lag;

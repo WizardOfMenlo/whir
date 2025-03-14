@@ -180,11 +180,11 @@ mod tests {
     #[test]
     fn test_blendy_3() {
         let point = MultilinearPoint(vec![
-            F::from(414151),
-            F::from(109849018),
-            F::from(33184190),
-            F::from(33184190),
-            F::from(33184190),
+            F::from(414_151),
+            F::from(109_849_018),
+            F::from(33_184_190),
+            F::from(33_184_190),
+            F::from(33_184_190),
         ]);
 
         let mut last_b = None;

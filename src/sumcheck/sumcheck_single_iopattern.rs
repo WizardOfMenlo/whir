@@ -3,6 +3,7 @@ use ark_ff::Field;
 use nimue::plugins::ark::FieldIOPattern;
 
 pub trait SumcheckSingleIOPattern<F: Field> {
+    #[must_use]
     fn add_sumcheck(self, folding_factor: usize, pow_bits: f64) -> Self;
 }
 

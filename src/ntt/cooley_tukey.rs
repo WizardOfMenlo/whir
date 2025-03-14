@@ -68,10 +68,11 @@ impl<F: FftField> NttEngine<F> {
     pub fn new_from_cache() -> Arc<Self> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
+        #[allow(clippy::option_if_let_else)]
         if let Some(engine) = cache.get(&type_id) {
             engine.clone().downcast::<Self>().unwrap()
         } else {
-            let engine = Arc::new(NttEngine::new_from_fftfield());
+            let engine = Arc::new(Self::new_from_fftfield());
             cache.insert(type_id, engine.clone());
             engine
         }
@@ -408,6 +409,7 @@ fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: us
 }
 
 #[cfg(test)]
+#[allow(clippy::significant_drop_tightening)]
 mod tests {
     use super::*;
     use crate::crypto::fields::Field64;

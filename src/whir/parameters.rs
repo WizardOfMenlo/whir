@@ -65,6 +65,7 @@ where
     F: FftField + FieldWithSize,
     MerkleConfig: Config,
 {
+    #[allow(clippy::too_many_lines)]
     pub fn new(
         mv_parameters: MultivariateParameters<F>,
         whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
@@ -180,10 +181,10 @@ where
             );
 
             round_parameters.push(RoundConfig {
-                ood_samples,
-                num_queries,
                 pow_bits,
                 folding_pow_bits,
+                num_queries,
+                ood_samples,
                 log_inv_rate,
             });
 
@@ -377,6 +378,7 @@ where
     }
 
     // Used to select the number of queries
+    #[allow(clippy::cast_sign_loss)]
     pub fn queries(
         soundness_type: SoundnessType,
         protocol_security_level: usize,
@@ -439,6 +441,7 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.mv_parameters.fmt(f)?;
         writeln!(f, ", folding factor: {:?}", self.folding_factor)?;

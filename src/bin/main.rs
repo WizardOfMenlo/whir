@@ -5,6 +5,7 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::FftField;
+use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
 use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use whir::{
@@ -89,7 +90,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
@@ -97,7 +98,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
@@ -105,7 +106,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
@@ -113,7 +114,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
@@ -121,7 +122,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
@@ -129,7 +130,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
@@ -137,7 +138,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
@@ -145,7 +146,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
@@ -153,7 +154,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
@@ -161,7 +162,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
@@ -169,7 +170,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
@@ -177,13 +178,13 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
     }
 }
 
 fn run_whir<F, MerkleConfig>(
-    args: Args,
+    args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -195,7 +196,9 @@ fn run_whir<F, MerkleConfig>(
     for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
 {
     match args.protocol_type {
-        WhirType::PCS => run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params),
+        WhirType::PCS => {
+            run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params);
+        }
         WhirType::LDT => {
             run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params);
         }
@@ -203,7 +206,7 @@ fn run_whir<F, MerkleConfig>(
 }
 
 fn run_whir_as_ldt<F, MerkleConfig>(
-    args: Args,
+    args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -270,7 +273,6 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    use ark_ff::Field;
     let polynomial = CoefficientList::new(
         (0..num_coeffs)
             .map(<F as Field>::BasePrimeField::from)
@@ -314,7 +316,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 }
 
 fn run_whir_pcs<F, MerkleConfig>(
-    args: Args,
+    args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -383,7 +385,6 @@ fn run_whir_pcs<F, MerkleConfig>(
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    use ark_ff::Field;
     let polynomial = CoefficientList::new(
         (0..num_coeffs)
             .map(<F as Field>::BasePrimeField::from)

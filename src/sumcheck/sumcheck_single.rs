@@ -316,7 +316,7 @@ mod tests {
         // First, check that is sums to the right value over the hypercube
         assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
-        let combination_randomness = F::from(100101);
+        let combination_randomness = F::from(100_101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
 
         prover.compress(combination_randomness, &folding_randomness, &poly_1);
@@ -341,7 +341,7 @@ mod tests {
 
         let mut statement = Statement::new(eval_point.num_variables());
         let weights = Weights::evaluation(eval_point);
-        statement.add_constraint(weights.clone(), eval);
+        statement.add_constraint(weights, eval);
 
         let mut prover = SumcheckSingle::new(polynomial, &statement, F::from(1));
 
@@ -349,7 +349,7 @@ mod tests {
         // First, check that is sums to the right value over the hypercube
         assert_eq!(poly_1.sum_over_boolean_hypercube(), claimed_value);
 
-        let combination_randomness = F::from(100101);
+        let combination_randomness = F::from(100_101);
         let folding_randomness = MultilinearPoint(vec![F::from(4999)]);
 
         prover.compress(combination_randomness, &folding_randomness, &poly_1);
@@ -368,7 +368,7 @@ mod tests {
         let mut out = vec![F::ZERO; 4];
         eval_eq(&eval, &mut out, F::ONE);
 
-        let point = MultilinearPoint(eval.clone());
+        let point = MultilinearPoint(eval);
         let mut expected = vec![F::ZERO; 4];
         for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
             expected[prefix.0] = lag;

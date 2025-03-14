@@ -11,6 +11,7 @@ use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
 use nimue_pow::blake3::Blake3PoW;
+use std::io::Write;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{
@@ -114,7 +115,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
@@ -122,7 +123,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
@@ -130,7 +131,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
@@ -138,7 +139,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
@@ -146,7 +147,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
@@ -154,7 +155,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
@@ -162,7 +163,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
@@ -170,7 +171,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
@@ -178,7 +179,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
@@ -186,7 +187,7 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
@@ -194,7 +195,7 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
@@ -202,13 +203,14 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_whir<F, MerkleConfig>(
-    args: Args,
+    args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -297,9 +299,7 @@ fn run_whir<F, MerkleConfig>(
         let statement_new = Statement::<F>::new(num_variables);
         let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
-        let proof = prover
-            .prove(&mut merlin, statement_new.clone(), witness)
-            .unwrap();
+        let proof = prover.prove(&mut merlin, statement_new, witness).unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
         let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
@@ -439,6 +439,5 @@ fn run_whir<F, MerkleConfig>(
         .create(true)
         .open("outputs/bench_output.json")
         .unwrap();
-    use std::io::Write;
     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
 }

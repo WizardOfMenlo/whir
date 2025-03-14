@@ -17,7 +17,7 @@ impl FromStr for WhirType {
         } else if s == "PCS" {
             Ok(Self::PCS)
         } else {
-            Err(format!("Invalid field: {}", s))
+            Err(format!("Invalid field: {s}"))
         }
     }
 }
@@ -49,7 +49,7 @@ impl FromStr for AvailableFields {
         } else if s == "Goldilocks3" {
             Ok(Self::Goldilocks3)
         } else {
-            Err(format!("Invalid field: {}", s))
+            Err(format!("Invalid field: {s}"))
         }
     }
 }
@@ -69,7 +69,7 @@ impl FromStr for AvailableMerkle {
         } else if s == "Blake3" {
             Ok(Self::Blake3)
         } else {
-            Err(format!("Invalid hash: {}", s))
+            Err(format!("Invalid hash: {s}"))
         }
     }
 }

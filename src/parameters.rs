@@ -38,7 +38,7 @@ impl FromStr for SoundnessType {
         } else if s == "UniqueDecoding" {
             Ok(Self::UniqueDecoding)
         } else {
-            Err(format!("Invalid soundness specification: {}", s))
+            Err(format!("Invalid soundness specification: {s}"))
         }
     }
 }
@@ -78,7 +78,7 @@ impl FromStr for FoldType {
         } else if s == "ProverHelps" {
             Ok(Self::ProverHelps)
         } else {
-            Err(format!("Invalid fold type specification: {}", s))
+            Err(format!("Invalid fold type specification: {s}"))
         }
     }
 }
@@ -121,8 +121,7 @@ impl FoldingFactor {
             Self::Constant(factor) => {
                 if *factor > num_variables {
                     Err(format!(
-                        "Folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
-                        factor, num_variables
+                        "Folding factor {factor} is greater than the number of variables {num_variables}. Polynomial too small, just send it directly."
                     ))
                 } else if *factor == 0 {
                     // We should at least fold some time
@@ -134,13 +133,11 @@ impl FoldingFactor {
             Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 if *first_round_factor > num_variables {
                     Err(format!(
-                        "First round folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
-                        first_round_factor, num_variables
+                        "First round folding factor {first_round_factor} is greater than the number of variables {num_variables}. Polynomial too small, just send it directly."
                     ))
                 } else if *factor > num_variables {
                     Err(format!(
-                        "Folding factor {} is greater than the number of variables {}. Polynomial too small, just send it directly.",
-                        factor, num_variables
+                        "Folding factor {factor} is greater than the number of variables {num_variables}. Polynomial too small, just send it directly."
                     ))
                 } else if *factor == 0 || *first_round_factor == 0 {
                     // We should at least fold some time
