@@ -49,7 +49,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for LeafIdentityHasher<F> {
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
-        _: &Self::Parameters,
+        (): &Self::Parameters,
         input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
         let mut buf = vec![];

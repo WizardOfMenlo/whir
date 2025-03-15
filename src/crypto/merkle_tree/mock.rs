@@ -19,7 +19,7 @@ impl TwoToOneCRHScheme for Mock {
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
-        _: &Self::Parameters,
+        (): &Self::Parameters,
         _: T,
         _: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
@@ -27,7 +27,7 @@ impl TwoToOneCRHScheme for Mock {
     }
 
     fn compress<T: Borrow<Self::Output>>(
-        _: &Self::Parameters,
+        (): &Self::Parameters,
         _: T,
         _: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {

@@ -18,7 +18,7 @@ pub fn wavelet_transform<F: Field>(values: &mut [F]) {
 
 pub fn inverse_wavelet_transform<F: Field>(values: &mut [F]) {
     debug_assert!(values.len().is_power_of_two());
-    inverse_wavelet_transform_batch(values, values.len())
+    inverse_wavelet_transform_batch(values, values.len());
 }
 
 pub fn inverse_wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {

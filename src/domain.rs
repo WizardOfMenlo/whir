@@ -40,6 +40,7 @@ where
         self.backing_domain.size()
     }
 
+    #[must_use]
     pub fn scale(&self, power: usize) -> Self {
         Self {
             backing_domain: self.scale_generator_by(power),

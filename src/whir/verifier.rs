@@ -103,6 +103,7 @@ where
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_proof<Arthur>(
         &self,
         arthur: &mut Arthur,
@@ -353,7 +354,7 @@ where
             new_constraints.push((weights, evaluation));
         }
         let mut proof_values_iter = proof.statement_values_at_random_point.iter();
-        for constraint in statement.constraints.iter() {
+        for constraint in &statement.constraints {
             match &constraint.0 {
                 VerifierWeights::Evaluation { point } => {
                     new_constraints
@@ -408,7 +409,7 @@ where
     fn compute_folds(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
         match self.params.fold_optimisation {
             FoldType::Naive => self.compute_folds_full(parsed),
-            FoldType::ProverHelps => self.compute_folds_helped(parsed),
+            FoldType::ProverHelps => compute_folds_helped(parsed),
         }
     }
 
@@ -477,33 +478,7 @@ where
         result
     }
 
-    fn compute_folds_helped(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
-        let mut result = Vec::new();
-
-        for round in &parsed.rounds {
-            let evaluations: Vec<_> = round
-                .stir_challenges_answers
-                .iter()
-                .map(|answers| {
-                    CoefficientList::new(answers.clone()).evaluate(&round.folding_randomness)
-                })
-                .collect();
-            result.push(evaluations);
-        }
-
-        // Final round
-        let evaluations: Vec<_> = parsed
-            .final_randomness_answers
-            .iter()
-            .map(|answers| {
-                CoefficientList::new(answers.clone()).evaluate(&parsed.final_folding_randomness)
-            })
-            .collect();
-        result.push(evaluations);
-
-        result
-    }
-
+    #[allow(clippy::too_many_lines)]
     pub fn verify<Arthur>(
         &self,
         arthur: &mut Arthur,
@@ -545,7 +520,7 @@ where
                     .ood_answers
                     .iter()
                     .copied()
-                    .chain(evaluations.clone())
+                    .chain(evaluations)
                     .zip(&parsed.initial_combination_randomness)
                     .map(|(ans, rand)| ans * rand)
                     .sum()
@@ -661,4 +636,31 @@ where
 
         Ok(())
     }
+}
+
+fn compute_folds_helped<F: FftField>(parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
+    let mut result = Vec::new();
+
+    for round in &parsed.rounds {
+        let evaluations: Vec<_> = round
+            .stir_challenges_answers
+            .iter()
+            .map(|answers| {
+                CoefficientList::new(answers.clone()).evaluate(&round.folding_randomness)
+            })
+            .collect();
+        result.push(evaluations);
+    }
+
+    // Final round
+    let evaluations: Vec<_> = parsed
+        .final_randomness_answers
+        .iter()
+        .map(|answers| {
+            CoefficientList::new(answers.clone()).evaluate(&parsed.final_folding_randomness)
+        })
+        .collect();
+    result.push(evaluations);
+
+    result
 }

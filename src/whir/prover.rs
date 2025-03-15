@@ -146,6 +146,7 @@ where
         self.round(merlin, round_state)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
@@ -392,6 +393,7 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
+        #[allow(clippy::map_unwrap_or)]
         let mut sumcheck_prover = round_state
             .sumcheck_prover
             .take()
