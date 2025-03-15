@@ -50,6 +50,7 @@ rayon = { version = "1.10.0", optional = true }
 
 [dev-dependencies]
 proptest = "1.0"
+criterion = "0.5"
 
 [profile.release]
 debug = true
@@ -65,3 +66,7 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
+
+[[bench]]
+name = "expand_from_coeff"
+harness = false
