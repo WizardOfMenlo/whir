@@ -74,38 +74,6 @@ where
         self.evaluation_of_p.num_variables()
     }
 
-    /// Compute the polynomial that represents the sum in the first variable.
-    #[cfg(not(feature = "parallel"))]
-    pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
-        assert!(self.num_variables >= 1);
-
-        // Compute coefficients of the quadratic result polynomial
-        let eval_p_iter = self.evaluation_of_p.evals().chunks_exact(2);
-        let eval_eq_iter = self.weights.evals().chunks_exact(2);
-        let (c0, c2) = eval_p_iter
-            .zip(eval_eq_iter)
-            .map(|(p_at, eq_at)| {
-                // Convert evaluations to coefficients for the linear fns p and eq.
-                let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
-                let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
-
-                // Now we need to add the contribution of p(x) * eq(x)
-                (p_0 * eq_0, p_1 * eq_1)
-            })
-            .reduce(|(a0, a2), (b0, b2)| (a0 + b0, a2 + b2))
-            .unwrap_or((F::ZERO, F::ZERO));
-
-        // Use the fact that self.sum = p(0) + p(1) = 2 * c0 + c1 + c2
-        let c1 = self.sum - c0.double() - c2;
-
-        // Evaluate the quadratic polynomial at 0, 1, 2
-        let eval_0 = c0;
-        let eval_1 = c0 + c1 + c2;
-        let eval_2 = eval_1 + c1 + c2 + c2.double();
-
-        SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
-    }
-
     /// Computes the sumcheck polynomial `h(X)`, which is quadratic.
     ///
     /// The sumcheck polynomial is given by:
@@ -118,15 +86,15 @@ where
     /// - `b` represents points in `{0,1,2}^1`.
     /// - `w(b, X)` are the generic weights applied to `p(b, X)`.
     /// - `h(X)` is a quadratic polynomial.
-    #[cfg(feature = "parallel")]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables() >= 1);
 
-        // Compute coefficients of the quadratic result polynomial
-        let eval_p_iter = self.evaluation_of_p.evals().par_chunks_exact(2);
-        let eval_eq_iter = self.weights.evals().par_chunks_exact(2);
-        let (c0, c2) = eval_p_iter
-            .zip(eval_eq_iter)
+        #[cfg(feature = "parallel")]
+        let (c0, c2) = self
+            .evaluation_of_p
+            .evals()
+            .par_chunks_exact(2)
+            .zip(self.weights.evals().par_chunks_exact(2))
             .map(|(p_at, eq_at)| {
                 // Convert evaluations to coefficients for the linear fns p and eq.
                 let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
@@ -139,6 +107,22 @@ where
                 || (F::ZERO, F::ZERO),
                 |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
             );
+
+        #[cfg(not(feature = "parallel"))]
+        let (c0, c2) = self
+            .evaluation_of_p
+            .evals()
+            .chunks_exact(2)
+            .zip(self.weights.evals().chunks_exact(2))
+            .map(|(p_at, eq_at)| {
+                // Convert evaluations to coefficients for the linear fns p and eq.
+                let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
+                let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
+
+                // Now we need to add the contribution of p(x) * eq(x)
+                (p_0 * eq_0, p_1 * eq_1)
+            })
+            .fold((F::ZERO, F::ZERO), |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2));
 
         // Use the fact that self.sum = p(0) + p(1) = 2 * coeff_0 + coeff_1 + coeff_2
         let c1 = self.sum - c0.double() - c2;
