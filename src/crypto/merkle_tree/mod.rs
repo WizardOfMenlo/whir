@@ -1,38 +1,29 @@
+use ark_crypto_primitives::{crh::CRHScheme, merkle_tree::DigestConverter, Error};
+use ark_serialize::CanonicalSerialize;
+use rand::RngCore;
+use std::sync::atomic::Ordering;
+use std::{borrow::Borrow, marker::PhantomData, sync::atomic::AtomicUsize};
+
 pub mod blake3;
 pub mod keccak;
 pub mod mock;
 
-use std::{borrow::Borrow, marker::PhantomData, sync::atomic::AtomicUsize};
-
-use ark_crypto_primitives::{crh::CRHScheme, merkle_tree::DigestConverter, Error};
-use ark_serialize::CanonicalSerialize;
-use rand::RngCore;
-use std::sync::LazyLock;
-
 #[derive(Debug, Default)]
-pub struct HashCounter {
-    counter: AtomicUsize,
-}
+pub struct HashCounter;
 
-static HASH_COUNTER: LazyLock<HashCounter> = LazyLock::new(HashCounter::default);
+static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl HashCounter {
     pub(crate) fn add() -> usize {
-        HASH_COUNTER
-            .counter
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        HASH_COUNTER.fetch_add(1, Ordering::SeqCst)
     }
 
     pub fn reset() {
-        HASH_COUNTER
-            .counter
-            .store(0, std::sync::atomic::Ordering::SeqCst);
+        HASH_COUNTER.store(0, Ordering::SeqCst);
     }
 
     pub fn get() -> usize {
-        HASH_COUNTER
-            .counter
-            .load(std::sync::atomic::Ordering::SeqCst)
+        HASH_COUNTER.load(Ordering::SeqCst)
     }
 }
 
