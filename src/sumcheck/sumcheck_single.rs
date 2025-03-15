@@ -250,6 +250,27 @@ where
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 
+    /// Compresses the polynomial and weight evaluations by reducing the number of variables.
+    ///
+    /// Given a multilinear polynomial `p(X1, ..., Xn)`, this function eliminates `X1` using the
+    /// folding randomness `r`:
+    /// \begin{equation}
+    ///     p'(X_2, ..., X_n) = (p(1, X_2, ..., X_n) - p(0, X_2, ..., X_n)) \cdot r
+    ///     + p(0, X_2, ...,X_n)
+    /// \end{equation}
+    ///
+    /// The same transformation applies to the weights `w(X)`, and the sum is updated as:
+    ///
+    /// \begin{equation}
+    ///     S' = \rho \cdot h(r)
+    /// \end{equation}
+    ///
+    /// where `h(r)` is the sumcheck polynomial evaluated at `r`, and `\rho` is
+    /// `combination_randomness`.
+    ///
+    /// # Effects
+    /// - Shrinks `p(X)` and `w(X)` by half.
+    /// - Updates `sum` using `sumcheck_poly`.
     #[cfg(feature = "parallel")]
     pub fn compress(
         &mut self,
@@ -830,5 +851,235 @@ mod tests {
         // The weights should remain unchanged
         let expected_weights = vec![F::ZERO; 2];
         assert_eq!(prover.weights.evals(), &expected_weights);
+    }
+
+    #[test]
+    fn test_compress_basic() {
+        // Polynomial with 2 variables:
+        // f(X1, X2) = c1 + c2*X1 + c3*X2 + c4*X1*X2
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let c3 = F::from(3);
+        let c4 = F::from(4);
+        let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
+
+        // Create an empty statement (no constraints initially)
+        let statement = Statement::new(2);
+
+        // Instantiate the Sumcheck prover
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        // Define random values for compression
+        let combination_randomness = F::from(3);
+        let folding_randomness = MultilinearPoint(vec![F::from(2)]);
+
+        // Compute sumcheck polynomial manually:
+        let sumcheck_poly = prover.compute_sumcheck_polynomial();
+
+        // Apply compression
+        prover.compress(combination_randomness, &folding_randomness, &sumcheck_poly);
+
+        // Compute expected evaluations after compression
+        //
+        // Compression follows the formula:
+        //
+        // p'(X2) = (p(X1=1, X2) - p(X1=0, X2)) * r + p(X1=0, X2)
+        //
+        // where r = folding_randomness
+        let r = folding_randomness.0[0];
+
+        let eval_00 = c1; // f(0,0) = c1
+        let eval_01 = c1 + c3; // f(0,1) = c1 + c3
+        let eval_10 = c1 + c2; // f(1,0) = c1 + c2
+        let eval_11 = c1 + c2 + c3 + c4; // f(1,1) = c1 + c2 + c3 + c4
+
+        // Compute new evaluations after compression:
+        let compressed_eval_0 = (eval_10 - eval_00) * r + eval_00;
+        let compressed_eval_1 = (eval_11 - eval_01) * r + eval_01;
+
+        let expected_compressed_evaluations = vec![compressed_eval_0, compressed_eval_1];
+
+        assert_eq!(
+            prover.evaluation_of_p.evals(),
+            &expected_compressed_evaluations
+        );
+
+        // Compute the expected sum update:
+        //
+        // sum' = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness)
+        let expected_sum =
+            combination_randomness * sumcheck_poly.evaluate_at_point(&folding_randomness);
+        assert_eq!(prover.sum, expected_sum);
+
+        // Check weights after compression
+        let weight_0 = prover.weights.evals()[0]; // w(X1=0, X2=0)
+        let weight_1 = prover.weights.evals()[1]; // w(X1=0, X2=1)
+
+        // Compute compressed weights
+        let compressed_weight_0 = weight_0; // No change as X1=0 remains
+        let compressed_weight_1 = weight_1; // No change as X1=0 remains
+
+        // The expected compressed weights after applying the transformation
+        let expected_compressed_weights = vec![compressed_weight_0, compressed_weight_1];
+
+        assert_eq!(prover.weights.evals(), &expected_compressed_weights);
+    }
+
+    #[test]
+    fn test_compress_three_variables() {
+        // Polynomial with 3 variables:
+        // f(X1, X2, X3) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let c3 = F::from(3);
+        let c4 = F::from(4);
+        let c5 = F::from(5);
+        let c6 = F::from(6);
+        let c7 = F::from(7);
+        let c8 = F::from(8);
+        let coeffs = CoefficientList::new(vec![c1, c2, c3, c4, c5, c6, c7, c8]);
+
+        // Create an empty statement (no constraints initially)
+        let statement = Statement::new(3);
+
+        // Instantiate the Sumcheck prover
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        // Define random values for compression
+        let combination_randomness = F::from(2);
+        let folding_randomness = MultilinearPoint(vec![F::from(3)]);
+
+        // Compute sumcheck polynomial manually:
+        let sumcheck_poly = prover.compute_sumcheck_polynomial();
+
+        // Apply compression
+        prover.compress(combination_randomness, &folding_randomness, &sumcheck_poly);
+
+        // Compute expected evaluations after compression
+        //
+        // Compression formula:
+        //
+        // p'(X2, X3) = (p(X1=1, X2, X3) - p(X1=0, X2, X3)) * r + p(X1=0, X2, X3)
+        //
+        // where r = folding_randomness
+        let r = folding_randomness.0[0];
+
+        let eval_000 = c1;
+        let eval_001 = c1 + c5;
+        let eval_010 = c1 + c3;
+        let eval_011 = c1 + c3 + c5 + c7;
+        let eval_100 = c1 + c2;
+        let eval_101 = c1 + c2 + c5 + c6;
+        let eval_110 = c1 + c2 + c3 + c4;
+        let eval_111 = c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
+
+        // Compute compressed evaluations
+        let compressed_eval_00 = (eval_100 - eval_000) * r + eval_000;
+        let compressed_eval_01 = (eval_101 - eval_001) * r + eval_001;
+        let compressed_eval_10 = (eval_110 - eval_010) * r + eval_010;
+        let compressed_eval_11 = (eval_111 - eval_011) * r + eval_011;
+
+        let expected_compressed_evaluations = vec![
+            compressed_eval_00,
+            compressed_eval_10,
+            compressed_eval_01,
+            compressed_eval_11,
+        ];
+
+        assert_eq!(
+            prover.evaluation_of_p.evals(),
+            &expected_compressed_evaluations
+        );
+
+        // Compute the expected sum update:
+        let expected_sum =
+            combination_randomness * sumcheck_poly.evaluate_at_point(&folding_randomness);
+        assert_eq!(prover.sum, expected_sum);
+
+        // Check weights after compression
+        //
+        // Compression formula:
+        //
+        // w'(X2, X3) = (w(X1=1, X2, X3) - w(X1=0, X2, X3)) * r + w(X1=0, X2, X3)
+        //
+        let r = folding_randomness.0[0];
+
+        let weight_00 = prover.weights.evals()[0];
+        let weight_01 = prover.weights.evals()[1];
+        let weight_10 = prover.weights.evals()[2];
+        let weight_11 = prover.weights.evals()[3];
+
+        // Apply the same compression rule
+        let compressed_weight_00 = (weight_10 - weight_00) * r + weight_00;
+        let compressed_weight_01 = (weight_11 - weight_01) * r + weight_01;
+
+        // The compressed weights should match expected values
+        let expected_compressed_weights = vec![
+            compressed_weight_00,
+            compressed_weight_01,
+            compressed_weight_00,
+            compressed_weight_01,
+        ];
+
+        assert_eq!(prover.weights.evals(), &expected_compressed_weights);
+    }
+
+    #[test]
+    fn test_compress_with_zero_randomness() {
+        // Polynomial with 2 variables:
+        // f(X1, X2) = c1 + c2*X1 + c3*X2 + c4*X1*X2
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let c3 = F::from(3);
+        let c4 = F::from(4);
+        let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
+
+        // Create an empty statement (no constraints initially)
+        let statement = Statement::new(2);
+
+        // Instantiate the Sumcheck prover
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        // Define zero folding randomness
+        let combination_randomness = F::from(2);
+        let folding_randomness = MultilinearPoint(vec![F::ZERO]);
+
+        // Compute sumcheck polynomial manually:
+        let sumcheck_poly = prover.compute_sumcheck_polynomial();
+
+        // Apply compression
+        prover.compress(combination_randomness, &folding_randomness, &sumcheck_poly);
+
+        // Since folding randomness is zero, the compressed evaluations should be:
+        //
+        // p'(X2) = (p(X1=1, X2) - p(X1=0, X2)) * 0 + p(X1=0, X2)
+        //        = p(X1=0, X2)
+        let expected_compressed_evaluations = vec![c1, c1 + c3];
+
+        assert_eq!(
+            prover.evaluation_of_p.evals(),
+            &expected_compressed_evaluations
+        );
+
+        // Compute the expected sum update:
+        let expected_sum =
+            combination_randomness * sumcheck_poly.evaluate_at_point(&folding_randomness);
+        assert_eq!(prover.sum, expected_sum);
+
+        // Check weights after compression
+        //
+        // Compression formula:
+        //
+        // w'(X2) = (w(X1=1, X2) - w(X1=0, X2)) * 0 + w(X1=0, X2)
+        //        = w(X1=0, X2)
+        //
+        // Since `r = 0`, this means the weights remain the same as `X1=0` slice.
+
+        let weight_0 = prover.weights.evals()[0]; // w(X1=0, X2=0)
+        let weight_1 = prover.weights.evals()[1]; // w(X1=0, X2=1)
+
+        let expected_compressed_weights = vec![weight_0, weight_1];
+
+        assert_eq!(prover.weights.evals(), &expected_compressed_weights);
     }
 }
