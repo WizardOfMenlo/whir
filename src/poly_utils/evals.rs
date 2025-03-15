@@ -1,4 +1,4 @@
-use super::{multilinear::MultilinearPoint, sequential_lag_poly::LagrangePolynomialIterator};
+use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::ops::Index;
 
