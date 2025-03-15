@@ -79,7 +79,7 @@ impl<F: FftField> NttEngine<F> {
     }
 
     /// Construct a new engine from the field's `FftField` trait.
-    fn new_from_fftfield() -> Self {
+    pub(crate) fn new_from_fftfield() -> Self {
         // TODO: Support SMALL_SUBGROUP
         if F::TWO_ADICITY <= 63 {
             Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
