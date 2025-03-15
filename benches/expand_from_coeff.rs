@@ -3,24 +3,27 @@ use whir::crypto::fields::Field64;
 use whir::ntt::expand_from_coeff;
 
 fn bench_expand_from_coeff(c: &mut Criterion) {
-    // Test cases with increasing polynomial sizes and expansion factors
+    // Test cases with polynomial sizes defined as exponents of 2 and expansion factors
     let test_cases = [
-        (2, 2),
-        (4, 4),
-        (8, 2),
-        (16, 2),
-        (32, 4),
-        (64, 8),
-        (128, 4),
-        (1024, 4),
-        (2048, 2),
+        (1, 2),
+        (2, 4),
+        (3, 2),
+        (4, 2),
+        (5, 4),
+        (6, 8),
+        (7, 4),
+        (10, 4),
+        (11, 2),
+        (20, 2),
     ];
 
-    for &(size, expansion) in &test_cases {
+    for &(exp, expansion) in &test_cases {
+        // Compute 2^exp
+        let size = 1 << exp;
         let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
 
         c.bench_function(
-            &format!("expand_from_coeff size={size} exp={expansion}"),
+            &format!("expand_from_coeff size=2^{exp} exp={expansion}"),
             |b| b.iter(|| expand_from_coeff(black_box(&coeffs), black_box(expansion))),
         );
     }
