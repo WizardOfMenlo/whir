@@ -207,15 +207,15 @@ where
     ) {
         assert_eq!(combination_randomness.len(), points.len());
         assert_eq!(combination_randomness.len(), evaluations.len());
-        for (point, rand) in points.iter().zip(combination_randomness) {
-            // TODO: We might want to do all points simultaneously so we
-            // do only a single pass over the data.
-            eval_eq(&point.0, self.weights.evals_mut(), *rand);
-        }
-        // Update the sum
-        for (rand, eval) in combination_randomness.iter().zip(evaluations.iter()) {
-            self.sum += *rand * eval;
-        }
+
+        // Accumulate the sum while applying all constraints simultaneously
+        points
+            .iter()
+            .zip(combination_randomness.iter().zip(evaluations.iter()))
+            .for_each(|(point, (&rand, &eval))| {
+                eval_eq(&point.0, self.weights.evals_mut(), rand);
+                self.sum += rand * eval;
+            });
     }
 
     // When the folding randomness arrives, compress the table accordingly (adding the new points)
@@ -689,5 +689,147 @@ mod tests {
 
         // Assert that computed sumcheck polynomial matches expectations
         assert_eq!(sumcheck_poly.evaluations(), &expected_evaluations);
+    }
+
+    #[test]
+    fn test_add_new_equality_single_constraint() {
+        // Polynomial with 2 variables:
+        // f(X1, X2) = c1 + c2*X1 + c3*X2 + c4*X1*X2
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let c3 = F::from(3);
+        let c4 = F::from(4);
+        let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
+
+        // Create an empty statement (no constraints initially)
+        let statement = Statement::new(2);
+
+        // Instantiate the Sumcheck prover
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        // Add a single constraint at (X1, X2) = (1,0) with weight 2
+        let point = MultilinearPoint(vec![F::ONE, F::ZERO]);
+        let weight = F::from(2);
+
+        // Compute f(1,0) **without simplifications**
+        //
+        // f(1,0) = c1 + c2*X1 + c3*X2 + c4*X1*X2
+        //        = c1 + c2*(1) + c3*(0) + c4*(1)*(0)
+        let eval = c1 + c2 * F::ONE + c3 * F::ZERO + c4 * F::ONE * F::ZERO;
+
+        prover.add_new_equality(&[point.clone()], &[eval], &[weight]);
+
+        // Compute expected sum explicitly:
+        //
+        // sum = weight * eval
+        //     = (2 * (c1 + c2*(1) + c3*(0) + c4*(1)*(0)))
+        //
+        let expected_sum = weight * eval;
+        assert_eq!(prover.sum, expected_sum);
+
+        // Compute the expected weight updates:
+        // The equality function at point (X1, X2) = (1,0) updates the weights.
+        let mut expected_weights = vec![F::ZERO; 4];
+        eval_eq(&point.0, &mut expected_weights, weight);
+
+        assert_eq!(prover.weights.evals(), &expected_weights);
+    }
+
+    #[test]
+    fn test_add_new_equality_multiple_constraints() {
+        // Polynomial with 3 variables:
+        // f(X1, X2, X3) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let c3 = F::from(3);
+        let c4 = F::from(4);
+        let c5 = F::from(5);
+        let c6 = F::from(6);
+        let c7 = F::from(7);
+        let c8 = F::from(8);
+        let coeffs = CoefficientList::new(vec![c1, c2, c3, c4, c5, c6, c7, c8]);
+
+        // Create an empty statement (no constraints initially)
+        let statement = Statement::new(3);
+
+        // Instantiate the Sumcheck prover
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        // Add constraints at (X1, X2, X3) = (1,0,1) with weight 2 and (0,1,0) with weight 3
+        let point1 = MultilinearPoint(vec![F::ONE, F::ZERO, F::ONE]);
+        let point2 = MultilinearPoint(vec![F::ZERO, F::ONE, F::ZERO]);
+
+        let weight1 = F::from(2);
+        let weight2 = F::from(3);
+
+        // Compute f(1,0,1) using the polynomial definition:
+        //
+        // f(1,0,1) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
+        //          = c1 + c2*(1) + c3*(0) + c4*(1)*(0) + c5*(1) + c6*(1)*(1) + c7*(0)*(1) +
+        // c8*(1)*(0)*(1)
+        let eval1 = c1
+            + c2 * F::ONE
+            + c3 * F::ZERO
+            + c4 * F::ONE * F::ZERO
+            + c5 * F::ONE
+            + c6 * F::ONE * F::ONE
+            + c7 * F::ZERO * F::ONE
+            + c8 * F::ONE * F::ZERO * F::ONE;
+
+        // Compute f(0,1,0) using the polynomial definition:
+        //
+        // f(0,1,0) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
+        //          = c1 + c2*(0) + c3*(1) + c4*(0)*(1) + c5*(0) + c6*(0)*(0) + c7*(1)*(0) +
+        // c8*(0)*(1)*(0)
+        let eval2 = c1
+            + c2 * F::ZERO
+            + c3 * F::ONE
+            + c4 * F::ZERO * F::ONE
+            + c5 * F::ZERO
+            + c6 * F::ZERO * F::ZERO
+            + c7 * F::ONE * F::ZERO
+            + c8 * F::ZERO * F::ONE * F::ZERO;
+
+        prover.add_new_equality(
+            &[point1.clone(), point2.clone()],
+            &[eval1, eval2],
+            &[weight1, weight2],
+        );
+
+        // Compute the expected sum manually:
+        //
+        // sum = (weight1 * eval1) + (weight2 * eval2)
+        let expected_sum = weight1 * eval1 + weight2 * eval2;
+        assert_eq!(prover.sum, expected_sum);
+
+        // Expected weight updates
+        let mut expected_weights = vec![F::ZERO; 8];
+        eval_eq(&point1.0, &mut expected_weights, weight1);
+        eval_eq(&point2.0, &mut expected_weights, weight2);
+
+        assert_eq!(prover.weights.evals(), &expected_weights);
+    }
+
+    #[test]
+    fn test_add_new_equality_with_zero_weight() {
+        let c1 = F::from(1);
+        let c2 = F::from(2);
+        let coeffs = CoefficientList::new(vec![c1, c2]);
+
+        let statement = Statement::new(1);
+        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+
+        let point = MultilinearPoint(vec![F::ONE]);
+        let weight = F::ZERO;
+        let eval = F::from(5);
+
+        prover.add_new_equality(&[point], &[eval], &[weight]);
+
+        // The sum should remain unchanged since the weight is zero
+        assert_eq!(prover.sum, F::ZERO);
+
+        // The weights should remain unchanged
+        let expected_weights = vec![F::ZERO; 2];
+        assert_eq!(prover.weights.evals(), &expected_weights);
     }
 }
