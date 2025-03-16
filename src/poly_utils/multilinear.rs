@@ -846,6 +846,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_equality3() {
         let point = MultilinearPoint(vec![Field64::from(0), Field64::from(0)]);
 

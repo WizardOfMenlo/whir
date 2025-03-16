@@ -110,16 +110,12 @@ where
     /// # Constraints:
     /// - The input `point` must have `n_variables` dimensions.
     pub fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
-        assert!(point.num_variables() == self.num_variables);
-        let num_evaluation_points = 3_usize.pow(self.num_variables as u32);
-
-        let mut evaluation = F::ZERO;
-
-        for index in 0..num_evaluation_points {
-            evaluation += self.evaluations[index] * point.eq_poly3(index);
-        }
-
-        evaluation
+        assert_eq!(point.num_variables(), self.num_variables);
+        self.evaluations
+            .iter()
+            .enumerate()
+            .map(|(i, &eval)| eval * point.eq_poly3(i))
+            .sum()
     }
 }
 

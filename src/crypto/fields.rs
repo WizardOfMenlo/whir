@@ -87,6 +87,7 @@ impl Fp3Config for F3Config64 {
         Fp3::new(MontFp!("5944137876247729999"), MontFp!("0"), MontFp!("0"));
 
     // T - 1 / 2
+    #[allow(clippy::unreadable_literal)]
     const TRACE_MINUS_ONE_DIV_TWO: &'static [u64] =
         &[0x80000002fffffffe, 0x80000002fffffffc, 0x7ffffffe];
 }

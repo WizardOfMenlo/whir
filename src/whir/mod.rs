@@ -100,9 +100,9 @@ mod tests {
         }
 
         let input = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
-        let input: EvaluationsList<F> = input.clone().into();
+        let input: EvaluationsList<F> = input.into();
 
-        let linear_claim_weight = Weights::linear(input.clone());
+        let linear_claim_weight = Weights::linear(input);
         let poly = EvaluationsList::from(polynomial.clone().to_extension());
 
         let sum = linear_claim_weight.weighted_sum(&poly);

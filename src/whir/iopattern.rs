@@ -10,14 +10,18 @@ use crate::{
 use super::parameters::WhirConfig;
 
 pub trait DigestIOPattern<MerkleConfig: Config> {
+    #[must_use]
     fn add_digest(self, label: &str) -> Self;
 }
 
 pub trait WhirIOPattern<F: FftField, MerkleConfig: Config> {
+    #[must_use]
     fn commit_statement<PowStrategy>(
         self,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self;
+
+    #[must_use]
     fn add_whir_proof<PowStrategy>(self, params: &WhirConfig<F, MerkleConfig, PowStrategy>)
         -> Self;
 }

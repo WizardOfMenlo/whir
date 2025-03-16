@@ -14,10 +14,6 @@ pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: us
     debug_assert_eq!(matrix.len() % (rows * cols), 0);
     debug_assert!(rows.is_power_of_two());
     debug_assert!(cols.is_power_of_two());
-    // eprintln!(
-    //     "Transpose {} x {rows} x {cols} matrix.",
-    //     matrix.len() / (rows * cols)
-    // );
     if rows == cols {
         for matrix in matrix.chunks_exact_mut(rows * cols) {
             let matrix = MatrixMut::from_mut_slice(matrix, rows, cols);

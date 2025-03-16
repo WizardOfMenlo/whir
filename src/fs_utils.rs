@@ -2,6 +2,7 @@ use ark_ff::Field;
 use nimue::plugins::ark::FieldIOPattern;
 use nimue_pow::PoWIOPattern;
 pub trait OODIOPattern<F: Field> {
+    #[must_use]
     fn add_ood(self, num_samples: usize) -> Self;
 }
 
@@ -21,6 +22,7 @@ where
 }
 
 pub trait WhirPoWIOPattern {
+    #[must_use]
     fn pow(self, bits: f64) -> Self;
 }
 

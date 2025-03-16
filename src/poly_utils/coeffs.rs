@@ -110,6 +110,7 @@ where
     ///
     /// - The number of variables decreases: `m = n - k`
     /// - Uses multivariate evaluation over chunks of coefficients.
+    #[must_use]
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
@@ -144,6 +145,7 @@ impl<F> CoefficientList<F> {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn coeffs(&self) -> &[F] {
         &self.coeffs
     }
@@ -534,7 +536,7 @@ mod tests {
         let coeff3 = F::from(2);
 
         let coeffs = vec![coeff0, coeff1, coeff2, coeff3];
-        let coeff_list = CoefficientList::new(coeffs.clone());
+        let coeff_list = CoefficientList::new(coeffs);
 
         let evaluations = EvaluationsList::from(coeff_list);
 

@@ -97,10 +97,10 @@ impl<F: Field> Weights<F> {
 
         assert_eq!(accumulator.num_variables(), self.num_variables());
         match self {
-            Weights::Evaluation { point } => {
+            Self::Evaluation { point } => {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
-            Weights::Linear { weight } => {
+            Self::Linear { weight } => {
                 accumulator
                     .evals_mut()
                     .par_iter_mut()
@@ -697,6 +697,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::redundant_clone)]
     fn test_compute_evaluation_weight_identity() {
         // Define an evaluation weight at a specific point
         let point = MultilinearPoint(vec![Field64::ONE, Field64::ZERO]);

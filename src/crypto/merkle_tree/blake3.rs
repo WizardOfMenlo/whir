@@ -57,7 +57,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
-        _: &Self::Parameters,
+        (): &Self::Parameters,
         input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
         let mut buf = vec![];
@@ -83,7 +83,7 @@ impl TwoToOneCRHScheme for Blake3TwoToOneCRHScheme {
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
-        _: &Self::Parameters,
+        (): &Self::Parameters,
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
