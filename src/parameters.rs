@@ -16,29 +16,23 @@ pub enum SoundnessType {
 
 impl Display for SoundnessType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match &self {
-                Self::ProvableList => "ProvableList",
-                Self::ConjectureList => "ConjectureList",
-                Self::UniqueDecoding => "UniqueDecoding",
-            }
-        )
+        f.write_str(match self {
+            Self::ProvableList => "ProvableList",
+            Self::ConjectureList => "ConjectureList",
+            Self::UniqueDecoding => "UniqueDecoding",
+        })
     }
 }
 
 impl FromStr for SoundnessType {
     type Err = String;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "ProvableList" {
-            Ok(Self::ProvableList)
-        } else if s == "ConjectureList" {
-            Ok(Self::ConjectureList)
-        } else if s == "UniqueDecoding" {
-            Ok(Self::UniqueDecoding)
-        } else {
-            Err(format!("Invalid soundness specification: {s}"))
+        match s {
+            "ProvableList" => Ok(Self::ProvableList),
+            "ConjectureList" => Ok(Self::ConjectureList),
+            "UniqueDecoding" => Ok(Self::UniqueDecoding),
+            _ => Err(format!("Invalid soundness specification: {s}")),
         }
     }
 }
@@ -72,27 +66,22 @@ pub enum FoldType {
 
 impl FromStr for FoldType {
     type Err = String;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "Naive" {
-            Ok(Self::Naive)
-        } else if s == "ProverHelps" {
-            Ok(Self::ProverHelps)
-        } else {
-            Err(format!("Invalid fold type specification: {s}"))
+        match s {
+            "Naive" => Ok(Self::Naive),
+            "ProverHelps" => Ok(Self::ProverHelps),
+            _ => Err(format!("Invalid fold type specification: {s}")),
         }
     }
 }
 
 impl Display for FoldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Naive => "Naive",
-                Self::ProverHelps => "ProverHelps",
-            }
-        )
+        f.write_str(match self {
+            Self::Naive => "Naive",
+            Self::ProverHelps => "ProverHelps",
+        })
     }
 }
 
