@@ -102,17 +102,17 @@ where
             0
         };
 
-        let starting_folding_pow_bits = whir_parameters
-            .initial_statement
-            .then_some(Self::folding_pow_bits(
+        let starting_folding_pow_bits = if whir_parameters.initial_statement {
+            Self::folding_pow_bits(
                 whir_parameters.security_level,
                 whir_parameters.soundness_type,
                 field_size_bits,
                 num_variables,
                 log_inv_rate,
                 log_eta_start,
-            ))
-            .unwrap_or_else(|| {
+            )
+        } else {
+            {
                 let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
                     whir_parameters.soundness_type,
                     field_size_bits,
@@ -122,7 +122,8 @@ where
                 ) + (whir_parameters.folding_factor.at_round(0) as f64)
                     .log2();
                 (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
-            });
+            }
+        };
 
         let mut round_parameters = Vec::with_capacity(num_rounds);
         num_variables -= whir_parameters.folding_factor.at_round(0);
