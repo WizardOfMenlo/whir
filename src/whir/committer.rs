@@ -259,4 +259,82 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_large_polynomial() {
+        type F = Field64;
+        type MerkleConfig = keccak::MerkleTreeParams<F>;
+
+        let mut rng = ark_std::test_rng();
+        let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
+
+        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            MultivariateParameters::<F>::new(10),
+            WhirParameters {
+                initial_statement: true,
+                security_level: 100,
+                pow_bits: 20,
+                folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
+                leaf_hash_params,
+                two_to_one_params,
+                soundness_type: SoundnessType::ConjectureList,
+                fold_optimisation: FoldType::ProverHelps,
+                _pow_parameters: Default::default(),
+                starting_log_inv_rate: 1,
+            },
+        );
+
+        let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
+        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let mut merlin = io.to_merlin();
+
+        let committer = Committer::new(params.clone());
+        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+
+        // Expansion factor is 2
+        assert_eq!(
+            witness.merkle_leaves.len(),
+            1024 * 2,
+            "Merkle tree should have expected number of leaves"
+        );
+    }
+
+    #[test]
+    fn test_commitment_without_ood_samples() {
+        type F = Field64;
+        type MerkleConfig = keccak::MerkleTreeParams<F>;
+
+        let mut rng = ark_std::test_rng();
+        let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
+
+        let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            MultivariateParameters::<F>::new(5),
+            WhirParameters {
+                initial_statement: true,
+                security_level: 100,
+                pow_bits: 20,
+                folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
+                leaf_hash_params,
+                two_to_one_params,
+                soundness_type: SoundnessType::ConjectureList,
+                fold_optimisation: FoldType::ProverHelps,
+                _pow_parameters: Default::default(),
+                starting_log_inv_rate: 1,
+            },
+        );
+
+        params.committment_ood_samples = 0; // No OOD samples
+
+        let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
+        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let mut merlin = io.to_merlin();
+
+        let committer = Committer::new(params.clone());
+        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+
+        assert!(
+            witness.ood_points.is_empty(),
+            "There should be no OOD points when committment_ood_samples is 0"
+        );
+    }
 }
