@@ -30,7 +30,10 @@ pub fn base_decomposition(mut value: usize, base: u8, n_bits: usize) -> Vec<u8> 
 // Gotti: Consider renaming this function. The name sounds like it's a PRG.
 // TODO (Gotti): Check that ordering is actually correct at point of use (everything else is big-endian).
 
-/// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
+/// Generates a sequence of powers of `base`, starting from `1`.
+///
+/// This function returns a vector containing the sequence:
+/// `[1, base, base^2, base^3, ..., base^(len-1)]`
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     let mut res = Vec::with_capacity(len);
     let mut acc = F::ONE;
@@ -38,7 +41,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
         res.push(acc);
         acc *= base;
     }
-
     res
 }
 
@@ -136,13 +138,12 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 
 #[cfg(test)]
 mod tests {
-    use super::stack_evaluations;
+    use super::*;
     use crate::{
         crypto::fields::Field64,
         poly_utils::{
             lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },
-        utils::{base_decomposition, eval_eq},
     };
     use ark_ff::AdditiveGroup;
     use ark_ff::Field;
@@ -412,5 +413,102 @@ mod tests {
         }
 
         assert_eq!(&out, &expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_basic() {
+        // Test with base = 2 and length = 5
+        let base = Field64::from(2);
+        let len = 5;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::from(2),
+            Field64::from(4),
+            Field64::from(8),
+            Field64::from(16),
+        ];
+
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_zero_length() {
+        // If len = 0, should return an empty vector
+        let base = Field64::from(3);
+        assert!(expand_randomness(base, 0).is_empty());
+    }
+
+    #[test]
+    fn test_expand_randomness_one_length() {
+        // If len = 1, should return [1]
+        let base = Field64::from(5);
+        assert_eq!(expand_randomness(base, 1), vec![Field64::ONE]);
+    }
+
+    #[test]
+    fn test_expand_randomness_large_base() {
+        // Test with a large base value
+        let base = Field64::from(10);
+        let len = 4;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::from(10),
+            Field64::from(100),
+            Field64::from(1000),
+        ];
+
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_identity_case() {
+        // If base = 1, all values should be 1
+        let base = Field64::ONE;
+        let len = 6;
+
+        let expected = vec![Field64::ONE; len];
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_zero_base() {
+        // If base = 0, all values after the first should be 0
+        let base = Field64::ZERO;
+        let len = 5;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::ZERO,
+            Field64::ZERO,
+            Field64::ZERO,
+            Field64::ZERO,
+        ];
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_negative_base() {
+        let start = std::time::Instant::now();
+
+        for _ in 0..1000 {
+            // Test with base = -1, which should alternate between 1 and -1
+            let base = -Field64::ONE;
+            let len = 6;
+
+            let expected = vec![
+                Field64::ONE,
+                -Field64::ONE,
+                Field64::ONE,
+                -Field64::ONE,
+                Field64::ONE,
+                -Field64::ONE,
+            ];
+
+            assert_eq!(expand_randomness(base, len), expected);
+        }
+
+        println!("expand_randomness negative base: {:?}", start.elapsed());
     }
 }
