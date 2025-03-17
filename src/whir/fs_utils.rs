@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
+use itertools::Itertools;
 use nimue::{ByteChallenges, ProofResult};
-use std::collections::BTreeSet;
 
 /// Generates a list of unique challenge queries within a folded domain.
 ///
@@ -25,20 +25,17 @@ where
     let mut queries = vec![0u8; num_queries * domain_size_bytes];
     transcript.fill_challenge_bytes(&mut queries)?;
 
-    // Convert random bytes into challenge indices
-    let indices = queries.chunks_exact(domain_size_bytes).map(|chunk| {
-        let mut result = 0;
-        for byte in chunk {
-            result <<= 8;
-            result |= *byte as usize;
-        }
-        // Ensure index is within valid range
-        result % folded_domain_size
-    });
+    // Convert bytes into indices in **one efficient pass**
+    let indices = queries
+        .chunks_exact(domain_size_bytes)
+        .map(|chunk| {
+            chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
+        })
+        .sorted_unstable()
+        .dedup()
+        .collect_vec();
 
-    // Deduplicate and sort using `BTreeSet`
-    let indices: BTreeSet<_> = indices.collect();
-    Ok(Vec::from_iter(indices))
+    Ok(indices)
 }
 
 pub trait DigestWriter<MerkleConfig: Config> {
@@ -157,52 +154,42 @@ mod tests {
 
     #[test]
     fn test_challenge_stir_queries_three_byte_indices() {
-        let start = std::time::Instant::now();
+        // Case where `domain_size_bytes = 3`, meaning indices are computed using three bytes.
+        let domain_size = 2usize.pow(24); // 16,777,216
+        let folding_factor = 4; // 2^4 = 16
+        let num_queries = 4;
 
-        for _ in 0..1000 {
-            // Case where `domain_size_bytes = 3`, meaning indices are computed using three bytes.
-            let domain_size = 2usize.pow(24); // 16,777,216
-            let folding_factor = 4; // 2^4 = 16
-            let num_queries = 4;
+        // Expected `folded_domain_size = 2^24 / 16 = 2^20 = 1,048,576`
+        let transcript_data = vec![
+            0x12, 0x34, 0x56, // Query 1
+            0x78, 0x9A, 0xBC, // Query 2
+            0xDE, 0xF0, 0x11, // Query 3
+            0x22, 0x33, 0x44, // Query 4
+        ];
+        let mut transcript = MockTranscript {
+            data: transcript_data.clone(),
+            index: 0,
+        };
 
-            // Expected `folded_domain_size = 2^24 / 16 = 2^20 = 1,048,576`
-            let transcript_data = vec![
-                0x12, 0x34, 0x56, // Query 1
-                0x78, 0x9A, 0xBC, // Query 2
-                0xDE, 0xF0, 0x11, // Query 3
-                0x22, 0x33, 0x44, // Query 4
-            ];
-            let mut transcript = MockTranscript {
-                data: transcript_data.clone(),
-                index: 0,
-            };
+        let result =
+            get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut transcript)
+                .unwrap();
 
-            let result = get_challenge_stir_queries(
-                domain_size,
-                folding_factor,
-                num_queries,
-                &mut transcript,
-            )
-            .unwrap();
+        let folded_domain_size = 1_048_576; // 2^20
 
-            let folded_domain_size = 1_048_576; // 2^20
+        // Manually computed expected indices using three bytes per index
+        let index_0 = ((0x12 << 16) | (0x34 << 8) | 0x56) % folded_domain_size;
+        let index_1 = ((0x78 << 16) | (0x9A << 8) | 0xBC) % folded_domain_size;
+        let index_2 = ((0xDE << 16) | (0xF0 << 8) | 0x11) % folded_domain_size;
+        let index_3 = ((0x22 << 16) | (0x33 << 8) | 0x44) % folded_domain_size;
 
-            // Manually computed expected indices using three bytes per index
-            let index_0 = ((0x12 << 16) | (0x34 << 8) | 0x56) % folded_domain_size;
-            let index_1 = ((0x78 << 16) | (0x9A << 8) | 0xBC) % folded_domain_size;
-            let index_2 = ((0xDE << 16) | (0xF0 << 8) | 0x11) % folded_domain_size;
-            let index_3 = ((0x22 << 16) | (0x33 << 8) | 0x44) % folded_domain_size;
+        let mut expected_indices = vec![index_0, index_1, index_2, index_3];
+        expected_indices.sort_unstable();
 
-            let mut expected_indices = vec![index_0, index_1, index_2, index_3];
-            expected_indices.sort_unstable();
-
-            assert_eq!(
-                result, expected_indices,
-                "Mismatch in computed indices for domain_size_bytes = 3"
-            );
-        }
-        let end = std::time::Instant::now();
-        println!("Time taken: {:?}", end - start);
+        assert_eq!(
+            result, expected_indices,
+            "Mismatch in computed indices for domain_size_bytes = 3"
+        );
     }
 
     #[test]
