@@ -7,7 +7,7 @@ pub const fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize
     num_variables + log_inv_rate - 3
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub enum SoundnessType {
     UniqueDecoding,
     ProvableList,
