@@ -2,9 +2,8 @@ use super::parameters::WhirConfig;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{
-        coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
+        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
     },
-    utils,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
@@ -53,12 +52,9 @@ where
     {
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / polynomial.num_coeffs();
-        let evals = expand_from_coeff(polynomial.coeffs(), expansion);
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor.at_round(0));
-        let folded_evals = restructure_evaluations(
-            folded_evals,
+        let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
+        transform_evaluations(
+            &mut evals,
             self.0.fold_optimisation,
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
@@ -69,7 +65,7 @@ where
         // This is not necessary for the commit, but in further rounds
         // we will need the extension field. For symplicity we do it here too.
         // TODO: Commit to base field directly.
-        let folded_evals = folded_evals
+        let folded_evals = evals
             .into_iter()
             .map(F::from_base_prime_field)
             .collect::<Vec<_>>();
