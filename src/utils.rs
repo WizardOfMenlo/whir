@@ -490,25 +490,19 @@ mod tests {
 
     #[test]
     fn test_expand_randomness_negative_base() {
-        let start = std::time::Instant::now();
+        // Test with base = -1, which should alternate between 1 and -1
+        let base = -Field64::ONE;
+        let len = 6;
 
-        for _ in 0..1000 {
-            // Test with base = -1, which should alternate between 1 and -1
-            let base = -Field64::ONE;
-            let len = 6;
+        let expected = vec![
+            Field64::ONE,
+            -Field64::ONE,
+            Field64::ONE,
+            -Field64::ONE,
+            Field64::ONE,
+            -Field64::ONE,
+        ];
 
-            let expected = vec![
-                Field64::ONE,
-                -Field64::ONE,
-                Field64::ONE,
-                -Field64::ONE,
-                Field64::ONE,
-                -Field64::ONE,
-            ];
-
-            assert_eq!(expand_randomness(base, len), expected);
-        }
-
-        println!("expand_randomness negative base: {:?}", start.elapsed());
+        assert_eq!(expand_randomness(base, len), expected);
     }
 }
