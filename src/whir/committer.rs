@@ -288,8 +288,8 @@ mod tests {
         let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
         let mut merlin = io.to_merlin();
 
-        let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let committer = Committer::new(params);
+        let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -329,8 +329,8 @@ mod tests {
         let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
         let mut merlin = io.to_merlin();
 
-        let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let committer = Committer::new(params);
+        let witness = committer.commit(&mut merlin, polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),
