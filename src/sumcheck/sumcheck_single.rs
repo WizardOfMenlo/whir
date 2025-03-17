@@ -255,8 +255,7 @@ where
     /// Given a multilinear polynomial `p(X1, ..., Xn)`, this function eliminates `X1` using the
     /// folding randomness `r`:
     /// \begin{equation}
-    ///     p'(X_2, ..., X_n) = (p(1, X_2, ..., X_n) - p(0, X_2, ..., X_n)) \cdot r
-    ///     + p(0, X_2, ...,X_n)
+    ///     p'(X_2, ..., X_n) = (1 - r) \cdot p(0, X_2, ..., X_n) + r \cdot p(1, X_2, ..., X_n)
     /// \end{equation}
     ///
     /// The same transformation applies to the weights `w(X)`, and the sum is updated as:
@@ -270,6 +269,7 @@ where
     ///
     /// # Effects
     /// - Shrinks `p(X)` and `w(X)` by half.
+    /// - Fixes `X_1 = r`, reducing the dimensionality.
     /// - Updates `sum` using `sumcheck_poly`.
     #[cfg(feature = "parallel")]
     pub fn compress(
