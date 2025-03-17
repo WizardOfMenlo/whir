@@ -164,6 +164,7 @@ mod tests {
 
     #[test]
     fn test_basic_commitment() {
+        // Define the field type and Merkle tree configuration.
         type F = Field64;
         type MerkleConfig = keccak::MerkleTreeParams<F>;
 
@@ -172,6 +173,7 @@ mod tests {
         // Generate Merkle tree hash parameters
         let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
 
+        // Set up Whir protocol parameters.
         let security_level = 100;
         let pow_bits = 20;
         let num_variables = 5;
@@ -195,30 +197,36 @@ mod tests {
             starting_log_inv_rate: starting_rate,
         };
 
+        // Define multivariate parameters for the polynomial.
         let mv_params = MultivariateParameters::<F>::new(num_variables);
         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
 
+        // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
+        // Set up the IOPattern and initialize a Merlin transcript.
         let io = IOPattern::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
-
         let mut merlin = io.to_merlin();
 
-        // Step 1: Run the Commitment Phase
+        // Run the Commitment Phase
         let committer = Committer::new(params.clone());
         let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
-        // Assertions to validate the commitment
+        // Ensure Merkle leaves are correctly generated.
         assert!(
             !witness.merkle_leaves.is_empty(),
             "Merkle leaves should not be empty"
         );
+
+        // Ensure OOD (out-of-domain) points are generated.
         assert!(
             !witness.ood_points.is_empty(),
             "OOD points should be generated"
         );
+
+        // Validate the number of generated OOD points.
         assert_eq!(
             witness.ood_points.len(),
             params.committment_ood_samples,
