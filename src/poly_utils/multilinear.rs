@@ -123,14 +123,9 @@ where
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
     pub fn eq_poly_outside(&self, point: &Self) -> F {
         assert_eq!(self.num_variables(), point.num_variables());
-
-        let mut acc = F::ONE;
-
-        for (&l, &r) in self.0.iter().zip(&point.0) {
-            acc *= l * r + (F::ONE - l) * (F::ONE - r);
-        }
-
-        acc
+        self.0.iter().zip(&point.0).fold(F::ONE, |acc, (&l, &r)| {
+            acc * (l * r + (F::ONE - l) * (F::ONE - r))
+        })
     }
 
     /// Computes `eq3(c, p)`, the **equality polynomial** for `{0,1,2}^n`.

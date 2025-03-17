@@ -272,7 +272,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
+    use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
     use crate::{
         crypto::fields::Field64 as F,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},

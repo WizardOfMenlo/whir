@@ -140,7 +140,7 @@ mod tests {
     use crate::{
         crypto::fields::Field64,
         poly_utils::{
-            multilinear::MultilinearPoint, sequential_lag_poly::LagrangePolynomialIterator,
+            lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },
         utils::{base_decomposition, eval_eq},
     };
