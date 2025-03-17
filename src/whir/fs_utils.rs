@@ -167,7 +167,7 @@ mod tests {
             0x22, 0x33, 0x44, // Query 4
         ];
         let mut transcript = MockTranscript {
-            data: transcript_data.clone(),
+            data: transcript_data,
             index: 0,
         };
 
