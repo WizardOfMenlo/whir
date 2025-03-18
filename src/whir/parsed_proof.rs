@@ -209,7 +209,7 @@ mod tests {
                 ..Default::default()
             }],
             final_folding_randomness: MultilinearPoint(vec![Field64::from(10), Field64::from(20)]),
-            final_randomness_answers: vec![stir_challenges_answers.clone()],
+            final_randomness_answers: vec![stir_challenges_answers],
             ..Default::default()
         };
 
