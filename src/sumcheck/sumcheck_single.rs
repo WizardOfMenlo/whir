@@ -13,7 +13,7 @@ use nimue::{
 use nimue_pow::{PoWChallenge, PowStrategy};
 
 #[cfg(feature = "parallel")]
-use rayon::{join, prelude::*};
+use rayon::prelude::*;
 
 /// Implements the single-round sumcheck protocol for verifying a multilinear polynomial evaluation.
 ///
@@ -202,38 +202,6 @@ where
             });
     }
 
-    // When the folding randomness arrives, compress the table accordingly (adding the new points)
-    #[cfg(not(feature = "parallel"))]
-    pub fn compress(
-        &mut self,
-        combination_randomness: F, // Scale the initial point
-        folding_randomness: &MultilinearPoint<F>,
-        sumcheck_poly: &SumcheckPolynomial<F>,
-    ) {
-        assert_eq!(folding_randomness.n_variables(), 1);
-        assert!(self.num_variables >= 1);
-
-        let randomness = folding_randomness.0[0];
-        let evaluations_of_p = self
-            .evaluation_of_p
-            .evals()
-            .chunks_exact(2)
-            .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect();
-        let evaluations_of_eq = self
-            .weights
-            .evals()
-            .chunks_exact(2)
-            .map(|at| (at[1] - at[0]) * randomness + at[0])
-            .collect();
-
-        // Update
-        self.num_variables -= 1;
-        self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
-        self.weights = EvaluationsList::new(evaluations_of_eq);
-        self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
-    }
-
     /// Compresses the polynomial and weight evaluations by reducing the number of variables.
     ///
     /// Given a multilinear polynomial `p(X1, ..., Xn)`, this function eliminates `X1` using the
@@ -255,7 +223,6 @@ where
     /// - Shrinks `p(X)` and `w(X)` by half.
     /// - Fixes `X_1 = r`, reducing the dimensionality.
     /// - Updates `sum` using `sumcheck_poly`.
-    #[cfg(feature = "parallel")]
     pub fn compress(
         &mut self,
         combination_randomness: F, // Scale the initial point
@@ -266,7 +233,9 @@ where
         assert!(self.num_variables() >= 1);
 
         let randomness = folding_randomness.0[0];
-        let (evaluations_of_p, evaluations_of_eq) = join(
+
+        #[cfg(feature = "parallel")]
+        let (evaluations_of_p, evaluations_of_eq) = rayon::join(
             || {
                 self.evaluation_of_p
                     .evals()
@@ -281,6 +250,20 @@ where
                     .map(|at| (at[1] - at[0]) * randomness + at[0])
                     .collect()
             },
+        );
+
+        #[cfg(not(feature = "parallel"))]
+        let (evaluations_of_p, evaluations_of_eq) = (
+            self.evaluation_of_p
+                .evals()
+                .chunks_exact(2)
+                .map(|at| (at[1] - at[0]) * randomness + at[0])
+                .collect(),
+            self.weights
+                .evals()
+                .chunks_exact(2)
+                .map(|at| (at[1] - at[0]) * randomness + at[0])
+                .collect(),
         );
 
         // Update
