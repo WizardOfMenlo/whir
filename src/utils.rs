@@ -66,22 +66,6 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
     evals
 }
 
-// Evaluate the eq function on for a given point on the hypercube, and add
-// the result multiplied by the scalar to the output.
-#[cfg(not(feature = "parallel"))]
-fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
-    debug_assert_eq!(out.len(), 1 << eval.len());
-    if let Some((&x, tail)) = eval.split_first() {
-        let (low, high) = out.split_at_mut(out.len() / 2);
-        let s1 = scalar * x;
-        let s0 = scalar - s1;
-        eval_eq(tail, low, s0);
-        eval_eq(tail, high, s1);
-    } else {
-        out[0] += scalar;
-    }
-}
-
 /// Computes the equality polynomial evaluations efficiently.
 ///
 /// Given an evaluation point vector `eval`, the function computes
@@ -92,8 +76,12 @@ fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 /// ```
 ///
 /// where `z_i` are the constraint points.
-#[cfg(feature = "parallel")]
+///
+/// - If compiled with the `parallel` feature flag, it will execute in parallel
+///   when `eval.len()` exceeds the **parallel threshold**.
+/// - Otherwise, it executes sequentially.
 pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
+    #[cfg(feature = "parallel")]
     use rayon::join;
 
     const PARALLEL_THRESHOLD: usize = 10;
@@ -118,12 +106,17 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
         let s0 = scalar - s1; // Contribution when `X_i = 0`
 
         // Use parallel execution if the number of remaining variables is large.
-        if tail.len() > PARALLEL_THRESHOLD {
-            join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
-        } else {
-            eval_eq(tail, low, s0);
-            eval_eq(tail, high, s1);
+        #[cfg(feature = "parallel")]
+        {
+            if tail.len() > PARALLEL_THRESHOLD {
+                join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
+                return;
+            }
         }
+
+        // Default sequential execution
+        eval_eq(tail, low, s0);
+        eval_eq(tail, high, s1);
     } else {
         // Leaf case: Add the accumulated scalar to the final output slot.
         out[0] += scalar;
