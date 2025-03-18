@@ -45,26 +45,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
 // FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
 // Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
-/// Stacks evaluations by grouping them into cosets and transposing in-place.
-///
-/// Given `evals[i] = f(ω^i)`, reorganizes values into `2^folding_factor` cosets.
-/// The transformation follows:
-///
-/// ```ignore
-/// stacked[i, j] = f(ω^(i + j * (N / 2^folding_factor)))
-/// ```
-///
-/// The input length must be a multiple of `2^folding_factor`.
-pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> Vec<F> {
-    let folding_factor_exp = 1 << folding_factor;
-    assert!(evals.len() % folding_factor_exp == 0);
-    let size_of_new_domain = evals.len() / folding_factor_exp;
-
-    // Interpret evals as (folding_factor_exp x size_of_new_domain)-matrix and transpose in-place
-    transpose(&mut evals, folding_factor_exp, size_of_new_domain);
-    evals
-}
-
 // Evaluate the eq function on for a given point on the hypercube, and add
 // the result multiplied by the scalar to the output.
 #[cfg(not(feature = "parallel"))]
