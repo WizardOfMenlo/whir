@@ -1,6 +1,5 @@
 use crate::ntt::transpose;
 use ark_ff::Field;
-use std::collections::BTreeSet;
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
@@ -40,11 +39,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     }
 
     res
-}
-
-/// Deduplicates AND orders a vector
-pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
-    Vec::from_iter(BTreeSet::from_iter(v))
 }
 
 // FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
