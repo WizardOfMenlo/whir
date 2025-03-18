@@ -626,7 +626,7 @@ mod tests {
     };
     use ark_std::test_rng;
 
-    /// Generates default WHIR parameters with **Blake3PoW** and **Keccak Merkle Tree**
+    /// Generates default WHIR parameters
     fn default_whir_params<F: FftField>() -> WhirParameters<MerkleTreeParams<F>, u8> {
         let mut rng = test_rng();
         let (leaf_hash_params, two_to_one_params) = default_config::<F>(&mut rng);
