@@ -1,9 +1,7 @@
 use super::parameters::WhirConfig;
 use crate::{
     ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
-    },
+    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations},
     utils::{self, sample_ood_points},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
@@ -91,19 +89,6 @@ where
         let root = merkle_tree.root();
 
         merlin.add_digest(root)?;
-
-        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
-        let mut ood_answers = Vec::with_capacity(self.0.committment_ood_samples);
-        if self.0.committment_ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
-            ood_answers.extend(ood_points.iter().map(|ood_point| {
-                polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
-                    *ood_point,
-                    self.0.mv_parameters.num_variables,
-                ))
-            }));
-            merlin.add_scalars(&ood_answers)?;
-        }
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
