@@ -126,15 +126,13 @@ pub fn restructure_evaluations<F: FftField>(
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::{FftField, Field};
-
+    use super::*;
     use crate::{
         crypto::fields::Field64,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         utils::stack_evaluations,
     };
-
-    use super::{compute_fold, restructure_evaluations};
+    use ark_ff::{FftField, Field};
 
     type F = Field64;
 

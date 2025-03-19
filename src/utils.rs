@@ -1,5 +1,9 @@
-use crate::ntt::transpose;
-use ark_ff::Field;
+use crate::{ntt::transpose, poly_utils::multilinear::MultilinearPoint};
+use ark_ff::{FftField, Field};
+use nimue::{
+    plugins::ark::{FieldChallenges, FieldWriter},
+    ProofResult,
+};
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
@@ -128,6 +132,40 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
         // Leaf case: Add the accumulated scalar to the final output slot.
         out[0] += scalar;
     }
+}
+
+/// A utility function to sample Out-of-Domain (OOD) points and evaluate them
+pub fn sample_ood_points<F, Merlin, E>(
+    merlin: &mut Merlin,
+    num_samples: usize,
+    num_variables: usize,
+    evaluate_fn: E,
+) -> ProofResult<(Vec<F>, Vec<F>)>
+where
+    F: FftField,
+    Merlin: FieldChallenges<F> + FieldWriter<F>,
+    E: Fn(&MultilinearPoint<F>) -> F,
+{
+    let mut ood_points = vec![F::ZERO; num_samples];
+    let mut ood_answers = Vec::with_capacity(num_samples);
+
+    if num_samples > 0 {
+        // Generate OOD points from Merlin randomness
+        merlin.fill_challenge_scalars(&mut ood_points)?;
+
+        // Evaluate the function at each OOD point
+        ood_answers.extend(ood_points.iter().map(|ood_point| {
+            evaluate_fn(&MultilinearPoint::expand_from_univariate(
+                *ood_point,
+                num_variables,
+            ))
+        }));
+
+        // Commit the answers to the transcript
+        merlin.add_scalars(&ood_answers)?;
+    }
+
+    Ok((ood_points, ood_answers))
 }
 
 #[cfg(test)]

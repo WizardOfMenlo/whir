@@ -4,7 +4,7 @@ use crate::{
     poly_utils::{
         coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
     },
-    utils,
+    utils::{self, sample_ood_points},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
@@ -104,6 +104,14 @@ where
             }));
             merlin.add_scalars(&ood_answers)?;
         }
+
+        // Handle OOD (Out-Of-Domain) samples
+        let (ood_points, ood_answers) = sample_ood_points(
+            merlin,
+            self.0.committment_ood_samples,
+            self.0.mv_parameters.num_variables,
+            |point| polynomial.evaluate_at_extension(point),
+        )?;
 
         Ok(Witness {
             polynomial: polynomial.to_extension(),
