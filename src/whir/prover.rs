@@ -142,7 +142,7 @@ where
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
             merkle_proofs: vec![],
-            randomness_vec: randomness_vec.clone(),
+            randomness_vec,
             statement,
         };
 
