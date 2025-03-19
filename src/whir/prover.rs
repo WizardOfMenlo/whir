@@ -1,6 +1,6 @@
 use super::{
     committer::Witness,
-    parameters::{RoundConfig, WhirConfig},
+    parameters::WhirConfig,
     statement::{Statement, Weights},
     WhirProof,
 };
@@ -149,6 +149,7 @@ where
         self.round(merlin, round_state)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn round<Merlin>(
         &self,
         merlin: &mut Merlin,
@@ -179,11 +180,44 @@ where
 
         let round_params = &self.0.round_parameters[round_state.round];
 
-        // Compute new domain and polynomial evaluations
-        let (new_domain, folded_evals, merkle_tree) =
-            self.compute_merkle_tree(&folded_coefficients, &round_state);
+        // Fold the coefficients, and compute fft of polynomial (and commit)
+        let new_domain = round_state.domain.scale(2);
+        let expansion = new_domain.size() / folded_coefficients.num_coeffs();
+        let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
+        // Group the evaluations into leaves by the *next* round folding factor
+        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
+        // They also partially overlap and undo one another. We should merge them.
+        let folded_evals = utils::stack_evaluations(
+            evals,
+            self.0.folding_factor.at_round(round_state.round + 1), // Next round fold factor
+        );
+        let folded_evals = restructure_evaluations(
+            folded_evals,
+            self.0.fold_optimisation,
+            new_domain.backing_domain.group_gen(),
+            new_domain.backing_domain.group_gen_inv(),
+            self.0.folding_factor.at_round(round_state.round + 1),
+        );
 
-        merlin.add_digest(merkle_tree.root())?;
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = folded_evals.chunks_exact(
+            1 << self
+                .0
+                .folding_factor
+                .get_folding_factor_of_round(round_state.round + 1),
+        );
+        #[cfg(feature = "parallel")]
+        let leafs_iter = folded_evals
+            .par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
+        let merkle_tree = MerkleTree::<MerkleConfig>::new(
+            &self.0.leaf_hash_params,
+            &self.0.two_to_one_params,
+            leafs_iter,
+        )
+        .unwrap();
+
+        let root = merkle_tree.root();
+        merlin.add_digest(root)?;
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) =
@@ -191,22 +225,37 @@ where
                 folded_coefficients.evaluate(point)
             })?;
 
-        // STIR Queries
-        let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
+        // STIR queries
+        let stir_challenges_indexes = get_challenge_stir_queries(
+            round_state.domain.size(), // Current domain size *before* folding
+            self.0.folding_factor.at_round(round_state.round), // Current fold factor
+            round_params.num_queries,
             merlin,
-            &round_state,
-            num_variables,
-            round_params,
-            ood_points,
         )?;
+        // Compute the generator of the folded domain, in the extension field
+        let domain_scaled_gen = round_state
+            .domain
+            .backing_domain
+            .element(1 << self.0.folding_factor.at_round(round_state.round));
+        let stir_challenges: Vec<_> = ood_points
+            .into_iter()
+            .chain(
+                stir_challenges_indexes
+                    .iter()
+                    .map(|i| domain_scaled_gen.pow([*i as u64])),
+            )
+            .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
+            .collect();
 
-        // Generate Merkle proof
-        let (merkle_proof, answers) = self.generate_merkle_proof(
-            &round_state.prev_merkle,
-            &round_state.prev_merkle_answers,
-            &stir_challenges_indexes,
-            round_state.round,
-        );
+        let merkle_proof = round_state
+            .prev_merkle
+            .generate_multi_proof(stir_challenges_indexes.clone())
+            .unwrap();
+        let fold_size = 1 << self.0.folding_factor.at_round(round_state.round);
+        let answers: Vec<_> = stir_challenges_indexes
+            .iter()
+            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
+            .collect();
 
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
@@ -367,108 +416,6 @@ where
             merkle_paths: round_state.merkle_proofs,
             statement_values_at_random_point,
         })
-    }
-
-    fn compute_merkle_tree(
-        &self,
-        folded_coefficients: &CoefficientList<F>,
-        round_state: &RoundState<F, MerkleConfig>,
-    ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
-        let new_domain = round_state.domain.scale(2);
-        let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
-
-        let folded_evals =
-            utils::stack_evaluations(evals, self.0.folding_factor.at_round(round_state.round + 1));
-
-        let folded_evals = restructure_evaluations(
-            folded_evals,
-            self.0.fold_optimisation,
-            new_domain.backing_domain.group_gen(),
-            new_domain.backing_domain.group_gen_inv(),
-            self.0.folding_factor.at_round(round_state.round + 1),
-        );
-
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(
-            1 << self
-                .0
-                .folding_factor
-                .get_folding_factor_of_round(round_state.round + 1),
-        );
-        #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals
-            .par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
-
-        let merkle_tree = MerkleTree::<MerkleConfig>::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
-
-        (new_domain, folded_evals, merkle_tree)
-    }
-
-    fn compute_stir_queries<Merlin>(
-        &self,
-        merlin: &mut Merlin,
-        round_state: &RoundState<F, MerkleConfig>,
-        num_variables: usize,
-        round_params: &RoundConfig,
-        ood_points: Vec<F>,
-    ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
-    where
-        Merlin: FieldChallenges<F>
-            + ByteChallenges
-            + FieldWriter<F>
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
-    {
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            round_state.domain.size(),
-            self.0.folding_factor.at_round(round_state.round),
-            round_params.num_queries,
-            merlin,
-        )?;
-
-        // Compute the generator of the folded domain, in the extension field
-        let domain_scaled_gen = round_state
-            .domain
-            .backing_domain
-            .element(1 << self.0.folding_factor.at_round(round_state.round));
-        let stir_challenges: Vec<_> = ood_points
-            .into_iter()
-            .chain(
-                stir_challenges_indexes
-                    .iter()
-                    .map(|i| domain_scaled_gen.pow([*i as u64])),
-            )
-            .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
-            .collect();
-
-        Ok((stir_challenges, stir_challenges_indexes))
-    }
-
-    fn generate_merkle_proof(
-        &self,
-        prev_merkle: &MerkleTree<MerkleConfig>,
-        prev_merkle_answers: &[F],
-        stir_challenges_indexes: &[usize],
-        round: usize,
-    ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>) {
-        let merkle_proof = prev_merkle
-            .generate_multi_proof(stir_challenges_indexes.to_vec())
-            .unwrap();
-
-        let fold_size = 1 << self.0.folding_factor.at_round(round);
-        let answers = stir_challenges_indexes
-            .iter()
-            .map(|&i| prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect();
-
-        (merkle_proof, answers)
     }
 }
 
