@@ -19,10 +19,14 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
-      - name: Build
+      - name: Build (parallel)
         run: cargo build --release --verbose
-      - name: Run tests
+      - name: Run tests (parallel)
         run: cargo test --release --verbose
+      - name: Build
+        run: cargo build --release --verbose --no-default-features
+      - name: Run tests
+        run: cargo test --release --verbose --no-default-features
 
   cargo-clippy:
     name: Cargo clippy
