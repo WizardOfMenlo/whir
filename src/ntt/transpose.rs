@@ -325,14 +325,13 @@ mod tests {
     fn test_transpose_copy() {
         // iterate over both parallel and non-parallel implementation.
         // Needs HRTB, otherwise it won't work.
-        let mut funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, _>, MatrixMut<'b, _>)> = vec![
+        let funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, _>, MatrixMut<'b, _>)> = vec![
             #[cfg(not(feature = "parallel"))]
             &transpose_copy_not_parallel::<Pair>,
             &transpose_copy::<Pair>,
+            #[cfg(feature = "parallel")]
+            &transpose_copy_parallel::<Pair>,
         ];
-        #[cfg(feature = "parallel")]
-        funs.push(&transpose_copy_parallel::<Pair>);
-
         for f in funs {
             let rows: usize = workload_size::<Pair>() + 1; // intentionally not a power of two: The function is not described as only working for powers of two.
             let columns: usize = 4;
@@ -356,13 +355,12 @@ mod tests {
     #[test]
     fn test_transpose_square_swap() {
         // iterate over parallel and non-parallel variants:
-        let mut funs = vec![
+        let funs = vec![
             #[cfg(not(feature = "parallel"))]
             &transpose_square_swap_non_parallel::<Triple>,
+            #[cfg(feature = "parallel")]
+            &transpose_square_swap_parallel::<Triple>,
         ];
-        #[cfg(feature = "parallel")]
-        funs.push(&transpose_square_swap_parallel::<Triple>);
-
         for f in funs {
             // Set rows manually. We want to be sure to trigger the actual recursion.
             // (Computing this from workload_size was too much hassle.)
@@ -396,12 +394,15 @@ mod tests {
 
     #[test]
     fn test_transpose_square() {
-        let mut funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, _>)> = vec![
+        let funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, _>)> = vec![
             &transpose_square::<Pair>,
+            #[cfg(feature = "parallel")]
             &transpose_square_parallel::<Pair>,
+            #[cfg(not(feature = "parallel"))]
+            &transpose_square_non_parallel::<Pair>,
+            #[cfg(feature = "parallel")]
+            &transpose_square::<Pair>,
         ];
-        #[cfg(feature = "parallel")]
-        funs.push(&transpose_square::<Pair>);
         for f in funs {
             // Set rows manually. We want to be sure to trigger the actual recursion.
             // (Computing this from workload_size was too much hassle.)

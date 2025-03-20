@@ -230,8 +230,8 @@ where
         folding_randomness: &MultilinearPoint<F>,
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
-        assert_eq!(folding_randomness.n_variables(), 1);
-        assert!(self.num_variables >= 1);
+        assert_eq!(folding_randomness.num_variables(), 1);
+        assert!(self.num_variables() >= 1);
 
         let randomness = folding_randomness.0[0];
         let evaluations_of_p = self
@@ -248,7 +248,6 @@ where
             .collect();
 
         // Update
-        self.num_variables -= 1;
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
         self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);

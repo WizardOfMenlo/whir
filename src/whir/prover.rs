@@ -394,7 +394,7 @@ where
             1 << self
                 .0
                 .folding_factor
-                .get_folding_factor_of_round(round_state.round + 1),
+                .at_round(round_state.round + 1),
         );
         #[cfg(feature = "parallel")]
         let leafs_iter = folded_evals
