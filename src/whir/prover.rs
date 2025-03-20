@@ -390,12 +390,8 @@ where
         );
 
         #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(
-            1 << self
-                .0
-                .folding_factor
-                .at_round(round_state.round + 1),
-        );
+        let leafs_iter =
+            folded_evals.chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
         #[cfg(feature = "parallel")]
         let leafs_iter = folded_evals
             .par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
