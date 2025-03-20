@@ -1,10 +1,10 @@
-use crate::{ntt::transpose, poly_utils::multilinear::MultilinearPoint};
-use ark_ff::{FftField, Field};
+use crate::poly_utils::multilinear::MultilinearPoint;
+use ark_ff::FftField;
+use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
     ProofResult,
 };
-use ark_ff::Field;
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?

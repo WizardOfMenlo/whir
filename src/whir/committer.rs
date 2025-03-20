@@ -1,11 +1,7 @@
 use super::parameters::WhirConfig;
 use crate::{
-    ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::restructure_evaluations},
-    utils::{self, sample_ood_points},
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
+    ntt::expand_from_coeff, poly_utils::coeffs::CoefficientList,
+    poly_utils::fold::transform_evaluations, utils::sample_ood_points,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;

@@ -1,5 +1,3 @@
-use std::{fmt::Display, marker::PhantomData, str::FromStr};
-
 use crate::{
     poly_utils::{coeffs::CoefficientList, fold::compute_fold},
     whir::prover::RoundState,
