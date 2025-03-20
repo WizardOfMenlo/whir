@@ -81,10 +81,6 @@ pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> 
 ///   when `eval.len()` exceeds the **parallel threshold**.
 /// - Otherwise, it executes sequentially.
 pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
-    #[cfg(feature = "parallel")]
-    use rayon::join;
-
-    const PARALLEL_THRESHOLD: usize = 10;
     // Ensure that the output buffer size is correct:
     // It should be of size `2^n`, where `n` is the number of variables.
     debug_assert_eq!(out.len(), 1 << eval.len());
@@ -108,8 +104,9 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
         // Use parallel execution if the number of remaining variables is large.
         #[cfg(feature = "parallel")]
         {
+            const PARALLEL_THRESHOLD: usize = 10;
             if tail.len() > PARALLEL_THRESHOLD {
-                join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
+                rayon::join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
                 return;
             }
         }
