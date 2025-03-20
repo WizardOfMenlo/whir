@@ -5,7 +5,7 @@
 
 use super::{
     transpose,
-    utils::{lcm, sqrt_factor, workload_size},
+    utils::{lcm, sqrt_factor},
 };
 use ark_ff::{FftField, Field};
 use std::{
@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(feature = "parallel")]
-use {rayon::prelude::*, std::cmp::max};
+use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
 
 /// Global cache for NTT engines, indexed by field.
 // TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
@@ -350,7 +350,7 @@ impl<F: Field> NttEngine<F> {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn apply_twiddles(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
+fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
     debug_assert_eq!(values.len() % (rows * cols), 0);
     let step = roots.len() / (rows * cols);
     for values in values.chunks_exact_mut(rows * cols) {
