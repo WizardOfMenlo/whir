@@ -1,9 +1,8 @@
-use super::{transpose, utils::workload_size};
+use super::transpose;
 use ark_ff::Field;
-use std::cmp::max;
 
 #[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use {super::utils::workload_size, rayon::prelude::*};
 
 /// Fast Wavelet Transform.
 ///
@@ -26,7 +25,7 @@ pub fn inverse_wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) 
     debug_assert!(size.is_power_of_two());
     #[cfg(feature = "parallel")]
     if values.len() > workload_size::<F>() && values.len() != size {
-        let workload_size = size * max(1, workload_size::<F>() / size);
+        let workload_size = size * std::cmp::max(1, workload_size::<F>() / size);
         return values.par_chunks_mut(workload_size).for_each(|values| {
             inverse_wavelet_transform_batch(values, size);
         });
@@ -62,7 +61,7 @@ pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
     debug_assert!(size.is_power_of_two());
     #[cfg(feature = "parallel")]
     if values.len() > workload_size::<F>() && values.len() != size {
-        let workload_size = size * max(1, workload_size::<F>() / size);
+        let workload_size = size * std::cmp::max(1, workload_size::<F>() / size);
         return values.par_chunks_mut(workload_size).for_each(|values| {
             wavelet_transform_batch(values, size);
         });
