@@ -11,6 +11,7 @@ use nimue_pow::{self, PoWChallenge};
 
 use super::{
     parameters::WhirConfig,
+    parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
     WhirProof,
 };
@@ -36,35 +37,6 @@ struct ParsedCommitment<F, D> {
     root: D,
     ood_points: Vec<F>,
     ood_answers: Vec<F>,
-}
-
-#[derive(Clone)]
-struct ParsedProof<F> {
-    initial_combination_randomness: Vec<F>,
-    initial_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
-    rounds: Vec<ParsedRound<F>>,
-    final_domain_gen_inv: F,
-    final_randomness_indexes: Vec<usize>,
-    final_randomness_points: Vec<F>,
-    final_randomness_answers: Vec<Vec<F>>,
-    final_folding_randomness: MultilinearPoint<F>,
-    final_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
-    final_sumcheck_randomness: MultilinearPoint<F>,
-    final_coefficients: CoefficientList<F>,
-    statement_values_at_random_point: Vec<F>,
-}
-
-#[derive(Debug, Clone)]
-struct ParsedRound<F> {
-    folding_randomness: MultilinearPoint<F>,
-    ood_points: Vec<F>,
-    ood_answers: Vec<F>,
-    stir_challenges_indexes: Vec<usize>,
-    stir_challenges_points: Vec<F>,
-    stir_challenges_answers: Vec<Vec<F>>,
-    combination_randomness: Vec<F>,
-    sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
-    domain_gen_inv: F,
 }
 
 impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
@@ -409,7 +381,7 @@ where
     fn compute_folds(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
         match self.params.fold_optimisation {
             FoldType::Naive => self.compute_folds_full(parsed),
-            FoldType::ProverHelps => compute_folds_helped(parsed),
+            FoldType::ProverHelps => parsed.compute_folds_helped(),
         }
     }
 
@@ -636,31 +608,4 @@ where
 
         Ok(())
     }
-}
-
-fn compute_folds_helped<F: FftField>(parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
-    let mut result = Vec::new();
-
-    for round in &parsed.rounds {
-        let evaluations: Vec<_> = round
-            .stir_challenges_answers
-            .iter()
-            .map(|answers| {
-                CoefficientList::new(answers.clone()).evaluate(&round.folding_randomness)
-            })
-            .collect();
-        result.push(evaluations);
-    }
-
-    // Final round
-    let evaluations: Vec<_> = parsed
-        .final_randomness_answers
-        .iter()
-        .map(|answers| {
-            CoefficientList::new(answers.clone()).evaluate(&parsed.final_folding_randomness)
-        })
-        .collect();
-    result.push(evaluations);
-
-    result
 }
