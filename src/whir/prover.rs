@@ -10,9 +10,12 @@ use crate::{
     ntt::expand_from_coeff,
     poly_utils::{
         coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
+        coeffs::CoefficientList,
+        fold::{compute_fold, transform_evaluations},
+        multilinear::MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::{self, expand_randomness},
+    utils::expand_randomness,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -276,7 +279,7 @@ where
             folding_randomness,
             coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
             prev_merkle: merkle_tree,
-            prev_merkle_answers: folded_evals,
+            prev_merkle_answers: evals,
             merkle_proofs: round_state.merkle_proofs,
             randomness_vec: round_state.randomness_vec.clone(),
             statement: round_state.statement,
