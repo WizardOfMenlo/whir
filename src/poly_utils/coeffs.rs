@@ -258,15 +258,6 @@ where
     }
 }
 
-#[inline]
-fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
-    // explicit "return" just to simplify static code-analyzers' tasks (that can't figure out the cfg's are disjoint)
-    #[cfg(not(feature = "parallel"))]
-    return eval_extension_nonparallel(coeff, eval, scalar);
-    #[cfg(feature = "parallel")]
-    return eval_extension_parallel(coeff, eval, scalar);
-}
-
 // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
 // You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
 // The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
@@ -274,43 +265,37 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
 // recursive helper function for polynomial evaluation:
 // Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
 
-/// Recursively compute scalar * poly_eval(coeffs;eval) where poly_eval interprets coeffs as a polynomial and eval are the evaluation points.
-fn eval_extension_nonparallel<F: Field, E: Field<BasePrimeField = F>>(
-    coeff: &[F],
-    eval: &[E],
-    scalar: E,
-) -> E {
+/// Recursively evaluates a multilinear polynomial at an extension field point.
+///
+/// Given `coeffs` in lexicographic order, this computes:
+/// ```ignore
+/// eval_poly(X_0, ..., X_n) = sum(coeffs[i] * product(X_j for j in S(i)))
+/// ```
+/// where `S(i)` is the set of variables active in term `i` (based on its binary representation).
+///
+/// - Uses divide-and-conquer recursion:
+///   - Splits `coeffs` into two halves for `X_0 = 0` and `X_0 = 1`.
+///   - Recursively evaluates each half.
+fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
     debug_assert_eq!(coeff.len(), 1 << eval.len());
-    if let Some((&x, tail)) = eval.split_first() {
-        let (low, high) = coeff.split_at(coeff.len() / 2);
-        let a = eval_extension_nonparallel(low, tail, scalar);
-        let b = eval_extension_nonparallel(high, tail, scalar * x);
-        a + b
-    } else {
-        scalar.mul_by_base_prime_field(&coeff[0])
-    }
-}
 
-#[cfg(feature = "parallel")]
-fn eval_extension_parallel<F: Field, E: Field<BasePrimeField = F>>(
-    coeff: &[F],
-    eval: &[E],
-    scalar: E,
-) -> E {
-    const PARALLEL_THRESHOLD: usize = 10;
-    debug_assert_eq!(coeff.len(), 1 << eval.len());
     if let Some((&x, tail)) = eval.split_first() {
         let (low, high) = coeff.split_at(coeff.len() / 2);
-        if tail.len() > PARALLEL_THRESHOLD {
-            let (a, b) = rayon::join(
-                || eval_extension_parallel(low, tail, scalar),
-                || eval_extension_parallel(high, tail, scalar * x),
-            );
-            a + b
-        } else {
-            eval_extension_nonparallel(low, tail, scalar)
-                + eval_extension_nonparallel(high, tail, scalar * x)
+
+        #[cfg(feature = "parallel")]
+        {
+            const PARALLEL_THRESHOLD: usize = 10;
+            if tail.len() > PARALLEL_THRESHOLD {
+                let (a, b) = rayon::join(
+                    || eval_extension(low, tail, scalar),
+                    || eval_extension(high, tail, scalar * x),
+                );
+                return a + b;
+            }
         }
+
+        // Default non-parallel execution
+        eval_extension(low, tail, scalar) + eval_extension(high, tail, scalar * x)
     } else {
         scalar.mul_by_base_prime_field(&coeff[0])
     }
@@ -319,15 +304,17 @@ fn eval_extension_parallel<F: Field, E: Field<BasePrimeField = F>>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        crypto::fields::Field64,
+        crypto::fields::{Field64, Field64_2},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, hypercube::BinaryHypercubePoint,
             multilinear::MultilinearPoint,
         },
     };
+    use ark_ff::AdditiveGroup;
     use ark_poly::{univariate::DensePolynomial, Polynomial};
 
     type F = Field64;
+    type E = Field64_2;
 
     #[test]
     fn test_evaluation_conversion() {
@@ -568,5 +555,85 @@ mod tests {
     fn test_coefficient_list_invalid_size() {
         // 7 is not a power of two
         let _coeff_list = CoefficientList::new(vec![F::from(1); 7]);
+    }
+
+    #[test]
+    fn test_evaluate_at_extension_single_variable() {
+        // Polynomial f(X) = 3 + 7X in base field
+        let coeff0 = F::from(3);
+        let coeff1 = F::from(7);
+        let coeffs = vec![coeff0, coeff1];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        let x = E::from(2); // Evaluation at x = 2 in extension field
+        let expected_value = E::from(3) + E::from(7) * x; // f(2) = 3 + 7 * 2
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x]));
+
+        assert_eq!(eval_result, expected_value);
+    }
+
+    #[test]
+    fn test_evaluate_at_extension_two_variables() {
+        // Polynomial f(X₀, X₁) = 2 + 5X₀ + 3X₁ + 7X₀X₁
+        let coeffs = vec![
+            F::from(2), // Constant term
+            F::from(5), // X₁ term
+            F::from(3), // X₀ term
+            F::from(7), // X₀X₁ term
+        ];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        let x0 = E::from(2);
+        let x1 = E::from(3);
+        let expected_value = E::from(2) + E::from(5) * x1 + E::from(3) * x0 + E::from(7) * x0 * x1;
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+
+        assert_eq!(eval_result, expected_value);
+    }
+
+    #[test]
+    fn test_evaluate_at_extension_three_variables() {
+        // Polynomial: f(X₀, X₁, X₂) = 1 + 2X₂ + 3X₁ + 5X₁X₂ + 4X₀ + 6X₀X₂ + 7X₀X₁ + 8X₀X₁X₂
+        let coeffs = vec![
+            F::from(1), // Constant term (000)
+            F::from(2), // X₂ (001)
+            F::from(3), // X₁ (010)
+            F::from(5), // X₁X₂ (011)
+            F::from(4), // X₀ (100)
+            F::from(6), // X₀X₂ (101)
+            F::from(7), // X₀X₁ (110)
+            F::from(8), // X₀X₁X₂ (111)
+        ];
+        let coeff_list = CoefficientList::new(coeffs);
+
+        let x0 = E::from(2);
+        let x1 = E::from(3);
+        let x2 = E::from(4);
+
+        // Correct expected value based on the coefficient order
+        let expected_value = E::from(1)
+            + E::from(2) * x2
+            + E::from(3) * x1
+            + E::from(5) * x1 * x2
+            + E::from(4) * x0
+            + E::from(6) * x0 * x2
+            + E::from(7) * x0 * x1
+            + E::from(8) * x0 * x1 * x2;
+
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1, x2]));
+
+        assert_eq!(eval_result, expected_value);
+    }
+
+    #[test]
+    fn test_evaluate_at_extension_zero_polynomial() {
+        // Zero polynomial f(X) = 0
+        let coeff_list = CoefficientList::new(vec![F::ZERO; 4]); // f(X₀, X₁) = 0
+
+        let x0 = E::from(5);
+        let x1 = E::from(7);
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+
+        assert_eq!(eval_result, E::ZERO);
     }
 }
