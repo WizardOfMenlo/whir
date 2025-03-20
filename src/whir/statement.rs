@@ -1,9 +1,10 @@
 #[cfg(not(feature = "parallel"))]
-use crate::poly_utils::sequential_lag_poly::LagrangePolynomialIterator;
+use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Represents a weight function used in polynomial evaluations.
@@ -59,15 +60,15 @@ impl<F: Field> Weights<F> {
     #[cfg(not(feature = "parallel"))]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         match self {
-            Weights::Evaluation { point } => {
-                for (prefix, lag) in LagrangePolynomialIterator::new(point) {
+            Self::Evaluation { point } => {
+                for (prefix, lag) in LagrangePolynomialIterator::from(point) {
                     accumulator.evals_mut()[prefix.0] += factor * lag;
                 }
             }
-            Weights::Linear { weight } => {
+            Self::Linear { weight } => {
                 accumulator
                     .evals_mut()
-                    .par_iter_mut()
+                    .iter_mut()
                     .enumerate()
                     .for_each(|(corner, acc)| {
                         *acc += factor * weight.index(corner);

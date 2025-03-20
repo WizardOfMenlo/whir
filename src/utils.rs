@@ -48,7 +48,7 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
 // Evaluate the eq function on for a given point on the hypercube, and add
 // the result multiplied by the scalar to the output.
 #[cfg(not(feature = "parallel"))]
-fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
+pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     debug_assert_eq!(out.len(), 1 << eval.len());
     if let Some((&x, tail)) = eval.split_first() {
         let (low, high) = out.split_at_mut(out.len() / 2);
