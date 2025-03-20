@@ -47,6 +47,8 @@ serde_json = "1.0"
 nimue = { git = "https://github.com/arkworks-rs/nimue", features = ["ark"] }
 nimue-pow = { git = "https://github.com/arkworks-rs/nimue" }
 rayon = { version = "1.10.0", optional = true }
+thiserror = "2.0"
+itertools = "0.14"
 
 [dev-dependencies]
 proptest = "1.0"
@@ -57,7 +59,6 @@ debug = true
 
 [features]
 default = ["parallel"]
-#default = []
 parallel = [
     "dep:rayon",
     "ark-poly/parallel",

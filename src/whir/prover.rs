@@ -10,11 +10,11 @@ use crate::{
     parameters::FoldType,
     poly_utils::{
         coeffs::CoefficientList,
-        fold::{compute_fold, restructure_evaluations},
+        fold::{compute_fold, transform_evaluations},
         multilinear::MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::{self, expand_randomness},
+    utils::expand_randomness,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -247,16 +247,9 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
-        // Group the evaluations into leaves by the *next* round folding factor
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let folded_evals = utils::stack_evaluations(
-            evals,
-            self.0.folding_factor.at_round(round_state.round + 1), // Next round fold factor
-        );
-        let folded_evals = restructure_evaluations(
-            folded_evals,
+        let mut evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
+        transform_evaluations(
+            &mut evals,
             self.0.fold_optimisation,
             new_domain.backing_domain.group_gen(),
             new_domain.backing_domain.group_gen_inv(),
@@ -264,15 +257,11 @@ where
         );
 
         #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(
-            1 << self
-                .0
-                .folding_factor
-                .get_folding_factor_of_round(round_state.round + 1),
-        );
+        let leafs_iter =
+            evals.chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
         #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals
-            .par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
+        let leafs_iter =
+            evals.par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
         let merkle_tree = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
@@ -441,7 +430,7 @@ where
             folding_randomness,
             coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
             prev_merkle: merkle_tree,
-            prev_merkle_answers: folded_evals,
+            prev_merkle_answers: evals,
             merkle_proofs: round_state.merkle_proofs,
             randomness_vec: round_state.randomness_vec.clone(),
             statement: round_state.statement,
