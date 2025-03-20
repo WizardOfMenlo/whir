@@ -1,15 +1,13 @@
 use super::{utils::workload_size, MatrixMut};
 use std::mem::swap;
 
-#[cfg(feature = "parallel")]
-use rayon::join;
-
 // NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
 // (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).
 
-/// Transpose a matrix in-place.
-/// Will batch transpose multiple matrices if the length of the slice is a multiple of rows * cols.
-/// This algorithm assumes that both rows and cols are powers of two.
+/// Transposes a matrix in-place.
+///
+/// This function processes a batch of matrices if the slice length is a multiple of `rows * cols`.
+/// Assumes that both `rows` and `cols` are powers of two.
 pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: usize) {
     debug_assert_eq!(matrix.len() % (rows * cols), 0);
     debug_assert!(rows.is_power_of_two());
@@ -32,27 +30,8 @@ pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: us
     }
 }
 
-// The following function have both a parallel and a non-parallel implementation.
-// We fuly split those in a parallel and a non-parallel functions (rather than using #[cfg] within a single function)
-// and have main entry point fun that just calls the appropriate version (either fun_parallel or fun_not_parallel).
-// The sole reason is that this simplifies unit tests: We otherwise would need to build twice to cover both cases.
-// For effiency, we assume the compiler inlines away the extra "indirection" that we add to the entry point function.
-
-// NOTE: We could lift the Send constraints on non-parallel build.
-
-fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<F>, dst: MatrixMut<F>) {
-    #[cfg(not(feature = "parallel"))]
-    transpose_copy_not_parallel(src, dst);
-    #[cfg(feature = "parallel")]
-    transpose_copy_parallel(src, dst);
-}
-
-/// Efficient parallel matrix transposition.
-///
-/// Uses cache-friendly recursive decomposition and direct pointer manipulation for maximum
-/// performance.
-#[cfg(feature = "parallel")]
-pub fn transpose_copy_parallel<F: Copy + Send>(src: MatrixMut<'_, F>, mut dst: MatrixMut<'_, F>) {
+/// Transposes a rectangular matrix into another matrix.
+fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<'_, F>, mut dst: MatrixMut<'_, F>) {
     assert_eq!(src.rows(), dst.cols());
     assert_eq!(src.cols(), dst.rows());
 
@@ -71,93 +50,61 @@ pub fn transpose_copy_parallel<F: Copy + Send>(src: MatrixMut<'_, F>, mut dst: M
     }
 
     // Determine optimal split axis
-    let (split_size, split_vertical) = if rows > cols {
-        (rows / 2, true)
+    let (src_a, src_b, dst_a, dst_b) = if rows > cols {
+        let split_size = rows / 2;
+        let (s1, s2) = src.split_vertical(split_size);
+        let (d1, d2) = dst.split_horizontal(split_size);
+        (s1, s2, d1, d2)
     } else {
-        (cols / 2, false)
+        let split_size = cols / 2;
+        let (s1, s2) = src.split_horizontal(split_size);
+        let (d1, d2) = dst.split_vertical(split_size);
+        (s1, s2, d1, d2)
     };
 
-    // Split source and destination matrices accordingly
-    let ((src_a, src_b), (dst_a, dst_b)) = if split_vertical {
-        (
-            src.split_vertical(split_size),
-            dst.split_horizontal(split_size),
-        )
-    } else {
-        (
-            src.split_horizontal(split_size),
-            dst.split_vertical(split_size),
-        )
-    };
-
-    // Execute recursive transposition in parallel
-    join(
-        || transpose_copy_parallel(src_a, dst_a),
-        || transpose_copy_parallel(src_b, dst_b),
-    );
-}
-
-/// Sets `dst` to the transpose of `src`. This will panic if the sizes of `src` and `dst` are not compatible.
-/// This is the non-parallel version
-#[cfg(not(feature = "parallel"))]
-fn transpose_copy_not_parallel<F: Sized + Copy>(src: MatrixMut<'_, F>, mut dst: MatrixMut<'_, F>) {
-    assert_eq!(src.rows(), dst.cols());
-    assert_eq!(src.cols(), dst.rows());
-    if src.rows() * src.cols() > workload_size::<F>() {
-        // Split along longest axis and recurse.
-        // This results in a cache-oblivious algorithm.
-        let ((a, b), (x, y)) = if src.rows() > src.cols() {
-            let n = src.rows() / 2;
-            (src.split_vertical(n), dst.split_horizontal(n))
-        } else {
-            let n = src.cols() / 2;
-            (src.split_horizontal(n), dst.split_vertical(n))
-        };
-        transpose_copy_not_parallel(a, x);
-        transpose_copy_not_parallel(b, y);
-    } else {
-        for i in 0..src.rows() {
-            for j in 0..src.cols() {
-                dst[(j, i)] = src[(i, j)];
-            }
-        }
-    }
-}
-
-/// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
-fn transpose_square<F: Sized + Send>(m: MatrixMut<F>) {
     #[cfg(feature = "parallel")]
-    transpose_square_parallel(m);
+    rayon::join(
+        || transpose_copy(src_a, dst_a),
+        || transpose_copy(src_b, dst_b),
+    );
+
     #[cfg(not(feature = "parallel"))]
-    transpose_square_non_parallel(m);
+    for (s, mut d) in [(src_a, dst_a), (src_b, dst_b)] {
+        for i in 0..s.rows() {
+            for j in 0..s.cols() {
+                d[(j, i)] = s[(i, j)];
+            }
+        }
+    }
 }
 
-/// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
-/// This is the parallel version.
-#[cfg(feature = "parallel")]
-fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
+/// Transposes a square matrix in-place.
+fn transpose_square<F: Sized + Send>(mut m: MatrixMut<F>) {
     debug_assert!(m.is_square());
     debug_assert!(m.rows().is_power_of_two());
     let size = m.rows();
+
     if size * size > workload_size::<F>() {
         // Recurse into quadrants.
         // This results in a cache-oblivious algorithm.
         let n = size / 2;
         let (a, b, c, d) = m.split_quadrants(n, n);
 
-        join(
-            || transpose_square_swap_parallel(b, c),
-            || {
-                join(
-                    || transpose_square_parallel(a),
-                    || transpose_square_parallel(d),
-                )
-            },
+        #[cfg(feature = "parallel")]
+        rayon::join(
+            || transpose_square_swap(b, c),
+            || rayon::join(|| transpose_square(a), || transpose_square(d)),
         );
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            transpose_square(a);
+            transpose_square(d);
+            transpose_square_swap(b, c);
+        }
     } else {
         for i in 0..size {
             for j in (i + 1)..size {
-                // unsafe needed due to lack of bounds-check by swap. We are guaranteed that (i,j) and (j,i) are within the bounds.
                 unsafe {
                     m.swap((i, j), (j, i));
                 }
@@ -166,41 +113,8 @@ fn transpose_square_parallel<F: Sized + Send>(mut m: MatrixMut<F>) {
     }
 }
 
-/// Transpose a square matrix in-place. Asserts that the size of the matrix is a power of two.
-/// This is the non-parallel version.
-#[cfg(not(feature = "parallel"))]
-fn transpose_square_non_parallel<F: Sized>(mut m: MatrixMut<F>) {
-    debug_assert!(m.is_square());
-    debug_assert!(m.rows().is_power_of_two());
-    let size = m.rows();
-    if size * size > workload_size::<F>() {
-        // Recurse into quadrants.
-        // This results in a cache-oblivious algorithm.
-        let n = size / 2;
-        let (a, b, c, d) = m.split_quadrants(n, n);
-        transpose_square_non_parallel(a);
-        transpose_square_non_parallel(d);
-        transpose_square_swap_non_parallel(b, c);
-    } else {
-        for i in 0..size {
-            for j in (i + 1)..size {
-                // unsafe needed due to lack of bounds-check by swap. We are guaranteed that (i,j) and (j,i) are within the bounds.
-                unsafe {
-                    m.swap((i, j), (j, i));
-                }
-            }
-        }
-    }
-}
-
-/// Transpose and swap two square size matrices (parallel version).
-///
-/// The size must be a power of two.
-#[cfg(feature = "parallel")]
-fn transpose_square_swap_parallel<F: Sized + Send>(
-    mut a: MatrixMut<'_, F>,
-    mut b: MatrixMut<'_, F>,
-) {
+/// Swaps two square sub-matrices in-place, transposing them simultaneously.
+fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: MatrixMut<'_, F>) {
     debug_assert!(a.is_square());
     debug_assert_eq!(a.rows(), b.cols());
     debug_assert_eq!(a.cols(), b.rows());
@@ -229,20 +143,29 @@ fn transpose_square_swap_parallel<F: Sized + Send>(
         let (aa, ab, ac, ad) = a.split_quadrants(n, n);
         let (ba, bb, bc, bd) = b.split_quadrants(n, n);
 
-        join(
+        #[cfg(feature = "parallel")]
+        rayon::join(
             || {
-                join(
-                    || transpose_square_swap_parallel(aa, ba),
-                    || transpose_square_swap_parallel(ab, bc),
+                rayon::join(
+                    || transpose_square_swap(aa, ba),
+                    || transpose_square_swap(ab, bc),
                 )
             },
             || {
-                join(
-                    || transpose_square_swap_parallel(ac, bb),
-                    || transpose_square_swap_parallel(ad, bd),
+                rayon::join(
+                    || transpose_square_swap(ac, bb),
+                    || transpose_square_swap(ad, bd),
                 )
             },
         );
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            transpose_square_swap(aa, ba);
+            transpose_square_swap(ab, bc);
+            transpose_square_swap(ac, bb);
+            transpose_square_swap(ad, bd);
+        }
     } else {
         // Optimized 2×2 loop unrolling for larger blocks
         // - Reduces loop overhead
@@ -253,35 +176,6 @@ fn transpose_square_swap_parallel<F: Sized + Send>(
                 swap(&mut a[(i + 1, j)], &mut b[(j, i + 1)]);
                 swap(&mut a[(i, j + 1)], &mut b[(j + 1, i)]);
                 swap(&mut a[(i + 1, j + 1)], &mut b[(j + 1, i + 1)]);
-            }
-        }
-    }
-}
-
-/// Transpose and swap two square size matrices, whose sizes are a power of two (non-parallel version)
-#[cfg(not(feature = "parallel"))]
-fn transpose_square_swap_non_parallel<F: Sized>(mut a: MatrixMut<F>, mut b: MatrixMut<F>) {
-    debug_assert!(a.is_square());
-    debug_assert_eq!(a.rows(), b.cols());
-    debug_assert_eq!(a.cols(), b.rows());
-    debug_assert!(a.rows().is_power_of_two());
-    debug_assert!(workload_size::<F>() >= 2); // otherwise, we would recurse even if size == 1.
-
-    let size = a.rows();
-    if 2 * size * size > workload_size::<F>() {
-        // Recurse into quadrants.
-        // This results in a cache-oblivious algorithm.
-        let n = size / 2;
-        let (aa, ab, ac, ad) = a.split_quadrants(n, n);
-        let (ba, bb, bc, bd) = b.split_quadrants(n, n);
-        transpose_square_swap_non_parallel(aa, ba);
-        transpose_square_swap_non_parallel(ab, bc);
-        transpose_square_swap_non_parallel(ac, bb);
-        transpose_square_swap_non_parallel(ad, bd);
-    } else {
-        for i in 0..size {
-            for j in 0..size {
-                swap(&mut a[(i, j)], &mut b[(j, i)]);
             }
         }
     }
@@ -323,100 +217,69 @@ mod tests {
     #[test]
     #[allow(clippy::type_complexity)]
     fn test_transpose_copy() {
-        // iterate over both parallel and non-parallel implementation.
-        // Needs HRTB, otherwise it won't work.
-        let funs: Vec<&dyn for<'a, 'b> Fn(MatrixMut<'a, _>, MatrixMut<'b, _>)> = vec![
-            #[cfg(not(feature = "parallel"))]
-            &transpose_copy_not_parallel::<Pair>,
-            &transpose_copy::<Pair>,
-            #[cfg(feature = "parallel")]
-            &transpose_copy_parallel::<Pair>,
-        ];
-        for f in funs {
-            let rows: usize = workload_size::<Pair>() + 1; // intentionally not a power of two: The function is not described as only working for powers of two.
-            let columns: usize = 4;
-            let mut srcarray = make_example_matrix(rows, columns);
-            let mut dstarray: Vec<(usize, usize)> = vec![(0, 0); rows * columns];
+        let rows: usize = workload_size::<Pair>() + 1; // intentionally not a power of two: The function is not described as only working for powers of two.
+        let columns: usize = 4;
+        let mut srcarray = make_example_matrix(rows, columns);
+        let mut dstarray: Vec<(usize, usize)> = vec![(0, 0); rows * columns];
 
-            let src1 = MatrixMut::<Pair>::from_mut_slice(&mut srcarray[..], rows, columns);
-            let dst1 = MatrixMut::<Pair>::from_mut_slice(&mut dstarray[..], columns, rows);
+        let src1 = MatrixMut::<Pair>::from_mut_slice(&mut srcarray[..], rows, columns);
+        let dst1 = MatrixMut::<Pair>::from_mut_slice(&mut dstarray[..], columns, rows);
 
-            f(src1, dst1);
-            let dst1 = MatrixMut::<Pair>::from_mut_slice(&mut dstarray[..], columns, rows);
+        transpose_copy(src1, dst1);
+        let dst1 = MatrixMut::<Pair>::from_mut_slice(&mut dstarray[..], columns, rows);
 
-            for i in 0..rows {
-                for j in 0..columns {
-                    assert_eq!(dst1[(j, i)], (i, j));
-                }
+        for i in 0..rows {
+            for j in 0..columns {
+                assert_eq!(dst1[(j, i)], (i, j));
             }
         }
     }
 
     #[test]
     fn test_transpose_square_swap() {
-        // iterate over parallel and non-parallel variants:
-        let funs = vec![
-            #[cfg(not(feature = "parallel"))]
-            &transpose_square_swap_non_parallel::<Triple>,
-            #[cfg(feature = "parallel")]
-            &transpose_square_swap_parallel::<Triple>,
-        ];
-        for f in funs {
-            // Set rows manually. We want to be sure to trigger the actual recursion.
-            // (Computing this from workload_size was too much hassle.)
-            let rows = 1024; // workload_size::<Triple>();
-            assert!(rows * rows > 2 * workload_size::<Triple>());
+        // Set rows manually. We want to be sure to trigger the actual recursion.
+        // (Computing this from workload_size was too much hassle.)
+        let rows = 1024; // workload_size::<Triple>();
+        assert!(rows * rows > 2 * workload_size::<Triple>());
 
-            let examples: Vec<Triple> = make_example_matrices(rows, rows, 2);
-            // Make copies for simplicity, because we borrow different parts.
-            let mut examples1 = Vec::from(&examples[0..rows * rows]);
-            let mut examples2 = Vec::from(&examples[rows * rows..2 * rows * rows]);
+        let examples: Vec<Triple> = make_example_matrices(rows, rows, 2);
+        // Make copies for simplicity, because we borrow different parts.
+        let mut examples1 = Vec::from(&examples[0..rows * rows]);
+        let mut examples2 = Vec::from(&examples[rows * rows..2 * rows * rows]);
 
-            let view1 = MatrixMut::from_mut_slice(&mut examples1, rows, rows);
-            let view2 = MatrixMut::from_mut_slice(&mut examples2, rows, rows);
-            for i in 0..rows {
-                for j in 0..rows {
-                    assert_eq!(view1[(i, j)], (0, i, j));
-                    assert_eq!(view2[(i, j)], (1, i, j));
-                }
+        let view1 = MatrixMut::from_mut_slice(&mut examples1, rows, rows);
+        let view2 = MatrixMut::from_mut_slice(&mut examples2, rows, rows);
+        for i in 0..rows {
+            for j in 0..rows {
+                assert_eq!(view1[(i, j)], (0, i, j));
+                assert_eq!(view2[(i, j)], (1, i, j));
             }
-            f(view1, view2);
-            let view1 = MatrixMut::from_mut_slice(&mut examples1, rows, rows);
-            let view2 = MatrixMut::from_mut_slice(&mut examples2, rows, rows);
-            for i in 0..rows {
-                for j in 0..rows {
-                    assert_eq!(view1[(i, j)], (1, j, i));
-                    assert_eq!(view2[(i, j)], (0, j, i));
-                }
+        }
+        transpose_square_swap(view1, view2);
+        let view1 = MatrixMut::from_mut_slice(&mut examples1, rows, rows);
+        let view2 = MatrixMut::from_mut_slice(&mut examples2, rows, rows);
+        for i in 0..rows {
+            for j in 0..rows {
+                assert_eq!(view1[(i, j)], (1, j, i));
+                assert_eq!(view2[(i, j)], (0, j, i));
             }
         }
     }
 
     #[test]
     fn test_transpose_square() {
-        let funs: Vec<&dyn for<'a> Fn(MatrixMut<'a, _>)> = vec![
-            &transpose_square::<Pair>,
-            #[cfg(feature = "parallel")]
-            &transpose_square_parallel::<Pair>,
-            #[cfg(not(feature = "parallel"))]
-            &transpose_square_non_parallel::<Pair>,
-            #[cfg(feature = "parallel")]
-            &transpose_square::<Pair>,
-        ];
-        for f in funs {
-            // Set rows manually. We want to be sure to trigger the actual recursion.
-            // (Computing this from workload_size was too much hassle.)
-            let size = 1024;
-            assert!(size * size > 2 * workload_size::<Pair>());
+        // Set rows manually. We want to be sure to trigger the actual recursion.
+        // (Computing this from workload_size was too much hassle.)
+        let size = 1024;
+        assert!(size * size > 2 * workload_size::<Pair>());
 
-            let mut example = make_example_matrix(size, size);
-            let view = MatrixMut::from_mut_slice(&mut example, size, size);
-            f(view);
-            let view = MatrixMut::from_mut_slice(&mut example, size, size);
-            for i in 0..size {
-                for j in 0..size {
-                    assert_eq!(view[(i, j)], (j, i));
-                }
+        let mut example = make_example_matrix(size, size);
+        let view = MatrixMut::from_mut_slice(&mut example, size, size);
+        transpose_square(view);
+        let view = MatrixMut::from_mut_slice(&mut example, size, size);
+        for i in 0..size {
+            for j in 0..size {
+                assert_eq!(view[(i, j)], (j, i));
             }
         }
     }
