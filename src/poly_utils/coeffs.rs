@@ -310,7 +310,7 @@ mod tests {
             multilinear::MultilinearPoint,
         },
     };
-    use ark_ff::AdditiveGroup;
+    use ark_ff::{AdditiveGroup, Field};
     use ark_poly::{univariate::DensePolynomial, Polynomial};
 
     type F = Field64;
@@ -635,5 +635,81 @@ mod tests {
         let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
 
         assert_eq!(eval_result, E::ZERO);
+    }
+
+    #[test]
+    fn test_evaluate_at_univariate_degree_one() {
+        // Polynomial: f(x) = 3 + 4x
+        let c0 = F::from(3);
+        let c1 = F::from(4);
+        let coeffs = vec![c0, c1];
+        let poly = CoefficientList::new(coeffs);
+
+        let p0 = F::from(0);
+        let p1 = F::from(1);
+        let p2 = F::from(2);
+        let p3 = F::from(5);
+        let points = vec![p0, p1, p2, p3];
+
+        // Manually compute expected values from coeffs
+        // f(x) = coeffs[0] + coeffs[1] * x
+        let expected = vec![
+            c0 + c1 * p0, // 3 + 4 * 0
+            c0 + c1 * p1, // 3 + 4 * 1
+            c0 + c1 * p2, // 3 + 4 * 2
+            c0 + c1 * p3, // 3 + 4 * 5
+        ];
+
+        let result = poly.evaluate_at_univariate(&points);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_evaluate_at_univariate_degree_three_multiple_points() {
+        // Polynomial: f(x) = 1 + 2x + 3x² + 4x³
+        let c0 = F::from(1);
+        let c1 = F::from(2);
+        let c2 = F::from(3);
+        let c3 = F::from(4);
+        let coeffs = vec![c0, c1, c2, c3];
+        let poly = CoefficientList::new(coeffs);
+
+        let p0 = F::from(0);
+        let p1 = F::from(1);
+        let p2 = F::from(2);
+        let points = vec![p0, p1, p2];
+
+        // f(x) = c0 + c1*x + c2*x² + c3*x³
+        let expected = vec![
+            c0 + c1 * p0 + c2 * p0.square() + c3 * p0.square() * p0,
+            c0 + c1 * p1 + c2 * p1.square() + c3 * p1.square() * p1,
+            c0 + c1 * p2 + c2 * p2.square() + c3 * p2.square() * p2,
+        ];
+
+        let result = poly.evaluate_at_univariate(&points);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_evaluate_at_univariate_equivalence_to_multilinear() {
+        // Polynomial: f(x) = 5 + 6x + 7x² + 8x³
+        let c0 = F::from(5);
+        let c1 = F::from(6);
+        let c2 = F::from(7);
+        let c3 = F::from(8);
+        let coeffs = vec![c0, c1, c2, c3];
+        let poly = CoefficientList::new(coeffs);
+
+        let x = F::from(2);
+
+        let expected = c0 + c1 * x + c2 * x.square() + c3 * x.square() * x;
+
+        let result_univariate = poly.evaluate_at_univariate(&[x])[0];
+
+        let ml_point = MultilinearPoint::expand_from_univariate(x, 2);
+        let result_multilinear = poly.evaluate(&ml_point);
+
+        assert_eq!(result_univariate, expected);
+        assert_eq!(result_multilinear, expected);
     }
 }
