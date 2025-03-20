@@ -98,7 +98,7 @@ pub fn transform_evaluations<F: FftField>(
             #[cfg(not(feature = "parallel"))]
             {
                 let mut coset_offset_inv = F::ONE;
-                for answers in stacked_evaluations.chunks_exact_mut(folding_size as usize) {
+                for answers in evals.chunks_exact_mut(folding_factor_exp) {
                     let mut scale = size_inv;
                     for v in answers.iter_mut() {
                         *v *= scale;
