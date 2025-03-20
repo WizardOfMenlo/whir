@@ -17,7 +17,7 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, ProofResult,
+    ByteChallenges, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -66,12 +66,7 @@ where
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F>
-            + FieldWriter<F>
-            + ByteChallenges
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: FieldWriter<F> + ByteChallenges + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         assert!(
             self.validate_parameters()
@@ -153,12 +148,7 @@ where
         mut round_state: RoundState<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F>
-            + ByteChallenges
-            + FieldWriter<F>
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: ByteChallenges + FieldWriter<F> + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -180,8 +170,6 @@ where
         // Compute new domain and polynomial evaluations
         let (new_domain, folded_evals, merkle_tree) =
             self.compute_merkle_tree(&folded_coefficients, &round_state);
-
-        merlin.add_digest(merkle_tree.root())?;
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) =

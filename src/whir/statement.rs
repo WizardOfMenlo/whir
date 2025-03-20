@@ -1,5 +1,3 @@
-#[cfg(not(feature = "parallel"))]
-use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
@@ -57,26 +55,6 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    #[cfg(not(feature = "parallel"))]
-    pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
-        match self {
-            Self::Evaluation { point } => {
-                for (prefix, lag) in LagrangePolynomialIterator::from(point) {
-                    accumulator.evals_mut()[prefix.0] += factor * lag;
-                }
-            }
-            Self::Linear { weight } => {
-                accumulator
-                    .evals_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
-            }
-        }
-    }
-
     /// Accumulates the contribution of the weight function into `accumulator`, scaled by `factor`.
     ///
     /// - In evaluation mode, updates `accumulator` using an equality constraint.
@@ -92,7 +70,6 @@ impl<F: Field> Weights<F> {
     ///
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
-    #[cfg(feature = "parallel")]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
@@ -102,9 +79,19 @@ impl<F: Field> Weights<F> {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Self::Linear { weight } => {
+                #[cfg(feature = "parallel")]
                 accumulator
                     .evals_mut()
                     .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
+
+                #[cfg(not(feature = "parallel"))]
+                accumulator
+                    .evals_mut()
+                    .iter_mut()
                     .enumerate()
                     .for_each(|(corner, acc)| {
                         *acc += factor * weight.index(corner);
@@ -131,18 +118,18 @@ impl<F: Field> Weights<F> {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 #[cfg(not(feature = "parallel"))]
                 {
-                    let mut sum = F::ZERO;
-                    for (corner, poly) in poly.evals().iter().enumerate() {
-                        sum += *weight.index(corner) * poly;
-                    }
-                    sum
+                    poly.evals()
+                        .iter()
+                        .zip(weight.evals().iter())
+                        .map(|(p, w)| *p * *w)
+                        .sum()
                 }
                 #[cfg(feature = "parallel")]
                 {
                     poly.evals()
                         .par_iter()
-                        .enumerate()
-                        .map(|(corner, poly)| *weight.index(corner) * *poly)
+                        .zip(weight.evals().par_iter())
+                        .map(|(p, w)| *p * *w)
                         .sum()
                 }
             }
@@ -235,15 +222,14 @@ impl<F: Field> Statement<F> {
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
         let evaluations_vec = vec![F::ZERO; 1 << self.num_variables];
         let mut combined_evals = EvaluationsList::new(evaluations_vec);
-        let mut combined_sum = F::ZERO;
-
-        let mut challenge_power = F::ONE;
-
-        for (weights, sum) in &self.constraints {
-            weights.accumulate(&mut combined_evals, challenge_power);
-            combined_sum += *sum * challenge_power;
-            challenge_power *= challenge;
-        }
+        let (combined_sum, _) = self.constraints.iter().fold(
+            (F::ZERO, F::ONE),
+            |(mut acc_sum, gamma_pow), (weights, sum)| {
+                weights.accumulate(&mut combined_evals, gamma_pow);
+                acc_sum += *sum * gamma_pow;
+                (acc_sum, gamma_pow * challenge)
+            },
+        );
 
         (combined_evals, combined_sum)
     }
@@ -396,12 +382,13 @@ impl<F: Field> StatementVerifier<F> {
         for (weights, sum) in &statement.constraints {
             match weights {
                 Weights::Linear { weight, .. } => {
-                    let weights = VerifierWeights::linear(weight.num_variables(), None);
-                    verifier.add_constraint(weights.clone(), *sum);
+                    verifier.add_constraint(
+                        VerifierWeights::linear(weight.num_variables(), None),
+                        *sum,
+                    );
                 }
                 Weights::Evaluation { point } => {
-                    let weights = VerifierWeights::evaluation(point.clone());
-                    verifier.add_constraint(weights.clone(), *sum);
+                    verifier.add_constraint(VerifierWeights::evaluation(point.clone()), *sum);
                 }
             }
         }
