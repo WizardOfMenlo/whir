@@ -304,7 +304,7 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
 #[cfg(test)]
 mod tests {
     use crate::{
-        crypto::fields::Field64,
+        crypto::fields::{Field64, Field64_2},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, hypercube::BinaryHypercubePoint,
             multilinear::MultilinearPoint,
@@ -314,7 +314,7 @@ mod tests {
     use ark_poly::{univariate::DensePolynomial, Polynomial};
 
     type F = Field64;
-    type E = Field64;
+    type E = Field64_2;
 
     #[test]
     fn test_evaluation_conversion() {
@@ -565,12 +565,9 @@ mod tests {
         let coeffs = vec![coeff0, coeff1];
         let coeff_list = CoefficientList::new(coeffs);
 
-        // Convert to extension field
-        let coeff_list_ext = coeff_list.to_extension::<E>();
-
         let x = E::from(2); // Evaluation at x = 2 in extension field
         let expected_value = E::from(3) + E::from(7) * x; // f(2) = 3 + 7 * 2
-        let eval_result = coeff_list_ext.evaluate_at_extension(&MultilinearPoint(vec![x]));
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -585,12 +582,11 @@ mod tests {
             F::from(7), // X₀X₁ term
         ];
         let coeff_list = CoefficientList::new(coeffs);
-        let coeff_list_ext = coeff_list.to_extension::<E>();
 
         let x0 = E::from(2);
         let x1 = E::from(3);
         let expected_value = E::from(2) + E::from(5) * x1 + E::from(3) * x0 + E::from(7) * x0 * x1;
-        let eval_result = coeff_list_ext.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -609,7 +605,6 @@ mod tests {
             F::from(8), // X₀X₁X₂ (111)
         ];
         let coeff_list = CoefficientList::new(coeffs);
-        let coeff_list_ext = coeff_list.to_extension::<E>();
 
         let x0 = E::from(2);
         let x1 = E::from(3);
@@ -625,7 +620,7 @@ mod tests {
             + E::from(7) * x0 * x1
             + E::from(8) * x0 * x1 * x2;
 
-        let eval_result = coeff_list_ext.evaluate_at_extension(&MultilinearPoint(vec![x0, x1, x2]));
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1, x2]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -634,11 +629,10 @@ mod tests {
     fn test_evaluate_at_extension_zero_polynomial() {
         // Zero polynomial f(X) = 0
         let coeff_list = CoefficientList::new(vec![F::ZERO; 4]); // f(X₀, X₁) = 0
-        let coeff_list_ext = coeff_list.to_extension::<E>();
 
         let x0 = E::from(5);
         let x1 = E::from(7);
-        let eval_result = coeff_list_ext.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
 
         assert_eq!(eval_result, E::ZERO);
     }
