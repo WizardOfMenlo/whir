@@ -80,7 +80,7 @@ where
         // Compute expansion factor based on the domain size and polynomial length.
         let expansion = base_domain.size() / polynomial.num_coeffs();
 
-                // Expand the polynomial coefficients into evaluations over the extended domain.
+        // Expand the polynomial coefficients into evaluations over the extended domain.
         let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
         transform_evaluations(
             &mut evals,
