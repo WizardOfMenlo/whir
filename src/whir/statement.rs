@@ -118,18 +118,18 @@ impl<F: Field> Weights<F> {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 #[cfg(not(feature = "parallel"))]
                 {
-                    let mut sum = F::ZERO;
-                    for (corner, poly) in poly.evals().iter().enumerate() {
-                        sum += *weight.index(corner) * poly;
-                    }
-                    sum
+                    poly.evals()
+                        .iter()
+                        .zip(weight.evals().iter())
+                        .map(|(p, w)| *p * *w)
+                        .sum()
                 }
                 #[cfg(feature = "parallel")]
                 {
                     poly.evals()
                         .par_iter()
-                        .enumerate()
-                        .map(|(corner, poly)| *weight.index(corner) * *poly)
+                        .zip(weight.evals().par_iter())
+                        .map(|(p, w)| *p * *w)
                         .sum()
                 }
             }
@@ -222,15 +222,14 @@ impl<F: Field> Statement<F> {
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
         let evaluations_vec = vec![F::ZERO; 1 << self.num_variables];
         let mut combined_evals = EvaluationsList::new(evaluations_vec);
-        let mut combined_sum = F::ZERO;
-
-        let mut challenge_power = F::ONE;
-
-        for (weights, sum) in &self.constraints {
-            weights.accumulate(&mut combined_evals, challenge_power);
-            combined_sum += *sum * challenge_power;
-            challenge_power *= challenge;
-        }
+        let (combined_sum, _) = self.constraints.iter().fold(
+            (F::ZERO, F::ONE),
+            |(mut acc_sum, gamma_pow), (weights, sum)| {
+                weights.accumulate(&mut combined_evals, gamma_pow);
+                acc_sum += *sum * gamma_pow;
+                (acc_sum, gamma_pow * challenge)
+            },
+        );
 
         (combined_evals, combined_sum)
     }
@@ -383,12 +382,13 @@ impl<F: Field> StatementVerifier<F> {
         for (weights, sum) in &statement.constraints {
             match weights {
                 Weights::Linear { weight, .. } => {
-                    let weights = VerifierWeights::linear(weight.num_variables(), None);
-                    verifier.add_constraint(weights.clone(), *sum);
+                    verifier.add_constraint(
+                        VerifierWeights::linear(weight.num_variables(), None),
+                        *sum,
+                    );
                 }
                 Weights::Evaluation { point } => {
-                    let weights = VerifierWeights::evaluation(point.clone());
-                    verifier.add_constraint(weights.clone(), *sum);
+                    verifier.add_constraint(VerifierWeights::evaluation(point.clone()), *sum);
                 }
             }
         }

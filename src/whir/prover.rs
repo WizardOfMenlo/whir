@@ -21,7 +21,7 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, ProofResult,
+    ByteChallenges, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -70,12 +70,7 @@ where
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F>
-            + FieldWriter<F>
-            + ByteChallenges
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: FieldWriter<F> + ByteChallenges + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -153,12 +148,7 @@ where
         mut round_state: RoundState<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F>
-            + ByteChallenges
-            + FieldWriter<F>
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: ByteChallenges + FieldWriter<F> + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -214,7 +204,7 @@ where
                             F::from(1),
                         )
                     })
-                    .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                    .compute_sumcheck_polynomials::<PowStrategy, _>(
                         merlin,
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
@@ -262,7 +252,7 @@ where
         #[cfg(feature = "parallel")]
         let leafs_iter =
             evals.par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
-        let merkle_tree = MerkleTree::<MerkleConfig>::new(
+        let merkle_tree = MerkleTree::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
             leafs_iter,

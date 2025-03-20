@@ -57,7 +57,7 @@ where
         arthur: &mut Arthur,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        Arthur: ByteReader + FieldReader<F> + FieldChallenges<F> + DigestReader<MerkleConfig>,
+        Arthur: FieldReader<F> + FieldChallenges<F> + DigestReader<MerkleConfig>,
     {
         let root = arthur.read_digest()?;
 
@@ -84,12 +84,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
-        Arthur: FieldReader<F>
-            + FieldChallenges<F>
-            + PoWChallenge
-            + ByteReader
-            + ByteChallenges
-            + DigestReader<MerkleConfig>,
+        Arthur: FieldReader<F> + PoWChallenge + ByteChallenges + DigestReader<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness: MultilinearPoint<F>;
