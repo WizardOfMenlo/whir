@@ -145,6 +145,7 @@ mod tests {
     use crate::parameters::{
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
+    use crate::poly_utils::multilinear::MultilinearPoint;
     use crate::whir::iopattern::WhirIOPattern;
     use ark_ff::UniformRand;
     use nimue::{DefaultHash, IOPattern};
