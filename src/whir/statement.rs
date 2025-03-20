@@ -1,5 +1,3 @@
-#[cfg(not(feature = "parallel"))]
-use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
@@ -57,26 +55,6 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    #[cfg(not(feature = "parallel"))]
-    pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
-        match self {
-            Self::Evaluation { point } => {
-                for (prefix, lag) in LagrangePolynomialIterator::from(point) {
-                    accumulator.evals_mut()[prefix.0] += factor * lag;
-                }
-            }
-            Self::Linear { weight } => {
-                accumulator
-                    .evals_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
-            }
-        }
-    }
-
     /// Accumulates the contribution of the weight function into `accumulator`, scaled by `factor`.
     ///
     /// - In evaluation mode, updates `accumulator` using an equality constraint.
@@ -92,7 +70,6 @@ impl<F: Field> Weights<F> {
     ///
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
-    #[cfg(feature = "parallel")]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
@@ -102,9 +79,19 @@ impl<F: Field> Weights<F> {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Self::Linear { weight } => {
+                #[cfg(feature = "parallel")]
                 accumulator
                     .evals_mut()
                     .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
+
+                #[cfg(not(feature = "parallel"))]
+                accumulator
+                    .evals_mut()
+                    .iter_mut()
                     .enumerate()
                     .for_each(|(corner, acc)| {
                         *acc += factor * weight.index(corner);
