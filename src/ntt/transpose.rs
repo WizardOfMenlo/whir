@@ -185,6 +185,7 @@ fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: Matrix
 mod tests {
     use super::super::utils::workload_size;
     use super::*;
+    use proptest::prelude::*;
 
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
@@ -346,6 +347,55 @@ mod tests {
             for i in 0..cols {
                 for j in 0..rows {
                     assert_eq!(view[(i, j)], (index, j, i));
+                }
+            }
+        }
+    }
+
+    /// Generates random square matrices with sizes that are powers of two.
+    #[allow(clippy::cast_sign_loss)]
+    fn arb_square_matrix() -> impl Strategy<Value = (Vec<usize>, usize)> {
+        (2usize..=64)
+            .prop_filter("Must be power of two", |&size| size.is_power_of_two())
+            .prop_map(|size| size * size)
+            .prop_flat_map(|matrix_size| {
+                prop::collection::vec(0usize..1000, matrix_size)
+                    .prop_map(move |matrix| (matrix, (matrix_size as f64).sqrt() as usize))
+            })
+    }
+
+    /// Generates random rectangular matrices where rows and columns are powers of two.
+    fn arb_rect_matrix() -> impl Strategy<Value = (Vec<usize>, usize, usize)> {
+        (2usize..=64, 2usize..=64)
+            .prop_filter("Rows and columns must be power of two", |&(r, c)| {
+                r.is_power_of_two() && c.is_power_of_two()
+            })
+            .prop_flat_map(|(rows, cols)| {
+                prop::collection::vec(0usize..1000, rows * cols)
+                    .prop_map(move |matrix| (matrix, rows, cols))
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_transpose_square((mut matrix, size) in arb_square_matrix()) {
+            let original = matrix.clone();
+            transpose(&mut matrix, size, size);
+            transpose(&mut matrix, size, size);
+            prop_assert_eq!(matrix, original);
+        }
+
+        #[test]
+        fn proptest_transpose_rect((mut matrix, rows, cols) in arb_rect_matrix()) {
+            let original = matrix.clone();
+            transpose(&mut matrix, rows, cols);
+
+            let view = MatrixMut::from_mut_slice(&mut matrix, cols, rows);
+
+            // Verify that each (i, j) moved to (j, i)
+            for i in 0..cols {
+                for j in 0..rows {
+                    prop_assert_eq!(view[(i, j)], original[j * cols + i]);
                 }
             }
         }
