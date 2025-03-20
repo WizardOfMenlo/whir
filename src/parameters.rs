@@ -356,7 +356,7 @@ mod tests {
             .check_validity(5)
             .is_ok());
 
-        // ❌ Invalid cases
+        // Invalid cases
         // Factor too large
         assert_eq!(
             FoldingFactor::Constant(5).check_validity(3),
