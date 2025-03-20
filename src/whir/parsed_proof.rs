@@ -49,18 +49,15 @@ impl<F: FftField> ParsedProof<F> {
             })
             .collect();
 
-        // Add final round if needed
-        if !self.final_randomness_answers.is_empty() {
-            result.push(
-                self.final_randomness_answers
-                    .iter()
-                    .map(|answers| {
-                        CoefficientList::new(answers.clone())
-                            .evaluate(&self.final_folding_randomness)
-                    })
-                    .collect(),
-            );
-        }
+        // Add final round
+        result.push(
+            self.final_randomness_answers
+                .iter()
+                .map(|answers| {
+                    CoefficientList::new(answers.clone()).evaluate(&self.final_folding_randomness)
+                })
+                .collect(),
+        );
 
         result
     }
@@ -139,21 +136,6 @@ mod tests {
         ]))];
 
         assert_eq!(folds, vec![expected_rounds, expected_final_round]);
-    }
-
-    #[test]
-    fn test_compute_folds_helped_empty_proof() {
-        let proof = ParsedProof::<Field64> {
-            rounds: vec![], // No rounds
-            final_folding_randomness: MultilinearPoint(vec![Field64::from(1)]),
-            final_randomness_answers: vec![],
-            ..Default::default()
-        };
-
-        let folds = proof.compute_folds_helped();
-
-        // Since there are no rounds, folds should be empty.
-        assert!(folds.is_empty());
     }
 
     #[test]
