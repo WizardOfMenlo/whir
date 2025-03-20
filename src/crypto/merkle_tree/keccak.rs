@@ -27,9 +27,7 @@ impl Absorb for KeccakDigest {
     }
 
     fn to_sponge_field_elements<F: ark_ff::PrimeField>(&self, dest: &mut Vec<F>) {
-        let mut buf = [0; 32];
-        buf.copy_from_slice(&self.0);
-        dest.push(F::from_be_bytes_mod_order(&buf));
+        dest.push(F::from_be_bytes_mod_order(&self.0));
     }
 }
 
@@ -61,14 +59,10 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
         (): &Self::Parameters,
         input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let mut buf = vec![];
-        CanonicalSerialize::serialize_compressed(input.borrow(), &mut buf)?;
+        let mut buf = Vec::new();
+        input.borrow().serialize_compressed(&mut buf)?;
 
-        let mut h = sha3::Keccak256::new();
-        h.update(&buf);
-
-        let mut output = [0; 32];
-        output.copy_from_slice(&h.finalize()[..]);
+        let output = sha3::Keccak256::digest(&buf).into();
         HashCounter::add();
         Ok(KeccakDigest(output))
     }
@@ -88,11 +82,12 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let mut h = sha3::Keccak256::new();
-        h.update(left_input.borrow().0);
-        h.update(right_input.borrow().0);
-        let mut output = [0; 32];
-        output.copy_from_slice(&h.finalize()[..]);
+        let output = sha3::Keccak256::new()
+            .chain_update(left_input.borrow().0)
+            .chain_update(right_input.borrow().0)
+            .finalize()
+            .into();
+
         HashCounter::add();
         Ok(KeccakDigest(output))
     }
@@ -102,7 +97,7 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        <Self as TwoToOneCRHScheme>::evaluate(parameters, left_input, right_input)
+        Self::evaluate(parameters, left_input, right_input)
     }
 }
 
@@ -129,10 +124,10 @@ pub fn default_config<F: CanonicalSerialize + Send>(
     <LeafH<F> as CRHScheme>::Parameters,
     <CompressH as TwoToOneCRHScheme>::Parameters,
 ) {
-    <LeafH<F> as CRHScheme>::setup(rng).unwrap();
-    <CompressH as TwoToOneCRHScheme>::setup(rng).unwrap();
-
-    ((), ())
+    (
+        <LeafH<F> as CRHScheme>::setup(rng).expect("Leaf hash setup failed"),
+        <CompressH as TwoToOneCRHScheme>::setup(rng).expect("Compress hash setup failed"),
+    )
 }
 
 impl<F: Field> DigestIOPattern<MerkleTreeParams<F>> for IOPattern {

@@ -1,6 +1,4 @@
-use crate::ntt::transpose;
 use ark_ff::Field;
-use std::collections::BTreeSet;
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
@@ -30,7 +28,10 @@ pub fn base_decomposition(mut value: usize, base: u8, n_bits: usize) -> Vec<u8> 
 // Gotti: Consider renaming this function. The name sounds like it's a PRG.
 // TODO (Gotti): Check that ordering is actually correct at point of use (everything else is big-endian).
 
-/// expand_randomness outputs the vector [1, base, base^2, base^3, ...] of length len.
+/// Generates a sequence of powers of `base`, starting from `1`.
+///
+/// This function returns a vector containing the sequence:
+/// `[1, base, base^2, base^3, ..., base^(len-1)]`
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     let mut res = Vec::with_capacity(len);
     let mut acc = F::ONE;
@@ -38,42 +39,16 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
         res.push(acc);
         acc *= base;
     }
-
     res
-}
-
-/// Deduplicates AND orders a vector
-pub fn dedup<T: Ord>(v: impl IntoIterator<Item = T>) -> Vec<T> {
-    Vec::from_iter(BTreeSet::from_iter(v))
 }
 
 // FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
 // Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
-/// Stacks evaluations by grouping them into cosets and transposing in-place.
-///
-/// Given `evals[i] = f(ω^i)`, reorganizes values into `2^folding_factor` cosets.
-/// The transformation follows:
-///
-/// ```ignore
-/// stacked[i, j] = f(ω^(i + j * (N / 2^folding_factor)))
-/// ```
-///
-/// The input length must be a multiple of `2^folding_factor`.
-pub fn stack_evaluations<F: Field>(mut evals: Vec<F>, folding_factor: usize) -> Vec<F> {
-    let folding_factor_exp = 1 << folding_factor;
-    assert!(evals.len() % folding_factor_exp == 0);
-    let size_of_new_domain = evals.len() / folding_factor_exp;
-
-    // Interpret evals as (folding_factor_exp x size_of_new_domain)-matrix and transpose in-place
-    transpose(&mut evals, folding_factor_exp, size_of_new_domain);
-    evals
-}
-
 // Evaluate the eq function on for a given point on the hypercube, and add
 // the result multiplied by the scalar to the output.
 #[cfg(not(feature = "parallel"))]
-fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
+pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     debug_assert_eq!(out.len(), 1 << eval.len());
     if let Some((&x, tail)) = eval.split_first() {
         let (low, high) = out.split_at_mut(out.len() / 2);
@@ -136,160 +111,15 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 
 #[cfg(test)]
 mod tests {
-    use super::stack_evaluations;
+    use super::*;
     use crate::{
         crypto::fields::Field64,
         poly_utils::{
-            multilinear::MultilinearPoint, sequential_lag_poly::LagrangePolynomialIterator,
+            lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },
-        utils::{base_decomposition, eval_eq},
     };
     use ark_ff::AdditiveGroup;
     use ark_ff::Field;
-
-    #[test]
-    fn test_evaluations_stack() {
-        use crate::crypto::fields::Field64 as F;
-
-        let num = 256;
-        let folding_factor = 3;
-        let fold_size = 1 << folding_factor;
-        assert_eq!(num % fold_size, 0);
-        let evals: Vec<_> = (0..num as u64).map(F::from).collect();
-
-        let stacked = stack_evaluations(evals, folding_factor);
-        assert_eq!(stacked.len(), num);
-
-        for (i, fold) in stacked.chunks_exact(fold_size).enumerate() {
-            assert_eq!(fold.len(), fold_size);
-            for (j, &f) in fold.iter().enumerate().take(fold_size) {
-                assert_eq!(f, F::from((i + j * num / fold_size) as u64));
-            }
-        }
-    }
-
-    #[test]
-    fn test_stack_evaluations_basic() {
-        // Basic test with 8 elements and folding factor of 2 (groups of 4)
-        let evals: Vec<_> = (0..8).map(Field64::from).collect();
-        let folding_factor = 2;
-
-        let stacked = stack_evaluations(evals.clone(), folding_factor);
-
-        // Check that the length remains unchanged after transformation
-        assert_eq!(stacked.len(), evals.len());
-
-        // Original matrix before stacking (4 rows, 2 columns):
-        // 0  1
-        // 2  3
-        // 4  5
-        // 6  7
-        //
-        // After transposition:
-        // 0  2  4  6
-        // 1  3  5  7
-        let expected: Vec<_> = vec![0, 2, 4, 6, 1, 3, 5, 7]
-            .into_iter()
-            .map(Field64::from)
-            .collect();
-
-        assert_eq!(stacked, expected);
-    }
-
-    #[test]
-    fn test_stack_evaluations_power_of_two() {
-        // Test with 16 elements and a folding factor of 3 (groups of 8)
-        let evals: Vec<_> = (0..16).map(Field64::from).collect();
-        let folding_factor = 3;
-
-        let stacked = stack_evaluations(evals.clone(), folding_factor);
-
-        // Ensure the length remains unchanged
-        assert_eq!(stacked.len(), evals.len());
-
-        // Original matrix (8 rows, 2 columns):
-        //  0   1
-        //  2   3
-        //  4   5
-        //  6   7
-        //  8   9
-        // 10  11
-        // 12  13
-        // 14  15
-        //
-        // After stacking:
-        //  0   2   4   6   8  10  12  14
-        //  1   3   5   7   9  11  13  15
-        let expected: Vec<_> = vec![0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15]
-            .into_iter()
-            .map(Field64::from)
-            .collect();
-
-        assert_eq!(stacked, expected);
-    }
-
-    #[test]
-    fn test_stack_evaluations_identity_case() {
-        // When folding_factor is 0, the function should return the input unchanged
-        let evals: Vec<_> = (0..4).map(Field64::from).collect();
-        let folding_factor = 0;
-
-        let stacked = stack_evaluations(evals.clone(), folding_factor);
-
-        // Expected result: No change
-        assert_eq!(stacked, evals);
-    }
-
-    #[test]
-    fn test_stack_evaluations_large_case() {
-        // Test with 32 elements and a folding factor of 4 (groups of 16)
-        let evals: Vec<_> = (0..32).map(Field64::from).collect();
-        let folding_factor = 4;
-
-        let stacked = stack_evaluations(evals.clone(), folding_factor);
-
-        // Ensure the length remains unchanged
-        assert_eq!(stacked.len(), evals.len());
-
-        // Original matrix before stacking (16 rows, 2 columns):
-        //  0   1
-        //  2   3
-        //  4   5
-        //  6   7
-        //  8   9
-        // 10  11
-        // 12  13
-        // 14  15
-        // 16  17
-        // 18  19
-        // 20  21
-        // 22  23
-        // 24  25
-        // 26  27
-        // 28  29
-        // 30  31
-        //
-        // After stacking:
-        //  0   2   4   6   8  10  12  14  16  18  20  22  24  26  28  30
-        //  1   3   5   7   9  11  13  15  17  19  21  23  25  27  29  31
-        let expected: Vec<_> = vec![
-            0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 1, 3, 5, 7, 9, 11, 13, 15,
-            17, 19, 21, 23, 25, 27, 29, 31,
-        ]
-        .into_iter()
-        .map(Field64::from)
-        .collect();
-
-        assert_eq!(stacked, expected);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_stack_evaluations_invalid_size() {
-        let evals: Vec<_> = (0..10).map(Field64::from).collect();
-        let folding_factor = 2; // folding size = 4, but 10 is not divisible by 4
-        stack_evaluations(evals, folding_factor);
-    }
 
     #[test]
     fn test_base_decomposition_binary() {
@@ -412,5 +242,96 @@ mod tests {
         }
 
         assert_eq!(&out, &expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_basic() {
+        // Test with base = 2 and length = 5
+        let base = Field64::from(2);
+        let len = 5;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::from(2),
+            Field64::from(4),
+            Field64::from(8),
+            Field64::from(16),
+        ];
+
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_zero_length() {
+        // If len = 0, should return an empty vector
+        let base = Field64::from(3);
+        assert!(expand_randomness(base, 0).is_empty());
+    }
+
+    #[test]
+    fn test_expand_randomness_one_length() {
+        // If len = 1, should return [1]
+        let base = Field64::from(5);
+        assert_eq!(expand_randomness(base, 1), vec![Field64::ONE]);
+    }
+
+    #[test]
+    fn test_expand_randomness_large_base() {
+        // Test with a large base value
+        let base = Field64::from(10);
+        let len = 4;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::from(10),
+            Field64::from(100),
+            Field64::from(1000),
+        ];
+
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_identity_case() {
+        // If base = 1, all values should be 1
+        let base = Field64::ONE;
+        let len = 6;
+
+        let expected = vec![Field64::ONE; len];
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_zero_base() {
+        // If base = 0, all values after the first should be 0
+        let base = Field64::ZERO;
+        let len = 5;
+
+        let expected = vec![
+            Field64::ONE,
+            Field64::ZERO,
+            Field64::ZERO,
+            Field64::ZERO,
+            Field64::ZERO,
+        ];
+        assert_eq!(expand_randomness(base, len), expected);
+    }
+
+    #[test]
+    fn test_expand_randomness_negative_base() {
+        // Test with base = -1, which should alternate between 1 and -1
+        let base = -Field64::ONE;
+        let len = 6;
+
+        let expected = vec![
+            Field64::ONE,
+            -Field64::ONE,
+            Field64::ONE,
+            -Field64::ONE,
+            Field64::ONE,
+            -Field64::ONE,
+        ];
+
+        assert_eq!(expand_randomness(base, len), expected);
     }
 }

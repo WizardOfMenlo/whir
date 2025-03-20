@@ -3,9 +3,8 @@ use crate::whir::fs_utils::DigestWriter;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{
-        coeffs::CoefficientList, fold::restructure_evaluations, multilinear::MultilinearPoint,
+        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
     },
-    utils,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
@@ -81,22 +80,21 @@ where
         // Compute expansion factor based on the domain size and polynomial length.
         let expansion = base_domain.size() / polynomial.num_coeffs();
 
-        // Expand the polynomial coefficients into evaluations over the extended domain.
-        let evals = expand_from_coeff(polynomial.coeffs(), expansion);
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor.at_round(0));
-        let folded_evals = restructure_evaluations(
-            folded_evals,
+                // Expand the polynomial coefficients into evaluations over the extended domain.
+        let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
+        transform_evaluations(
+            &mut evals,
             self.0.fold_optimisation,
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
             self.0.folding_factor.at_round(0),
         );
 
-        // Convert evaluations into the extension field, required for later rounds.
-        // TODO: Commit to base field directly in the future.
-        let folded_evals = folded_evals
+        // Convert to extension field.
+        // This is not necessary for the commit, but in further rounds
+        // we will need the extension field. For symplicity we do it here too.
+        // TODO: Commit to base field directly.
+        let folded_evals = evals
             .into_iter()
             .map(F::from_base_prime_field)
             .collect::<Vec<_>>();

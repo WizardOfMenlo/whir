@@ -11,7 +11,11 @@ env:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        features: ["--features parallel", "--no-default-features"]
     runs-on: ubuntu-latest
+    name: Build & Test (${{ matrix.features }})
 
     steps:
       - uses: actions/checkout@v4
@@ -20,32 +24,33 @@ jobs:
         with:
           toolchain: nightly
       - name: Build
-        run: cargo build --release --verbose
+        run: cargo build --release --verbose ${{ matrix.features }}
       - name: Run tests
-        run: cargo test --release --verbose
+        run: cargo test --release --verbose ${{ matrix.features }}
 
   cargo-clippy:
-    name: Cargo clippy
+    strategy:
+      matrix:
+        features: ["--features parallel", "--no-default-features"]
     runs-on: ubuntu-latest
+    name: Clippy (${{ matrix.features }})
 
     steps:
-      - name: Fetch Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install nightly toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           components: clippy
       - name: Clippy Check
-        run: cargo clippy --workspace --all-targets --all-features -- -Dwarnings
+        run: cargo clippy --workspace --all-targets ${{ matrix.features }} -- -Dwarnings
 
   cargo-fmt:
     name: Cargo fmt
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fetch Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install nightly toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
