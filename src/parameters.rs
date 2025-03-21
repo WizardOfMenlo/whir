@@ -123,7 +123,7 @@ impl FoldType {
                 folding_randomness: &round_state.folding_randomness,
             },
         };
-        ctx.evaluate(answers, stir_evaluations)
+        ctx.evaluate(answers, stir_evaluations);
     }
 
     /// Computes folded evaluations across all rounds of the proof,
@@ -139,7 +139,7 @@ impl FoldType {
     /// - If `Naive`, performs coset-based folding round by round.
     /// - If `ProverHelps`, reuses the precomputed coefficient evaluations.
     pub(crate) fn stir_evaluations_verifier<F, MerkleConfig, PowStrategy>(
-        &self,
+        self,
         parsed: &ParsedProof<F>,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Vec<Vec<F>>
@@ -148,7 +148,7 @@ impl FoldType {
         MerkleConfig: Config,
     {
         match self {
-            FoldType::Naive => {
+            Self::Naive => {
                 // Start with the domain size and the fold vector
                 let mut domain_size = params.starting_domain.backing_domain.size();
                 let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
@@ -190,7 +190,7 @@ impl FoldType {
                 result.push(final_evals);
                 result
             }
-            FoldType::ProverHelps => parsed.compute_folds_helped(),
+            Self::ProverHelps => parsed.compute_folds_helped(),
         }
     }
 }
