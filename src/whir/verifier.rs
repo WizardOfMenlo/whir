@@ -475,7 +475,7 @@ where
 
         let mut prev_sumcheck = None;
 
-        // Initial sumcheck
+        // Initial sumcheck verification
         if let Some(round) = parsed.initial_sumcheck_rounds.first() {
             // Check the first polynomial
             let (mut prev_poly, mut randomness) = round.clone();
@@ -515,8 +515,7 @@ where
 
             let prev_eval = prev_sumcheck
                 .as_ref()
-                .map(|(p, r)| p.evaluate_at_point(&(*r).into()))
-                .unwrap_or(F::ZERO);
+                .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
 
             let claimed_sum = prev_eval
                 + values
@@ -559,8 +558,7 @@ where
         if self.params.final_sumcheck_rounds > 0 {
             let claimed_sum = prev_sumcheck
                 .as_ref()
-                .map(|(p, r)| p.evaluate_at_point(&(*r).into()))
-                .unwrap_or(F::ZERO);
+                .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
 
             let (sumcheck_poly, new_randomness) = &parsed.final_sumcheck_rounds[0];
 
@@ -583,9 +581,8 @@ where
         }
 
         // Final v · w Check
-        let prev_sumcheck_poly_eval = prev_sumcheck
-            .map(|(poly, rand)| poly.evaluate_at_point(&rand.into()))
-            .unwrap_or(F::ZERO);
+        let prev_sumcheck_poly_eval =
+            prev_sumcheck.map_or(F::ZERO, |(poly, rand)| poly.evaluate_at_point(&rand.into()));
 
         // Check the final sumcheck evaluation
         let evaluation_of_v_poly = self.compute_w_poly(&parsed_commitment, statement, &parsed);
