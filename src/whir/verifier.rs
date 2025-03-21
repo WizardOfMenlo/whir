@@ -307,25 +307,24 @@ where
                 .collect(),
         );
 
-        let mut new_constraints: Vec<(VerifierWeights<F>, F)> = Vec::new();
-        for (point, evaluation) in parsed_commitment
+        let mut new_constraints: Vec<_> = parsed_commitment
             .ood_points
-            .clone()
-            .into_iter()
-            .zip(parsed_commitment.ood_answers.clone())
-        {
-            let weights = VerifierWeights::evaluation(MultilinearPoint::expand_from_univariate(
-                point,
-                num_variables,
-            ));
-            new_constraints.push((weights, evaluation));
-        }
+            .iter()
+            .zip(&parsed_commitment.ood_answers)
+            .map(|(&point, &eval)| {
+                let weights = VerifierWeights::evaluation(
+                    MultilinearPoint::expand_from_univariate(point, num_variables),
+                );
+                (weights, eval)
+            })
+            .collect();
+
         let mut proof_values_iter = proof.statement_values_at_random_point.iter();
-        for constraint in &statement.constraints {
-            match &constraint.0 {
+        for (weights, expected_result) in &statement.constraints {
+            match weights {
                 VerifierWeights::Evaluation { point } => {
                     new_constraints
-                        .push((VerifierWeights::evaluation(point.clone()), constraint.1));
+                        .push((VerifierWeights::evaluation(point.clone()), *expected_result));
                 }
                 VerifierWeights::Linear { .. } => {
                     let term = proof_values_iter
@@ -333,11 +332,12 @@ where
                         .expect("Not enough proof statement values for linear constraints");
                     new_constraints.push((
                         VerifierWeights::linear(num_variables, Some(*term)),
-                        constraint.1,
+                        *expected_result,
                     ));
                 }
             }
         }
+
         let mut value: F = new_constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
@@ -348,23 +348,19 @@ where
             num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
-            let ood_points = &round_proof.ood_points;
-            let stir_challenges_points = &round_proof.stir_challenges_points;
-            let stir_challenges = ood_points
+            let stir_challenges = round_proof
+                .ood_points
                 .iter()
-                .chain(stir_challenges_points)
-                .copied()
-                .map(|univariate| {
+                .chain(&round_proof.stir_challenges_points)
+                .map(|&univariate| {
                     MultilinearPoint::expand_from_univariate(univariate, num_variables)
                     // TODO:
                     // Maybe refactor outside
                 });
 
             let sum_of_claims: F = stir_challenges
-                .into_iter()
-                .map(|point| point.eq_poly_outside(&folding_randomness))
                 .zip(&round_proof.combination_randomness)
-                .map(|(point, rand)| point * rand)
+                .map(|(pt, rand)| pt.eq_poly_outside(&folding_randomness) * rand)
                 .sum();
 
             value += sum_of_claims;
