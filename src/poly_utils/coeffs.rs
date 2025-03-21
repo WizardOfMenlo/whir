@@ -1,7 +1,7 @@
+use super::dense::WhirDensePolynomial;
 use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint};
 use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 use ark_ff::Field;
-use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 #[cfg(feature = "parallel")]
 use {
     rayon::{join, prelude::*},
@@ -89,9 +89,9 @@ where
     /// for a single point x, we have (extending notation to a single point)
     /// self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}), ..., x^2, x])
     pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
-        // DensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
+        // WhirDensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
         // The coefficient order is "coefficient of 1 first".
-        let univariate = DensePolynomial::from_coefficients_slice(&self.coeffs);
+        let univariate = WhirDensePolynomial::from_coefficients_slice(&self.coeffs);
         points
             .iter()
             .map(|point| univariate.evaluate(point))
@@ -229,7 +229,7 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     }
 }
 
-impl<F> From<CoefficientList<F>> for DensePolynomial<F>
+impl<F> From<CoefficientList<F>> for WhirDensePolynomial<F>
 where
     F: Field,
 {
@@ -238,11 +238,11 @@ where
     }
 }
 
-impl<F> From<DensePolynomial<F>> for CoefficientList<F>
+impl<F> From<WhirDensePolynomial<F>> for CoefficientList<F>
 where
     F: Field,
 {
-    fn from(value: DensePolynomial<F>) -> Self {
+    fn from(value: WhirDensePolynomial<F>) -> Self {
         Self::new(value.coeffs)
     }
 }
@@ -303,15 +303,9 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crypto::fields::{Field64, Field64_2},
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, hypercube::BinaryHypercubePoint,
-            multilinear::MultilinearPoint,
-        },
-    };
-    use ark_ff::{AdditiveGroup, Field};
-    use ark_poly::{univariate::DensePolynomial, Polynomial};
+    use super::*;
+    use crate::crypto::fields::{Field64, Field64_2};
+    use ark_ff::AdditiveGroup;
 
     type F = Field64;
     type E = Field64_2;
@@ -392,7 +386,7 @@ mod tests {
         ];
 
         let mv_poly = CoefficientList::new(polynomial);
-        let uv_poly: DensePolynomial<_> = mv_poly.clone().into();
+        let uv_poly: WhirDensePolynomial<_> = mv_poly.clone().into();
 
         let eval_point = F::from(4999);
         assert_eq!(
