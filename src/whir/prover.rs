@@ -70,18 +70,25 @@ where
     where
         Merlin: FieldWriter<F> + ByteChallenges + PoWChallenge + DigestWriter<MerkleConfig>,
     {
-        assert!(self.validate_parameters());
-        assert!(self.validate_statement(&statement));
-        assert!(self.validate_witness(&witness));
+        assert!(
+            self.validate_parameters()
+                && self.validate_statement(&statement)
+                && self.validate_witness(&witness)
+        );
 
-        let mut new_constraints = Vec::new();
-
-        for (point, evaluation) in witness.ood_points.into_iter().zip(witness.ood_answers) {
-            let weights: Weights<F> = Weights::evaluation(
-                MultilinearPoint::expand_from_univariate(point, self.0.mv_parameters.num_variables),
-            );
-            new_constraints.push((weights, evaluation));
-        }
+        // Convert witness ood_points into constraints
+        let new_constraints = witness
+            .ood_points
+            .into_iter()
+            .zip(witness.ood_answers)
+            .map(|(point, evaluation)| {
+                let weights = Weights::evaluation(MultilinearPoint::expand_from_univariate(
+                    point,
+                    self.0.mv_parameters.num_variables,
+                ));
+                (weights, evaluation)
+            })
+            .collect();
 
         statement.add_constraints_in_front(new_constraints);
         let mut sumcheck_prover = None;
@@ -132,7 +139,7 @@ where
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
             merkle_proofs: vec![],
-            randomness_vec: randomness_vec.clone(),
+            randomness_vec,
             statement,
         };
 
