@@ -12,7 +12,7 @@ use crate::{
     },
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
-    whir::utils::sample_ood_points,
+    whir::{stir_evaluations::StirEvalContext, utils::sample_ood_points},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -239,8 +239,12 @@ where
             .collect();
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
-        self.0.fold_optimisation.compute_stir_evaluations(
-            &round_state,
+        self.0.fold_optimisation.stir_evaluations(
+            &StirEvalContext {
+                domain: round_state.domain,
+                folding_randomness: &round_state.folding_randomness,
+                round: round_state.round,
+            },
             &stir_challenges_indexes,
             &answers,
             self.0.folding_factor,
