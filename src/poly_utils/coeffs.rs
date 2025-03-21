@@ -229,15 +229,6 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     }
 }
 
-impl<F> From<CoefficientList<F>> for WhirDensePolynomial<F>
-where
-    F: Field,
-{
-    fn from(value: CoefficientList<F>) -> Self {
-        Self::from_coefficients_vec(value.coeffs)
-    }
-}
-
 impl<F> From<WhirDensePolynomial<F>> for CoefficientList<F>
 where
     F: Field,
@@ -362,41 +353,6 @@ mod tests {
                 coeffs_list.evaluate(&eval_point)
             );
         }
-    }
-
-    #[test]
-    fn test_evaluation_mv() {
-        let polynomial = vec![
-            F::from(0),
-            F::from(1),
-            F::from(2),
-            F::from(3),
-            F::from(4),
-            F::from(5),
-            F::from(6),
-            F::from(7),
-            F::from(8),
-            F::from(9),
-            F::from(10),
-            F::from(11),
-            F::from(12),
-            F::from(13),
-            F::from(14),
-            F::from(15),
-        ];
-
-        let mv_poly = CoefficientList::new(polynomial);
-        let uv_poly: WhirDensePolynomial<_> = mv_poly.clone().into();
-
-        let eval_point = F::from(4999);
-        assert_eq!(
-            uv_poly.evaluate(&F::from(1)),
-            F::from((0..=15).sum::<u32>())
-        );
-        assert_eq!(
-            uv_poly.evaluate(&eval_point),
-            mv_poly.evaluate(&MultilinearPoint::expand_from_univariate(eval_point, 4))
-        );
     }
 
     #[test]
