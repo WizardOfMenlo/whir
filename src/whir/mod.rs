@@ -34,7 +34,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nimue::{DefaultHash, IOPattern};
+    use nimue::IOPattern;
     use nimue_pow::blake3::Blake3PoW;
 
     use crate::crypto::fields::Field64;
@@ -109,7 +109,7 @@ mod tests {
         let sum = linear_claim_weight.weighted_sum(&poly);
         statement.add_constraint(linear_claim_weight, sum);
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = IOPattern::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 

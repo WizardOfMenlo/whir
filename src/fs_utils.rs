@@ -60,11 +60,11 @@ where
 mod tests {
     use super::*;
     use crate::crypto::fields::Field64;
-    use nimue::{DefaultHash, IOPattern};
+    use nimue::IOPattern;
 
     #[test]
     fn test_add_ood() {
-        let iop = IOPattern::<DefaultHash>::new("test_protocol");
+        let iop = IOPattern::new("test_protocol");
 
         // Apply OOD query addition
         let updated_iop = <IOPattern as OODIOPattern<Field64>>::add_ood(iop.clone(), 3);
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_pow() {
-        let iop = IOPattern::<DefaultHash>::new("test_protocol");
+        let iop = IOPattern::new("test_protocol");
 
         // Apply PoW challenge
         let updated_iop = iop.clone().pow(10.0);

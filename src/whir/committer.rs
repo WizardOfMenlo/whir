@@ -157,7 +157,7 @@ mod tests {
     };
     use crate::whir::iopattern::WhirIOPattern;
     use ark_ff::UniformRand;
-    use nimue::{DefaultHash, IOPattern};
+    use nimue::IOPattern;
     use nimue_pow::blake3::Blake3PoW;
 
     #[test]
@@ -203,7 +203,7 @@ mod tests {
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
         // Set up the IOPattern and initialize a Merlin transcript.
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = IOPattern::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
         let mut merlin = io.to_merlin();
@@ -283,7 +283,7 @@ mod tests {
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let io = IOPattern::new("🌪️").commit_statement(&params);
         let mut merlin = io.to_merlin();
 
         let committer = Committer::new(params);
@@ -324,7 +324,7 @@ mod tests {
         params.committment_ood_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let io = IOPattern::new("🌪️").commit_statement(&params);
         let mut merlin = io.to_merlin();
 
         let committer = Committer::new(params);

@@ -9,7 +9,7 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
-use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
+use nimue::{Arthur, IOPattern, Merlin};
 use nimue_pow::blake3::Blake3PoW;
 use std::io::Write;
 use whir::{
@@ -284,7 +284,7 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = IOPattern::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
@@ -350,7 +350,7 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = IOPattern::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 

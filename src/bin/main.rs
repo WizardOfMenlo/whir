@@ -7,7 +7,7 @@ use ark_crypto_primitives::{
 use ark_ff::FftField;
 use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
-use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
+use nimue::{Arthur, IOPattern, Merlin};
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -262,7 +262,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::<DefaultHash>::new("🌪️")
+    let io = IOPattern::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
@@ -374,7 +374,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::<DefaultHash>::new("🌪️")
+    let io = IOPattern::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
