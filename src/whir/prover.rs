@@ -278,12 +278,7 @@ where
         folded_coefficients: &CoefficientList<F>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldChallenges<F>
-            + ByteChallenges
-            + FieldWriter<F>
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: ByteChallenges + FieldWriter<F> + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         // Directly send coefficients of the polynomial to the verifier.
         merlin.add_scalars(folded_coefficients.coeffs())?;
@@ -398,12 +393,7 @@ where
         ood_points: Vec<F>,
     ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
     where
-        Merlin: FieldChallenges<F>
-            + ByteChallenges
-            + FieldWriter<F>
-            + ByteWriter
-            + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+        Merlin: ByteChallenges,
     {
         let stir_challenges_indexes = get_challenge_stir_queries(
             round_state.domain.size(),
