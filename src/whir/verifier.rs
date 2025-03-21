@@ -471,10 +471,8 @@ where
         let mut prev_sumcheck = None;
 
         // Initial sumcheck verification
-        if let Some(round) = parsed.initial_sumcheck_rounds.first() {
-            // Check the first polynomial
-            let (mut prev_poly, mut randomness) = round.clone();
-            if prev_poly.sum_over_boolean_hypercube()
+        if let Some((poly, randomness)) = parsed.initial_sumcheck_rounds.first().cloned() {
+            if poly.sum_over_boolean_hypercube()
                 != parsed_commitment
                     .ood_answers
                     .iter()
@@ -488,25 +486,30 @@ where
                 return Err(ProofError::InvalidProof);
             }
 
+            let mut current = (poly, randomness);
+
             // Check the rest of the rounds
-            for (sumcheck_poly, new_randomness) in &parsed.initial_sumcheck_rounds[1..] {
-                if sumcheck_poly.sum_over_boolean_hypercube()
-                    != prev_poly.evaluate_at_point(&randomness.into())
+            for (next_poly, next_rand) in &parsed.initial_sumcheck_rounds[1..] {
+                if next_poly.sum_over_boolean_hypercube()
+                    != current.0.evaluate_at_point(&current.1.into())
                 {
                     return Err(ProofError::InvalidProof);
                 }
-                prev_poly = sumcheck_poly.clone();
-                randomness = *new_randomness;
+                current = (next_poly.clone(), *next_rand);
             }
 
-            prev_sumcheck = Some((prev_poly, randomness));
+            prev_sumcheck = Some(current);
         }
 
         // Sumcheck rounds
         for (round, folds) in parsed.rounds.iter().zip(&computed_folds) {
             let (sumcheck_poly, new_randomness) = &round.sumcheck_rounds[0];
 
-            let values = round.ood_answers.iter().copied().chain(folds.clone());
+            let values = round
+                .ood_answers
+                .iter()
+                .copied()
+                .chain(folds.iter().copied());
 
             let prev_eval = prev_sumcheck
                 .as_ref()
@@ -537,7 +540,7 @@ where
         }
 
         // Check the foldings computed from the proof match the evaluations of the polynomial
-        let final_folds = &computed_folds[computed_folds.len() - 1];
+        let final_folds = &computed_folds.last().expect("final folds missing");
         let final_evaluations = parsed
             .final_coefficients
             .evaluate_at_univariate(&parsed.final_randomness_points);
