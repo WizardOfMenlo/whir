@@ -1,6 +1,7 @@
-use crate::whir::stir_evaluations::StirEvalContext;
+use crate::whir::{prover::RoundState, stir_evaluations::StirEvalContext};
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
+use ark_poly::EvaluationDomain;
 use serde::Serialize;
 use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use thiserror::Error;
@@ -88,24 +89,40 @@ impl FoldType {
     ///
     /// This method is used by both the verifier and the prover when deriving
     /// folded polynomial values at queried points.
-    pub(crate) fn stir_evaluations<F>(
+    pub(crate) fn stir_evaluations<F, MerkleConfig>(
         self,
-        context: &StirEvalContext<F>,
+        round_state: &RoundState<F, MerkleConfig>,
         stir_challenges_indexes: &[usize],
         answers: &[Vec<F>],
-        folding_factor: &FoldingFactor,
+        folding_factor: FoldingFactor,
         stir_evaluations: &mut Vec<F>,
     ) where
         F: FftField,
+        MerkleConfig: Config,
     {
         match self {
-            Self::Naive => context.stir_evaluations_naive(
-                stir_challenges_indexes,
-                answers,
-                folding_factor,
-                stir_evaluations,
-            ),
-            Self::ProverHelps => context.stir_evaluations_prover_helps(answers, stir_evaluations),
+            Self::Naive => {
+                let ctx = StirEvalContext::Naive {
+                    domain_size: round_state.domain.backing_domain.size(),
+                    domain_gen_inv: round_state
+                        .domain
+                        .backing_domain
+                        .element(1)
+                        .inverse()
+                        .unwrap(),
+                    round: round_state.round,
+                    stir_challenges_indexes,
+                    folding_factor: &folding_factor,
+                    folding_randomness: &round_state.folding_randomness,
+                };
+                ctx.evaluate(answers, stir_evaluations);
+            }
+            Self::ProverHelps => {
+                let ctx = StirEvalContext::ProverHelps {
+                    folding_randomness: &round_state.folding_randomness,
+                };
+                ctx.evaluate(answers, stir_evaluations);
+            }
         }
     }
 }

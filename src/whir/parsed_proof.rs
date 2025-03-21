@@ -41,29 +41,21 @@ impl<F: FftField> ParsedProof<F> {
         for round in &self.rounds {
             let mut evals = Vec::with_capacity(round.stir_challenges_answers.len());
 
-            let stir_evals_context = StirEvalContext {
-                domain_size: None,
-                domain_gen_inv: None,
+            let stir_evals_context = StirEvalContext::ProverHelps {
                 folding_randomness: &round.folding_randomness,
-                round: None,
             };
 
-            stir_evals_context
-                .stir_evaluations_prover_helps(&round.stir_challenges_answers, &mut evals);
+            stir_evals_context.evaluate(&round.stir_challenges_answers, &mut evals);
             result.push(evals);
         }
 
         // Add final round
         let mut final_evals = Vec::with_capacity(self.final_randomness_answers.len());
 
-        let stir_evals_context = StirEvalContext {
-            domain_size: None,
-            domain_gen_inv: None,
+        let stir_evals_context = StirEvalContext::ProverHelps {
             folding_randomness: &self.final_folding_randomness,
-            round: None,
         };
-        stir_evals_context
-            .stir_evaluations_prover_helps(&self.final_randomness_answers, &mut final_evals);
+        stir_evals_context.evaluate(&self.final_randomness_answers, &mut final_evals);
         result.push(final_evals);
         result
     }

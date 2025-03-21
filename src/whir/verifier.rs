@@ -381,18 +381,15 @@ where
         for (round_index, round) in parsed.rounds.iter().enumerate() {
             // Compute the folds for this round
             let mut round_evals = Vec::with_capacity(round.stir_challenges_indexes.len());
-            let stir_evals_context = StirEvalContext {
-                domain_size: Some(domain_size),
-                domain_gen_inv: Some(round.domain_gen_inv),
+            let stir_evals_context = StirEvalContext::Naive {
+                domain_size,
+                domain_gen_inv: round.domain_gen_inv,
+                round: round_index,
+                stir_challenges_indexes: &round.stir_challenges_indexes,
+                folding_factor: &self.params.folding_factor,
                 folding_randomness: &round.folding_randomness,
-                round: Some(round_index),
             };
-            stir_evals_context.stir_evaluations_naive(
-                &round.stir_challenges_indexes,
-                &round.stir_challenges_answers,
-                &self.params.folding_factor,
-                &mut round_evals,
-            );
+            stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
 
             // Push the folds to the result
             result.push(round_evals);
@@ -404,19 +401,16 @@ where
         let final_round_index = parsed.rounds.len();
         let mut final_evals = Vec::with_capacity(parsed.final_randomness_indexes.len());
 
-        let stir_evals_context = StirEvalContext {
-            domain_size: Some(domain_size),
-            domain_gen_inv: Some(parsed.final_domain_gen_inv),
+        let stir_evals_context = StirEvalContext::Naive {
+            domain_size,
+            domain_gen_inv: parsed.final_domain_gen_inv,
+            round: final_round_index,
+            stir_challenges_indexes: &parsed.final_randomness_indexes,
+            folding_factor: &self.params.folding_factor,
             folding_randomness: &parsed.final_folding_randomness,
-            round: Some(final_round_index),
         };
 
-        stir_evals_context.stir_evaluations_naive(
-            &parsed.final_randomness_indexes,
-            &parsed.final_randomness_answers,
-            &self.params.folding_factor,
-            &mut final_evals,
-        );
+        stir_evals_context.evaluate(&parsed.final_randomness_answers, &mut final_evals);
 
         result.push(final_evals);
         result
