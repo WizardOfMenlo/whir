@@ -50,7 +50,7 @@ impl<F: FftField> StirEvalContext<'_, F> {
     ///
     /// In this mode, we compute the folded evaluation over a coset:
     ///
-    /// ```
+    /// ```ignore
     /// f_folded(α) = ∑_{i=0}^{2^m - 1} f(ωᵢ · γ) · eᵢ(r)
     /// ```
     ///
@@ -64,7 +64,7 @@ impl<F: FftField> StirEvalContext<'_, F> {
     ///
     /// In this mode, the prover sends coefficients directly, and we compute:
     ///
-    /// ```
+    /// ```ignore
     /// f(r) = evaluate(coeffs, r)
     /// ```
     ///
