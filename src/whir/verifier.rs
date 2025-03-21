@@ -5,7 +5,7 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldReader},
-    ByteChallenges, ByteReader, ProofError, ProofResult,
+    ByteChallenges, ProofError, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
 
@@ -453,12 +453,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
     where
-        Arthur: FieldChallenges<F>
-            + FieldReader<F>
-            + ByteChallenges
-            + ByteReader
-            + PoWChallenge
-            + DigestReader<MerkleConfig>,
+        Arthur: FieldReader<F> + ByteChallenges + PoWChallenge + DigestReader<MerkleConfig>,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
