@@ -1,10 +1,9 @@
 use super::parameters::WhirConfig;
+use super::utils::sample_ood_points;
 use crate::whir::fs_utils::DigestWriter;
 use crate::{
     ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
+    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
@@ -120,21 +119,13 @@ where
         let root = merkle_tree.root();
         merlin.add_digest(root)?;
 
-        // Initialize out-of-domain (OOD) challenge points and evaluations.
-        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
-        let mut ood_answers = Vec::with_capacity(self.0.committment_ood_samples);
-
-        // Generate OOD points and compute their evaluations.
-        if self.0.committment_ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
-            ood_answers.extend(ood_points.iter().map(|ood_point| {
-                polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
-                    *ood_point,
-                    self.0.mv_parameters.num_variables,
-                ))
-            }));
-            merlin.add_scalars(&ood_answers)?;
-        }
+        // Handle OOD (Out-Of-Domain) samples
+        let (ood_points, ood_answers) = sample_ood_points(
+            merlin,
+            self.0.committment_ood_samples,
+            self.0.mv_parameters.num_variables,
+            |point| polynomial.evaluate_at_extension(point),
+        )?;
 
         // Return the witness containing the polynomial, Merkle tree, and OOD results.
         Ok(Witness {
@@ -155,6 +146,7 @@ mod tests {
     use crate::parameters::{
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
+    use crate::poly_utils::multilinear::MultilinearPoint;
     use crate::whir::iopattern::WhirIOPattern;
     use ark_ff::UniformRand;
     use nimue::{DefaultHash, IOPattern};

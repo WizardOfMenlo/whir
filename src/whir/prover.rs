@@ -15,6 +15,7 @@ use crate::{
     },
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
+    whir::utils::sample_ood_points,
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
@@ -262,19 +263,11 @@ where
         let root = merkle_tree.root();
         merlin.add_digest(root)?;
 
-        // OOD Samples
-        let mut ood_points = vec![F::ZERO; round_params.ood_samples];
-        let mut ood_answers = Vec::with_capacity(round_params.ood_samples);
-        if round_params.ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
-            ood_answers.extend(ood_points.iter().map(|ood_point| {
-                folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
-                    *ood_point,
-                    num_variables,
-                ))
-            }));
-            merlin.add_scalars(&ood_answers)?;
-        }
+        // Handle OOD (Out-Of-Domain) samples
+        let (ood_points, ood_answers) =
+            sample_ood_points(merlin, round_params.ood_samples, num_variables, |point| {
+                folded_coefficients.evaluate(point)
+            })?;
 
         // STIR queries
         let stir_challenges_indexes = get_challenge_stir_queries(
@@ -308,7 +301,7 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
         // Evaluate answers in the folding randomness.
-        let mut stir_evaluations = ood_answers.clone();
+        let mut stir_evaluations = ood_answers;
         match self.0.fold_optimisation {
             FoldType::Naive => {
                 // See `Verifier::compute_folds_full`
