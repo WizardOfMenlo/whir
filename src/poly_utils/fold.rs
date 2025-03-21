@@ -129,15 +129,13 @@ pub fn transform_evaluations<F: FftField>(
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::{FftField, Field};
-
+    use super::*;
+    use super::{compute_fold, transform_evaluations};
     use crate::{
         crypto::fields::Field64,
         ntt::transpose,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
-
-    use super::{compute_fold, transform_evaluations};
 
     type F = Field64;
 

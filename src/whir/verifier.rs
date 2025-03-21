@@ -91,7 +91,7 @@ where
         let initial_combination_randomness;
         if self.params.initial_statement {
             // Derive combination randomness and first sumcheck polynomial
-            let [combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
+            let [combination_randomness_gen] = arthur.challenge_scalars()?;
             initial_combination_randomness = expand_randomness(
                 combination_randomness_gen,
                 parsed_commitment.ood_points.len() + statement_points_len,
@@ -307,7 +307,7 @@ where
                 .collect(),
         );
 
-        let mut new_constraints: Vec<(VerifierWeights<F>, F)> = Vec::new();
+        let mut new_constraints = Vec::new();
         for (point, evaluation) in parsed_commitment
             .ood_points
             .clone()
@@ -338,7 +338,7 @@ where
                 }
             }
         }
-        let mut value: F = new_constraints
+        let mut value = new_constraints
             .iter()
             .zip(&proof.initial_combination_randomness)
             .map(|((weight, _), randomness)| *randomness * weight.compute(&folding_randomness))

@@ -135,7 +135,27 @@ where
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
     }
 
-    /// Do `folding_factor` rounds of sumcheck, and return the proof.
+    /// Implements `folding_factor` rounds of the sumcheck protocol.
+    ///
+    /// The sumcheck protocol progressively reduces the number of variables in a multilinear
+    /// polynomial. At each step, a quadratic polynomial is derived and verified.
+    ///
+    /// Given a polynomial \( p(X_1, \dots, X_n) \), this function iteratively applies the
+    /// transformation:
+    ///
+    /// \begin{equation}
+    /// h(X) = \sum_b p(b, X) \cdot w(b, X)
+    /// \end{equation}
+    ///
+    /// where:
+    /// - \( b \) are points in \{0,1,2\}.
+    /// - \( w(b, X) \) represents generic weights applied to \( p(b, X) \).
+    /// - \( h(X) \) is a quadratic polynomial in \( X \).
+    ///
+    /// This function:
+    /// - Samples random values to progressively reduce the polynomial.
+    /// - Applies proof-of-work grinding if required.
+    /// - Returns the sampled folding randomness values used in each reduction step.
     pub fn compute_sumcheck_polynomials<S, Merlin>(
         &mut self,
         merlin: &mut Merlin,
@@ -151,7 +171,7 @@ where
         for _ in 0..folding_factor {
             let sumcheck_poly = self.compute_sumcheck_polynomial();
             merlin.add_scalars(sumcheck_poly.evaluations())?;
-            let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
+            let [folding_randomness] = merlin.challenge_scalars()?;
             res.push(folding_randomness);
 
             // Do PoW if needed
