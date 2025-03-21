@@ -13,12 +13,10 @@ use super::{
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
-    stir_evaluations::StirEvalContext,
     WhirProof,
 };
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
-    parameters::FoldType,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
@@ -366,56 +364,6 @@ where
         value
     }
 
-    fn compute_folds(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
-        match self.params.fold_optimisation {
-            FoldType::Naive => self.compute_folds_full(parsed),
-            FoldType::ProverHelps => parsed.compute_folds_helped(),
-        }
-    }
-
-    fn compute_folds_full(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
-        // Start with the domain size and the fold vector
-        let mut domain_size = self.params.starting_domain.backing_domain.size();
-        let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
-
-        for (round_index, round) in parsed.rounds.iter().enumerate() {
-            // Compute the folds for this round
-            let mut round_evals = Vec::with_capacity(round.stir_challenges_indexes.len());
-            let stir_evals_context = StirEvalContext::Naive {
-                domain_size,
-                domain_gen_inv: round.domain_gen_inv,
-                round: round_index,
-                stir_challenges_indexes: &round.stir_challenges_indexes,
-                folding_factor: &self.params.folding_factor,
-                folding_randomness: &round.folding_randomness,
-            };
-            stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
-
-            // Push the folds to the result
-            result.push(round_evals);
-            // Update the domain size
-            domain_size /= 2;
-        }
-
-        // Final round
-        let final_round_index = parsed.rounds.len();
-        let mut final_evals = Vec::with_capacity(parsed.final_randomness_indexes.len());
-
-        let stir_evals_context = StirEvalContext::Naive {
-            domain_size,
-            domain_gen_inv: parsed.final_domain_gen_inv,
-            round: final_round_index,
-            stir_challenges_indexes: &parsed.final_randomness_indexes,
-            folding_factor: &self.params.folding_factor,
-            folding_randomness: &parsed.final_folding_randomness,
-        };
-
-        stir_evals_context.evaluate(&parsed.final_randomness_answers, &mut final_evals);
-
-        result.push(final_evals);
-        result
-    }
-
     #[allow(clippy::too_many_lines)]
     pub fn verify<Arthur>(
         &self,
@@ -437,7 +385,10 @@ where
             whir_proof,
         )?;
 
-        let computed_folds = self.compute_folds(&parsed);
+        let computed_folds = self
+            .params
+            .fold_optimisation
+            .stir_evaluations_verifier(&parsed, &self.params);
 
         let mut prev_sumcheck = None;
 

@@ -239,7 +239,7 @@ where
             .collect();
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
-        self.0.fold_optimisation.stir_evaluations(
+        self.0.fold_optimisation.stir_evaluations_prover(
             &round_state,
             &stir_challenges_indexes,
             &answers,

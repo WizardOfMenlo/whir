@@ -1,4 +1,7 @@
-use crate::whir::{prover::RoundState, stir_evaluations::StirEvalContext};
+use crate::whir::parameters::WhirConfig;
+use crate::whir::{
+    parsed_proof::ParsedProof, prover::RoundState, stir_evaluations::StirEvalContext,
+};
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -82,14 +85,16 @@ pub enum FoldType {
 }
 
 impl FoldType {
+    /// Computes folded evaluations for a single round of the proof,
+    /// based on the current folding strategy.
+    ///
     /// Dispatches the STIR evaluation logic according to the chosen folding strategy.
     ///
     /// - If `Naive`, uses coset-based folding via `compute_fold`.
     /// - If `ProverHelps`, assumes coefficients and evaluates directly at $\vec{r}$.
     ///
-    /// This method is used by both the verifier and the prover when deriving
-    /// folded polynomial values at queried points.
-    pub(crate) fn stir_evaluations<F, MerkleConfig>(
+    /// This method is used by the prover when deriving folded polynomial values at queried points.
+    pub(crate) fn stir_evaluations_prover<F, MerkleConfig>(
         self,
         round_state: &RoundState<F, MerkleConfig>,
         stir_challenges_indexes: &[usize],
@@ -100,29 +105,92 @@ impl FoldType {
         F: FftField,
         MerkleConfig: Config,
     {
+        let ctx = match self {
+            Self::Naive => StirEvalContext::Naive {
+                domain_size: round_state.domain.backing_domain.size(),
+                domain_gen_inv: round_state
+                    .domain
+                    .backing_domain
+                    .element(1)
+                    .inverse()
+                    .unwrap(),
+                round: round_state.round,
+                stir_challenges_indexes,
+                folding_factor: &folding_factor,
+                folding_randomness: &round_state.folding_randomness,
+            },
+            Self::ProverHelps => StirEvalContext::ProverHelps {
+                folding_randomness: &round_state.folding_randomness,
+            },
+        };
+        ctx.evaluate(answers, stir_evaluations)
+    }
+
+    /// Computes folded evaluations across all rounds of the proof,
+    /// based on the configured folding strategy.
+    ///
+    /// This function is used during proof verification by the verifier.
+    ///
+    /// # Returns
+    /// - A list of folded evaluations for each round, including the final round.
+    ///
+    /// # Strategy Behavior
+    ///
+    /// - If `Naive`, performs coset-based folding round by round.
+    /// - If `ProverHelps`, reuses the precomputed coefficient evaluations.
+    pub(crate) fn stir_evaluations_verifier<F, MerkleConfig, PowStrategy>(
+        &self,
+        parsed: &ParsedProof<F>,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Vec<Vec<F>>
+    where
+        F: FftField,
+        MerkleConfig: Config,
+    {
         match self {
-            Self::Naive => {
-                let ctx = StirEvalContext::Naive {
-                    domain_size: round_state.domain.backing_domain.size(),
-                    domain_gen_inv: round_state
-                        .domain
-                        .backing_domain
-                        .element(1)
-                        .inverse()
-                        .unwrap(),
-                    round: round_state.round,
-                    stir_challenges_indexes,
-                    folding_factor: &folding_factor,
-                    folding_randomness: &round_state.folding_randomness,
+            FoldType::Naive => {
+                // Start with the domain size and the fold vector
+                let mut domain_size = params.starting_domain.backing_domain.size();
+                let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
+
+                for (round_index, round) in parsed.rounds.iter().enumerate() {
+                    // Compute the folds for this round
+                    let mut round_evals = Vec::with_capacity(round.stir_challenges_indexes.len());
+                    let stir_evals_context = StirEvalContext::Naive {
+                        domain_size,
+                        domain_gen_inv: round.domain_gen_inv,
+                        round: round_index,
+                        stir_challenges_indexes: &round.stir_challenges_indexes,
+                        folding_factor: &params.folding_factor,
+                        folding_randomness: &round.folding_randomness,
+                    };
+                    stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
+
+                    // Push the folds to the result
+                    result.push(round_evals);
+                    // Update the domain size
+                    domain_size /= 2;
+                }
+
+                // Final round
+                let final_round_index = parsed.rounds.len();
+                let mut final_evals = Vec::with_capacity(parsed.final_randomness_indexes.len());
+
+                let stir_evals_context = StirEvalContext::Naive {
+                    domain_size,
+                    domain_gen_inv: parsed.final_domain_gen_inv,
+                    round: final_round_index,
+                    stir_challenges_indexes: &parsed.final_randomness_indexes,
+                    folding_factor: &params.folding_factor,
+                    folding_randomness: &parsed.final_folding_randomness,
                 };
-                ctx.evaluate(answers, stir_evaluations);
+
+                stir_evals_context.evaluate(&parsed.final_randomness_answers, &mut final_evals);
+
+                result.push(final_evals);
+                result
             }
-            Self::ProverHelps => {
-                let ctx = StirEvalContext::ProverHelps {
-                    folding_randomness: &round_state.folding_randomness,
-                };
-                ctx.evaluate(answers, stir_evaluations);
-            }
+            FoldType::ProverHelps => parsed.compute_folds_helped(),
         }
     }
 }
