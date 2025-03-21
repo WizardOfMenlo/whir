@@ -263,6 +263,7 @@ where
                 // w^2 * <w^(N/16)>, and so on. Until w^(N/16-1) * <w^(N/16)>.
                 let coset_generator_inv =
                     domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
+                let two_inv = F::from(2).inverse().unwrap();
                 stir_evaluations.extend(stir_challenges_indexes.iter().zip(&answers).map(
                     |(index, answers)| {
                         // The coset is w^index * <w_coset_generator>
@@ -279,7 +280,7 @@ where
                             &round_state.folding_randomness.0,
                             coset_offset_inv,
                             coset_generator_inv,
-                            F::from(2).inverse().unwrap(),
+                            two_inv,
                             self.0.folding_factor.at_round(round_state.round),
                         )
                     },
