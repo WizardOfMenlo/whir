@@ -381,67 +381,81 @@ where
     }
 
     fn compute_folds_full(&self, parsed: &ParsedProof<F>) -> Vec<Vec<F>> {
+        // Start with the domain size and the fold vector
         let mut domain_size = self.params.starting_domain.backing_domain.size();
+        let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
+        let folding_factor = &self.params.folding_factor;
 
-        let mut result = Vec::new();
+        // Helper function to compute the folds for a single round
+        let compute = |answers: &[F],
+                       randomness: &[F],
+                       index: usize,
+                       domain_gen_inv: F,
+                       domain_size: usize,
+                       round_index: usize| {
+            let coset_domain_size = 1 << folding_factor.at_round(round_index);
+            let coset_offset_inv = domain_gen_inv.pow([index as u64]);
+            let coset_generator_inv =
+                domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
+
+            compute_fold(
+                answers,
+                randomness,
+                coset_offset_inv,
+                coset_generator_inv,
+                self.two_inv,
+                folding_factor.at_round(round_index),
+            )
+        };
 
         for (round_index, round) in parsed.rounds.iter().enumerate() {
-            let coset_domain_size = 1 << self.params.folding_factor.at_round(round_index);
-            // This is such that coset_generator^coset_domain_size = F::ONE
-            //let _coset_generator = domain_gen.pow(&[(domain_size / coset_domain_size) as u64]);
-            let coset_generator_inv = round
-                .domain_gen_inv
-                .pow([(domain_size / coset_domain_size) as u64]);
-
-            let evaluations: Vec<_> = round
+            // Compute the folds for this round
+            let evals = round
                 .stir_challenges_indexes
                 .iter()
                 .zip(&round.stir_challenges_answers)
-                .map(|(index, answers)| {
-                    // The coset is w^index * <w_coset_generator>
-                    //let _coset_offset = domain_gen.pow(&[*index as u64]);
-                    let coset_offset_inv = round.domain_gen_inv.pow([*index as u64]);
-
-                    compute_fold(
+                .map(|(&index, answers)| {
+                    compute(
                         answers,
                         &round.folding_randomness.0,
-                        coset_offset_inv,
-                        coset_generator_inv,
-                        self.two_inv,
-                        self.params.folding_factor.at_round(round_index),
+                        index,
+                        round.domain_gen_inv,
+                        domain_size,
+                        round_index,
                     )
                 })
                 .collect();
-            result.push(evaluations);
+            // Push the folds to the result
+            result.push(evals);
+            // Update the domain size
             domain_size /= 2;
         }
 
-        let coset_domain_size = 1 << self.params.folding_factor.at_round(parsed.rounds.len());
-        let domain_gen_inv = parsed.final_domain_gen_inv;
-
         // Final round
-        let coset_generator_inv = domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
-        let evaluations: Vec<_> = parsed
+        let final_round_index = parsed.rounds.len();
+        let final_coset_domain_size = 1 << folding_factor.at_round(final_round_index);
+        let final_coset_generator_inv = parsed
+            .final_domain_gen_inv
+            .pow([(domain_size / final_coset_domain_size) as u64]);
+
+        let final_evals = parsed
             .final_randomness_indexes
             .iter()
             .zip(&parsed.final_randomness_answers)
-            .map(|(index, answers)| {
-                // The coset is w^index * <w_coset_generator>
-                //let _coset_offset = domain_gen.pow(&[*index as u64]);
-                let coset_offset_inv = domain_gen_inv.pow([*index as u64]);
-
+            .map(|(&index, answers)| {
+                let coset_offset_inv = parsed.final_domain_gen_inv.pow([index as u64]);
                 compute_fold(
                     answers,
                     &parsed.final_folding_randomness.0,
                     coset_offset_inv,
-                    coset_generator_inv,
+                    final_coset_generator_inv,
                     self.two_inv,
-                    self.params.folding_factor.at_round(parsed.rounds.len()),
+                    folding_factor.at_round(final_round_index),
                 )
             })
             .collect();
-        result.push(evaluations);
 
+        result.push(final_evals);
         result
     }
 
