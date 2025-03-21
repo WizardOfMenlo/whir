@@ -13,12 +13,13 @@ use super::{
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
+    stir_evaluations::StirEvalContext,
     WhirProof,
 };
 use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     parameters::FoldType,
-    poly_utils::{coeffs::CoefficientList, fold::compute_fold, multilinear::MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
 };
@@ -29,7 +30,6 @@ where
     MerkleConfig: Config,
 {
     params: WhirConfig<F, MerkleConfig, PowStrategy>,
-    two_inv: F,
 }
 
 #[derive(Clone)]
@@ -45,11 +45,8 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
-    pub fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Self {
-            params,
-            two_inv: F::from(2).inverse().unwrap(), // The only inverse in the entire code :)
-        }
+    pub const fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+        Self { params }
     }
 
     fn parse_commitment<Arthur>(
@@ -380,76 +377,46 @@ where
         // Start with the domain size and the fold vector
         let mut domain_size = self.params.starting_domain.backing_domain.size();
         let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
-        let folding_factor = &self.params.folding_factor;
-
-        // Helper function to compute the folds for a single round
-        let compute = |answers: &[F],
-                       randomness: &[F],
-                       index: usize,
-                       domain_gen_inv: F,
-                       domain_size: usize,
-                       round_index: usize| {
-            let coset_domain_size = 1 << folding_factor.at_round(round_index);
-            let coset_offset_inv = domain_gen_inv.pow([index as u64]);
-            let coset_generator_inv =
-                domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
-
-            compute_fold(
-                answers,
-                randomness,
-                coset_offset_inv,
-                coset_generator_inv,
-                self.two_inv,
-                folding_factor.at_round(round_index),
-            )
-        };
 
         for (round_index, round) in parsed.rounds.iter().enumerate() {
             // Compute the folds for this round
-            let evals = round
-                .stir_challenges_indexes
-                .iter()
-                .zip(&round.stir_challenges_answers)
-                .map(|(&index, answers)| {
-                    compute(
-                        answers,
-                        &round.folding_randomness.0,
-                        index,
-                        round.domain_gen_inv,
-                        domain_size,
-                        round_index,
-                    )
-                })
-                .collect();
+            let mut round_evals = Vec::with_capacity(round.stir_challenges_indexes.len());
+            let stir_evals_context = StirEvalContext {
+                domain_size: Some(domain_size),
+                domain_gen_inv: Some(round.domain_gen_inv),
+                folding_randomness: &round.folding_randomness,
+                round: Some(round_index),
+            };
+            stir_evals_context.stir_evaluations_naive(
+                &round.stir_challenges_indexes,
+                &round.stir_challenges_answers,
+                &self.params.folding_factor,
+                &mut round_evals,
+            );
+
             // Push the folds to the result
-            result.push(evals);
+            result.push(round_evals);
             // Update the domain size
             domain_size /= 2;
         }
 
         // Final round
         let final_round_index = parsed.rounds.len();
-        let final_coset_domain_size = 1 << folding_factor.at_round(final_round_index);
-        let final_coset_generator_inv = parsed
-            .final_domain_gen_inv
-            .pow([(domain_size / final_coset_domain_size) as u64]);
+        let mut final_evals = Vec::with_capacity(parsed.final_randomness_indexes.len());
 
-        let final_evals = parsed
-            .final_randomness_indexes
-            .iter()
-            .zip(&parsed.final_randomness_answers)
-            .map(|(&index, answers)| {
-                let coset_offset_inv = parsed.final_domain_gen_inv.pow([index as u64]);
-                compute_fold(
-                    answers,
-                    &parsed.final_folding_randomness.0,
-                    coset_offset_inv,
-                    final_coset_generator_inv,
-                    self.two_inv,
-                    folding_factor.at_round(final_round_index),
-                )
-            })
-            .collect();
+        let stir_evals_context = StirEvalContext {
+            domain_size: Some(domain_size),
+            domain_gen_inv: Some(parsed.final_domain_gen_inv),
+            folding_randomness: &parsed.final_folding_randomness,
+            round: Some(final_round_index),
+        };
+
+        stir_evals_context.stir_evaluations_naive(
+            &parsed.final_randomness_indexes,
+            &parsed.final_randomness_answers,
+            &self.params.folding_factor,
+            &mut final_evals,
+        );
 
         result.push(final_evals);
         result

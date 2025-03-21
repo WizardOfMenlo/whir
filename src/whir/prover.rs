@@ -241,13 +241,21 @@ where
         let mut stir_evaluations = ood_answers;
         self.0.fold_optimisation.stir_evaluations(
             &StirEvalContext {
-                domain: round_state.domain,
+                domain_size: Some(round_state.domain.backing_domain.size()),
+                domain_gen_inv: Some(
+                    round_state
+                        .domain
+                        .backing_domain
+                        .element(1)
+                        .inverse()
+                        .unwrap(),
+                ),
                 folding_randomness: &round_state.folding_randomness,
-                round: round_state.round,
+                round: Some(round_state.round),
             },
             &stir_challenges_indexes,
             &answers,
-            self.0.folding_factor,
+            &self.0.folding_factor,
             &mut stir_evaluations,
         );
         round_state.merkle_proofs.push((merkle_proof, answers));

@@ -93,7 +93,7 @@ impl FoldType {
         context: &StirEvalContext<F>,
         stir_challenges_indexes: &[usize],
         answers: &[Vec<F>],
-        folding_factor: FoldingFactor,
+        folding_factor: &FoldingFactor,
         stir_evaluations: &mut Vec<F>,
     ) where
         F: FftField,

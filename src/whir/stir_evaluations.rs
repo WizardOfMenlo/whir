@@ -1,25 +1,25 @@
 use crate::{
-    domain::Domain,
     parameters::FoldingFactor,
     poly_utils::{coeffs::CoefficientList, fold::compute_fold, multilinear::MultilinearPoint},
 };
 use ark_ff::FftField;
-use ark_poly::EvaluationDomain;
 
 /// Context for evaluating STIR queries during a WHIR proof round.
 ///
 /// This holds all the information needed to compute evaluations
 /// at queried points.
 pub(crate) struct StirEvalContext<'a, F: FftField> {
-    /// The domain before folding.
-    pub(crate) domain: Domain<F>,
+    /// The domain size before folding.
+    pub(crate) domain_size: Option<usize>,
+    /// The domain used for the evaluations.
+    pub(crate) domain_gen_inv: Option<F>,
     /// The folding randomness vector $\vec{r}$.
     pub(crate) folding_randomness: &'a MultilinearPoint<F>,
     /// The current round number `i`, which determines the folding factor.
-    pub(crate) round: usize,
+    pub(crate) round: Option<usize>,
 }
 
-impl<'a, F: FftField> StirEvalContext<'a, F> {
+impl<F: FftField> StirEvalContext<'_, F> {
     /// Computes STIR evaluations using the naive folding strategy.
     ///
     /// This method computes, for each query, the folded value of a multilinear
@@ -38,15 +38,16 @@ impl<'a, F: FftField> StirEvalContext<'a, F> {
         &self,
         stir_challenges_indexes: &[usize],
         answers: &[Vec<F>],
-        folding_factor: FoldingFactor,
+        folding_factor: &FoldingFactor,
         stir_evaluations: &mut Vec<F>,
     ) where
         F: FftField,
     {
-        let domain_size = self.domain.backing_domain.size();
-        let domain_gen = self.domain.backing_domain.element(1);
-        let domain_gen_inv = domain_gen.inverse().unwrap();
-        let coset_domain_size = 1 << folding_factor.at_round(self.round);
+        let round = self.round.unwrap();
+        let domain_size = self.domain_size.unwrap();
+        let domain_gen_inv = self.domain_gen_inv.unwrap();
+
+        let coset_domain_size = 1 << folding_factor.at_round(round);
         let coset_generator_inv = domain_gen_inv.pow([(domain_size / coset_domain_size) as u64]);
         let two_inv = F::from(2).inverse().unwrap();
 
@@ -60,7 +61,7 @@ impl<'a, F: FftField> StirEvalContext<'a, F> {
                     coset_offset_inv,
                     coset_generator_inv,
                     two_inv,
-                    folding_factor.at_round(self.round),
+                    folding_factor.at_round(round),
                 )
             },
         ));
@@ -81,7 +82,7 @@ impl<'a, F: FftField> StirEvalContext<'a, F> {
         stir_evaluations: &mut Vec<F>,
     ) {
         stir_evaluations.extend(answers.iter().map(|answers| {
-            CoefficientList::new(answers.clone()).evaluate(&self.folding_randomness)
+            CoefficientList::new(answers.clone()).evaluate(self.folding_randomness)
         }));
     }
 }
