@@ -85,7 +85,7 @@ pub fn compute_fold<F: Field>(
 /// 3. Scale correction:
 ///    Each output is multiplied by:
 ///
-///    ```
+///    ```ignore
 ///    size_inv * (domain_gen_inv^i)^j
 ///    ```
 ///
