@@ -4,6 +4,7 @@ use super::{
     statement::{Statement, Weights},
     WhirProof,
 };
+use crate::whir::parameters::RoundConfig;
 use crate::{
     domain::Domain,
     ntt::expand_from_coeff,
@@ -206,27 +207,14 @@ where
                 folded_coefficients.evaluate(point)
             })?;
 
-        // STIR queries
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            round_state.domain.size(), // Current domain size *before* folding
-            self.0.folding_factor.at_round(round_state.round), // Current fold factor
-            round_params.num_queries,
+        // STIR Queries
+        let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
             merlin,
+            &round_state,
+            num_variables,
+            round_params,
+            ood_points,
         )?;
-        // Compute the generator of the folded domain, in the extension field
-        let domain_scaled_gen = round_state
-            .domain
-            .backing_domain
-            .element(1 << self.0.folding_factor.at_round(round_state.round));
-        let stir_challenges: Vec<_> = ood_points
-            .into_iter()
-            .chain(
-                stir_challenges_indexes
-                    .iter()
-                    .map(|i| domain_scaled_gen.pow([*i as u64])),
-            )
-            .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
-            .collect();
 
         let merkle_proof = round_state
             .prev_merkle
@@ -394,6 +382,42 @@ where
             merkle_paths: round_state.merkle_proofs,
             statement_values_at_random_point,
         })
+    }
+
+    fn compute_stir_queries<Merlin>(
+        &self,
+        merlin: &mut Merlin,
+        round_state: &RoundState<F, MerkleConfig>,
+        num_variables: usize,
+        round_params: &RoundConfig,
+        ood_points: Vec<F>,
+    ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
+    where
+        Merlin: ByteChallenges,
+    {
+        let stir_challenges_indexes = get_challenge_stir_queries(
+            round_state.domain.size(),
+            self.0.folding_factor.at_round(round_state.round),
+            round_params.num_queries,
+            merlin,
+        )?;
+
+        // Compute the generator of the folded domain, in the extension field
+        let domain_scaled_gen = round_state
+            .domain
+            .backing_domain
+            .element(1 << self.0.folding_factor.at_round(round_state.round));
+        let stir_challenges = ood_points
+            .into_iter()
+            .chain(
+                stir_challenges_indexes
+                    .iter()
+                    .map(|i| domain_scaled_gen.pow([*i as u64])),
+            )
+            .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
+            .collect();
+
+        Ok((stir_challenges, stir_challenges_indexes))
     }
 }
 
