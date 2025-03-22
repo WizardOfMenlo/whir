@@ -360,7 +360,7 @@ where
                 .unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 })
-                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                .compute_sumcheck_polynomials::<PowStrategy, _>(
                     merlin,
                     self.0.final_sumcheck_rounds,
                     self.0.final_folding_pow_bits,
