@@ -271,8 +271,7 @@ where
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                let mut statement: Statement<F> =
-                    Statement::<F>::new(folded_coefficients.num_variables());
+                let mut statement = Statement::new(folded_coefficients.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
                     let weights = Weights::evaluation(point.clone());
@@ -285,12 +284,11 @@ where
                 )
             });
 
-        let folding_randomness = sumcheck_prover
-            .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
-                merlin,
-                self.0.folding_factor.at_round(round_state.round + 1),
-                round_params.folding_pow_bits,
-            )?;
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
+            merlin,
+            self.0.folding_factor.at_round(round_state.round + 1),
+            round_params.folding_pow_bits,
+        )?;
 
         let start_idx = self.0.folding_factor.total_number(round_state.round);
         let mut arr = folding_randomness.clone().0;
