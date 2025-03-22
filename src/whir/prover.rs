@@ -372,7 +372,7 @@ where
                 .copy_from_slice(&arr);
         }
 
-        let mut randomness_vec_rev = round_state.randomness_vec.clone();
+        let mut randomness_vec_rev = round_state.randomness_vec;
         randomness_vec_rev.reverse();
 
         let statement_values_at_random_point = round_state
