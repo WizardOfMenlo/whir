@@ -1,3 +1,4 @@
+use super::stir_evaluations::StirEvalContext;
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
@@ -35,30 +36,27 @@ pub(crate) struct ParsedProof<F> {
 
 impl<F: FftField> ParsedProof<F> {
     pub fn compute_folds_helped(&self) -> Vec<Vec<F>> {
-        let mut result: Vec<_> = self
-            .rounds
-            .iter()
-            .map(|round| {
-                round
-                    .stir_challenges_answers
-                    .iter()
-                    .map(|answers| {
-                        CoefficientList::new(answers.clone()).evaluate(&round.folding_randomness)
-                    })
-                    .collect()
-            })
-            .collect();
+        let mut result = Vec::with_capacity(self.rounds.len() + 1);
+
+        for round in &self.rounds {
+            let mut evals = Vec::with_capacity(round.stir_challenges_answers.len());
+
+            let stir_evals_context = StirEvalContext::ProverHelps {
+                folding_randomness: &round.folding_randomness,
+            };
+
+            stir_evals_context.evaluate(&round.stir_challenges_answers, &mut evals);
+            result.push(evals);
+        }
 
         // Add final round
-        result.push(
-            self.final_randomness_answers
-                .iter()
-                .map(|answers| {
-                    CoefficientList::new(answers.clone()).evaluate(&self.final_folding_randomness)
-                })
-                .collect(),
-        );
+        let mut final_evals = Vec::with_capacity(self.final_randomness_answers.len());
 
+        let stir_evals_context = StirEvalContext::ProverHelps {
+            folding_randomness: &self.final_folding_randomness,
+        };
+        stir_evals_context.evaluate(&self.final_randomness_answers, &mut final_evals);
+        result.push(final_evals);
         result
     }
 }
