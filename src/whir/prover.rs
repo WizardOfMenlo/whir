@@ -100,7 +100,7 @@ where
                 combination_randomness_gen,
             );
 
-            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, _>(
                 merlin,
                 self.0.folding_factor.at_round(0),
                 self.0.starting_folding_pow_bits,
@@ -120,10 +120,9 @@ where
             }
             MultilinearPoint(folding_randomness)
         };
-        let mut randomness_vec = vec![F::ZERO; self.0.mv_parameters.num_variables];
-        let mut arr = folding_randomness.clone().0;
-        arr.reverse();
-        randomness_vec[..folding_randomness.0.len()].copy_from_slice(&arr);
+        let mut randomness_vec = Vec::with_capacity(self.0.mv_parameters.num_variables);
+        randomness_vec.extend(folding_randomness.0.iter().rev().copied());
+        randomness_vec.resize(self.0.mv_parameters.num_variables, F::ZERO);
 
         let round_state = RoundState {
             domain: self.0.starting_domain.clone(),
