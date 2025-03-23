@@ -92,23 +92,22 @@ where
             // If there is initial statement, then we run the sum-check for
             // this initial statement.
             let [combination_randomness_gen] = merlin.challenge_scalars()?;
-            sumcheck_prover = {
-                let sumcheck = SumcheckSingle::new(
-                    witness.polynomial.clone(),
-                    &statement,
-                    combination_randomness_gen,
-                );
-                Some(sumcheck)
-            };
 
-            sumcheck_prover
-                .as_mut()
-                .unwrap()
-                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
-                    merlin,
-                    self.0.folding_factor.at_round(0),
-                    self.0.starting_folding_pow_bits,
-                )?
+            // Create the sumcheck prover
+            let mut sumcheck = SumcheckSingle::new(
+                witness.polynomial.clone(),
+                &statement,
+                combination_randomness_gen,
+            );
+
+            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, Merlin>(
+                merlin,
+                self.0.folding_factor.at_round(0),
+                self.0.starting_folding_pow_bits,
+            )?;
+
+            sumcheck_prover = Some(sumcheck);
+            folding_randomness
         } else {
             // If there is no initial statement, there is no need to run the
             // initial rounds of the sum-check, and the verifier directly sends
