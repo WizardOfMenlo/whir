@@ -82,11 +82,11 @@ where
         Arthur: FieldReader<F> + PoWChallenge + ByteChallenges + DigestReader<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
-        let mut folding_randomness: MultilinearPoint<F>;
+        let mut folding_randomness;
         let initial_combination_randomness;
         if self.params.initial_statement {
             // Derive combination randomness and first sumcheck polynomial
-            let [combination_randomness_gen]: [F; 1] = arthur.challenge_scalars()?;
+            let [combination_randomness_gen] = arthur.challenge_scalars()?;
             initial_combination_randomness = expand_randomness(
                 combination_randomness_gen,
                 parsed_commitment.ood_points.len() + statement_points_len,
@@ -95,7 +95,7 @@ where
             // Initial sumcheck
             sumcheck_rounds.reserve_exact(self.params.folding_factor.at_round(0));
             for _ in 0..self.params.folding_factor.at_round(0) {
-                let sumcheck_poly_evals: [F; 3] = arthur.next_scalars()?;
+                let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 let [folding_randomness_single] = arthur.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
@@ -252,7 +252,7 @@ where
 
         let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
         for _ in 0..self.params.final_sumcheck_rounds {
-            let sumcheck_poly_evals: [F; 3] = arthur.next_scalars()?;
+            let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
             let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
             let [folding_randomness_single] = arthur.challenge_scalars()?;
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
