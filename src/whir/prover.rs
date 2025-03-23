@@ -167,6 +167,10 @@ where
 
         let round_params = &self.0.round_parameters[round_state.round];
 
+        // Compute the folding factors for later use
+        let folding_factor = self.0.folding_factor.at_round(round_state.round);
+        let folding_factor_next = self.0.folding_factor.at_round(round_state.round + 1);
+
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
@@ -176,15 +180,13 @@ where
             self.0.fold_optimisation,
             new_domain.backing_domain.group_gen(),
             new_domain.backing_domain.group_gen_inv(),
-            self.0.folding_factor.at_round(round_state.round + 1),
+            folding_factor_next,
         );
 
         #[cfg(not(feature = "parallel"))]
-        let leafs_iter =
-            evals.chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
+        let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
-        let leafs_iter =
-            evals.par_chunks_exact(1 << self.0.folding_factor.at_round(round_state.round + 1));
+        let leafs_iter = evals.par_chunks_exact(1 << folding_factor_next);
         let merkle_tree = MerkleTree::new(
             &self.0.leaf_hash_params,
             &self.0.two_to_one_params,
@@ -214,7 +216,7 @@ where
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
-        let fold_size = 1 << self.0.folding_factor.at_round(round_state.round);
+        let fold_size = 1 << folding_factor;
         let answers: Vec<_> = stir_challenges_indexes
             .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
@@ -268,7 +270,7 @@ where
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
             merlin,
-            self.0.folding_factor.at_round(round_state.round + 1),
+            folding_factor_next,
             round_params.folding_pow_bits,
         )?;
 
@@ -307,13 +309,16 @@ where
         // Directly send coefficients of the polynomial to the verifier.
         merlin.add_scalars(folded_coefficients.coeffs())?;
 
+        // Precompute the folding factors for later use
+        let folding_factor = self.0.folding_factor.at_round(round_state.round);
+
         // Final verifier queries and answers. The indices are over the
         // *folded* domain.
         let final_challenge_indexes = get_challenge_stir_queries(
             // The size of the *original* domain before folding
             round_state.domain.size(),
             // The folding factor we used to fold the previous polynomial
-            self.0.folding_factor.at_round(round_state.round),
+            folding_factor,
             self.0.final_queries,
             merlin,
         )?;
@@ -323,7 +328,7 @@ where
             .generate_multi_proof(final_challenge_indexes.clone())
             .unwrap();
         // Every query requires opening these many in the previous Merkle tree
-        let fold_size = 1 << self.0.folding_factor.at_round(round_state.round);
+        let fold_size = 1 << folding_factor;
         let answers = final_challenge_indexes
             .into_iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
