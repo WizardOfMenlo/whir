@@ -181,7 +181,7 @@ where
             let mut sumcheck_rounds =
                 Vec::with_capacity(self.params.folding_factor.at_round(r + 1));
             for _ in 0..self.params.folding_factor.at_round(r + 1) {
-                let sumcheck_poly_evals: [F; 3] = arthur.next_scalars()?;
+                let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 let [folding_randomness_single] = arthur.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
@@ -208,7 +208,7 @@ where
 
             folding_randomness = new_folding_randomness;
 
-            prev_root = new_root.clone();
+            prev_root = new_root;
             domain_gen = domain_gen * domain_gen;
             exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(r + 1)]);
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
