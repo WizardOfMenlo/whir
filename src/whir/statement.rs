@@ -1,5 +1,3 @@
-use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
-use ark_ff::Field;
 use std::fmt::Debug;
 
 use ark_ff::Field;
