@@ -1,13 +1,15 @@
-use crate::whir::parameters::WhirConfig;
-use crate::whir::{
-    parsed_proof::ParsedProof, prover::RoundState, stir_evaluations::StirEvalContext,
-};
+use std::{fmt::Display, marker::PhantomData, str::FromStr};
+
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use serde::Serialize;
-use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use thiserror::Error;
+
+use crate::whir::{
+    parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
+    stir_evaluations::StirEvalContext,
+};
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///

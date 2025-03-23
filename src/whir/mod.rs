@@ -39,19 +39,22 @@ mod tests {
     use nimue::IOPattern;
     use nimue_pow::blake3::Blake3PoW;
 
-    use crate::crypto::fields::Field64;
-    use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{
-        FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
-    };
-    use crate::poly_utils::coeffs::CoefficientList;
-    use crate::poly_utils::evals::EvaluationsList;
-    use crate::poly_utils::multilinear::MultilinearPoint;
-    use crate::whir::statement::{Statement, StatementVerifier, Weights};
-
-    use crate::whir::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier,
+    use crate::{
+        crypto::{fields::Field64, merkle_tree::blake3 as merkle_tree},
+        parameters::{
+            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+        },
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
+        whir::{
+            committer::Committer,
+            iopattern::WhirIOPattern,
+            parameters::WhirConfig,
+            prover::Prover,
+            statement::{Statement, StatementVerifier, Weights},
+            verifier::Verifier,
+        },
     };
 
     type MerkleConfig = merkle_tree::MerkleTreeParams<F>;

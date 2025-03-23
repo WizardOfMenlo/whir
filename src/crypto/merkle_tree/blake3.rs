@@ -1,8 +1,5 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-use super::{HashCounter, IdentityDigestConverter};
-use crate::whir::fs_utils::{DigestReader, DigestWriter};
-use crate::whir::iopattern::DigestIOPattern;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
@@ -14,6 +11,12 @@ use nimue::{
     Arthur, ByteIOPattern, ByteReader, ByteWriter, IOPattern, Merlin, ProofError, ProofResult,
 };
 use rand::RngCore;
+
+use super::{HashCounter, IdentityDigestConverter};
+use crate::whir::{
+    fs_utils::{DigestReader, DigestWriter},
+    iopattern::DigestIOPattern,
+};
 
 #[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,

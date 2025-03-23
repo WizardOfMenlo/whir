@@ -128,12 +128,13 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::{
         crypto::fields::Field64,
         poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
-    use ark_ff::AdditiveGroup;
 
     type F = Field64;
 

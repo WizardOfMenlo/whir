@@ -1,12 +1,14 @@
+use core::panic;
+use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
+
+use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
+use ark_ff::FftField;
+
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
     parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
 };
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
-use ark_ff::FftField;
-use core::panic;
-use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
 
 #[derive(Clone)]
 pub struct WhirConfig<F, MerkleConfig, PowStrategy>
@@ -619,12 +621,13 @@ impl Display for RoundConfig {
 
 #[cfg(test)]
 mod tests {
+    use ark_std::test_rng;
+
     use super::*;
     use crate::crypto::{
         fields::Field64,
         merkle_tree::keccak::{default_config, MerkleTreeParams},
     };
-    use ark_std::test_rng;
 
     /// Generates default WHIR parameters
     fn default_whir_params<F: FftField>() -> WhirParameters<MerkleTreeParams<F>, u8> {

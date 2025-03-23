@@ -60,9 +60,10 @@ impl<F: Field> WhirDensePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Zero};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::{AdditiveGroup, Zero};
 
     #[test]
     fn test_zero_polynomial() {

@@ -1,5 +1,6 @@
-use crate::poly_utils::multilinear::MultilinearPoint;
 use ark_ff::Field;
+
+use crate::poly_utils::multilinear::MultilinearPoint;
 
 /// Represents a polynomial stored in evaluation form over a ternary domain {0,1,2}^n.
 ///
@@ -121,9 +122,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_binary_to_ternary_index() {

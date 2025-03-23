@@ -183,9 +183,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::Field;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::Field;
 
     #[test]
     fn test_domain_creation_valid() {

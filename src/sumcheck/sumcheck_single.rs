@@ -1,19 +1,18 @@
-use super::SumcheckPolynomial;
-use crate::{
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    utils::eval_eq,
-    whir::statement::Statement,
-};
-
 use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
     ProofResult,
 };
 use nimue_pow::{PoWChallenge, PowStrategy};
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::SumcheckPolynomial;
+use crate::{
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
+    utils::eval_eq,
+    whir::statement::Statement,
+};
 
 /// Implements the single-round sumcheck protocol for verifying a multilinear polynomial evaluation.
 ///
@@ -275,14 +274,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
-    use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
     use crate::{
         crypto::fields::Field64 as F,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        poly_utils::{
+            coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
+            multilinear::MultilinearPoint,
+        },
         whir::statement::Weights,
     };
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_sumcheck_folding_factor_1() {
