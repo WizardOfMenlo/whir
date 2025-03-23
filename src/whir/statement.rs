@@ -2,8 +2,11 @@ use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
 use std::fmt::Debug;
 
+use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 
 /// Represents a weight function used in polynomial evaluations.
 ///
@@ -388,10 +391,10 @@ impl<F: Field> StatementVerifier<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::crypto::fields::Field64;
-    use crate::utils::eval_eq;
     use ark_ff::AdditiveGroup;
+
+    use super::*;
+    use crate::{crypto::fields::Field64, utils::eval_eq};
 
     #[test]
     fn test_weights_evaluation() {

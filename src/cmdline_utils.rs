@@ -1,5 +1,6 @@
-use serde::Serialize;
 use std::str::FromStr;
+
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum WhirType {

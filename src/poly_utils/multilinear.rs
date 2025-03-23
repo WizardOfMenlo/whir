@@ -1,7 +1,7 @@
-use super::hypercube::BinaryHypercubePoint;
 use ark_ff::Field;
-use rand::Rng;
-use rand::{distributions::Standard, prelude::Distribution, RngCore};
+use rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
+
+use super::hypercube::BinaryHypercubePoint;
 
 /// A point `(x_1, ..., x_n)` in `F^n` for some field `F`.
 ///
@@ -191,9 +191,8 @@ impl<F> From<F> for MultilinearPoint<F> {
 mod tests {
     use ark_ff::AdditiveGroup;
 
-    use crate::crypto::fields::Field64;
-
     use super::*;
+    use crate::crypto::fields::Field64;
 
     #[test]
     fn test_n_variables() {

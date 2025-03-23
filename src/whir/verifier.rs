@@ -15,11 +15,11 @@ use super::{
     statement::{StatementVerifier, VerifierWeights},
     WhirProof,
 };
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
+    whir::fs_utils::{get_challenge_stir_queries, DigestReader},
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>

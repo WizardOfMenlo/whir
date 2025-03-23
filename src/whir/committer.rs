@@ -1,10 +1,3 @@
-use super::parameters::WhirConfig;
-use super::utils::sample_ood_points;
-use crate::whir::fs_utils::DigestWriter;
-use crate::{
-    ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -14,6 +7,13 @@ use nimue::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::{parameters::WhirConfig, utils::sample_ood_points};
+use crate::{
+    ntt::expand_from_coeff,
+    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
+    whir::fs_utils::DigestWriter,
+};
 
 /// Represents the commitment and evaluation data for a polynomial.
 ///
@@ -140,17 +140,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::crypto::fields::Field64;
-    use crate::crypto::merkle_tree::keccak;
-    use crate::parameters::{
-        FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
-    };
-    use crate::poly_utils::multilinear::MultilinearPoint;
-    use crate::whir::iopattern::WhirIOPattern;
     use ark_ff::UniformRand;
     use nimue::IOPattern;
     use nimue_pow::blake3::Blake3PoW;
+
+    use super::*;
+    use crate::{
+        crypto::{fields::Field64, merkle_tree::keccak},
+        parameters::{
+            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+        },
+        poly_utils::multilinear::MultilinearPoint,
+        whir::iopattern::WhirIOPattern,
+    };
 
     #[test]
     fn test_basic_commitment() {

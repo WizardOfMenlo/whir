@@ -101,6 +101,8 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Field};
+
     use super::*;
     use crate::{
         crypto::fields::Field64,
@@ -108,8 +110,6 @@ mod tests {
             lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },
     };
-    use ark_ff::AdditiveGroup;
-    use ark_ff::Field;
 
     #[test]
     fn test_base_decomposition_binary() {

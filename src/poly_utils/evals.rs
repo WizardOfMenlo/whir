@@ -1,6 +1,8 @@
-use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use ark_ff::Field;
 use std::ops::Index;
+
+use ark_ff::Field;
+
+use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -170,9 +172,10 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
 #[cfg(test)]
 #[allow(clippy::should_panic_without_expect)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::{crypto::fields::Field64, poly_utils::hypercube::BinaryHypercube};
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_new_evaluations_list() {

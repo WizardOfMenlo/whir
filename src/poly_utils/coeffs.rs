@@ -1,12 +1,12 @@
-use super::dense::WhirDensePolynomial;
-use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint};
-use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use {
     rayon::{join, prelude::*},
     std::mem::size_of,
 };
+
+use super::{dense::WhirDensePolynomial, evals::EvaluationsList, hypercube::BinaryHypercubePoint};
+use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -294,9 +294,10 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::{Field64, Field64_2};
-    use ark_ff::AdditiveGroup;
 
     type F = Field64;
     type E = Field64_2;

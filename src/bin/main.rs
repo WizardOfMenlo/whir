@@ -4,10 +4,11 @@ use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
 };
-use ark_ff::FftField;
-use ark_ff::Field;
+use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
+use clap::Parser;
 use nimue::{Arthur, IOPattern, Merlin};
+use nimue_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -19,14 +20,12 @@ use whir::{
         WhirParameters,
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, Weights},
+    whir::{
+        fs_utils::{DigestReader, DigestWriter},
+        iopattern::DigestIOPattern,
+        statement::{Statement, StatementVerifier, Weights},
+    },
 };
-
-use nimue_pow::blake3::Blake3PoW;
-
-use clap::Parser;
-use whir::whir::fs_utils::{DigestReader, DigestWriter};
-use whir::whir::iopattern::DigestIOPattern;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

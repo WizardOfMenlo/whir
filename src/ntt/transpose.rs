@@ -1,5 +1,6 @@
-use super::{utils::workload_size, MatrixMut};
 use std::mem::swap;
+
+use super::{utils::workload_size, MatrixMut};
 
 // NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
 // (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).
@@ -183,9 +184,9 @@ fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: Matrix
 
 #[cfg(test)]
 mod tests {
-    use super::super::utils::workload_size;
-    use super::*;
     use proptest::prelude::*;
+
+    use super::{super::utils::workload_size, *};
 
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
