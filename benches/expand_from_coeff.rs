@@ -12,7 +12,7 @@ fn bench_expand_from_coeff(c: &mut Criterion) {
         let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
 
         c.bench_function(&format!("expand_from_coeff size=2^{exp} exp={expansion}"), |b| {
-            b.iter(|| expand_from_coeff(black_box(&coeffs), black_box(expansion)))
+            b.iter(|| expand_from_coeff(black_box(&coeffs), black_box(expansion)));
         });
     }
 }
