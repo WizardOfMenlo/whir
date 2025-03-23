@@ -1,9 +1,10 @@
-use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
-use ark_ff::Field;
 use std::{fmt::Debug, ops::Index};
 
+use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 
 /// Represents a weight function used in polynomial evaluations.
 ///
@@ -80,22 +81,14 @@ impl<F: Field> Weights<F> {
             }
             Self::Linear { weight } => {
                 #[cfg(feature = "parallel")]
-                accumulator
-                    .evals_mut()
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
+                accumulator.evals_mut().par_iter_mut().enumerate().for_each(|(corner, acc)| {
+                    *acc += factor * weight.index(corner);
+                });
 
                 #[cfg(not(feature = "parallel"))]
-                accumulator
-                    .evals_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
+                accumulator.evals_mut().iter_mut().enumerate().for_each(|(corner, acc)| {
+                    *acc += factor * weight.index(corner);
+                });
             }
         }
     }
@@ -118,11 +111,7 @@ impl<F: Field> Weights<F> {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 #[cfg(not(feature = "parallel"))]
                 {
-                    poly.evals()
-                        .iter()
-                        .zip(weight.evals().iter())
-                        .map(|(p, w)| *p * *w)
-                        .sum()
+                    poly.evals().iter().zip(weight.evals().iter()).map(|(p, w)| *p * *w).sum()
                 }
                 #[cfg(feature = "parallel")]
                 {
@@ -168,10 +157,7 @@ pub struct Statement<F> {
 impl<F: Field> Statement<F> {
     /// Creates an empty `Statement<F>` for polynomials with `num_variables` variables.
     pub const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            constraints: Vec::new(),
-        }
+        Self { num_variables, constraints: Vec::new() }
     }
 
     /// Returns the number of variables defining the polynomial space.
@@ -252,10 +238,7 @@ pub enum VerifierWeights<F> {
     Evaluation { point: MultilinearPoint<F> },
     /// Linear weight representation over `num_variables` variables.
     /// May store a precomputed term for efficiency.
-    Linear {
-        num_variables: usize,
-        term: Option<F>,
-    },
+    Linear { num_variables: usize, term: Option<F> },
 }
 
 impl<F: Field> VerifierWeights<F> {
@@ -269,10 +252,7 @@ impl<F: Field> VerifierWeights<F> {
     /// - `num_variables`: The number of variables in the polynomial space.
     /// - `term`: An optional precomputed term for efficiency.
     pub const fn linear(num_variables: usize, term: Option<F>) -> Self {
-        Self::Linear {
-            num_variables,
-            term,
-        }
+        Self::Linear { num_variables, term }
     }
 
     /// Returns the number of variables in the weight.
@@ -340,10 +320,7 @@ pub struct StatementVerifier<F> {
 impl<F: Field> StatementVerifier<F> {
     /// Creates a new statement verifier for a given number of variables.
     const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            constraints: Vec::new(),
-        }
+        Self { num_variables, constraints: Vec::new() }
     }
 
     /// Returns the number of variables in the statement.
@@ -398,10 +375,10 @@ impl<F: Field> StatementVerifier<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::crypto::fields::Field64;
-    use crate::utils::eval_eq;
     use ark_ff::AdditiveGroup;
+
+    use super::*;
+    use crate::{crypto::fields::Field64, utils::eval_eq};
 
     #[test]
     fn test_weights_evaluation() {

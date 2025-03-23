@@ -1,18 +1,19 @@
+use ark_ff::FftField;
+
 use crate::{
     parameters::FoldingFactor,
     poly_utils::{coeffs::CoefficientList, fold::compute_fold, multilinear::MultilinearPoint},
 };
-use ark_ff::FftField;
 
 /// Unified context for evaluating STIR queries during a WHIR proof round.
 ///
 /// This enum captures the two strategies used in STIR evaluation:
 ///
-/// - `Naive`: In this mode, the verifier evaluates the folded polynomial using
-///   the original oracle evaluations over a coset of the domain.
+/// - `Naive`: In this mode, the verifier evaluates the folded polynomial using the original oracle
+///   evaluations over a coset of the domain.
 ///
-/// - `ProverHelps`: In this mode, the prover provides coefficients directly,
-///   and evaluation reduces to computing `f(𝑟)` via multilinear interpolation.
+/// - `ProverHelps`: In this mode, the prover provides coefficients directly, and evaluation reduces
+///   to computing `f(𝑟)` via multilinear interpolation.
 ///
 /// These modes are unified in this enum to simplify dispatch and centralize logic.
 pub(crate) enum StirEvalContext<'a, F: FftField> {
@@ -70,7 +71,8 @@ impl<F: FftField> StirEvalContext<'_, F> {
     ///
     /// # Arguments
     ///
-    /// - `answers`: Oracle values — either raw evaluations (naive) or preprocessed coefficients (prover helps).
+    /// - `answers`: Oracle values — either raw evaluations (naive) or preprocessed coefficients
+    ///   (prover helps).
     /// - `stir_evaluations`: Output vector where the results will be appended.
     pub(crate) fn evaluate(&self, answers: &[Vec<F>], stir_evaluations: &mut Vec<F>) {
         match self {
@@ -122,9 +124,10 @@ impl<F: FftField> StirEvalContext<'_, F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Field};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::{AdditiveGroup, Field};
 
     #[test]
     fn test_stir_eval_prover_helps_basic() {
@@ -152,9 +155,7 @@ mod tests {
 
         let mut evals = Vec::new();
 
-        let context = StirEvalContext::ProverHelps {
-            folding_randomness: &r,
-        };
+        let context = StirEvalContext::ProverHelps { folding_randomness: &r };
         context.evaluate(&[coeffs], &mut evals);
 
         assert_eq!(evals, vec![expected]);
@@ -173,9 +174,7 @@ mod tests {
         let expected = c0 + c1 * r0;
 
         let mut evals = Vec::new();
-        let context = StirEvalContext::ProverHelps {
-            folding_randomness: &r,
-        };
+        let context = StirEvalContext::ProverHelps { folding_randomness: &r };
         context.evaluate(&[coeffs], &mut evals);
 
         assert_eq!(evals, vec![expected]);
@@ -185,16 +184,10 @@ mod tests {
     fn test_stir_eval_prover_helps_zero_polynomial() {
         // Zero polynomial of any degree should evaluate to zero at any point
         let coeffs = vec![Field64::ZERO; 8];
-        let r = MultilinearPoint(vec![
-            Field64::from(10),
-            Field64::from(20),
-            Field64::from(30),
-        ]);
+        let r = MultilinearPoint(vec![Field64::from(10), Field64::from(20), Field64::from(30)]);
 
         let mut evals = Vec::new();
-        let context = StirEvalContext::ProverHelps {
-            folding_randomness: &r,
-        };
+        let context = StirEvalContext::ProverHelps { folding_randomness: &r };
         context.evaluate(&[coeffs], &mut evals);
 
         assert_eq!(evals, vec![Field64::ZERO]);
@@ -209,9 +202,7 @@ mod tests {
         let r = MultilinearPoint(vec![Field64::from(7)]); // Evaluate at x = 7
 
         let mut evals = Vec::new();
-        let context = StirEvalContext::ProverHelps {
-            folding_randomness: &r,
-        };
+        let context = StirEvalContext::ProverHelps { folding_randomness: &r };
         context.evaluate(&[coeffs1, coeffs2], &mut evals);
 
         // f1(7) = 1, f2(7) = 7

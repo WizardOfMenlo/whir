@@ -1,10 +1,3 @@
-use super::parameters::WhirConfig;
-use super::utils::sample_ood_points;
-use crate::whir::fs_utils::DigestWriter;
-use crate::{
-    ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -14,6 +7,13 @@ use nimue::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::{parameters::WhirConfig, utils::sample_ood_points};
+use crate::{
+    ntt::expand_from_coeff,
+    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
+    whir::fs_utils::DigestWriter,
+};
 
 /// Represents the commitment and evaluation data for a polynomial.
 ///
@@ -93,10 +93,7 @@ where
         // This is not necessary for the commit, but in further rounds
         // we will need the extension field. For symplicity we do it here too.
         // TODO: Commit to base field directly.
-        let folded_evals = evals
-            .into_iter()
-            .map(F::from_base_prime_field)
-            .collect::<Vec<_>>();
+        let folded_evals = evals.into_iter().map(F::from_base_prime_field).collect::<Vec<_>>();
 
         // Determine leaf size based on folding factor.
         let fold_size = 1 << self.0.folding_factor.at_round(0);
@@ -140,17 +137,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::crypto::fields::Field64;
-    use crate::crypto::merkle_tree::keccak;
-    use crate::parameters::{
-        FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
-    };
-    use crate::poly_utils::multilinear::MultilinearPoint;
-    use crate::whir::iopattern::WhirIOPattern;
     use ark_ff::UniformRand;
     use nimue::IOPattern;
     use nimue_pow::blake3::Blake3PoW;
+
+    use super::*;
+    use crate::{
+        crypto::{fields::Field64, merkle_tree::keccak},
+        parameters::{
+            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+        },
+        poly_utils::multilinear::MultilinearPoint,
+        whir::iopattern::WhirIOPattern,
+    };
 
     #[test]
     fn test_basic_commitment() {
@@ -195,9 +194,7 @@ mod tests {
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
         // Set up the IOPattern and initialize a Merlin transcript.
-        let io = IOPattern::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
+        let io = IOPattern::new("🌪️").commit_statement(&params).add_whir_proof(&params);
         let mut merlin = io.to_merlin();
 
         // Run the Commitment Phase
@@ -205,16 +202,10 @@ mod tests {
         let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
-        assert!(
-            !witness.merkle_leaves.is_empty(),
-            "Merkle leaves should not be empty"
-        );
+        assert!(!witness.merkle_leaves.is_empty(), "Merkle leaves should not be empty");
 
         // Ensure OOD (out-of-domain) points are generated.
-        assert!(
-            !witness.ood_points.is_empty(),
-            "OOD points should be generated"
-        );
+        assert!(!witness.ood_points.is_empty(), "OOD points should be generated");
 
         // Validate the number of generated OOD points.
         assert_eq!(
@@ -225,11 +216,7 @@ mod tests {
 
         // Check that the Merkle tree root is valid
         let root = witness.merkle_tree.root();
-        assert_ne!(
-            root.as_ref(),
-            &[0u8; 32],
-            "Merkle tree root should not be zero"
-        );
+        assert_ne!(root.as_ref(), &[0u8; 32], "Merkle tree root should not be zero");
 
         // Ensure polynomial data is correctly stored
         assert_eq!(

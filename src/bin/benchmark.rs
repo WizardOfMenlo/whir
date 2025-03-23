@@ -1,5 +1,6 @@
 use std::{
     fs::OpenOptions,
+    io::Write,
     time::{Duration, Instant},
 };
 
@@ -9,9 +10,10 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
+use clap::Parser;
 use nimue::{Arthur, IOPattern, Merlin};
 use nimue_pow::blake3::Blake3PoW;
-use std::io::Write;
+use serde::Serialize;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{
@@ -23,13 +25,12 @@ use whir::{
         WhirParameters,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, Weights},
+    whir::{
+        fs_utils::{DigestReader, DigestWriter},
+        iopattern::DigestIOPattern,
+        statement::{Statement, StatementVerifier, Weights},
+    },
 };
-
-use clap::Parser;
-use serde::Serialize;
-use whir::whir::fs_utils::{DigestReader, DigestWriter};
-use whir::whir::iopattern::DigestIOPattern;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -256,11 +257,8 @@ fn run_whir<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
     };
 
-    let polynomial = CoefficientList::new(
-        (0..num_coeffs)
-            .map(<F as Field>::BasePrimeField::from)
-            .collect(),
-    );
+    let polynomial =
+        CoefficientList::new((0..num_coeffs).map(<F as Field>::BasePrimeField::from).collect());
 
     let (
         whir_ldt_prover_time,
@@ -284,9 +282,7 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
+        let io = IOPattern::new("🌪️").commit_statement(&params).add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 
@@ -315,9 +311,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier
-                .verify(&mut arthur, &statement_verifier, &proof)
-                .unwrap();
+            verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -350,9 +344,7 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
+        let io = IOPattern::new("🌪️").commit_statement(&params).add_whir_proof(&params);
 
         let mut merlin = io.to_merlin();
 
@@ -378,9 +370,7 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
-        let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
-            .unwrap();
+        let proof = prover.prove(&mut merlin, statement.clone(), witness).unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
         let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
@@ -393,9 +383,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut arthur = io.to_arthur(merlin.transcript());
-            verifier
-                .verify(&mut arthur, &statement_verifier, &proof)
-                .unwrap();
+            verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();
@@ -437,10 +425,7 @@ fn run_whir<F, MerkleConfig>(
         whir_ldt_verifier_hashes,
     };
 
-    let mut out_file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open("outputs/bench_output.json")
-        .unwrap();
+    let mut out_file =
+        OpenOptions::new().append(true).create(true).open("outputs/bench_output.json").unwrap();
     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
 }

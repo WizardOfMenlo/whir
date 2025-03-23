@@ -2,12 +2,11 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use nimue::plugins::ark::{ByteIOPattern, FieldIOPattern};
 
+use super::parameters::WhirConfig;
 use crate::{
     fs_utils::{OODIOPattern, WhirPoWIOPattern},
     sumcheck::SumcheckSingleIOPattern,
 };
-
-use super::parameters::WhirConfig;
 
 pub trait DigestIOPattern<MerkleConfig: Config> {
     #[must_use]
@@ -58,10 +57,7 @@ where
         if params.initial_statement {
             self = self
                 .challenge_scalars(1, "initial_combination_randomness")
-                .add_sumcheck(
-                    params.folding_factor.at_round(0),
-                    params.starting_folding_pow_bits,
-                );
+                .add_sumcheck(params.folding_factor.at_round(0), params.starting_folding_pow_bits);
         } else {
             self = self
                 .challenge_scalars(params.folding_factor.at_round(0), "folding_randomness")
@@ -78,17 +74,12 @@ where
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
-                .add_sumcheck(
-                    params.folding_factor.at_round(round + 1),
-                    r.folding_pow_bits,
-                );
+                .add_sumcheck(params.folding_factor.at_round(round + 1), r.folding_pow_bits);
             domain_size >>= 1;
         }
 
-        let folded_domain_size = domain_size
-            >> params
-                .folding_factor
-                .at_round(params.round_parameters.len());
+        let folded_domain_size =
+            domain_size >> params.folding_factor.at_round(params.round_parameters.len());
         let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")

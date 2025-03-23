@@ -1,6 +1,8 @@
-use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use ark_ff::Field;
 use std::ops::Index;
+
+use ark_ff::Field;
+
+use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -33,15 +35,9 @@ where
     /// - If `evals.len()` is **not** a power of two.
     pub fn new(evals: Vec<F>) -> Self {
         let len = evals.len();
-        assert!(
-            len.is_power_of_two(),
-            "Evaluation list length must be a power of two."
-        );
+        assert!(len.is_power_of_two(), "Evaluation list length must be a power of two.");
 
-        Self {
-            evals,
-            num_variables: len.ilog2() as usize,
-        }
+        Self { evals, num_variables: len.ilog2() as usize }
     }
 
     /// Evaluates the polynomial at a given multilinear point.
@@ -176,9 +172,10 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
 #[cfg(test)]
 #[allow(clippy::should_panic_without_expect)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::{crypto::fields::Field64, poly_utils::hypercube::BinaryHypercube};
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_new_evaluations_list() {
@@ -199,12 +196,7 @@ mod tests {
 
     #[test]
     fn test_indexing() {
-        let evals = vec![
-            Field64::from(1),
-            Field64::from(2),
-            Field64::from(3),
-            Field64::from(4),
-        ];
+        let evals = vec![Field64::from(1), Field64::from(2), Field64::from(3), Field64::from(4)];
         let evaluations_list = EvaluationsList::new(evals.clone());
 
         assert_eq!(evaluations_list[0], evals[0]);
@@ -224,12 +216,8 @@ mod tests {
 
     #[test]
     fn test_mutability_of_evals() {
-        let mut evals = EvaluationsList::new(vec![
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-        ]);
+        let mut evals =
+            EvaluationsList::new(vec![Field64::ZERO, Field64::ONE, Field64::ZERO, Field64::ONE]);
 
         assert_eq!(evals.evals()[1], Field64::ONE);
 
@@ -265,9 +253,8 @@ mod tests {
         let result = evals.evaluate(&point);
 
         // The result should be computed using Lagrange interpolation.
-        let expected = LagrangePolynomialIterator::from(&point)
-            .map(|(b, lag)| lag * evals[b.0])
-            .sum();
+        let expected =
+            LagrangePolynomialIterator::from(&point).map(|(b, lag)| lag * evals[b.0]).sum();
 
         assert_eq!(result, expected);
     }
@@ -282,54 +269,29 @@ mod tests {
         let evals = EvaluationsList::new(vec![e1, e2, e3, e4]);
 
         // Evaluating at a binary hypercube point should return the direct value
-        assert_eq!(
-            evals.evaluate(&MultilinearPoint(vec![Field64::ZERO, Field64::ZERO])),
-            e1
-        );
-        assert_eq!(
-            evals.evaluate(&MultilinearPoint(vec![Field64::ZERO, Field64::ONE])),
-            e2
-        );
-        assert_eq!(
-            evals.evaluate(&MultilinearPoint(vec![Field64::ONE, Field64::ZERO])),
-            e3
-        );
-        assert_eq!(
-            evals.evaluate(&MultilinearPoint(vec![Field64::ONE, Field64::ONE])),
-            e4
-        );
+        assert_eq!(evals.evaluate(&MultilinearPoint(vec![Field64::ZERO, Field64::ZERO])), e1);
+        assert_eq!(evals.evaluate(&MultilinearPoint(vec![Field64::ZERO, Field64::ONE])), e2);
+        assert_eq!(evals.evaluate(&MultilinearPoint(vec![Field64::ONE, Field64::ZERO])), e3);
+        assert_eq!(evals.evaluate(&MultilinearPoint(vec![Field64::ONE, Field64::ONE])), e4);
     }
 
     #[test]
     fn test_num_evals() {
-        let evals = EvaluationsList::new(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let evals =
+            EvaluationsList::new(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
         assert_eq!(evals.num_evals(), 4);
     }
 
     #[test]
     fn test_num_variables() {
-        let evals = EvaluationsList::new(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let evals =
+            EvaluationsList::new(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
         assert_eq!(evals.num_variables(), 2);
     }
 
     #[test]
     fn test_eval_extension_on_hypercube_points() {
-        let evals = vec![
-            Field64::from(1),
-            Field64::from(2),
-            Field64::from(3),
-            Field64::from(4),
-        ];
+        let evals = vec![Field64::from(1), Field64::from(2), Field64::from(3), Field64::from(4)];
         let eval_list = EvaluationsList::new(evals.clone());
 
         for i in BinaryHypercube::new(2) {
@@ -389,10 +351,10 @@ mod tests {
 
         // Interpolation formula:
         // f(x, y) = (1-x)(1-y) * f(0,0) + (1-x)y * f(0,1) + x(1-y) * f(1,0) + xy * f(1,1)
-        let expected = (Field64::ONE - x) * (Field64::ONE - y) * a
-            + (Field64::ONE - x) * y * c
-            + x * (Field64::ONE - y) * b
-            + x * y * d;
+        let expected = (Field64::ONE - x) * (Field64::ONE - y) * a +
+            (Field64::ONE - x) * y * c +
+            x * (Field64::ONE - y) * b +
+            x * y * d;
 
         assert_eq!(eval_multilinear(&evals, &[x, y]), expected);
     }
@@ -418,14 +380,14 @@ mod tests {
         let z = Field64::from(1) / Field64::from(3);
 
         // Using trilinear interpolation formula:
-        let expected = (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * a
-            + (Field64::ONE - x) * (Field64::ONE - y) * z * c
-            + (Field64::ONE - x) * y * (Field64::ONE - z) * b
-            + (Field64::ONE - x) * y * z * e
-            + x * (Field64::ONE - y) * (Field64::ONE - z) * d
-            + x * (Field64::ONE - y) * z * f
-            + x * y * (Field64::ONE - z) * g
-            + x * y * z * h;
+        let expected = (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * a +
+            (Field64::ONE - x) * (Field64::ONE - y) * z * c +
+            (Field64::ONE - x) * y * (Field64::ONE - z) * b +
+            (Field64::ONE - x) * y * z * e +
+            x * (Field64::ONE - y) * (Field64::ONE - z) * d +
+            x * (Field64::ONE - y) * z * f +
+            x * y * (Field64::ONE - z) * g +
+            x * y * z * h;
 
         assert_eq!(eval_multilinear(&evals, &[x, y, z]), expected);
     }
@@ -459,22 +421,22 @@ mod tests {
 
         // Quadlinear interpolation formula
         let expected =
-            (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * (Field64::ONE - w) * a
-                + (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * w * b
-                + (Field64::ONE - x) * (Field64::ONE - y) * z * (Field64::ONE - w) * c
-                + (Field64::ONE - x) * (Field64::ONE - y) * z * w * d
-                + (Field64::ONE - x) * y * (Field64::ONE - z) * (Field64::ONE - w) * e
-                + (Field64::ONE - x) * y * (Field64::ONE - z) * w * f
-                + (Field64::ONE - x) * y * z * (Field64::ONE - w) * g
-                + (Field64::ONE - x) * y * z * w * h
-                + x * (Field64::ONE - y) * (Field64::ONE - z) * (Field64::ONE - w) * i
-                + x * (Field64::ONE - y) * (Field64::ONE - z) * w * j
-                + x * (Field64::ONE - y) * z * (Field64::ONE - w) * k
-                + x * (Field64::ONE - y) * z * w * l
-                + x * y * (Field64::ONE - z) * (Field64::ONE - w) * m
-                + x * y * (Field64::ONE - z) * w * n
-                + x * y * z * (Field64::ONE - w) * o
-                + x * y * z * w * p;
+            (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * (Field64::ONE - w) * a +
+                (Field64::ONE - x) * (Field64::ONE - y) * (Field64::ONE - z) * w * b +
+                (Field64::ONE - x) * (Field64::ONE - y) * z * (Field64::ONE - w) * c +
+                (Field64::ONE - x) * (Field64::ONE - y) * z * w * d +
+                (Field64::ONE - x) * y * (Field64::ONE - z) * (Field64::ONE - w) * e +
+                (Field64::ONE - x) * y * (Field64::ONE - z) * w * f +
+                (Field64::ONE - x) * y * z * (Field64::ONE - w) * g +
+                (Field64::ONE - x) * y * z * w * h +
+                x * (Field64::ONE - y) * (Field64::ONE - z) * (Field64::ONE - w) * i +
+                x * (Field64::ONE - y) * (Field64::ONE - z) * w * j +
+                x * (Field64::ONE - y) * z * (Field64::ONE - w) * k +
+                x * (Field64::ONE - y) * z * w * l +
+                x * y * (Field64::ONE - z) * (Field64::ONE - w) * m +
+                x * y * (Field64::ONE - z) * w * n +
+                x * y * z * (Field64::ONE - w) * o +
+                x * y * z * w * p;
 
         // Validate against the function output
         assert_eq!(eval_multilinear(&evals, &[x, y, z, w]), expected);

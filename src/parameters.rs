@@ -1,13 +1,15 @@
-use crate::whir::parameters::WhirConfig;
-use crate::whir::{
-    parsed_proof::ParsedProof, prover::RoundState, stir_evaluations::StirEvalContext,
-};
+use std::{fmt::Display, marker::PhantomData, str::FromStr};
+
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use serde::Serialize;
-use std::{fmt::Display, marker::PhantomData, str::FromStr};
 use thiserror::Error;
+
+use crate::whir::{
+    parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
+    stir_evaluations::StirEvalContext,
+};
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
@@ -62,10 +64,7 @@ pub struct MultivariateParameters<F> {
 impl<F> MultivariateParameters<F> {
     /// Creates new multivariate parameters.
     pub const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            _field: PhantomData,
-        }
+        Self { num_variables, _field: PhantomData }
     }
 }
 
@@ -108,20 +107,15 @@ impl FoldType {
         let ctx = match self {
             Self::Naive => StirEvalContext::Naive {
                 domain_size: round_state.domain.backing_domain.size(),
-                domain_gen_inv: round_state
-                    .domain
-                    .backing_domain
-                    .element(1)
-                    .inverse()
-                    .unwrap(),
+                domain_gen_inv: round_state.domain.backing_domain.element(1).inverse().unwrap(),
                 round: round_state.round,
                 stir_challenges_indexes,
                 folding_factor: &folding_factor,
                 folding_randomness: &round_state.folding_randomness,
             },
-            Self::ProverHelps => StirEvalContext::ProverHelps {
-                folding_randomness: &round_state.folding_randomness,
-            },
+            Self::ProverHelps => {
+                StirEvalContext::ProverHelps { folding_randomness: &round_state.folding_randomness }
+            }
         };
         ctx.evaluate(answers, stir_evaluations);
     }
@@ -271,10 +265,7 @@ impl FoldingFactor {
             Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 if *first_round_factor > num_variables {
                     // The first round folding factor must not exceed the available variables.
-                    Err(FoldingFactorError::TooLarge(
-                        *first_round_factor,
-                        num_variables,
-                    ))
+                    Err(FoldingFactorError::TooLarge(*first_round_factor, num_variables))
                 } else if *factor > num_variables {
                     // Subsequent round folding factors must also not exceed the available
                     // variables.
@@ -299,10 +290,7 @@ impl FoldingFactor {
                 // Compute the number of WHIR rounds by subtracting the final sumcheck rounds
                 // and dividing by the folding factor. The -1 accounts for the fact that the last
                 // round does not require another folding.
-                (
-                    (num_variables - final_sumcheck_rounds) / factor - 1,
-                    final_sumcheck_rounds,
-                )
+                ((num_variables - final_sumcheck_rounds) / factor - 1, final_sumcheck_rounds)
             }
             Self::ConstantFromSecondRound(first_round_factor, factor) => {
                 // Compute the number of variables remaining after the first round.
@@ -319,10 +307,7 @@ impl FoldingFactor {
 
                 // Compute the number of WHIR rounds by dividing the remaining variables
                 // (excluding the first round) by the folding factor.
-                (
-                    (nv_except_first_round - final_sumcheck_rounds) / factor,
-                    final_sumcheck_rounds,
-                )
+                ((nv_except_first_round - final_sumcheck_rounds) / factor, final_sumcheck_rounds)
             }
         }
     }
@@ -418,18 +403,9 @@ mod tests {
 
     #[test]
     fn test_soundness_type_from_str() {
-        assert_eq!(
-            SoundnessType::from_str("ProvableList"),
-            Ok(SoundnessType::ProvableList)
-        );
-        assert_eq!(
-            SoundnessType::from_str("ConjectureList"),
-            Ok(SoundnessType::ConjectureList)
-        );
-        assert_eq!(
-            SoundnessType::from_str("UniqueDecoding"),
-            Ok(SoundnessType::UniqueDecoding)
-        );
+        assert_eq!(SoundnessType::from_str("ProvableList"), Ok(SoundnessType::ProvableList));
+        assert_eq!(SoundnessType::from_str("ConjectureList"), Ok(SoundnessType::ConjectureList));
+        assert_eq!(SoundnessType::from_str("UniqueDecoding"), Ok(SoundnessType::UniqueDecoding));
 
         // Invalid cases
         assert!(SoundnessType::from_str("InvalidType").is_err());
@@ -469,9 +445,7 @@ mod tests {
     fn test_folding_factor_check_validity() {
         // Valid cases
         assert!(FoldingFactor::Constant(2).check_validity(4).is_ok());
-        assert!(FoldingFactor::ConstantFromSecondRound(2, 3)
-            .check_validity(5)
-            .is_ok());
+        assert!(FoldingFactor::ConstantFromSecondRound(2, 3).check_validity(5).is_ok());
 
         // Invalid cases
         // Factor too large

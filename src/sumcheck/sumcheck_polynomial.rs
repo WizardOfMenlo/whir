@@ -1,5 +1,6 @@
-use crate::poly_utils::multilinear::MultilinearPoint;
 use ark_ff::Field;
+
+use crate::poly_utils::multilinear::MultilinearPoint;
 
 /// Represents a polynomial stored in evaluation form over a ternary domain {0,1,2}^n.
 ///
@@ -29,10 +30,7 @@ where
     ///
     /// The vector `evaluations` **must** have a length of `3^n_variables`.
     pub const fn new(evaluations: Vec<F>, num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            evaluations,
-        }
+        Self { num_variables, evaluations }
     }
 
     /// Returns the vector of stored evaluations.
@@ -111,19 +109,16 @@ where
     /// - The input `point` must have `n_variables` dimensions.
     pub fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(point.num_variables(), self.num_variables);
-        self.evaluations
-            .iter()
-            .enumerate()
-            .map(|(i, &eval)| eval * point.eq_poly3(i))
-            .sum()
+        self.evaluations.iter().enumerate().map(|(i, &eval)| eval * point.eq_poly3(i)).sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_binary_to_ternary_index() {
@@ -204,14 +199,14 @@ mod tests {
         let poly = SumcheckPolynomial::new(evaluations, 3);
 
         // Sum over {0,1}^3
-        let expected_sum = Field64::from(1)
-            + Field64::from(2)
-            + Field64::from(4)
-            + Field64::from(5)
-            + Field64::from(10)
-            + Field64::from(11)
-            + Field64::from(13)
-            + Field64::from(14);
+        let expected_sum = Field64::from(1) +
+            Field64::from(2) +
+            Field64::from(4) +
+            Field64::from(5) +
+            Field64::from(10) +
+            Field64::from(11) +
+            Field64::from(13) +
+            Field64::from(14);
 
         assert_eq!(poly.sum_over_boolean_hypercube(), expected_sum);
     }
@@ -231,15 +226,15 @@ mod tests {
         let result = poly.evaluate_at_point(&point);
 
         // Compute the expected result using the full weighted sum:
-        let expected_value = Field64::from(1) * point.eq_poly3(0)
-            + Field64::from(2) * point.eq_poly3(1)
-            + Field64::from(3) * point.eq_poly3(2)
-            + Field64::from(4) * point.eq_poly3(3)
-            + Field64::from(5) * point.eq_poly3(4)
-            + Field64::from(6) * point.eq_poly3(5)
-            + Field64::from(7) * point.eq_poly3(6)
-            + Field64::from(8) * point.eq_poly3(7)
-            + Field64::from(9) * point.eq_poly3(8);
+        let expected_value = Field64::from(1) * point.eq_poly3(0) +
+            Field64::from(2) * point.eq_poly3(1) +
+            Field64::from(3) * point.eq_poly3(2) +
+            Field64::from(4) * point.eq_poly3(3) +
+            Field64::from(5) * point.eq_poly3(4) +
+            Field64::from(6) * point.eq_poly3(5) +
+            Field64::from(7) * point.eq_poly3(6) +
+            Field64::from(8) * point.eq_poly3(7) +
+            Field64::from(9) * point.eq_poly3(8);
 
         assert_eq!(result, expected_value);
     }
@@ -254,9 +249,8 @@ mod tests {
         let point = MultilinearPoint(vec![Field64::from(1) / Field64::from(2); 3]);
 
         // Compute expected evaluation:
-        let expected_value = (0..27)
-            .map(|i| poly.evaluations[i] * point.eq_poly3(i))
-            .sum::<Field64>();
+        let expected_value =
+            (0..27).map(|i| poly.evaluations[i] * point.eq_poly3(i)).sum::<Field64>();
 
         let computed_value = poly.evaluate_at_point(&point);
         assert_eq!(computed_value, expected_value);

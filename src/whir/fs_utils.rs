@@ -83,10 +83,7 @@ mod tests {
             0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
             0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
         ];
-        let mut transcript = MockTranscript {
-            data: transcript_data,
-            index: 0,
-        };
+        let mut transcript = MockTranscript { data: transcript_data, index: 0 };
 
         let result =
             get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut transcript)
@@ -125,10 +122,7 @@ mod tests {
             0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
             0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
         ];
-        let mut transcript = MockTranscript {
-            data: transcript_data,
-            index: 0,
-        };
+        let mut transcript = MockTranscript { data: transcript_data, index: 0 };
 
         let result =
             get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut transcript)
@@ -166,10 +160,7 @@ mod tests {
             0xDE, 0xF0, 0x11, // Query 3
             0x22, 0x33, 0x44, // Query 4
         ];
-        let mut transcript = MockTranscript {
-            data: transcript_data,
-            index: 0,
-        };
+        let mut transcript = MockTranscript { data: transcript_data, index: 0 };
 
         let result =
             get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut transcript)
@@ -203,10 +194,7 @@ mod tests {
         let transcript_data = vec![
             0x20, 0x40, 0x20, 0x60, 0x40, // Duplicate indices 0x20 and 0x40
         ];
-        let mut transcript = MockTranscript {
-            data: transcript_data,
-            index: 0,
-        };
+        let mut transcript = MockTranscript { data: transcript_data, index: 0 };
 
         let result =
             get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut transcript)
@@ -215,16 +203,10 @@ mod tests {
         let folded_domain_size = 128;
 
         // Manually computed expected indices, ensuring duplicates are removed
-        let mut expected_indices = vec![
-            0x20 % folded_domain_size,
-            0x40 % folded_domain_size,
-            0x60 % folded_domain_size,
-        ];
+        let mut expected_indices =
+            vec![0x20 % folded_domain_size, 0x40 % folded_domain_size, 0x60 % folded_domain_size];
         expected_indices.sort_unstable();
 
-        assert_eq!(
-            result, expected_indices,
-            "Mismatch in computed indices for deduplication test"
-        );
+        assert_eq!(result, expected_indices, "Mismatch in computed indices for deduplication test");
     }
 }

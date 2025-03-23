@@ -6,17 +6,15 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use self::matrix::MatrixMut;
 use ark_ff::FftField;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use self::matrix::MatrixMut;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
-    wavelet::inverse_wavelet_transform,
-    wavelet::wavelet_transform,
+    wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
 
 /// RS encode at a rate 1/`expansion`.
@@ -43,17 +41,14 @@ pub fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> 
     #[cfg(feature = "parallel")]
     result.par_extend((1..expansion).into_par_iter().flat_map(|i| {
         let root_i = root.pow([i as u64]);
-        coeffs
-            .par_iter()
-            .enumerate()
-            .map_with(F::ZERO, move |root_j, (j, coeff)| {
-                if root_j.is_zero() {
-                    *root_j = root_i.pow([j as u64]);
-                } else {
-                    *root_j *= root_i;
-                }
-                *coeff * *root_j
-            })
+        coeffs.par_iter().enumerate().map_with(F::ZERO, move |root_j, (j, coeff)| {
+            if root_j.is_zero() {
+                *root_j = root_i.pow([j as u64]);
+            } else {
+                *root_j *= root_i;
+            }
+            *coeff * *root_j
+        })
     }));
 
     ntt_batch(&mut result, coeffs.len());
@@ -63,9 +58,10 @@ pub fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> 
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::Field;
+
     use super::*;
     use crate::{crypto::fields::Field64, ntt::cooley_tukey::NttEngine};
-    use ark_ff::Field;
 
     #[test]
     fn test_expand_from_coeff_size_2() {

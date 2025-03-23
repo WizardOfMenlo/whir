@@ -1,20 +1,3 @@
-use super::{
-    committer::Witness,
-    parameters::WhirConfig,
-    statement::{Statement, Weights},
-    WhirProof,
-};
-use crate::whir::parameters::RoundConfig;
-use crate::{
-    domain::Domain,
-    ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
-    sumcheck::SumcheckSingle,
-    utils::expand_randomness,
-    whir::utils::sample_ood_points,
-};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -23,10 +6,29 @@ use nimue::{
     ByteChallenges, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestWriter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::{
+    committer::Witness,
+    parameters::WhirConfig,
+    statement::{Statement, Weights},
+    WhirProof,
+};
+use crate::{
+    domain::Domain,
+    ntt::expand_from_coeff,
+    poly_utils::{
+        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
+    },
+    sumcheck::SumcheckSingle,
+    utils::expand_randomness,
+    whir::{
+        fs_utils::{get_challenge_stir_queries, DigestWriter},
+        parameters::RoundConfig,
+        utils::sample_ood_points,
+    },
+};
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
@@ -40,13 +42,13 @@ where
     PowStrategy: nimue_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
-        self.0.mv_parameters.num_variables
-            == self.0.folding_factor.total_number(self.0.n_rounds()) + self.0.final_sumcheck_rounds
+        self.0.mv_parameters.num_variables ==
+            self.0.folding_factor.total_number(self.0.n_rounds()) + self.0.final_sumcheck_rounds
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        statement.num_variables() == self.0.mv_parameters.num_variables
-            && (self.0.initial_statement || statement.constraints.is_empty())
+        statement.num_variables() == self.0.mv_parameters.num_variables &&
+            (self.0.initial_statement || statement.constraints.is_empty())
     }
 
     fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
@@ -67,9 +69,9 @@ where
         Merlin: FieldWriter<F> + ByteChallenges + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         assert!(
-            self.validate_parameters()
-                && self.validate_statement(&statement)
-                && self.validate_witness(&witness)
+            self.validate_parameters() &&
+                self.validate_statement(&statement) &&
+                self.validate_witness(&witness)
         );
 
         // Convert witness ood_points into constraints
@@ -150,12 +152,10 @@ where
         Merlin: ByteChallenges + FieldWriter<F> + PoWChallenge + DigestWriter<MerkleConfig>,
     {
         // Fold the coefficients
-        let folded_coefficients = round_state
-            .coefficients
-            .fold(&round_state.folding_randomness);
+        let folded_coefficients = round_state.coefficients.fold(&round_state.folding_randomness);
 
-        let num_variables = self.0.mv_parameters.num_variables
-            - self.0.folding_factor.total_number(round_state.round);
+        let num_variables = self.0.mv_parameters.num_variables -
+            self.0.folding_factor.total_number(round_state.round);
         // num_variables should match the folded_coefficients here.
         assert_eq!(num_variables, folded_coefficients.num_variables());
 
@@ -186,12 +186,9 @@ where
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
         let leafs_iter = evals.par_chunks_exact(1 << folding_factor_next);
-        let merkle_tree = MerkleTree::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+        let merkle_tree =
+            MerkleTree::new(&self.0.leaf_hash_params, &self.0.two_to_one_params, leafs_iter)
+                .unwrap();
 
         let root = merkle_tree.root();
         merlin.add_digest(root)?;
@@ -211,10 +208,8 @@ where
             ood_points,
         )?;
 
-        let merkle_proof = round_state
-            .prev_merkle
-            .generate_multi_proof(stir_challenges_indexes.clone())
-            .unwrap();
+        let merkle_proof =
+            round_state.prev_merkle.generate_multi_proof(stir_challenges_indexes.clone()).unwrap();
         let fold_size = 1 << folding_factor;
         let answers: Vec<_> = stir_challenges_indexes
             .iter()
@@ -285,7 +280,8 @@ where
             domain: new_domain,
             sumcheck_prover: Some(sumcheck_prover),
             folding_randomness,
-            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
+            coefficients: folded_coefficients, /* TODO: Is this redundant with
+                                                * `sumcheck_prover.coeff` ? */
             prev_merkle: merkle_tree,
             prev_merkle_answers: evals,
             merkle_proofs: round_state.merkle_proofs,
@@ -322,10 +318,8 @@ where
             merlin,
         )?;
 
-        let merkle_proof = round_state
-            .prev_merkle
-            .generate_multi_proof(final_challenge_indexes.clone())
-            .unwrap();
+        let merkle_proof =
+            round_state.prev_merkle.generate_multi_proof(final_challenge_indexes.clone()).unwrap();
         // Every query requires opening these many in the previous Merkle tree
         let fold_size = 1 << folding_factor;
         let answers = final_challenge_indexes
@@ -374,10 +368,7 @@ where
             })
             .collect();
 
-        Ok(WhirProof {
-            merkle_paths: round_state.merkle_proofs,
-            statement_values_at_random_point,
-        })
+        Ok(WhirProof { merkle_paths: round_state.merkle_proofs, statement_values_at_random_point })
     }
 
     fn compute_stir_queries<Merlin>(
@@ -405,11 +396,7 @@ where
             .element(1 << self.0.folding_factor.at_round(round_state.round));
         let stir_challenges = ood_points
             .into_iter()
-            .chain(
-                stir_challenges_indexes
-                    .iter()
-                    .map(|i| domain_scaled_gen.pow([*i as u64])),
-            )
+            .chain(stir_challenges_indexes.iter().map(|i| domain_scaled_gen.pow([*i as u64])))
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
 

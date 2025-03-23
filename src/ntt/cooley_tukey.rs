@@ -3,19 +3,20 @@
 //! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
 //! A global cache is used for twiddle factors.
 
-use super::{
-    transpose,
-    utils::{lcm, sqrt_factor},
-};
-use ark_ff::{FftField, Field};
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
     sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard},
 };
 
+use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
+
+use super::{
+    transpose,
+    utils::{lcm, sqrt_factor},
+};
 
 /// Global cache for NTT engines, indexed by field.
 // TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
@@ -29,7 +30,8 @@ pub struct NttEngine<F: Field> {
     order: usize,   // order of omega_orger
     omega_order: F, // primitive order'th root.
 
-    // Roots of small order (zero if unavailable). The naming convention is that omega_foo has order foo.
+    // Roots of small order (zero if unavailable). The naming convention is that omega_foo has
+    // order foo.
     half_omega_3_1_plus_2: F, // ½(ω₃ + ω₃²)
     half_omega_3_1_min_2: F,  // ½(ω₃ - ω₃²)
     omega_4_1: F,
@@ -53,12 +55,14 @@ pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::<F>::new_from_cache().ntt_batch(values, size);
 }
 
-/// Compute the inverse NTT of a slice of field element without the 1/n scaling factor, using a cached engine.
+/// Compute the inverse NTT of a slice of field element without the 1/n scaling factor, using a
+/// cached engine.
 pub fn intt<F: FftField>(values: &mut [F]) {
     NttEngine::<F>::new_from_cache().intt(values);
 }
 
-/// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the 1/n scaling factor and using a cached engine.
+/// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the
+/// 1/n scaling factor and using a cached engine.
 pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
     NttEngine::<F>::new_from_cache().intt_batch(values, size);
 }
@@ -116,7 +120,8 @@ impl<F: Field> NttEngine<F> {
         if order % 3 == 0 {
             let omega_3_1 = res.root(3);
             let omega_3_2 = omega_3_1 * omega_3_1;
-            // Note: char F cannot be 2 and so division by 2 works, because primitive roots of unity with even order exist.
+            // Note: char F cannot be 2 and so division by 2 works, because primitive roots of unity
+            // with even order exist.
             res.half_omega_3_1_min_2 = (omega_3_1 - omega_3_2) / F::from(2u64);
             res.half_omega_3_1_plus_2 = (omega_3_1 + omega_3_2) / F::from(2u64);
         }
@@ -169,10 +174,7 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn root(&self, order: usize) -> F {
-        assert!(
-            self.order % order == 0,
-            "Subgroup of requested order does not exist."
-        );
+        assert!(self.order % order == 0, "Subgroup of requested order does not exist.");
         self.omega_order.pow([(self.order / order) as u64])
     }
 
@@ -188,11 +190,7 @@ impl<F: Field> NttEngine<F> {
             if roots.is_empty() || roots.len() % order != 0 {
                 // Compute minimal size to support all sizes seen so far.
                 // TODO: Do we really need all of these? Can we leverage omege_2 = -1?
-                let size = if roots.is_empty() {
-                    order
-                } else {
-                    lcm(roots.len(), order)
-                };
+                let size = if roots.is_empty() { order } else { lcm(roots.len(), order) };
                 roots.clear();
                 roots.reserve_exact(size);
 
@@ -374,19 +372,15 @@ fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: us
 
     if values.len() > workload_size::<F>() {
         if values.len() == size {
-            values
-                .par_chunks_exact_mut(cols)
-                .enumerate()
-                .skip(1)
-                .for_each(|(i, row)| {
-                    let step = (i * step) % roots.len();
-                    let mut index = step;
-                    for value in row.iter_mut().skip(1) {
-                        index %= roots.len();
-                        *value *= roots[index];
-                        index += step;
-                    }
-                });
+            values.par_chunks_exact_mut(cols).enumerate().skip(1).for_each(|(i, row)| {
+                let step = (i * step) % roots.len();
+                let mut index = step;
+                for value in row.iter_mut().skip(1) {
+                    index %= roots.len();
+                    *value *= roots[index];
+                    index += step;
+                }
+            });
         } else {
             let workload_size = size * max(1, workload_size::<F>() / size);
             values.par_chunks_mut(workload_size).for_each(|values| {
@@ -411,10 +405,10 @@ fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: us
 #[cfg(test)]
 #[allow(clippy::significant_drop_tightening)]
 mod tests {
+    use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
-    use ark_ff::{BigInteger, PrimeField};
 
     #[test]
     fn test_new_from_fftfield_basic() {
@@ -787,62 +781,62 @@ mod tests {
         let omega7 = omega * omega6; // ω⁷
 
         let expected_f0 = f0 + f1 + f2 + f3 + f4 + f5 + f6 + f7;
-        let expected_f1 = f0
-            + f1 * omega1
-            + f2 * omega2
-            + f3 * omega3
-            + f4 * omega4
-            + f5 * omega5
-            + f6 * omega6
-            + f7 * omega7;
-        let expected_f2 = f0
-            + f1 * omega2
-            + f2 * omega4
-            + f3 * omega6
-            + f4 * Field64::ONE
-            + f5 * omega2
-            + f6 * omega4
-            + f7 * omega6;
-        let expected_f3 = f0
-            + f1 * omega3
-            + f2 * omega6
-            + f3 * omega1
-            + f4 * omega4
-            + f5 * omega7
-            + f6 * omega2
-            + f7 * omega5;
-        let expected_f4 = f0
-            + f1 * omega4
-            + f2 * Field64::ONE
-            + f3 * omega4
-            + f4 * Field64::ONE
-            + f5 * omega4
-            + f6 * Field64::ONE
-            + f7 * omega4;
-        let expected_f5 = f0
-            + f1 * omega5
-            + f2 * omega2
-            + f3 * omega7
-            + f4 * omega4
-            + f5 * omega1
-            + f6 * omega6
-            + f7 * omega3;
-        let expected_f6 = f0
-            + f1 * omega6
-            + f2 * omega4
-            + f3 * omega2
-            + f4 * Field64::ONE
-            + f5 * omega6
-            + f6 * omega4
-            + f7 * omega2;
-        let expected_f7 = f0
-            + f1 * omega7
-            + f2 * omega6
-            + f3 * omega5
-            + f4 * omega4
-            + f5 * omega3
-            + f6 * omega2
-            + f7 * omega1;
+        let expected_f1 = f0 +
+            f1 * omega1 +
+            f2 * omega2 +
+            f3 * omega3 +
+            f4 * omega4 +
+            f5 * omega5 +
+            f6 * omega6 +
+            f7 * omega7;
+        let expected_f2 = f0 +
+            f1 * omega2 +
+            f2 * omega4 +
+            f3 * omega6 +
+            f4 * Field64::ONE +
+            f5 * omega2 +
+            f6 * omega4 +
+            f7 * omega6;
+        let expected_f3 = f0 +
+            f1 * omega3 +
+            f2 * omega6 +
+            f3 * omega1 +
+            f4 * omega4 +
+            f5 * omega7 +
+            f6 * omega2 +
+            f7 * omega5;
+        let expected_f4 = f0 +
+            f1 * omega4 +
+            f2 * Field64::ONE +
+            f3 * omega4 +
+            f4 * Field64::ONE +
+            f5 * omega4 +
+            f6 * Field64::ONE +
+            f7 * omega4;
+        let expected_f5 = f0 +
+            f1 * omega5 +
+            f2 * omega2 +
+            f3 * omega7 +
+            f4 * omega4 +
+            f5 * omega1 +
+            f6 * omega6 +
+            f7 * omega3;
+        let expected_f6 = f0 +
+            f1 * omega6 +
+            f2 * omega4 +
+            f3 * omega2 +
+            f4 * Field64::ONE +
+            f5 * omega6 +
+            f6 * omega4 +
+            f7 * omega2;
+        let expected_f7 = f0 +
+            f1 * omega7 +
+            f2 * omega6 +
+            f3 * omega5 +
+            f4 * omega4 +
+            f5 * omega3 +
+            f6 * omega2 +
+            f7 * omega1;
 
         let expected_values = vec![
             expected_f0,
@@ -878,11 +872,8 @@ mod tests {
         let mut expected_values = vec![Field64::ZERO; 16];
         for (k, expected_value) in expected_values.iter_mut().enumerate().take(16) {
             let omega_k = omega.pow([k as u64]);
-            *expected_value = values
-                .iter()
-                .enumerate()
-                .map(|(j, &f_j)| f_j * omega_k.pow([j as u64]))
-                .sum();
+            *expected_value =
+                values.iter().enumerate().map(|(j, &f_j)| f_j * omega_k.pow([j as u64])).sum();
         }
 
         engine.ntt_batch(&mut values_ntt, 16);
@@ -908,11 +899,8 @@ mod tests {
         let mut expected_values = vec![Field64::ZERO; 32];
         for (k, expected_value) in expected_values.iter_mut().enumerate().take(32) {
             let omega_k = omega.pow([k as u64]);
-            *expected_value = values
-                .iter()
-                .enumerate()
-                .map(|(j, &f_j)| f_j * omega_k.pow([j as u64]))
-                .sum();
+            *expected_value =
+                values.iter().enumerate().map(|(j, &f_j)| f_j * omega_k.pow([j as u64])).sum();
         }
 
         engine.ntt_batch(&mut values_ntt, 32);

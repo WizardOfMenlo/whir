@@ -4,10 +4,11 @@ use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
 };
-use ark_ff::FftField;
-use ark_ff::Field;
+use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
+use clap::Parser;
 use nimue::{Arthur, IOPattern, Merlin};
+use nimue_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -19,14 +20,12 @@ use whir::{
         WhirParameters,
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    whir::statement::{Statement, StatementVerifier, Weights},
+    whir::{
+        fs_utils::{DigestReader, DigestWriter},
+        iopattern::DigestIOPattern,
+        statement::{Statement, StatementVerifier, Weights},
+    },
 };
-
-use nimue_pow::blake3::Blake3PoW;
-
-use clap::Parser;
-use whir::whir::fs_utils::{DigestReader, DigestWriter};
-use whir::whir::iopattern::DigestIOPattern;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -262,9 +261,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::new("🌪️")
-        .commit_statement(&params)
-        .add_whir_proof(&params);
+    let io = IOPattern::new("🌪️").commit_statement(&params).add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
@@ -276,11 +273,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    let polynomial = CoefficientList::new(
-        (0..num_coeffs)
-            .map(<F as Field>::BasePrimeField::from)
-            .collect(),
-    );
+    let polynomial =
+        CoefficientList::new((0..num_coeffs).map(<F as Field>::BasePrimeField::from).collect());
 
     let whir_prover_time = Instant::now();
 
@@ -310,9 +304,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut arthur = io.to_arthur(&transcript);
-        verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
-            .unwrap();
+        verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
     dbg!(HashCounter::get() as f64 / reps as f64);
@@ -374,9 +366,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::new("🌪️")
-        .commit_statement(&params)
-        .add_whir_proof(&params);
+    let io = IOPattern::new("🌪️").commit_statement(&params).add_whir_proof(&params);
 
     let mut merlin = io.to_merlin();
 
@@ -388,11 +378,8 @@ fn run_whir_pcs<F, MerkleConfig>(
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    let polynomial = CoefficientList::new(
-        (0..num_coeffs)
-            .map(<F as Field>::BasePrimeField::from)
-            .collect(),
-    );
+    let polynomial =
+        CoefficientList::new((0..num_coeffs).map(<F as Field>::BasePrimeField::from).collect());
     let whir_prover_time = Instant::now();
 
     let committer = Committer::new(params.clone());
@@ -425,15 +412,10 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let proof = prover
-        .prove(&mut merlin, statement.clone(), witness)
-        .unwrap();
+    let proof = prover.prove(&mut merlin, statement.clone(), witness).unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
-    println!(
-        "Proof size: {:.1} KiB",
-        whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
-    );
+    println!("Proof size: {:.1} KiB", whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0);
 
     let statement_verifier = StatementVerifier::from_statement(&statement);
     // Just not to count that initial inversion (which could be precomputed)
@@ -443,16 +425,8 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut arthur = io.to_arthur(merlin.transcript());
-        verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
-            .unwrap();
+        verifier.verify(&mut arthur, &statement_verifier, &proof).unwrap();
     }
-    println!(
-        "Verifier time: {:.1?}",
-        whir_verifier_time.elapsed() / reps as u32
-    );
-    println!(
-        "Average hashes: {:.1}k",
-        (HashCounter::get() as f64 / reps as f64) / 1000.0
-    );
+    println!("Verifier time: {:.1?}", whir_verifier_time.elapsed() / reps as u32);
+    println!("Average hashes: {:.1}k", (HashCounter::get() as f64 / reps as f64) / 1000.0);
 }

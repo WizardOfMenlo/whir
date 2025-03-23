@@ -23,8 +23,7 @@ where
 {
     fn add_ood(self, num_samples: usize) -> Self {
         if num_samples > 0 {
-            self.challenge_scalars(num_samples, "ood_query")
-                .add_scalars(num_samples, "ood_ans")
+            self.challenge_scalars(num_samples, "ood_query").add_scalars(num_samples, "ood_ans")
         } else {
             self
         }
@@ -58,9 +57,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use nimue::IOPattern;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use nimue::IOPattern;
 
     #[test]
     fn test_add_ood() {

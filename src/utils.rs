@@ -1,8 +1,8 @@
 use ark_ff::Field;
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
-// Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
-// Currently, we compute the decomposition of value % (base^n_bits).
+// Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted
+// not to happen? Currently, we compute the decomposition of value % (base^n_bits).
 
 /// Decomposes `value` into its base-`base` representation with `n_bits` digits.
 /// The result follows big-endian order:
@@ -26,7 +26,8 @@ pub fn base_decomposition(mut value: usize, base: u8, n_bits: usize) -> Vec<u8> 
 }
 
 // Gotti: Consider renaming this function. The name sounds like it's a PRG.
-// TODO (Gotti): Check that ordering is actually correct at point of use (everything else is big-endian).
+// TODO (Gotti): Check that ordering is actually correct at point of use (everything else is
+// big-endian).
 
 /// Generates a sequence of powers of `base`, starting from `1`.
 ///
@@ -42,8 +43,8 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     res
 }
 
-// FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
-// Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
+// FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor
+// and folding_factor_exp) Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
 
 /// Computes the equality polynomial evaluations efficiently.
 ///
@@ -56,8 +57,8 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
 ///
 /// where `z_i` are the constraint points.
 ///
-/// - If compiled with the `parallel` feature flag, it will execute in parallel
-///   when `eval.len()` exceeds the **parallel threshold**.
+/// - If compiled with the `parallel` feature flag, it will execute in parallel when `eval.len()`
+///   exceeds the **parallel threshold**.
 /// - Otherwise, it executes sequentially.
 pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     // Ensure that the output buffer size is correct:
@@ -101,6 +102,8 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Field};
+
     use super::*;
     use crate::{
         crypto::fields::Field64,
@@ -108,8 +111,6 @@ mod tests {
             lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },
     };
-    use ark_ff::AdditiveGroup;
-    use ark_ff::Field;
 
     #[test]
     fn test_base_decomposition_binary() {
@@ -271,12 +272,8 @@ mod tests {
         let base = Field64::from(10);
         let len = 4;
 
-        let expected = vec![
-            Field64::ONE,
-            Field64::from(10),
-            Field64::from(100),
-            Field64::from(1000),
-        ];
+        let expected =
+            vec![Field64::ONE, Field64::from(10), Field64::from(100), Field64::from(1000)];
 
         assert_eq!(expand_randomness(base, len), expected);
     }
@@ -297,13 +294,8 @@ mod tests {
         let base = Field64::ZERO;
         let len = 5;
 
-        let expected = vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ZERO,
-            Field64::ZERO,
-            Field64::ZERO,
-        ];
+        let expected =
+            vec![Field64::ONE, Field64::ZERO, Field64::ZERO, Field64::ZERO, Field64::ZERO];
         assert_eq!(expand_randomness(base, len), expected);
     }
 

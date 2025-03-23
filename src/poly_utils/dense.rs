@@ -52,17 +52,16 @@ impl<F: Field> WhirDensePolynomial<F> {
 
     // Horner's method for polynomial evaluation
     fn horner_evaluate(&self, point: &F) -> F {
-        self.coeffs
-            .iter()
-            .rfold(F::zero(), move |result, coeff| result * point + coeff)
+        self.coeffs.iter().rfold(F::zero(), move |result, coeff| result * point + coeff)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Zero};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::{AdditiveGroup, Zero};
 
     #[test]
     fn test_zero_polynomial() {

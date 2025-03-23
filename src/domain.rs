@@ -39,10 +39,7 @@ where
         let base_domain = GeneralEvaluationDomain::new(size)?;
         let backing_domain = Self::to_extension_domain(&base_domain);
 
-        Some(Self {
-            backing_domain,
-            base_domain: Some(base_domain),
-        })
+        Some(Self { backing_domain, base_domain: Some(base_domain) })
     }
 
     /// Returns the domain size after `folding_factor` applications of folding.
@@ -183,9 +180,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::Field;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::Field;
 
     #[test]
     fn test_domain_creation_valid() {
@@ -299,10 +297,7 @@ mod tests {
 
         // The inverse generator should be `g^-2`.
         let expected_group_gen_inv = expected_group_gen.inverse().unwrap();
-        assert_eq!(
-            scaled_domain.backing_domain.group_gen_inv(),
-            expected_group_gen_inv
-        );
+        assert_eq!(scaled_domain.backing_domain.group_gen_inv(), expected_group_gen_inv);
     }
 
     #[test]
@@ -348,10 +343,7 @@ mod tests {
 
         // The offset_pow_size should be offset^(new_size)
         let expected_offset_pow_size = expected_offset.pow([8]);
-        assert_eq!(
-            scaled_domain.coset_offset_pow_size(),
-            expected_offset_pow_size
-        );
+        assert_eq!(scaled_domain.coset_offset_pow_size(), expected_offset_pow_size);
     }
 
     #[test]
@@ -363,10 +355,7 @@ mod tests {
         let expected_size_as_field_element = Field64::from(8);
 
         // Check if size_as_field_element correctly represents the scaled size in the field
-        assert_eq!(
-            scaled_domain.size_as_field_element(),
-            expected_size_as_field_element
-        );
+        assert_eq!(scaled_domain.size_as_field_element(), expected_size_as_field_element);
     }
 
     #[test]

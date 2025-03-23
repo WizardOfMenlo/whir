@@ -1,12 +1,12 @@
-use super::dense::WhirDensePolynomial;
-use super::{evals::EvaluationsList, hypercube::BinaryHypercubePoint};
-use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use {
     rayon::{join, prelude::*},
     std::mem::size_of,
 };
+
+use super::{dense::WhirDensePolynomial, evals::EvaluationsList, hypercube::BinaryHypercubePoint};
+use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -50,10 +50,7 @@ where
         assert_eq!(self.coeffs.len(), 1 << self.num_variables);
         assert!(point.0 < (1 << self.num_variables));
         // TODO: Optimized implementation
-        self.evaluate(&MultilinearPoint::from_binary_hypercube_point(
-            point,
-            self.num_variables,
-        ))
+        self.evaluate(&MultilinearPoint::from_binary_hypercube_point(point, self.num_variables))
     }
 
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
@@ -71,7 +68,8 @@ where
         eval_multivariate(&self.coeffs, &point.0)
     }
 
-    /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
+    /// Evaluate self at `point`, where `point` is from a field extension extending the field over
+    /// which the polynomial `self` is defined.
     ///
     /// Note that we only support the case where F is a prime field.
     pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
@@ -82,20 +80,18 @@ where
         eval_extension(&self.coeffs, &point.0, E::ONE)
     }
 
-    /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending i) and evaluates it at each point in `points`.
-    /// We return the vector of evaluations.
+    /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending
+    /// i) and evaluates it at each point in `points`. We return the vector of evaluations.
     ///
-    /// NOTE: For the `usual` mapping between univariate and multilinear polynomials, the coefficient ordering is such that
-    /// for a single point x, we have (extending notation to a single point)
-    /// self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}), ..., x^2, x])
+    /// NOTE: For the `usual` mapping between univariate and multilinear polynomials, the
+    /// coefficient ordering is such that for a single point x, we have (extending notation to a
+    /// single point) self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}),
+    /// ..., x^2, x])
     pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
         // WhirDensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
         // The coefficient order is "coefficient of 1 first".
         let univariate = WhirDensePolynomial::from_coefficients_slice(&self.coeffs);
-        points
-            .iter()
-            .map(|point| univariate.evaluate(point))
-            .collect()
+        points.iter().map(|point| univariate.evaluate(point)).collect()
     }
 
     /// Folds the polynomial along high-indexed variables, reducing its dimensionality.
@@ -126,10 +122,7 @@ where
             .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
             .collect();
 
-        Self {
-            coeffs,
-            num_variables: self.num_variables() - folding_factor,
-        }
+        Self { coeffs, num_variables: self.num_variables() - folding_factor }
     }
 }
 
@@ -139,10 +132,7 @@ impl<F> CoefficientList<F> {
         assert!(len.is_power_of_two());
         let num_variables = len.ilog2();
 
-        Self {
-            coeffs,
-            num_variables: num_variables as usize,
-        }
+        Self { coeffs, num_variables: num_variables as usize }
     }
 
     #[allow(clippy::missing_const_for_fn)]
@@ -158,16 +148,12 @@ impl<F> CoefficientList<F> {
         self.coeffs.len()
     }
 
-    /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field extension of F.
+    /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field
+    /// extension of F.
     ///
     /// Note that this is currently restricted to the case where F is a prime field.
     pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
-        CoefficientList::new(
-            self.coeffs
-                .into_iter()
-                .map(E::from_base_prime_field)
-                .collect(),
-        )
+        CoefficientList::new(self.coeffs.into_iter().map(E::from_base_prime_field).collect())
     }
 }
 
@@ -216,10 +202,7 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
             let (b0t, b1t) = {
                 let work_size: usize = (1 << 15) / size_of::<F>();
                 if coeffs.len() > work_size {
-                    join(
-                        || eval_multivariate(b0t, tail),
-                        || eval_multivariate(b1t, tail),
-                    )
+                    join(|| eval_multivariate(b0t, tail), || eval_multivariate(b1t, tail))
                 } else {
                     (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail))
                 }
@@ -250,11 +233,13 @@ where
 }
 
 // NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
-// You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
-// The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
+// You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the
+// recursion at all). The difference comes from multiplications by E::ONE at the leaves of the
+// recursion tree.
 
 // recursive helper function for polynomial evaluation:
-// Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
+// Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right,
+// [X_1,...])
 
 /// Recursively evaluates a multilinear polynomial at an extension field point.
 ///
@@ -294,9 +279,10 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::{Field64, Field64_2};
-    use ark_ff::AdditiveGroup;
 
     type F = Field64;
     type E = Field64_2;
@@ -311,10 +297,7 @@ mod tests {
         assert_eq!(evaluations[0], coeffs[0]);
         assert_eq!(evaluations[1], coeffs[0] + coeffs[1]);
         assert_eq!(evaluations[2], coeffs[0] + coeffs[2]);
-        assert_eq!(
-            evaluations[3],
-            coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]
-        );
+        assert_eq!(evaluations[3], coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]);
     }
 
     #[test]
@@ -383,20 +366,11 @@ mod tests {
 
         // Evaluations at hypercube points (expected values derived manually)
         // f(0,0) = coeffs[0]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b00)),
-            coeff0
-        );
+        assert_eq!(coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b00)), coeff0);
         // f(0,1) = coeffs[0] + coeffs[1]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b01)),
-            coeff0 + coeff1
-        );
+        assert_eq!(coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b01)), coeff0 + coeff1);
         // f(1,0) = coeffs[0] + coeffs[2]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b10)),
-            coeff0 + coeff2
-        );
+        assert_eq!(coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b10)), coeff0 + coeff2);
         // f(1,1) = coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]
         assert_eq!(
             coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b11)),
@@ -432,14 +406,8 @@ mod tests {
         let coeff_list = CoefficientList::new(coeffs);
 
         // Single-variable polynomial evaluations
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0)),
-            coeff0
-        );
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(1)),
-            coeff0 + coeff1
-        );
+        assert_eq!(coeff_list.evaluate_hypercube(BinaryHypercubePoint(0)), coeff0);
+        assert_eq!(coeff_list.evaluate_hypercube(BinaryHypercubePoint(1)), coeff0 + coeff1);
     }
 
     #[test]
@@ -459,10 +427,7 @@ mod tests {
         let expected_eval = coeff_list.evaluate(&full_point);
 
         // Ensure correctness of folding and evaluation
-        assert_eq!(
-            folded.evaluate(&MultilinearPoint(vec![eval_x0])),
-            expected_eval
-        );
+        assert_eq!(folded.evaluate(&MultilinearPoint(vec![eval_x0])), expected_eval);
     }
 
     #[test]
@@ -561,14 +526,14 @@ mod tests {
         let x2 = E::from(4);
 
         // Correct expected value based on the coefficient order
-        let expected_value = E::from(1)
-            + E::from(2) * x2
-            + E::from(3) * x1
-            + E::from(5) * x1 * x2
-            + E::from(4) * x0
-            + E::from(6) * x0 * x2
-            + E::from(7) * x0 * x1
-            + E::from(8) * x0 * x1 * x2;
+        let expected_value = E::from(1) +
+            E::from(2) * x2 +
+            E::from(3) * x1 +
+            E::from(5) * x1 * x2 +
+            E::from(4) * x0 +
+            E::from(6) * x0 * x2 +
+            E::from(7) * x0 * x1 +
+            E::from(8) * x0 * x1 * x2;
 
         let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1, x2]));
 

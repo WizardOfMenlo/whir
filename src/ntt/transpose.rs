@@ -1,8 +1,10 @@
-use super::{utils::workload_size, MatrixMut};
 use std::mem::swap;
 
-// NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
-// (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).
+use super::{utils::workload_size, MatrixMut};
+
+// NOTE: The assumption that rows and cols are a power of two are actually only relevant for the
+// square matrix case. (This is because the algorithm recurses into 4 sub-matrices of half
+// dimension; we assume those to be square matrices as well, which only works for powers of two).
 
 /// Transposes a matrix in-place.
 ///
@@ -63,10 +65,7 @@ fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<'_, F>, mut dst: Matrix
     };
 
     #[cfg(feature = "parallel")]
-    rayon::join(
-        || transpose_copy(src_a, dst_a),
-        || transpose_copy(src_b, dst_b),
-    );
+    rayon::join(|| transpose_copy(src_a, dst_a), || transpose_copy(src_b, dst_b));
 
     #[cfg(not(feature = "parallel"))]
     for (s, mut d) in [(src_a, dst_a), (src_b, dst_b)] {
@@ -145,18 +144,8 @@ fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: Matrix
 
         #[cfg(feature = "parallel")]
         rayon::join(
-            || {
-                rayon::join(
-                    || transpose_square_swap(aa, ba),
-                    || transpose_square_swap(ab, bc),
-                )
-            },
-            || {
-                rayon::join(
-                    || transpose_square_swap(ac, bb),
-                    || transpose_square_swap(ad, bd),
-                )
-            },
+            || rayon::join(|| transpose_square_swap(aa, ba), || transpose_square_swap(ab, bc)),
+            || rayon::join(|| transpose_square_swap(ac, bb), || transpose_square_swap(ad, bd)),
         );
 
         #[cfg(not(feature = "parallel"))]
@@ -183,9 +172,9 @@ fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: Matrix
 
 #[cfg(test)]
 mod tests {
-    use super::super::utils::workload_size;
-    use super::*;
     use proptest::prelude::*;
+
+    use super::{super::utils::workload_size, *};
 
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
@@ -193,9 +182,7 @@ mod tests {
     /// Creates a `rows x columns` matrix stored as a flat vector.
     /// Each element `(i, j)` represents its row and column position.
     fn make_example_matrix(rows: usize, columns: usize) -> Vec<Pair> {
-        (0..rows)
-            .flat_map(|i| (0..columns).map(move |j| (i, j)))
-            .collect()
+        (0..rows).flat_map(|i| (0..columns).map(move |j| (i, j))).collect()
     }
 
     /// Creates a sequence of `instances` matrices, each of size `rows x columns`.
@@ -218,7 +205,8 @@ mod tests {
     #[test]
     #[allow(clippy::type_complexity)]
     fn test_transpose_copy() {
-        let rows: usize = workload_size::<Pair>() + 1; // intentionally not a power of two: The function is not described as only working for powers of two.
+        let rows: usize = workload_size::<Pair>() + 1; // intentionally not a power of two: The function is not described as only working for
+                                                       // powers of two.
         let columns: usize = 4;
         let mut srcarray = make_example_matrix(rows, columns);
         let mut dstarray: Vec<(usize, usize)> = vec![(0, 0); rows * columns];

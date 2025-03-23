@@ -27,18 +27,13 @@ unsafe impl<T: Send> Send for MatrixMut<'_, T> {}
 unsafe impl<T: Sync> Sync for MatrixMut<'_, T> {}
 
 impl<'a, T> MatrixMut<'a, T> {
-    /// creates a MatrixMut from `slice`, where slice is the concatenations of `rows` rows, each consisting of `cols` many entries.
+    /// creates a MatrixMut from `slice`, where slice is the concatenations of `rows` rows, each
+    /// consisting of `cols` many entries.
     pub fn from_mut_slice(slice: &'a mut [T], rows: usize, cols: usize) -> Self {
         assert_eq!(slice.len(), rows * cols);
         // Safety: The input slice is valid for the lifetime `'a` and has
         // `rows` contiguous rows of length `cols`.
-        Self {
-            data: slice.as_mut_ptr(),
-            rows,
-            cols,
-            row_stride: cols,
-            _lifetime: PhantomData,
-        }
+        Self { data: slice.as_mut_ptr(), rows, cols, row_stride: cols, _lifetime: PhantomData }
     }
 
     /// returns the number of rows
@@ -65,7 +60,8 @@ impl<'a, T> MatrixMut<'a, T> {
         unsafe { slice::from_raw_parts_mut(self.data.add(row * self.row_stride), self.cols) }
     }
 
-    /// Split the matrix into two vertically at the `row`'th row (meaning that in the returned pair (A,B), the matrix A has `row` rows).
+    /// Split the matrix into two vertically at the `row`'th row (meaning that in the returned pair
+    /// (A,B), the matrix A has `row` rows).
     ///
     /// [A]
     /// [ ] = self
@@ -90,7 +86,8 @@ impl<'a, T> MatrixMut<'a, T> {
         )
     }
 
-    /// Split the matrix into two horizontally at the `col`th column (meaning that in the returned pair (A,B), the matrix A has `col` columns).
+    /// Split the matrix into two horizontally at the `col`th column (meaning that in the returned
+    /// pair (A,B), the matrix A has `col` columns).
     ///
     /// [A B] = self
     pub fn split_horizontal(self, col: usize) -> (Self, Self) {
@@ -115,7 +112,8 @@ impl<'a, T> MatrixMut<'a, T> {
         )
     }
 
-    /// Split the matrix into four quadrants at the indicated `row` and `col` (meaning that in the returned 4-tuple (A,B,C,D), the matrix A is a `row`x`col` matrix)
+    /// Split the matrix into four quadrants at the indicated `row` and `col` (meaning that in the
+    /// returned 4-tuple (A,B,C,D), the matrix A is a `row`x`col` matrix)
     ///
     /// self = [A B]
     ///        [C D]
@@ -139,7 +137,8 @@ impl<'a, T> MatrixMut<'a, T> {
         }
     }
 
-    /// returns an immutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
+    /// returns an immutable pointer to the element at (`row`, `col`). This performs no bounds
+    /// checking and provining indices out-of-bounds is UB.
     pub(crate) const unsafe fn ptr_at(&self, row: usize, col: usize) -> *const T {
         // Safe to call under the following assertion (checked by caller)
         // assert!(row < self.rows);
@@ -150,7 +149,8 @@ impl<'a, T> MatrixMut<'a, T> {
         self.data.add(row * self.row_stride + col)
     }
 
-    /// returns a mutable pointer to the element at (`row`, `col`). This performs no bounds checking and provining indices out-of-bounds is UB.
+    /// returns a mutable pointer to the element at (`row`, `col`). This performs no bounds checking
+    /// and provining indices out-of-bounds is UB.
     pub(crate) const unsafe fn ptr_at_mut(&mut self, row: usize, col: usize) -> *mut T {
         // Safe to call under the following assertion (checked by caller)
         //
@@ -163,7 +163,8 @@ impl<'a, T> MatrixMut<'a, T> {
     }
 }
 
-// Use MatrixMut::ptr_at and MatrixMut::ptr_at_mut to implement Index and IndexMut. The latter are not unsafe, since they contain bounds-checks.
+// Use MatrixMut::ptr_at and MatrixMut::ptr_at_mut to implement Index and IndexMut. The latter are
+// not unsafe, since they contain bounds-checks.
 
 impl<T> Index<(usize, usize)> for MatrixMut<'_, T> {
     type Output = T;

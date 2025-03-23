@@ -1,7 +1,7 @@
-use super::hypercube::BinaryHypercubePoint;
 use ark_ff::Field;
-use rand::Rng;
-use rand::{distributions::Standard, prelude::Distribution, RngCore};
+use rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
+
+use super::hypercube::BinaryHypercubePoint;
 
 /// A point `(x_1, ..., x_n)` in `F^n` for some field `F`.
 ///
@@ -31,13 +31,7 @@ where
         Self(
             (0..num_variables)
                 .rev()
-                .map(|i| {
-                    if (point.0 >> i) & 1 == 1 {
-                        F::ONE
-                    } else {
-                        F::ZERO
-                    }
-                })
+                .map(|i| if (point.0 >> i) & 1 == 1 { F::ONE } else { F::ZERO })
                 .collect(),
         )
     }
@@ -123,9 +117,10 @@ where
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
     pub fn eq_poly_outside(&self, point: &Self) -> F {
         assert_eq!(self.num_variables(), point.num_variables());
-        self.0.iter().zip(&point.0).fold(F::ONE, |acc, (&l, &r)| {
-            acc * (l * r + (F::ONE - l) * (F::ONE - r))
-        })
+        self.0
+            .iter()
+            .zip(&point.0)
+            .fold(F::ONE, |acc, (&l, &r)| acc * (l * r + (F::ONE - l) * (F::ONE - r)))
     }
 
     /// Computes `eq3(c, p)`, the **equality polynomial** for `{0,1,2}^n`.
@@ -191,9 +186,8 @@ impl<F> From<F> for MultilinearPoint<F> {
 mod tests {
     use ark_ff::AdditiveGroup;
 
-    use crate::crypto::fields::Field64;
-
     use super::*;
+    use crate::crypto::fields::Field64;
 
     #[test]
     fn test_n_variables() {
@@ -280,12 +274,8 @@ mod tests {
 
     #[test]
     fn test_to_hypercube_all_zeros() {
-        let point = MultilinearPoint(vec![
-            Field64::ZERO,
-            Field64::ZERO,
-            Field64::ZERO,
-            Field64::ZERO,
-        ]);
+        let point =
+            MultilinearPoint(vec![Field64::ZERO, Field64::ZERO, Field64::ZERO, Field64::ZERO]);
         assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0)));
     }
 
@@ -297,12 +287,8 @@ mod tests {
 
     #[test]
     fn test_to_hypercube_mixed_bits() {
-        let point = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let point =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
         assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0b1010)));
     }
 
@@ -327,10 +313,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        assert_eq!(
-            point.to_hypercube(),
-            Some(BinaryHypercubePoint(0b1101_0110))
-        );
+        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0b1101_0110)));
     }
 
     #[test]
@@ -381,13 +364,7 @@ mod tests {
         let expanded = MultilinearPoint::expand_from_univariate(point, 5);
 
         // For n = 5, we expect [y^16, y^8, y^4, y^2, y]
-        let expected = vec![
-            point.pow([16]),
-            point.pow([8]),
-            point.pow([4]),
-            point.pow([2]),
-            point,
-        ];
+        let expected = vec![point.pow([16]), point.pow([8]), point.pow([4]), point.pow([2]), point];
         assert_eq!(expanded.0, expected);
     }
 
@@ -460,12 +437,8 @@ mod tests {
     #[test]
     fn test_eq_poly_mixed_bits_match() {
         // Multilinear point (1,0,1,0)
-        let ml_point = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let ml_point =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
         let binary_point = BinaryHypercubePoint(0b1010);
 
         // eq_poly should evaluate to 1 since c_i = p_i for all i
@@ -475,12 +448,8 @@ mod tests {
     #[test]
     fn test_eq_poly_mixed_bits_mismatch() {
         // Multilinear point (1,0,1,0)
-        let ml_point = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let ml_point =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
         let binary_point = BinaryHypercubePoint(0b1100); // Differs at second bit
 
         // eq_poly should evaluate to 0 since there is at least one mismatch
@@ -573,36 +542,20 @@ mod tests {
 
     #[test]
     fn test_eq_poly_outside_mixed_match() {
-        let ml_point1 = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
-        let ml_point2 = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
+        let ml_point1 =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
+        let ml_point2 =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
 
         assert_eq!(ml_point1.eq_poly_outside(&ml_point2), Field64::ONE);
     }
 
     #[test]
     fn test_eq_poly_outside_mixed_mismatch() {
-        let ml_point1 = MultilinearPoint(vec![
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-        ]);
-        let ml_point2 = MultilinearPoint(vec![
-            Field64::ZERO,
-            Field64::ONE,
-            Field64::ZERO,
-            Field64::ONE,
-        ]);
+        let ml_point1 =
+            MultilinearPoint(vec![Field64::ONE, Field64::ZERO, Field64::ONE, Field64::ZERO]);
+        let ml_point2 =
+            MultilinearPoint(vec![Field64::ZERO, Field64::ONE, Field64::ZERO, Field64::ONE]);
 
         assert_eq!(ml_point1.eq_poly_outside(&ml_point2), Field64::ZERO);
     }
@@ -773,13 +726,13 @@ mod tests {
         ]);
         // (2,1,0,1,0,2,1) in base 3 = 2 * 3^6 + 1 * 3^5 + 0 * 3^4 + 1 * 3^3 + 0 * 3^2 + 2 * 3^1 + 1
         // * 3^0
-        let ternary_point = 2 * 3_i32.pow(6)
-            + 1 * 3_i32.pow(5)
-            + 0 * 3_i32.pow(4)
-            + 1 * 3_i32.pow(3)
-            + 0 * 3_i32.pow(2)
-            + 2 * 3_i32.pow(1)
-            + 1;
+        let ternary_point = 2 * 3_i32.pow(6) +
+            1 * 3_i32.pow(5) +
+            0 * 3_i32.pow(4) +
+            1 * 3_i32.pow(3) +
+            0 * 3_i32.pow(2) +
+            2 * 3_i32.pow(1) +
+            1;
 
         assert_eq!(ml_point.eq_poly3(ternary_point as usize), Field64::ONE);
     }
@@ -797,13 +750,13 @@ mod tests {
             Field64::ONE,
         ]);
         // (2,1,0,1,1,2,1) differs at the fifth coordinate
-        let ternary_point = 2 * 3_i32.pow(6)
-            + 1 * 3_i32.pow(5)
-            + 0 * 3_i32.pow(4)
-            + 1 * 3_i32.pow(3)
-            + 1 * 3_i32.pow(2)
-            + 2 * 3_i32.pow(1)
-            + 1;
+        let ternary_point = 2 * 3_i32.pow(6) +
+            1 * 3_i32.pow(5) +
+            0 * 3_i32.pow(4) +
+            1 * 3_i32.pow(3) +
+            1 * 3_i32.pow(2) +
+            2 * 3_i32.pow(1) +
+            1;
 
         assert_eq!(ml_point.eq_poly3(ternary_point as usize), Field64::ZERO);
     }

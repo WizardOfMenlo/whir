@@ -63,13 +63,7 @@ impl<F: Field> From<&MultilinearPoint<F>> for LagrangePolynomialIterator<F> {
         point.reverse();
         point_negated.reverse();
 
-        Self {
-            num_variables,
-            point,
-            point_negated,
-            stack,
-            last_position: None,
-        }
+        Self { num_variables, point, point_negated, stack, last_position: None }
     }
 }
 
@@ -78,7 +72,8 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
     /// Computes the next `(x, y)` pair where `y = eq_poly(c, x)`.
     ///
     /// - The first iteration **outputs** `(0, y_1 ... y_n)`, where `y_i = (1 - c_i)`.
-    /// - Subsequent iterations **update** `y` using binary code ordering, minimizing recomputations.
+    /// - Subsequent iterations **update** `y` using binary code ordering, minimizing
+    ///   recomputations.
     fn next(&mut self) -> Option<Self::Item> {
         // a) Check if this is the first iteration
         if self.last_position.is_none() {
@@ -119,21 +114,19 @@ impl<F: Field> Iterator for LagrangePolynomialIterator<F> {
         self.last_position = Some(next_position);
 
         // Return the top of the stack
-        Some((
-            BinaryHypercubePoint(next_position),
-            *self.stack.last().unwrap(),
-        ))
+        Some((BinaryHypercubePoint(next_position), *self.stack.last().unwrap()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::{
         crypto::fields::Field64,
         poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
-    use ark_ff::AdditiveGroup;
 
     type F = Field64;
 
@@ -145,22 +138,10 @@ mod tests {
 
         let mut lag_iterator = LagrangePolynomialIterator::from(&point_1);
 
-        assert_eq!(
-            lag_iterator.next().unwrap(),
-            (BinaryHypercubePoint(0), (one - a) * (one - b))
-        );
-        assert_eq!(
-            lag_iterator.next().unwrap(),
-            (BinaryHypercubePoint(1), (one - a) * b)
-        );
-        assert_eq!(
-            lag_iterator.next().unwrap(),
-            (BinaryHypercubePoint(2), a * (one - b))
-        );
-        assert_eq!(
-            lag_iterator.next().unwrap(),
-            (BinaryHypercubePoint(3), a * b)
-        );
+        assert_eq!(lag_iterator.next().unwrap(), (BinaryHypercubePoint(0), (one - a) * (one - b)));
+        assert_eq!(lag_iterator.next().unwrap(), (BinaryHypercubePoint(1), (one - a) * b));
+        assert_eq!(lag_iterator.next().unwrap(), (BinaryHypercubePoint(2), a * (one - b)));
+        assert_eq!(lag_iterator.next().unwrap(), (BinaryHypercubePoint(3), a * b));
         assert_eq!(lag_iterator.next(), None);
     }
 
@@ -201,10 +182,7 @@ mod tests {
         let mut iter = LagrangePolynomialIterator::from(&point);
 
         // Expected values: (0, 1 - p) and (1, p)
-        assert_eq!(
-            iter.next(),
-            Some((BinaryHypercubePoint(0), F::ONE - point.0[0]))
-        );
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0), F::ONE - point.0[0])));
         assert_eq!(iter.next(), Some((BinaryHypercubePoint(1), point.0[0])));
         assert_eq!(iter.next(), None); // No more elements should be present
     }
@@ -216,18 +194,9 @@ mod tests {
         let mut iter = LagrangePolynomialIterator::from(&point);
 
         // Expected values based on binary enumeration (big-endian)
-        assert_eq!(
-            iter.next(),
-            Some((BinaryHypercubePoint(0b00), (F::ONE - a) * (F::ONE - b)))
-        );
-        assert_eq!(
-            iter.next(),
-            Some((BinaryHypercubePoint(0b01), (F::ONE - a) * b))
-        );
-        assert_eq!(
-            iter.next(),
-            Some((BinaryHypercubePoint(0b10), a * (F::ONE - b)))
-        );
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b00), (F::ONE - a) * (F::ONE - b))));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b01), (F::ONE - a) * b)));
+        assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b10), a * (F::ONE - b))));
         assert_eq!(iter.next(), Some((BinaryHypercubePoint(0b11), a * b)));
         assert_eq!(iter.next(), None);
     }

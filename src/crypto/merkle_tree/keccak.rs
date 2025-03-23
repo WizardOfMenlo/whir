@@ -1,8 +1,5 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-use super::{HashCounter, IdentityDigestConverter};
-use crate::whir::fs_utils::{DigestReader, DigestWriter};
-use crate::whir::iopattern::DigestIOPattern;
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
@@ -15,6 +12,12 @@ use nimue::{
 };
 use rand::RngCore;
 use sha3::Digest;
+
+use super::{HashCounter, IdentityDigestConverter};
+use crate::whir::{
+    fs_utils::{DigestReader, DigestWriter},
+    iopattern::DigestIOPattern,
+};
 
 #[derive(
     Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,
@@ -120,10 +123,7 @@ impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
 
 pub fn default_config<F: CanonicalSerialize + Send>(
     rng: &mut impl RngCore,
-) -> (
-    <LeafH<F> as CRHScheme>::Parameters,
-    <CompressH as TwoToOneCRHScheme>::Parameters,
-) {
+) -> (<LeafH<F> as CRHScheme>::Parameters, <CompressH as TwoToOneCRHScheme>::Parameters) {
     (
         <LeafH<F> as CRHScheme>::setup(rng).expect("Leaf hash setup failed"),
         <CompressH as TwoToOneCRHScheme>::setup(rng).expect("Compress hash setup failed"),

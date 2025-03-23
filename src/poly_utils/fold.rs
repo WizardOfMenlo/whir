@@ -1,9 +1,11 @@
-use crate::ntt::{intt_batch, transpose};
-use crate::parameters::FoldType;
 use ark_ff::{FftField, Field};
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use crate::{
+    ntt::{intt_batch, transpose},
+    parameters::FoldType,
+};
 
 /// Computes the folded value of a function evaluated on a coset.
 ///
@@ -75,15 +77,15 @@ pub fn compute_fold<F: Field>(
 /// supporting two modes:
 ///
 /// - `FoldType::Naive`: applies only the reshaping step (transposition).
-/// - `FoldType::ProverHelps`: performs reshaping, inverse NTTs, and applies coset + scaling correction.
+/// - `FoldType::ProverHelps`: performs reshaping, inverse NTTs, and applies coset + scaling
+///   correction.
 ///
 /// The evaluations are grouped into `2^folding_factor` blocks of size `N / 2^folding_factor`.
 /// For each group, the function performs the following (if `ProverHelps`):
 ///
 /// 1. Transpose: reshape layout to enable independent processing of each sub-coset.
 /// 2. Inverse NTT: convert each sub-coset from evaluation to coefficient form (no 1/N scaling).
-/// 3. Scale correction:
-///    Each output is multiplied by:
+/// 3. Scale correction: Each output is multiplied by:
 ///
 ///    ```ignore
 ///    size_inv * (domain_gen_inv^i)^j
@@ -114,7 +116,8 @@ pub fn transform_evaluations<F: FftField>(
 
     match fold_type {
         FoldType::Naive => {
-            // Simply transpose into column-major form: shape = [folding_factor_exp × size_of_new_domain]
+            // Simply transpose into column-major form: shape = [folding_factor_exp ×
+            // size_of_new_domain]
             transpose(evals, folding_factor_exp, size_of_new_domain);
         }
         FoldType::ProverHelps => {
@@ -140,10 +143,9 @@ pub fn transform_evaluations<F: FftField>(
                 }
             }
             #[cfg(feature = "parallel")]
-            evals
-                .par_chunks_exact_mut(folding_factor_exp)
-                .enumerate()
-                .for_each_with(F::ZERO, |offset, (i, answers)| {
+            evals.par_chunks_exact_mut(folding_factor_exp).enumerate().for_each_with(
+                F::ZERO,
+                |offset, (i, answers)| {
                     if *offset == F::ZERO {
                         *offset = domain_gen_inv.pow([i as u64]);
                     } else {
@@ -154,13 +156,16 @@ pub fn transform_evaluations<F: FftField>(
                         *v *= scale;
                         scale *= &*offset;
                     }
-                });
+                },
+            );
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, FftField, Field};
+
     use super::{compute_fold, transform_evaluations};
     use crate::{
         crypto::fields::Field64,
@@ -168,7 +173,6 @@ mod tests {
         parameters::FoldType,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
-    use ark_ff::{AdditiveGroup, FftField, Field};
 
     type F = Field64;
 
@@ -258,10 +262,7 @@ mod tests {
         let mut domain_evaluations: Vec<_> = (0..domain_size)
             .map(|w| root_of_unity.pow([w]))
             .map(|point| {
-                poly.evaluate(&MultilinearPoint::expand_from_univariate(
-                    point,
-                    num_variables,
-                ))
+                poly.evaluate(&MultilinearPoint::expand_from_univariate(point, num_variables))
             })
             .collect();
 

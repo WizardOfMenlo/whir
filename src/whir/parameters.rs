@@ -1,12 +1,14 @@
+use core::panic;
+use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
+
+use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
+use ark_ff::FftField;
+
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
     parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
 };
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
-use ark_ff::FftField;
-use core::panic;
-use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
 
 #[derive(Clone)]
 pub struct WhirConfig<F, MerkleConfig, PowStrategy>
@@ -21,11 +23,10 @@ where
 
     pub committment_ood_samples: usize,
     // The WHIR protocol can prove either:
-    // 1. The commitment is a valid low degree polynomial. In that case, the
-    //    initial statement is set to false.
-    // 2. The commitment is a valid folded polynomial, and an additional
-    //    polynomial evaluation statement. In that case, the initial statement
-    //    is set to true.
+    // 1. The commitment is a valid low degree polynomial. In that case, the initial statement is
+    //    set to false.
+    // 2. The commitment is a valid folded polynomial, and an additional polynomial evaluation
+    //    statement. In that case, the initial statement is set to true.
     pub initial_statement: bool,
     pub starting_domain: Domain<F>,
     pub starting_log_inv_rate: usize,
@@ -68,14 +69,10 @@ where
         mv_parameters: MultivariateParameters<F>,
         whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
-        whir_parameters
-            .folding_factor
-            .check_validity(mv_parameters.num_variables)
-            .unwrap();
+        whir_parameters.folding_factor.check_validity(mv_parameters.num_variables).unwrap();
 
-        let protocol_security_level = whir_parameters
-            .security_level
-            .saturating_sub(whir_parameters.pow_bits);
+        let protocol_security_level =
+            whir_parameters.security_level.saturating_sub(whir_parameters.pow_bits);
         let field_size_bits = F::field_size_in_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = mv_parameters.num_variables;
@@ -83,9 +80,8 @@ where
         let starting_domain = Domain::new(1 << mv_parameters.num_variables, log_inv_rate)
             .expect("Should have found an appropriate domain - check Field 2 adicity?");
 
-        let (num_rounds, final_sumcheck_rounds) = whir_parameters
-            .folding_factor
-            .compute_number_of_rounds(mv_parameters.num_variables);
+        let (num_rounds, final_sumcheck_rounds) =
+            whir_parameters.folding_factor.compute_number_of_rounds(mv_parameters.num_variables);
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate);
 
@@ -183,15 +179,12 @@ where
             log_inv_rate = next_rate;
         }
 
-        let final_queries = Self::queries(
-            whir_parameters.soundness_type,
-            protocol_security_level,
-            log_inv_rate,
-        );
+        let final_queries =
+            Self::queries(whir_parameters.soundness_type, protocol_security_level, log_inv_rate);
 
         let final_pow_bits = 0_f64.max(
-            whir_parameters.security_level as f64
-                - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries),
+            whir_parameters.security_level as f64 -
+                Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries),
         );
 
         let final_folding_pow_bits =
@@ -229,9 +222,9 @@ where
         let max_bits = self.max_pow_bits as f64;
 
         // Check the main pow bits values
-        if self.starting_folding_pow_bits > max_bits
-            || self.final_pow_bits > max_bits
-            || self.final_folding_pow_bits > max_bits
+        if self.starting_folding_pow_bits > max_bits ||
+            self.final_pow_bits > max_bits ||
+            self.final_folding_pow_bits > max_bits
         {
             return false;
         }
@@ -441,11 +434,7 @@ where
             self.security_level, self.soundness_type, self.max_pow_bits
         )?;
 
-        writeln!(
-            f,
-            "initial_folding_pow_bits: {}",
-            self.starting_folding_pow_bits
-        )?;
+        writeln!(f, "initial_folding_pow_bits: {}", self.starting_folding_pow_bits)?;
         for r in &self.round_parameters {
             r.fmt(f)?;
         }
@@ -574,11 +563,8 @@ where
             num_variables -= self.folding_factor.at_round(round + 1);
         }
 
-        let query_error = Self::rbr_queries(
-            self.soundness_type,
-            self.final_log_inv_rate,
-            self.final_queries,
-        );
+        let query_error =
+            Self::rbr_queries(self.soundness_type, self.final_log_inv_rate, self.final_queries);
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
@@ -619,12 +605,13 @@ impl Display for RoundConfig {
 
 #[cfg(test)]
 mod tests {
+    use ark_std::test_rng;
+
     use super::*;
     use crate::crypto::{
         fields::Field64,
         merkle_tree::keccak::{default_config, MerkleTreeParams},
     };
-    use ark_std::test_rng;
 
     /// Generates default WHIR parameters
     fn default_whir_params<F: FftField>() -> WhirParameters<MerkleTreeParams<F>, u8> {
@@ -953,10 +940,7 @@ mod tests {
             log_inv_rate: 3,
         }];
 
-        assert!(
-            !config.check_pow_bits(),
-            "All values exceed max_pow_bits, should return false."
-        );
+        assert!(!config.check_pow_bits(), "All values exceed max_pow_bits, should return false.");
     }
 
     #[test]
@@ -1016,13 +1000,7 @@ mod tests {
     fn test_list_size_bits_unique_decoding() {
         // UniqueDecoding: always returns 0.0
 
-        let cases = vec![
-            (10, 5, 2.0),
-            (0, 5, 2.0),
-            (10, 0, 2.0),
-            (10, 5, 0.0),
-            (10, 5, 10.0),
-        ];
+        let cases = vec![(10, 5, 2.0), (0, 5, 2.0), (10, 0, 2.0), (10, 5, 0.0), (10, 5, 10.0)];
 
         for (num_variables, log_inv_rate, log_eta) in cases {
             let result = WhirConfig::<Field64, MerkleTreeParams<Field64>, u8>::list_size_bits(
@@ -1041,49 +1019,17 @@ mod tests {
 
     #[test]
     fn test_rbr_ood_sample_conjecture_list() {
-        // ConjectureList: rbr_ood_sample = (ood_samples * field_size_bits) + 1 - (2 * list_size_bits + num_variables * ood_samples)
+        // ConjectureList: rbr_ood_sample = (ood_samples * field_size_bits) + 1 - (2 *
+        // list_size_bits + num_variables * ood_samples)
 
         let cases = vec![
-            (
-                10,
-                5,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 13.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                0,
-                5,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (0.0 * 3.0)),
-            ), // Edge case: num_variables = 0
-            (
-                10,
-                0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 8.0 + (10.0 * 3.0)),
-            ), // Edge case: log_inv_rate = 0
-            (
-                10,
-                5,
-                0.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 15.0 + (10.0 * 3.0)),
-            ), // Edge case: log_eta = 0
-            (
-                10,
-                5,
-                10.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 5.0 + (10.0 * 3.0)),
-            ), // High log_eta
+            (10, 5, 2.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 13.0 + (10.0 * 3.0))), // Basic case
+            (0, 5, 2.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (0.0 * 3.0))), /* Edge case:
+                                                                                   * num_variables
+                                                                                   * = 0 */
+            (10, 0, 2.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 8.0 + (10.0 * 3.0))), /* Edge case: log_inv_rate = 0 */
+            (10, 5, 0.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 15.0 + (10.0 * 3.0))), /* Edge case: log_eta = 0 */
+            (10, 5, 10.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 5.0 + (10.0 * 3.0))), /* High log_eta */
         ];
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
@@ -1099,13 +1045,7 @@ mod tests {
             assert!(
                 (result - expected).abs() < 1e-6,
                 "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
+                (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples)
             );
         }
     }
@@ -1115,38 +1055,10 @@ mod tests {
         // ProvableList: Uses a different list_size_bits formula
 
         let cases = vec![
-            (
-                10,
-                8,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 1.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                10,
-                0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -3.0 + (10.0 * 3.0)),
-            ), // log_inv_rate = 0
-            (
-                10,
-                8,
-                0.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (10.0 * 3.0)),
-            ), // log_eta = 0
-            (
-                10,
-                8,
-                10.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -7.0 + (10.0 * 3.0)),
-            ), // High log_eta
+            (10, 8, 2.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 1.0 + (10.0 * 3.0))), // Basic case
+            (10, 0, 2.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * -3.0 + (10.0 * 3.0))), /* log_inv_rate = 0 */
+            (10, 8, 0.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (10.0 * 3.0))),  // log_eta = 0
+            (10, 8, 10.0, 256, 3, (3.0 * 256.0) + 1.0 - (2.0 * -7.0 + (10.0 * 3.0))), /* High log_eta */
         ];
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
@@ -1162,13 +1074,7 @@ mod tests {
             assert!(
                 (result - expected).abs() < 1e-6,
                 "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
+                (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples)
             );
         }
     }

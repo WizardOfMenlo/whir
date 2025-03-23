@@ -15,11 +15,11 @@ use super::{
     statement::{StatementVerifier, VerifierWeights},
     WhirProof,
 };
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestReader};
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
+    whir::fs_utils::{get_challenge_stir_queries, DigestReader},
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
@@ -63,11 +63,7 @@ where
             arthur.fill_next_scalars(&mut ood_answers)?;
         }
 
-        Ok(ParsedCommitment {
-            root,
-            ood_points,
-            ood_answers,
-        })
+        Ok(ParsedCommitment { root, ood_points, ood_answers })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -162,8 +158,8 @@ where
                     &prev_root,
                     answers.iter().map(|a| a.as_ref()),
                 )
-                .unwrap()
-                || merkle_proof.leaf_indexes != stir_challenges_indexes
+                .unwrap() ||
+                merkle_proof.leaf_indexes != stir_challenges_indexes
             {
                 return Err(ProofError::InvalidProof);
             }
@@ -240,8 +236,8 @@ where
                 &prev_root,
                 final_randomness_answers.iter().map(|a| a.as_ref()),
             )
-            .unwrap()
-            || final_merkle_proof.leaf_indexes != final_randomness_indexes
+            .unwrap() ||
+            final_merkle_proof.leaf_indexes != final_randomness_indexes
         {
             return Err(ProofError::InvalidProof);
         }
@@ -261,13 +257,8 @@ where
                 arthur.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
             }
         }
-        let final_sumcheck_randomness = MultilinearPoint(
-            final_sumcheck_rounds
-                .iter()
-                .map(|&(_, r)| r)
-                .rev()
-                .collect(),
-        );
+        let final_sumcheck_randomness =
+            MultilinearPoint(final_sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
 
         Ok(ParsedProof {
             initial_combination_randomness,
@@ -343,15 +334,14 @@ where
             num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
-            let stir_challenges = round_proof
-                .ood_points
-                .iter()
-                .chain(&round_proof.stir_challenges_points)
-                .map(|&univariate| {
-                    MultilinearPoint::expand_from_univariate(univariate, num_variables)
-                    // TODO:
-                    // Maybe refactor outside
-                });
+            let stir_challenges =
+                round_proof.ood_points.iter().chain(&round_proof.stir_challenges_points).map(
+                    |&univariate| {
+                        MultilinearPoint::expand_from_univariate(univariate, num_variables)
+                        // TODO:
+                        // Maybe refactor outside
+                    },
+                );
 
             let sum_of_claims: F = stir_challenges
                 .zip(&round_proof.combination_randomness)
@@ -378,24 +368,18 @@ where
         // Then we will check the algebraic part (so to optimise inversions)
         let parsed_commitment = self.parse_commitment(arthur)?;
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
-        let parsed = self.parse_proof(
-            arthur,
-            &parsed_commitment,
-            statement.constraints.len(),
-            whir_proof,
-        )?;
+        let parsed =
+            self.parse_proof(arthur, &parsed_commitment, statement.constraints.len(), whir_proof)?;
 
-        let computed_folds = self
-            .params
-            .fold_optimisation
-            .stir_evaluations_verifier(&parsed, &self.params);
+        let computed_folds =
+            self.params.fold_optimisation.stir_evaluations_verifier(&parsed, &self.params);
 
         let mut prev_sumcheck = None;
 
         // Initial sumcheck verification
         if let Some((poly, randomness)) = parsed.initial_sumcheck_rounds.first().cloned() {
-            if poly.sum_over_boolean_hypercube()
-                != parsed_commitment
+            if poly.sum_over_boolean_hypercube() !=
+                parsed_commitment
                     .ood_answers
                     .iter()
                     .copied()
@@ -412,8 +396,8 @@ where
 
             // Check the rest of the rounds
             for (next_poly, next_rand) in &parsed.initial_sumcheck_rounds[1..] {
-                if next_poly.sum_over_boolean_hypercube()
-                    != current.0.evaluate_at_point(&current.1.into())
+                if next_poly.sum_over_boolean_hypercube() !=
+                    current.0.evaluate_at_point(&current.1.into())
                 {
                     return Err(ProofError::InvalidProof);
                 }
@@ -427,18 +411,13 @@ where
         for (round, folds) in parsed.rounds.iter().zip(&computed_folds) {
             let (sumcheck_poly, new_randomness) = &round.sumcheck_rounds[0];
 
-            let values = round
-                .ood_answers
-                .iter()
-                .copied()
-                .chain(folds.iter().copied());
+            let values = round.ood_answers.iter().copied().chain(folds.iter().copied());
 
-            let prev_eval = prev_sumcheck
-                .as_ref()
-                .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
+            let prev_eval =
+                prev_sumcheck.as_ref().map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
 
-            let claimed_sum = prev_eval
-                + values
+            let claimed_sum = prev_eval +
+                values
                     .zip(&round.combination_randomness)
                     .map(|(val, rand)| val * rand)
                     .sum::<F>();
@@ -452,8 +431,8 @@ where
             // Check the rest of the round
             for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds[1..] {
                 let (prev_poly, randomness) = prev_sumcheck.unwrap();
-                if sumcheck_poly.sum_over_boolean_hypercube()
-                    != prev_poly.evaluate_at_point(&randomness.into())
+                if sumcheck_poly.sum_over_boolean_hypercube() !=
+                    prev_poly.evaluate_at_point(&randomness.into())
                 {
                     return Err(ProofError::InvalidProof);
                 }
@@ -463,22 +442,16 @@ where
 
         // Check the foldings computed from the proof match the evaluations of the polynomial
         let final_folds = &computed_folds.last().expect("final folds missing");
-        let final_evaluations = parsed
-            .final_coefficients
-            .evaluate_at_univariate(&parsed.final_randomness_points);
-        if !final_folds
-            .iter()
-            .zip(final_evaluations)
-            .all(|(&fold, eval)| fold == eval)
-        {
+        let final_evaluations =
+            parsed.final_coefficients.evaluate_at_univariate(&parsed.final_randomness_points);
+        if !final_folds.iter().zip(final_evaluations).all(|(&fold, eval)| fold == eval) {
             return Err(ProofError::InvalidProof);
         }
 
         // Check the final sumchecks
         if self.params.final_sumcheck_rounds > 0 {
-            let claimed_sum = prev_sumcheck
-                .as_ref()
-                .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
+            let claimed_sum =
+                prev_sumcheck.as_ref().map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
 
             let (sumcheck_poly, new_randomness) = &parsed.final_sumcheck_rounds[0];
 
@@ -491,8 +464,8 @@ where
             // Check the rest of the round
             for (sumcheck_poly, new_randomness) in &parsed.final_sumcheck_rounds[1..] {
                 let (prev_poly, randomness) = prev_sumcheck.unwrap();
-                if sumcheck_poly.sum_over_boolean_hypercube()
-                    != prev_poly.evaluate_at_point(&randomness.into())
+                if sumcheck_poly.sum_over_boolean_hypercube() !=
+                    prev_poly.evaluate_at_point(&randomness.into())
                 {
                     return Err(ProofError::InvalidProof);
                 }
@@ -506,9 +479,7 @@ where
 
         // Check the final sumcheck evaluation
         let evaluation_of_v_poly = self.compute_w_poly(&parsed_commitment, statement, &parsed);
-        let final_value = parsed
-            .final_coefficients
-            .evaluate(&parsed.final_sumcheck_randomness);
+        let final_value = parsed.final_coefficients.evaluate(&parsed.final_sumcheck_randomness);
 
         if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
             return Err(ProofError::InvalidProof);

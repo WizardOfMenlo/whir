@@ -1,14 +1,16 @@
 use std::ops::{Deref, DerefMut};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-// TODO (Gotti): Should pos rather be a u64? usize is platform-dependent, giving a platform-dependent limit on the number of variables.
-// num_variables may be smaller as well.
+// TODO (Gotti): Should pos rather be a u64? usize is platform-dependent, giving a
+// platform-dependent limit on the number of variables. num_variables may be smaller as well.
 
-// NOTE: Conversion BinaryHypercube <-> MultilinearPoint is Big Endian, using only the num_variables least significant bits of the number stored inside BinaryHypercube.
+// NOTE: Conversion BinaryHypercube <-> MultilinearPoint is Big Endian, using only the num_variables
+// least significant bits of the number stored inside BinaryHypercube.
 
 /// point on the binary hypercube {0,1}^n for some n.
 ///
-/// The point is encoded via the n least significant bits of a usize in big endian order and we do not store n.
+/// The point is encoded via the n least significant bits of a usize in big endian order and we do
+/// not store n.
 pub struct BinaryHypercubePoint(pub usize);
 
 impl Deref for BinaryHypercubePoint {
@@ -46,10 +48,7 @@ impl BinaryHypercube {
     pub const fn new(num_variables: usize) -> Self {
         // Note that we need strictly smaller, since some code would overflow otherwise.
         debug_assert!(num_variables < usize::BITS as usize);
-        Self {
-            pos: 0,
-            num_variables,
-        }
+        Self { pos: 0, num_variables }
     }
 }
 

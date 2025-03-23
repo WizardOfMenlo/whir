@@ -1,9 +1,10 @@
+use ark_ff::FftField;
+
 use super::stir_evaluations::StirEvalContext;
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
 };
-use ark_ff::FftField;
 
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ParsedRound<F> {
@@ -41,9 +42,8 @@ impl<F: FftField> ParsedProof<F> {
         for round in &self.rounds {
             let mut evals = Vec::with_capacity(round.stir_challenges_answers.len());
 
-            let stir_evals_context = StirEvalContext::ProverHelps {
-                folding_randomness: &round.folding_randomness,
-            };
+            let stir_evals_context =
+                StirEvalContext::ProverHelps { folding_randomness: &round.folding_randomness };
 
             stir_evals_context.evaluate(&round.stir_challenges_answers, &mut evals);
             result.push(evals);
@@ -52,9 +52,8 @@ impl<F: FftField> ParsedProof<F> {
         // Add final round
         let mut final_evals = Vec::with_capacity(self.final_randomness_answers.len());
 
-        let stir_evals_context = StirEvalContext::ProverHelps {
-            folding_randomness: &self.final_folding_randomness,
-        };
+        let stir_evals_context =
+            StirEvalContext::ProverHelps { folding_randomness: &self.final_folding_randomness };
         stir_evals_context.evaluate(&self.final_randomness_answers, &mut final_evals);
         result.push(final_evals);
         result
@@ -63,9 +62,10 @@ impl<F: FftField> ParsedProof<F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_compute_folds_helped_basic_case() {
@@ -128,10 +128,7 @@ mod tests {
             Field64::from(7),
             Field64::from(8),
         ])
-        .evaluate(&MultilinearPoint(vec![
-            Field64::from(55),
-            Field64::from(66),
-        ]))];
+        .evaluate(&MultilinearPoint(vec![Field64::from(55), Field64::from(66)]))];
 
         assert_eq!(folds, vec![expected_rounds, expected_final_round]);
     }
@@ -153,7 +150,8 @@ mod tests {
 
         let proof = ParsedProof {
             rounds: vec![single_round],
-            final_folding_randomness: MultilinearPoint(vec![Field64::from(7)]), /* Evaluating at X1=7 */
+            final_folding_randomness: MultilinearPoint(vec![Field64::from(7)]), /* Evaluating at
+                                                                                 * X1=7 */
             final_randomness_answers: vec![vec![Field64::from(8), Field64::from(10)]],
             ..Default::default()
         };
@@ -162,18 +160,14 @@ mod tests {
 
         // Compute expected evaluation at X1=3:
         // f(3) = 2 + 5(3) = 17
-        let expected_rounds = vec![
-            CoefficientList::new(vec![Field64::from(2), Field64::from(5)])
-                .evaluate(&MultilinearPoint(vec![Field64::from(3)])),
-        ];
+        let expected_rounds = vec![CoefficientList::new(vec![Field64::from(2), Field64::from(5)])
+            .evaluate(&MultilinearPoint(vec![Field64::from(3)]))];
 
         // Compute expected final round evaluation at X1=7:
         // f(7) = 8 + 10(7) = 78
-        let expected_final_round = vec![CoefficientList::new(vec![
-            Field64::from(8),
-            Field64::from(10),
-        ])
-        .evaluate(&MultilinearPoint(vec![Field64::from(7)]))];
+        let expected_final_round =
+            vec![CoefficientList::new(vec![Field64::from(8), Field64::from(10)])
+                .evaluate(&MultilinearPoint(vec![Field64::from(7)]))];
 
         assert_eq!(folds, vec![expected_rounds, expected_final_round]);
     }

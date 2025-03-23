@@ -1,19 +1,18 @@
-use super::SumcheckPolynomial;
-use crate::{
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    utils::eval_eq,
-    whir::statement::Statement,
-};
-
 use ark_ff::Field;
 use nimue::{
     plugins::ark::{FieldChallenges, FieldWriter},
     ProofResult,
 };
 use nimue_pow::{PoWChallenge, PowStrategy};
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::SumcheckPolynomial;
+use crate::{
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
+    utils::eval_eq,
+    whir::statement::Statement,
+};
 
 /// Implements the single-round sumcheck protocol for verifying a multilinear polynomial evaluation.
 ///
@@ -62,11 +61,7 @@ where
         combination_randomness: F,
     ) -> Self {
         let (weights, sum) = statement.combine(combination_randomness);
-        Self {
-            evaluation_of_p: coeffs.into(),
-            weights,
-            sum,
-        }
+        Self { evaluation_of_p: coeffs.into(), weights, sum }
     }
 
     /// Returns the number of variables in the polynomial.
@@ -103,10 +98,7 @@ where
                 // Now we need to add the contribution of p(x) * eq(x)
                 (p_0 * eq_0, p_1 * eq_1)
             })
-            .reduce(
-                || (F::ZERO, F::ZERO),
-                |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
-            );
+            .reduce(|| (F::ZERO, F::ZERO), |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2));
 
         #[cfg(not(feature = "parallel"))]
         let (c0, c2) = self
@@ -193,13 +185,12 @@ where
         assert_eq!(combination_randomness.len(), evaluations.len());
 
         // Accumulate the sum while applying all constraints simultaneously
-        points
-            .iter()
-            .zip(combination_randomness.iter().zip(evaluations.iter()))
-            .for_each(|(point, (&rand, &eval))| {
+        points.iter().zip(combination_randomness.iter().zip(evaluations.iter())).for_each(
+            |(point, (&rand, &eval))| {
                 eval_eq(&point.0, self.weights.evals_mut(), rand);
                 self.sum += rand * eval;
-            });
+            },
+        );
     }
 
     /// Compresses the polynomial and weight evaluations by reducing the number of variables.
@@ -275,14 +266,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
-    use crate::poly_utils::lagrange_iterator::LagrangePolynomialIterator;
     use crate::{
         crypto::fields::Field64 as F,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        poly_utils::{
+            coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
+            multilinear::MultilinearPoint,
+        },
         whir::statement::Weights,
     };
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_sumcheck_folding_factor_1() {
@@ -662,10 +656,10 @@ mod tests {
 
         // Compute the coefficients of the sumcheck polynomial S(X)
         let e0 = ep_000 * f_000 + ep_010 * f_010 + ep_100 * f_100 + ep_110 * f_110; // Contribution at X = 0
-        let e2 = (ep_001 - ep_000) * (f_001 - f_000)
-            + (ep_011 - ep_010) * (f_011 - f_010)
-            + (ep_101 - ep_100) * (f_101 - f_100)
-            + (ep_111 - ep_110) * (f_111 - f_110); // Quadratic coefficient
+        let e2 = (ep_001 - ep_000) * (f_001 - f_000) +
+            (ep_011 - ep_010) * (f_011 - f_010) +
+            (ep_101 - ep_100) * (f_101 - f_100) +
+            (ep_111 - ep_110) * (f_111 - f_110); // Quadratic coefficient
         let e1 = prover.sum - e0.double() - e2; // Middle coefficient using sum rule
 
         // Compute sumcheck polynomial evaluations at {0,1,2}
@@ -754,28 +748,28 @@ mod tests {
         // f(1,0,1) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
         //          = c1 + c2*(1) + c3*(0) + c4*(1)*(0) + c5*(1) + c6*(1)*(1) + c7*(0)*(1) +
         // c8*(1)*(0)*(1)
-        let eval1 = c1
-            + c2 * F::ONE
-            + c3 * F::ZERO
-            + c4 * F::ONE * F::ZERO
-            + c5 * F::ONE
-            + c6 * F::ONE * F::ONE
-            + c7 * F::ZERO * F::ONE
-            + c8 * F::ONE * F::ZERO * F::ONE;
+        let eval1 = c1 +
+            c2 * F::ONE +
+            c3 * F::ZERO +
+            c4 * F::ONE * F::ZERO +
+            c5 * F::ONE +
+            c6 * F::ONE * F::ONE +
+            c7 * F::ZERO * F::ONE +
+            c8 * F::ONE * F::ZERO * F::ONE;
 
         // Compute f(0,1,0) using the polynomial definition:
         //
         // f(0,1,0) = c1 + c2*X1 + c3*X2 + c4*X1*X2 + c5*X3 + c6*X1*X3 + c7*X2*X3 + c8*X1*X2*X3
         //          = c1 + c2*(0) + c3*(1) + c4*(0)*(1) + c5*(0) + c6*(0)*(0) + c7*(1)*(0) +
         // c8*(0)*(1)*(0)
-        let eval2 = c1
-            + c2 * F::ZERO
-            + c3 * F::ONE
-            + c4 * F::ZERO * F::ONE
-            + c5 * F::ZERO
-            + c6 * F::ZERO * F::ZERO
-            + c7 * F::ONE * F::ZERO
-            + c8 * F::ZERO * F::ONE * F::ZERO;
+        let eval2 = c1 +
+            c2 * F::ZERO +
+            c3 * F::ONE +
+            c4 * F::ZERO * F::ONE +
+            c5 * F::ZERO +
+            c6 * F::ZERO * F::ZERO +
+            c7 * F::ONE * F::ZERO +
+            c8 * F::ZERO * F::ONE * F::ZERO;
 
         prover.add_new_equality(
             &[point1.clone(), point2.clone()],
@@ -866,10 +860,7 @@ mod tests {
 
         let expected_compressed_evaluations = vec![compressed_eval_0, compressed_eval_1];
 
-        assert_eq!(
-            prover.evaluation_of_p.evals(),
-            &expected_compressed_evaluations
-        );
+        assert_eq!(prover.evaluation_of_p.evals(), &expected_compressed_evaluations);
 
         // Compute the expected sum update:
         //
@@ -946,17 +937,10 @@ mod tests {
         let compressed_eval_10 = (eval_110 - eval_010) * r + eval_010;
         let compressed_eval_11 = (eval_111 - eval_011) * r + eval_011;
 
-        let expected_compressed_evaluations = vec![
-            compressed_eval_00,
-            compressed_eval_10,
-            compressed_eval_01,
-            compressed_eval_11,
-        ];
+        let expected_compressed_evaluations =
+            vec![compressed_eval_00, compressed_eval_10, compressed_eval_01, compressed_eval_11];
 
-        assert_eq!(
-            prover.evaluation_of_p.evals(),
-            &expected_compressed_evaluations
-        );
+        assert_eq!(prover.evaluation_of_p.evals(), &expected_compressed_evaluations);
 
         // Compute the expected sum update:
         let expected_sum =
@@ -1023,10 +1007,7 @@ mod tests {
         //        = p(X1=0, X2)
         let expected_compressed_evaluations = vec![c1, c1 + c3];
 
-        assert_eq!(
-            prover.evaluation_of_p.evals(),
-            &expected_compressed_evaluations
-        );
+        assert_eq!(prover.evaluation_of_p.evals(), &expected_compressed_evaluations);
 
         // Compute the expected sum update:
         let expected_sum =

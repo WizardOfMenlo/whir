@@ -29,10 +29,7 @@ where
 
         // Evaluate the function at each OOD point
         ood_answers.extend(ood_points.iter().map(|ood_point| {
-            evaluate_fn(&MultilinearPoint::expand_from_univariate(
-                *ood_point,
-                num_variables,
-            ))
+            evaluate_fn(&MultilinearPoint::expand_from_univariate(*ood_point, num_variables))
         }));
 
         // Commit the answers to the transcript
