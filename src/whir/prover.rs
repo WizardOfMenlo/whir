@@ -45,13 +45,8 @@ where
     }
 
     fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        if !statement.num_variables() == self.0.mv_parameters.num_variables {
-            return false;
-        }
-        if !self.0.initial_statement && !statement.constraints.is_empty() {
-            return false;
-        }
-        true
+        statement.num_variables() == self.0.mv_parameters.num_variables
+            && (self.0.initial_statement || statement.constraints.is_empty())
     }
 
     fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
