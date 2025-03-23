@@ -15,7 +15,6 @@ use rayon::prelude::*;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
-    wavelet::inverse_wavelet_transform,
     wavelet::wavelet_transform,
 };
 

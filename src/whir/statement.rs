@@ -1,6 +1,6 @@
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use ark_ff::Field;
-use std::{fmt::Debug, ops::Index};
+use std::fmt::Debug;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -79,23 +79,13 @@ impl<F: Field> Weights<F> {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Self::Linear { weight } => {
+                let evals = accumulator.evals_mut();
                 #[cfg(feature = "parallel")]
-                accumulator
-                    .evals_mut()
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
-
+                let iter = evals.par_iter_mut().enumerate();
                 #[cfg(not(feature = "parallel"))]
-                accumulator
-                    .evals_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
+                let iter = evals.iter_mut().enumerate();
+
+                iter.for_each(|(i, acc)| *acc += factor * weight[i]);
             }
         }
     }
