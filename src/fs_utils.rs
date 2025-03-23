@@ -58,9 +58,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use nimue::IOPattern;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use nimue::IOPattern;
 
     #[test]
     fn test_add_ood() {

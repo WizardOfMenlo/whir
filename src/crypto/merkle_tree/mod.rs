@@ -1,8 +1,12 @@
+use std::{
+    borrow::Borrow,
+    marker::PhantomData,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
 use ark_crypto_primitives::{crh::CRHScheme, merkle_tree::DigestConverter, Error};
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
-use std::sync::atomic::Ordering;
-use std::{borrow::Borrow, marker::PhantomData, sync::atomic::AtomicUsize};
 
 pub mod blake3;
 pub mod keccak;

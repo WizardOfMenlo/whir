@@ -1,9 +1,11 @@
-use crate::ntt::{intt_batch, transpose};
-use crate::parameters::FoldType;
 use ark_ff::{FftField, Field};
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use crate::{
+    ntt::{intt_batch, transpose},
+    parameters::FoldType,
+};
 
 /// Computes the folded value of a function evaluated on a coset.
 ///
@@ -161,6 +163,8 @@ pub fn transform_evaluations<F: FftField>(
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, FftField, Field};
+
     use super::{compute_fold, transform_evaluations};
     use crate::{
         crypto::fields::Field64,
@@ -168,7 +172,6 @@ mod tests {
         parameters::FoldType,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
-    use ark_ff::{AdditiveGroup, FftField, Field};
 
     type F = Field64;
 

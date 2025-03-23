@@ -3,19 +3,20 @@
 //! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
 //! A global cache is used for twiddle factors.
 
-use super::{
-    transpose,
-    utils::{lcm, sqrt_factor},
-};
-use ark_ff::{FftField, Field};
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
     sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard},
 };
 
+use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
+
+use super::{
+    transpose,
+    utils::{lcm, sqrt_factor},
+};
 
 /// Global cache for NTT engines, indexed by field.
 // TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
@@ -411,10 +412,10 @@ fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: us
 #[cfg(test)]
 #[allow(clippy::significant_drop_tightening)]
 mod tests {
+    use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
-    use ark_ff::{BigInteger, PrimeField};
 
     #[test]
     fn test_new_from_fftfield_basic() {

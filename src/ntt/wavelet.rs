@@ -1,8 +1,8 @@
-use super::transpose;
 use ark_ff::Field;
-
 #[cfg(feature = "parallel")]
 use {super::utils::workload_size, rayon::prelude::*};
+
+use super::transpose;
 
 /// Fast Wavelet Transform.
 ///
@@ -129,9 +129,8 @@ pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::fields::Field64;
-
     use super::*;
+    use crate::crypto::fields::Field64;
 
     #[test]
     fn test_wavelet_transform_single_element() {

@@ -1,20 +1,3 @@
-use super::{
-    committer::Witness,
-    parameters::WhirConfig,
-    statement::{Statement, Weights},
-    WhirProof,
-};
-use crate::whir::parameters::RoundConfig;
-use crate::{
-    domain::Domain,
-    ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
-    sumcheck::SumcheckSingle,
-    utils::expand_randomness,
-    whir::utils::sample_ood_points,
-};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -23,10 +6,29 @@ use nimue::{
     ByteChallenges, ProofResult,
 };
 use nimue_pow::{self, PoWChallenge};
-
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestWriter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::{
+    committer::Witness,
+    parameters::WhirConfig,
+    statement::{Statement, Weights},
+    WhirProof,
+};
+use crate::{
+    domain::Domain,
+    ntt::expand_from_coeff,
+    poly_utils::{
+        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
+    },
+    sumcheck::SumcheckSingle,
+    utils::expand_randomness,
+    whir::{
+        fs_utils::{get_challenge_stir_queries, DigestWriter},
+        parameters::RoundConfig,
+        utils::sample_ood_points,
+    },
+};
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where

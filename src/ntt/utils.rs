@@ -75,8 +75,9 @@ pub const fn gcd(mut a: usize, mut b: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{gcd, lcm, sqrt_factor};
     use proptest::prelude::*;
+
+    use super::{gcd, lcm, sqrt_factor};
 
     /// Computes the largest factor of `x` that is ≤ sqrt(x).
     /// If `x` is 0, returns 0.

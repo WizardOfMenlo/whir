@@ -1,6 +1,7 @@
-use crate::fs_utils::WhirPoWIOPattern;
 use ark_ff::Field;
 use nimue::plugins::ark::FieldIOPattern;
+
+use crate::fs_utils::WhirPoWIOPattern;
 
 pub trait SumcheckSingleIOPattern<F: Field> {
     #[must_use]

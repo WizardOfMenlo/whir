@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use whir::crypto::fields::Field64;
-use whir::ntt::expand_from_coeff;
+use whir::{crypto::fields::Field64, ntt::expand_from_coeff};
 
 fn bench_expand_from_coeff(c: &mut Criterion) {
     // Test cases with polynomial sizes defined as exponents of 2 and expansion factors

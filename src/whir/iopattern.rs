@@ -2,12 +2,11 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use nimue::plugins::ark::{ByteIOPattern, FieldIOPattern};
 
+use super::parameters::WhirConfig;
 use crate::{
     fs_utils::{OODIOPattern, WhirPoWIOPattern},
     sumcheck::SumcheckSingleIOPattern,
 };
-
-use super::parameters::WhirConfig;
 
 pub trait DigestIOPattern<MerkleConfig: Config> {
     #[must_use]

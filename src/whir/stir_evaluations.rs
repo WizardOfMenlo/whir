@@ -1,8 +1,9 @@
+use ark_ff::FftField;
+
 use crate::{
     parameters::FoldingFactor,
     poly_utils::{coeffs::CoefficientList, fold::compute_fold, multilinear::MultilinearPoint},
 };
-use ark_ff::FftField;
 
 /// Unified context for evaluating STIR queries during a WHIR proof round.
 ///
@@ -122,9 +123,10 @@ impl<F: FftField> StirEvalContext<'_, F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::{AdditiveGroup, Field};
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::{AdditiveGroup, Field};
 
     #[test]
     fn test_stir_eval_prover_helps_basic() {

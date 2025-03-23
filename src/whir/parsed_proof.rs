@@ -1,9 +1,10 @@
+use ark_ff::FftField;
+
 use super::stir_evaluations::StirEvalContext;
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
 };
-use ark_ff::FftField;
 
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ParsedRound<F> {
@@ -63,9 +64,10 @@ impl<F: FftField> ParsedProof<F> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::AdditiveGroup;
+
     use super::*;
     use crate::crypto::fields::Field64;
-    use ark_ff::AdditiveGroup;
 
     #[test]
     fn test_compute_folds_helped_basic_case() {
