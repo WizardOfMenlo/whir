@@ -894,10 +894,10 @@ mod tests {
 
     #[test]
     fn test_multilinear_point_rand_not_all_same() {
-        let mut rng = thread_rng();
-
         const K: usize = 20; // Number of trials
         const N: usize = 10; // Number of variables
+
+        let mut rng = thread_rng();
 
         let mut all_same_count = 0;
 
@@ -914,8 +914,7 @@ mod tests {
         // If all K trials are completely uniform, the RNG is suspicious
         assert!(
             all_same_count < K,
-            "rand generated uniform points in all {} trials",
-            K
+            "rand generated uniform points in all {K} trials"
         );
     }
 }
