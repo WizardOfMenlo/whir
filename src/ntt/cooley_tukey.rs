@@ -350,60 +350,95 @@ impl<F: Field> NttEngine<F> {
     }
 }
 
-#[cfg(not(feature = "parallel"))]
-fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
-    debug_assert_eq!(values.len() % (rows * cols), 0);
-    let step = roots.len() / (rows * cols);
-    for values in values.chunks_exact_mut(rows * cols) {
-        for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
+/// Applies twiddle factors to a slice of field elements in-place.
+///
+/// This is part of the six-step Cooley-Tukey NTT algorithm,
+/// where after transposing and partially transforming a 2D matrix,
+/// we multiply each non-zero row and column entry by a scalar "twiddle factor"
+/// derived from powers of a root of unity.
+///
+/// Given:
+/// - `values`: a flattened set of NTT matrices, each with shape `[rows × cols]`
+/// - `roots`: the root-of-unity table (should have length divisible by `rows * cols`)
+/// - `rows`, `cols`: the dimensions of each matrix
+///
+/// This function mutates `values` in-place, applying twiddle factors like so:
+///
+/// ```text
+/// values[i][j] *= roots[(i * step + j * step) % roots.len()]
+/// ```
+///
+/// More specifically:
+/// - The first row and column are left untouched (twiddle factor is 1).
+/// - For each row `i > 0`, each element `values[i][j > 0]` is multiplied by a twiddle factor.
+/// - The factor is taken as `roots[index]`, where:
+///   - `index` starts at `step = (i * roots.len()) / (rows * cols)`
+///   - `index` increments by `step` for each column.
+///
+/// ### Parallelism
+/// - If `parallel` is enabled and `values.len()` exceeds a threshold:
+///   - Large matrices are split into workloads and processed in parallel.
+///   - If a single matrix is present, its rows are parallelized directly.
+///
+/// ### Panics
+/// - If `values.len() % (rows * cols) != 0`
+/// - If `roots.len()` is not divisible by `rows * cols`
+///
+/// ### Example
+/// Suppose you have a `2×4` matrix:
+/// ```text
+/// [ a0 a1 a2 a3 ]
+/// [ b0 b1 b2 b3 ]
+/// ```
+/// and `roots = [r0, r1, ..., rN]`, then the transformed matrix becomes:
+/// ```text
+/// [ a0  a1       a2       a3       ]
+/// [ b0  b1*rX1   b2*rX2   b3*rX3   ]
+/// ```
+/// where `rX1`, `rX2`, etc., are powers of root-of-unity determined by row/col indices.
+pub fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
+    let size = rows * cols;
+    debug_assert_eq!(values.len() % size, 0);
+    let step = roots.len() / size;
+
+    #[cfg(feature = "parallel")]
+    {
+        if values.len() > workload_size::<F>() {
+            if values.len() == size {
+                // Only one matrix → parallelize rows directly
+                values
+                    .par_chunks_exact_mut(cols)
+                    .enumerate()
+                    .skip(1)
+                    .for_each(|(i, row)| {
+                        let step = (i * step) % roots.len();
+                        let mut index = step;
+                        for value in row.iter_mut().skip(1) {
+                            index %= roots.len();
+                            *value *= roots[index];
+                            index += step;
+                        }
+                    });
+                return;
+            }
+            // Multiple matrices → chunk and recurse
+            let workload_size = size * max(1, workload_size::<F>() / size);
+            values
+                .par_chunks_mut(workload_size)
+                .for_each(|chunk| apply_twiddles(chunk, roots, rows, cols));
+            return;
+        }
+    }
+
+    // Fallback (non-parallel or small workload)
+    for matrix in values.chunks_exact_mut(size) {
+        for (i, row) in matrix.chunks_exact_mut(cols).enumerate().skip(1) {
             let step = (i * step) % roots.len();
             let mut index = step;
             for value in row.iter_mut().skip(1) {
                 index %= roots.len();
                 *value *= roots[index];
                 index += step;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "parallel")]
-fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols: usize) {
-    let size = rows * cols;
-    debug_assert_eq!(values.len() % size, 0);
-    let step = roots.len() / size;
-
-    if values.len() > workload_size::<F>() {
-        if values.len() == size {
-            values
-                .par_chunks_exact_mut(cols)
-                .enumerate()
-                .skip(1)
-                .for_each(|(i, row)| {
-                    let step = (i * step) % roots.len();
-                    let mut index = step;
-                    for value in row.iter_mut().skip(1) {
-                        index %= roots.len();
-                        *value *= roots[index];
-                        index += step;
-                    }
-                });
-        } else {
-            let workload_size = size * max(1, workload_size::<F>() / size);
-            values.par_chunks_mut(workload_size).for_each(|values| {
-                apply_twiddles(values, roots, rows, cols);
-            });
-        }
-    } else {
-        for values in values.chunks_exact_mut(size) {
-            for (i, row) in values.chunks_exact_mut(cols).enumerate().skip(1) {
-                let step = (i * step) % roots.len();
-                let mut index = step;
-                for value in row.iter_mut().skip(1) {
-                    index %= roots.len();
-                    *value *= roots[index];
-                    index += step;
-                }
             }
         }
     }
