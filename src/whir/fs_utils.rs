@@ -48,7 +48,7 @@ pub trait UnitToDigest<MerkleConfig: Config> {
 
 #[cfg(test)]
 mod tests {
-    use spongefish::IOPatternError;
+    use spongefish::DomainSeparatorMismatch;
 
     use super::*;
 
@@ -57,8 +57,11 @@ mod tests {
         index: usize,
     }
 
-    impl ByteChallenges for MockTranscript {
-        fn fill_challenge_bytes(&mut self, buffer: &mut [u8]) -> Result<(), IOPatternError> {
+    impl VerifierMessageBytes for MockTranscript {
+        fn fill_challenge_bytes(
+            &mut self,
+            buffer: &mut [u8],
+        ) -> Result<(), DomainSeparatorMismatch> {
             if self.index + buffer.len() > self.data.len() {
                 return Err(String::from("Invalid input").into());
             }

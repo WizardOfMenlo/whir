@@ -155,9 +155,9 @@ mod tests {
     use crate::parameters::{
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
-    use crate::whir::domainsep::WhirIOPattern;
+    use crate::whir::domainsep::WhirDomainSeparator;
     use ark_ff::UniformRand;
-    use spongefish::{DefaultHash, IOPattern};
+    use spongefish::{DefaultHash, DomainSeparator};
     use spongefish_pow::blake3::Blake3PoW;
 
     #[test]
@@ -202,15 +202,17 @@ mod tests {
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
-        // Set up the IOPattern and initialize a Merlin transcript.
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        // Set up the DomainSeparator and initialize a Merlin transcript.
+        let io = DomainSeparator::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
-        let mut merlin = io.to_merlin();
+        let mut prover_state = io.to_prover_state();
 
         // Run the Commitment Phase
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let witness = committer
+            .commit(&mut prover_state, polynomial.clone())
+            .unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -283,11 +285,11 @@ mod tests {
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
-        let mut merlin = io.to_merlin();
+        let io = DomainSeparator::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let mut prover_state = io.to_prover_state();
 
         let committer = Committer::new(params);
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -324,11 +326,11 @@ mod tests {
         params.committment_ood_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let io = IOPattern::<DefaultHash>::new("🌪️").commit_statement(&params);
-        let mut merlin = io.to_merlin();
+        let io = DomainSeparator::<DefaultHash>::new("🌪️").commit_statement(&params);
+        let mut prover_state = io.to_prover_state();
 
         let committer = Committer::new(params);
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),
