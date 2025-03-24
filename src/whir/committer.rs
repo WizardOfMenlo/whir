@@ -66,13 +66,13 @@ where
     /// - Constructs a Merkle tree from the evaluations.
     /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
-    pub fn commit<Merlin>(
+    pub fn commit<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestToUnit<MerkleConfig>,
+        ProverState: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestToUnit<MerkleConfig>,
     {
         // Retrieve the base domain, ensuring it is set.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
@@ -118,7 +118,7 @@ where
 
         // Retrieve the Merkle tree root and add it to the transcript.
         let root = merkle_tree.root();
-        merlin.add_digest(root)?;
+        prover_state.add_digest(root)?;
 
         // Initialize out-of-domain (OOD) challenge points and evaluations.
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
@@ -126,14 +126,14 @@ where
 
         // Generate OOD points and compute their evaluations.
         if self.0.committment_ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
+            prover_state.fill_challenge_scalars(&mut ood_points)?;
             ood_answers.extend(ood_points.iter().map(|ood_point| {
                 polynomial.evaluate_at_extension(&MultilinearPoint::expand_from_univariate(
                     *ood_point,
                     self.0.mv_parameters.num_variables,
                 ))
             }));
-            merlin.add_scalars(&ood_answers)?;
+            prover_state.add_scalars(&ood_answers)?;
         }
 
         // Return the witness containing the polynomial, Merkle tree, and OOD results.
