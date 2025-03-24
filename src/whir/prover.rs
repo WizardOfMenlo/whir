@@ -19,13 +19,13 @@ use crate::{
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ProofResult,
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    ProofResult, VerifierMessageBytes,
 };
-use nimue_pow::{self, PoWChallenge};
+use spongefish_pow::{self, PoWChallenge};
 
-use crate::whir::fs_utils::{get_challenge_stir_queries, DigestWriter};
+use crate::whir::fs_utils::{get_challenge_stir_queries, DigestToUnit};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -38,7 +38,7 @@ impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: nimue_pow::PowStrategy,
+    PowStrategy: spongefish_pow::PowStrategy,
 {
     fn validate_parameters(&self) -> bool {
         self.0.mv_parameters.num_variables
@@ -63,14 +63,18 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
-    pub fn prove<Merlin>(
+    pub fn prove<ProverPrivateState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverPrivateState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: FieldWriter<F> + ByteChallenges + PoWChallenge + DigestWriter<MerkleConfig>,
+        ProverPrivateState: FieldToUnit<F>
+            + UnitToField<F>
+            + PoWChallenge
+            + DigestToUnit<MerkleConfig>
+            + VerifierMessageBytes,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -90,7 +94,7 @@ where
         let folding_randomness = if self.0.initial_statement {
             // If there is initial statement, then we run the sum-check for
             // this initial statement.
-            let [combination_randomness_gen] = merlin.challenge_scalars()?;
+            let [combination_randomness_gen] = prover_state.challenge_scalars()?;
             sumcheck_prover = {
                 let sumcheck = SumcheckSingle::new(
                     witness.polynomial.clone(),
@@ -103,8 +107,8 @@ where
             sumcheck_prover
                 .as_mut()
                 .unwrap()
-                .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
-                    merlin,
+                .compute_sumcheck_polynomials::<PowStrategy, ProverPrivateState>(
+                    prover_state,
                     self.0.folding_factor.at_round(0),
                     self.0.starting_folding_pow_bits,
                 )?
@@ -113,10 +117,10 @@ where
             // initial rounds of the sum-check, and the verifier directly sends
             // the initial folding randomnesses.
             let mut folding_randomness = vec![F::ZERO; self.0.folding_factor.at_round(0)];
-            merlin.fill_challenge_scalars(&mut folding_randomness)?;
+            prover_state.fill_challenge_scalars(&mut folding_randomness)?;
 
             if self.0.starting_folding_pow_bits > 0. {
-                merlin.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
+                prover_state.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
             }
             MultilinearPoint(folding_randomness)
         };
@@ -138,17 +142,21 @@ where
             statement,
         };
 
-        self.round(merlin, round_state)
+        self.round(prover_state, round_state)
     }
 
     #[allow(clippy::too_many_lines)]
-    fn round<Merlin>(
+    fn round<ProverPrivateState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverPrivateState,
         mut round_state: RoundState<F, MerkleConfig>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        Merlin: ByteChallenges + FieldWriter<F> + PoWChallenge + DigestWriter<MerkleConfig>,
+        ProverPrivateState: VerifierMessageBytes
+            + FieldToUnit<F>
+            + UnitToField<F>
+            + PoWChallenge
+            + DigestToUnit<MerkleConfig>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -163,7 +171,7 @@ where
         // Base case
         if round_state.round == self.0.n_rounds() {
             // Directly send coefficients of the polynomial to the verifier.
-            merlin.add_scalars(folded_coefficients.coeffs())?;
+            prover_state.add_scalars(folded_coefficients.coeffs())?;
 
             // Final verifier queries and answers. The indices are over the
             // *folded* domain.
@@ -171,7 +179,7 @@ where
                 round_state.domain.size(), // The size of the *original* domain before folding
                 self.0.folding_factor.at_round(round_state.round), // The folding factor we used to fold the previous polynomial
                 self.0.final_queries,
-                merlin,
+                prover_state,
             )?;
 
             let merkle_proof = round_state
@@ -190,7 +198,7 @@ where
 
             // PoW
             if self.0.final_pow_bits > 0. {
-                merlin.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
+                prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
             }
 
             // Final sumcheck
@@ -205,7 +213,7 @@ where
                         )
                     })
                     .compute_sumcheck_polynomials::<PowStrategy, _>(
-                        merlin,
+                        prover_state,
                         self.0.final_sumcheck_rounds,
                         self.0.final_folding_pow_bits,
                     )?;
@@ -260,20 +268,20 @@ where
         .unwrap();
 
         let root = merkle_tree.root();
-        merlin.add_digest(root)?;
+        prover_state.add_digest(root)?;
 
         // OOD Samples
         let mut ood_points = vec![F::ZERO; round_params.ood_samples];
         let mut ood_answers = Vec::with_capacity(round_params.ood_samples);
         if round_params.ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
+            prover_state.fill_challenge_scalars(&mut ood_points)?;
             ood_answers.extend(ood_points.iter().map(|ood_point| {
                 folded_coefficients.evaluate(&MultilinearPoint::expand_from_univariate(
                     *ood_point,
                     num_variables,
                 ))
             }));
-            merlin.add_scalars(&ood_answers)?;
+            prover_state.add_scalars(&ood_answers)?;
         }
 
         // STIR queries
@@ -281,7 +289,7 @@ where
             round_state.domain.size(), // Current domain size *before* folding
             self.0.folding_factor.at_round(round_state.round), // Current fold factor
             round_params.num_queries,
-            merlin,
+            prover_state,
         )?;
         // Compute the generator of the folded domain, in the extension field
         let domain_scaled_gen = round_state
@@ -364,11 +372,11 @@ where
 
         // PoW
         if round_params.pow_bits > 0. {
-            merlin.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
         }
 
         // Randomness for combination
-        let [combination_randomness_gen] = merlin.challenge_scalars()?;
+        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
@@ -400,8 +408,8 @@ where
             });
 
         let folding_randomness = sumcheck_prover
-            .compute_sumcheck_polynomials::<PowStrategy, Merlin>(
-                merlin,
+            .compute_sumcheck_polynomials::<PowStrategy, ProverPrivateState>(
+                prover_state,
                 self.0.folding_factor.at_round(round_state.round + 1),
                 round_params.folding_pow_bits,
             )?;
@@ -426,7 +434,7 @@ where
             statement: round_state.statement,
         };
 
-        self.round(merlin, round_state)
+        self.round(prover_state, round_state)
     }
 }
 

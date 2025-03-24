@@ -1,20 +1,20 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use nimue::plugins::ark::{ByteIOPattern, FieldIOPattern};
+use spongefish::codecs::arkworks_algebra::{ByteDomainSeparator, FieldDomainSeparator};
 
 use crate::{
-    fs_utils::{OODIOPattern, WhirPoWIOPattern},
-    sumcheck::SumcheckSingleIOPattern,
+    fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator},
+    sumcheck::SumcheckSingleDomainSeparator,
 };
 
 use super::parameters::WhirConfig;
 
-pub trait DigestIOPattern<MerkleConfig: Config> {
+pub trait DigestDomainSeparator<MerkleConfig: Config> {
     #[must_use]
     fn add_digest(self, label: &str) -> Self;
 }
 
-pub trait WhirIOPattern<F: FftField, MerkleConfig: Config> {
+pub trait WhirDomainSeparator<F: FftField, MerkleConfig: Config> {
     #[must_use]
     fn commit_statement<PowStrategy>(
         self,
@@ -26,16 +26,16 @@ pub trait WhirIOPattern<F: FftField, MerkleConfig: Config> {
         -> Self;
 }
 
-impl<F, MerkleConfig, IOPattern> WhirIOPattern<F, MerkleConfig> for IOPattern
+impl<F, MerkleConfig, DomainSeparator> WhirDomainSeparator<F, MerkleConfig> for DomainSeparator
 where
     F: FftField,
     MerkleConfig: Config,
-    IOPattern: ByteIOPattern
-        + FieldIOPattern<F>
-        + SumcheckSingleIOPattern<F>
-        + WhirPoWIOPattern
-        + OODIOPattern<F>
-        + DigestIOPattern<MerkleConfig>,
+    DomainSeparator: ByteDomainSeparator
+        + FieldDomainSeparator<F>
+        + SumcheckSingleDomainSeparator<F>
+        + WhirPoWDomainSeparator
+        + OODDomainSeparator<F>
+        + DigestDomainSeparator<MerkleConfig>,
 {
     fn commit_statement<PowStrategy>(
         self,

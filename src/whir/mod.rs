@@ -2,8 +2,8 @@ use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
+pub mod domainsep;
 pub mod fs_utils;
-pub mod iopattern;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
@@ -34,8 +34,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nimue::{DefaultHash, IOPattern};
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::{DefaultHash, IOPattern};
+    use spongefish_pow::blake3::Blake3PoW;
 
     use crate::crypto::fields::Field64;
     use crate::crypto::merkle_tree::blake3 as merkle_tree;
@@ -48,7 +48,7 @@ mod tests {
     use crate::whir::statement::{Statement, StatementVerifier, Weights};
 
     use crate::whir::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
+        committer::Committer, domainsep::WhirIOPattern, parameters::WhirConfig, prover::Prover,
         verifier::Verifier,
     };
 

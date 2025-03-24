@@ -1,25 +1,25 @@
 use ark_ff::Field;
-use nimue::plugins::ark::FieldIOPattern;
-use nimue_pow::PoWIOPattern;
+use spongefish::codecs::arkworks_algebra::FieldDomainSeparator;
+use spongefish_pow::PoWDomainSeparator;
 
-/// Trait for adding out-of-domain (OOD) queries and their responses to an IOPattern.
+/// Trait for adding out-of-domain (OOD) queries and their responses to a DomainSeparator.
 ///
-/// This trait allows extending an IOPattern with challenge-response interactions.
-pub trait OODIOPattern<F: Field> {
-    /// Adds `num_samples` OOD queries and their corresponding responses to the IOPattern.
+/// This trait allows extending an DomainSeparator with challenge-response interactions.
+pub trait OODDomainSeparator<F: Field> {
+    /// Adds `num_samples` OOD queries and their corresponding responses to the DomainSeparator.
     ///
     /// - If `num_samples > 0`, this appends:
     ///   - A challenge query labeled `"ood_query"` with `num_samples` elements.
     ///   - A corresponding response labeled `"ood_ans"` with `num_samples` elements.
-    /// - If `num_samples == 0`, the IOPattern remains unchanged.
+    /// - If `num_samples == 0`, the DomainSeparator remains unchanged.
     #[must_use]
     fn add_ood(self, num_samples: usize) -> Self;
 }
 
-impl<F, IOPattern> OODIOPattern<F> for IOPattern
+impl<F, DomainSeparator> OODDomainSeparator<F> for DomainSeparator
 where
     F: Field,
-    IOPattern: FieldIOPattern<F>,
+    DomainSeparator: FieldDomainSeparator<F>,
 {
     fn add_ood(self, num_samples: usize) -> Self {
         if num_samples > 0 {
@@ -31,21 +31,21 @@ where
     }
 }
 
-/// Trait for adding a Proof-of-Work (PoW) challenge to an IOPattern.
+/// Trait for adding a Proof-of-Work (PoW) challenge to a DomainSeparator.
 ///
-/// This trait enables an IOPattern to include PoW challenges.
-pub trait WhirPoWIOPattern {
-    /// Adds a Proof-of-Work challenge to the IOPattern.
+/// This trait enables an DomainSeparator to include PoW challenges.
+pub trait WhirPoWDomainSeparator {
+    /// Adds a Proof-of-Work challenge to the DomainSeparator.
     ///
     /// - If `bits > 0`, this appends a PoW challenge labeled `"pow_queries"`.
-    /// - If `bits == 0`, the IOPattern remains unchanged.
+    /// - If `bits == 0`, the DomainSeparator remains unchanged.
     #[must_use]
     fn pow(self, bits: f64) -> Self;
 }
 
-impl<IOPattern> WhirPoWIOPattern for IOPattern
+impl<DomainSeparator> WhirPoWDomainSeparator for DomainSeparator
 where
-    IOPattern: PoWIOPattern,
+    DomainSeparator: PoWDomainSeparator,
 {
     fn pow(self, bits: f64) -> Self {
         if bits > 0. {
@@ -60,14 +60,14 @@ where
 mod tests {
     use super::*;
     use crate::crypto::fields::Field64;
-    use nimue::{DefaultHash, IOPattern};
+    use spongefish::{DefaultHash, DomainSeparator};
 
     #[test]
     fn test_add_ood() {
-        let iop = IOPattern::<DefaultHash>::new("test_protocol");
+        let iop = DomainSeparator::<DefaultHash>::new("test_protocol");
 
         // Apply OOD query addition
-        let updated_iop = <IOPattern as OODIOPattern<Field64>>::add_ood(iop.clone(), 3);
+        let updated_iop = <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(iop.clone(), 3);
 
         // Convert to a string for inspection
         let pattern_str = String::from_utf8(updated_iop.as_bytes().to_vec()).unwrap();
@@ -77,14 +77,14 @@ mod tests {
         assert!(pattern_str.contains("ood_ans"));
 
         // Test case where num_samples = 0 (should not modify anything)
-        let unchanged_iop = <IOPattern as OODIOPattern<Field64>>::add_ood(iop, 0);
+        let unchanged_iop = <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(iop, 0);
         let unchanged_str = String::from_utf8(unchanged_iop.as_bytes().to_vec()).unwrap();
         assert_eq!(unchanged_str, "test_protocol"); // Should remain the same
     }
 
     #[test]
     fn test_pow() {
-        let iop = IOPattern::<DefaultHash>::new("test_protocol");
+        let iop = DomainSeparator::<DefaultHash>::new("test_protocol");
 
         // Apply PoW challenge
         let updated_iop = iop.clone().pow(10.0);

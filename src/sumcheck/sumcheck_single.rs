@@ -6,11 +6,11 @@ use crate::{
 };
 
 use ark_ff::Field;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
     ProofResult,
 };
-use nimue_pow::{PoWChallenge, PowStrategy};
+use spongefish_pow::{PoWChallenge, PowStrategy};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -143,7 +143,7 @@ where
         pow_bits: f64,
     ) -> ProofResult<MultilinearPoint<F>>
     where
-        Merlin: FieldWriter<F> + FieldChallenges<F> + PoWChallenge,
+        Merlin: FieldToUnit<F> + UnitToField<F> + PoWChallenge,
         S: PowStrategy,
     {
         let mut res = Vec::with_capacity(folding_factor);

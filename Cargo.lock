@@ -808,35 +808,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nimue"
-version = "0.2.0"
-source = "git+https://github.com/arkworks-rs/nimue#b28eb124420eede1a890e3c64b37adfff94938d3"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-serialize",
- "digest",
- "generic-array",
- "hex",
- "keccak",
- "log",
- "rand",
- "zeroize",
-]
-
-[[package]]
-name = "nimue-pow"
-version = "0.1.0"
-source = "git+https://github.com/arkworks-rs/nimue#b28eb124420eede1a890e3c64b37adfff94938d3"
-dependencies = [
- "blake3",
- "bytemuck",
- "keccak",
- "nimue",
- "rayon",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1163,6 +1134,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "spongefish"
+version = "0.2.0"
+source = "git+https://github.com/arkworks-rs/spongefish#c78cc71b274c9e94b5475500d593f29bc9514203"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-serialize",
+ "digest",
+ "hex",
+ "keccak",
+ "log",
+ "rand",
+ "zeroize",
+]
+
+[[package]]
+name = "spongefish-pow"
+version = "0.1.0"
+source = "git+https://github.com/arkworks-rs/spongefish#c78cc71b274c9e94b5475500d593f29bc9514203"
+dependencies = [
+ "blake3",
+ "bytemuck",
+ "keccak",
+ "rand",
+ "rayon",
+ "spongefish",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1420,14 +1420,14 @@ dependencies = [
  "clap",
  "criterion",
  "itertools 0.14.0",
- "nimue",
- "nimue-pow",
  "proptest",
  "rand",
  "rayon",
  "serde",
  "serde_json",
  "sha3",
+ "spongefish",
+ "spongefish-pow",
  "thiserror",
 ]
 

@@ -1,5 +1,5 @@
 use super::parameters::WhirConfig;
-use crate::whir::fs_utils::DigestWriter;
+use crate::whir::fs_utils::DigestToUnit;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{
@@ -9,12 +9,12 @@ use crate::{
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteWriter, ProofResult,
-};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    ByteWriter, ProofResult,
+};
 
 /// Represents the commitment and evaluation data for a polynomial.
 ///
@@ -72,7 +72,7 @@ where
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter + DigestWriter<MerkleConfig>,
+        Merlin: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestToUnit<MerkleConfig>,
     {
         // Retrieve the base domain, ensuring it is set.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
@@ -155,10 +155,10 @@ mod tests {
     use crate::parameters::{
         FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
     };
-    use crate::whir::iopattern::WhirIOPattern;
+    use crate::whir::domainsep::WhirIOPattern;
     use ark_ff::UniformRand;
-    use nimue::{DefaultHash, IOPattern};
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::{DefaultHash, IOPattern};
+    use spongefish_pow::blake3::Blake3PoW;
 
     #[test]
     fn test_basic_commitment() {

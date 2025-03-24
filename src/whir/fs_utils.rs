@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use itertools::Itertools;
-use nimue::{ByteChallenges, ProofResult};
+use spongefish::{ProofResult, VerifierMessageBytes};
 
 /// Generates a list of unique challenge queries within a folded domain.
 ///
@@ -15,7 +15,7 @@ pub fn get_challenge_stir_queries<T>(
     transcript: &mut T,
 ) -> ProofResult<Vec<usize>>
 where
-    T: ByteChallenges,
+    T: VerifierMessageBytes,
 {
     let folded_domain_size = domain_size >> folding_factor;
     // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
@@ -38,17 +38,17 @@ where
     Ok(indices)
 }
 
-pub trait DigestWriter<MerkleConfig: Config> {
+pub trait DigestToUnit<MerkleConfig: Config> {
     fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
 }
 
-pub trait DigestReader<MerkleConfig: Config> {
+pub trait UnitToDigest<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }
 
 #[cfg(test)]
 mod tests {
-    use nimue::IOPatternError;
+    use spongefish::IOPatternError;
 
     use super::*;
 

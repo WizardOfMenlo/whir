@@ -9,8 +9,8 @@ use ark_crypto_primitives::{
 };
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
-use nimue::{Arthur, DefaultHash, IOPattern, Merlin};
-use nimue_pow::blake3::Blake3PoW;
+use spongefish::{DefaultHash, DomainSeparator, ProverPrivateState, VerifierState};
+use spongefish_pow::blake3::Blake3PoW;
 use std::io::Write;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
@@ -28,8 +28,8 @@ use whir::{
 
 use clap::Parser;
 use serde::Serialize;
-use whir::whir::fs_utils::{DigestReader, DigestWriter};
-use whir::whir::iopattern::DigestIOPattern;
+use whir::whir::domainsep::DigestDomainSeparator;
+use whir::whir::fs_utils::{DigestToUnit, UnitToDigest};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -220,9 +220,9 @@ fn run_whir<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    IOPattern: DigestIOPattern<MerkleConfig>,
-    Merlin: DigestWriter<MerkleConfig>,
-    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
+    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
+    ProverPrivateState: DigestToUnit<MerkleConfig>,
+    for<'a> VerifierState<'a>: UnitToDigest<MerkleConfig>,
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
@@ -271,8 +271,8 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run LDT
         use whir::whir::{
-            committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-            verifier::Verifier, whir_proof_size,
+            committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
+            prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
         let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
@@ -284,28 +284,32 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = DomainSeparator::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        let mut merlin = io.to_merlin();
+        let mut prover_state = io.to_prover_state();
 
         let whir_ldt_prover_time = Instant::now();
 
         HashCounter::reset();
 
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let witness = committer
+            .commit(&mut prover_state, polynomial.clone())
+            .unwrap();
 
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
         let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
-        let proof = prover.prove(&mut merlin, statement_new, witness).unwrap();
+        let proof = prover
+            .prove(&mut prover_state, statement_new, witness)
+            .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-        let whir_ldt_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_ldt_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
         let whir_ldt_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -314,9 +318,9 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut arthur = io.to_arthur(merlin.transcript());
+            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
             verifier
-                .verify(&mut arthur, &statement_verifier, &proof)
+                .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
         }
 
@@ -341,8 +345,8 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run PCS
         use whir::whir::{
-            committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-            verifier::Verifier, whir_proof_size,
+            committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
+            prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
         let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -350,11 +354,11 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let io = DomainSeparator::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        let mut merlin = io.to_merlin();
+        let mut prover_state = io.to_prover_state();
 
         let points: Vec<_> = (0..args.num_evaluations)
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
@@ -374,16 +378,16 @@ fn run_whir<F, MerkleConfig>(
         let whir_prover_time = Instant::now();
 
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+            .prove(&mut prover_state, statement.clone(), witness)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
-        let whir_argument_size = whir_proof_size(merlin.transcript(), &proof);
+        let whir_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
         let whir_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -392,9 +396,9 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut arthur = io.to_arthur(merlin.transcript());
+            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
             verifier
-                .verify(&mut arthur, &statement_verifier, &proof)
+                .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
         }
 
