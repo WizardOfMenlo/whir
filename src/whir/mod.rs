@@ -142,12 +142,12 @@ mod tests {
         // Add linear constraint to the statement
         statement.add_constraint(linear_claim_weight, sum);
 
-              // Define the Fiat-Shamir IOPattern for committing and proving
+        // Define the Fiat-Shamir IOPattern for committing and proving
         let io = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-              // Initialize the Merlin transcript from the IOPattern
+        // Initialize the Merlin transcript from the IOPattern
         let mut prover_state = io.to_prover_state();
 
         // Create a commitment to the polynomial and generate auxiliary witness data
@@ -160,16 +160,16 @@ mod tests {
         // Extract verifier-side version of the statement (only public data)
         let statement_verifier = StatementVerifier::from_statement(&statement);
 
-              // Generate a STARK proof for the given statement and witness
+        // Generate a STARK proof for the given statement and witness
         let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
         // Create a verifier with matching parameters
         let verifier = Verifier::new(params);
 
-              // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
+        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
-      
-              // Verify that the generated proof satisfies the statement
+
+        // Verify that the generated proof satisfies the statement
         assert!(verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .is_ok());
