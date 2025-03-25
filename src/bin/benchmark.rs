@@ -27,8 +27,8 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
         domainsep::DigestDomainSeparator,
-        fs_utils::{DigestReader, DigestWriter},
         statement::{Statement, StatementVerifier, Weights},
+        utils::{DigestReader, DigestWriter},
     },
 };
 
