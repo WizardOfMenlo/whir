@@ -1,12 +1,12 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteWriter, ProofResult,
-};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    ByteWriter, ProofResult,
+};
 
 use super::{parameters::WhirConfig, utils::sample_ood_points};
 use crate::{
@@ -65,13 +65,13 @@ where
     /// - Constructs a Merkle tree from the evaluations.
     /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
-    pub fn commit<Merlin>(
+    pub fn commit<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldWriter<F> + FieldChallenges<F> + ByteWriter + DigestWriter<MerkleConfig>,
+        ProverState: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestWriter<MerkleConfig>,
     {
         // Retrieve the base domain, ensuring it is set.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
@@ -115,13 +115,13 @@ where
         )
         .unwrap();
 
-        // Retrieve the Merkle tree root and add it to the transcript.
+        // Retrieve the Merkle tree root and add it to the narg_string.
         let root = merkle_tree.root();
-        merlin.add_digest(root)?;
+        prover_state.add_digest(root)?;
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
-            merlin,
+            prover_state,
             self.0.committment_ood_samples,
             self.0.mv_parameters.num_variables,
             |point| polynomial.evaluate_at_extension(point),
@@ -141,8 +141,8 @@ where
 #[cfg(test)]
 mod tests {
     use ark_ff::UniformRand;
-    use nimue::IOPattern;
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::DomainSeparator;
+    use spongefish_pow::blake3::Blake3PoW;
 
     use super::*;
     use crate::{
@@ -151,7 +151,7 @@ mod tests {
             FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
         },
         poly_utils::multilinear::MultilinearPoint,
-        whir::iopattern::WhirIOPattern,
+        whir::domainsep::WhirDomainSeparator,
     };
 
     #[test]
@@ -196,15 +196,17 @@ mod tests {
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
-        // Set up the IOPattern and initialize a Merlin transcript.
-        let io = IOPattern::new("🌪️")
+        // Set up the DomainSeparator and initialize a ProverState narg_string.
+        let io = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
-        let mut merlin = io.to_merlin();
+        let mut prover_state = io.to_prover_state();
 
         // Run the Commitment Phase
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+        let witness = committer
+            .commit(&mut prover_state, polynomial.clone())
+            .unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -277,11 +279,11 @@ mod tests {
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let io = IOPattern::new("🌪️").commit_statement(&params);
-        let mut merlin = io.to_merlin();
+        let io = DomainSeparator::new("🌪️").commit_statement(&params);
+        let mut prover_state = io.to_prover_state();
 
         let committer = Committer::new(params);
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -318,11 +320,11 @@ mod tests {
         params.committment_ood_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let io = IOPattern::new("🌪️").commit_statement(&params);
-        let mut merlin = io.to_merlin();
+        let io = DomainSeparator::new("🌪️").commit_statement(&params);
+        let mut prover_state = io.to_prover_state();
 
         let committer = Committer::new(params);
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),

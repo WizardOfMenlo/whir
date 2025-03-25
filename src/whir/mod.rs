@@ -2,8 +2,8 @@ use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
+pub mod domainsep;
 pub mod fs_utils;
-pub mod iopattern;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
@@ -24,21 +24,21 @@ where
 }
 
 pub fn whir_proof_size<MerkleConfig, F>(
-    transcript: &[u8],
+    narg_string: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
 mod tests {
     use ark_ff::Field;
-    use nimue::IOPattern;
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::DomainSeparator;
+    use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::{fields::Field64, merkle_tree::blake3 as merkle_tree},
@@ -50,7 +50,7 @@ mod tests {
         },
         whir::{
             committer::Committer,
-            iopattern::WhirIOPattern,
+            domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, StatementVerifier, Weights},
@@ -142,17 +142,17 @@ mod tests {
         // Add linear constraint to the statement
         statement.add_constraint(linear_claim_weight, sum);
 
-        // Define the Fiat-Shamir IOPattern for committing and proving
-        let io = IOPattern::new("🌪️")
+              // Define the Fiat-Shamir IOPattern for committing and proving
+        let io = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        // Initialize the Merlin transcript from the IOPattern
-        let mut merlin = io.to_merlin();
+              // Initialize the Merlin transcript from the IOPattern
+        let mut prover_state = io.to_prover_state();
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
@@ -160,18 +160,18 @@ mod tests {
         // Extract verifier-side version of the statement (only public data)
         let statement_verifier = StatementVerifier::from_statement(&statement);
 
-        // Generate a STARK proof for the given statement and witness
-        let proof = prover.prove(&mut merlin, statement, witness).unwrap();
+              // Generate a STARK proof for the given statement and witness
+        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
         // Create a verifier with matching parameters
         let verifier = Verifier::new(params);
 
-        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
-        let mut arthur = io.to_arthur(merlin.transcript());
-
-        // Verify that the generated proof satisfies the statement
+              // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
+        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+      
+              // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
+            .verify(&mut verifier_state, &statement_verifier, &proof)
             .is_ok());
     }
 
