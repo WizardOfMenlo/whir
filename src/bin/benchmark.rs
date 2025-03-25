@@ -12,7 +12,7 @@ use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use serde::Serialize;
-use spongefish::{DomainSeparator, ProverPrivateState, VerifierState};
+use spongefish::{DomainSeparator, ProverState, VerifierState};
 use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
@@ -222,7 +222,7 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverPrivateState: DigestWriter<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     let security_level = args.security_level;

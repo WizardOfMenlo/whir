@@ -5,7 +5,7 @@ use ark_poly::EvaluationDomain;
 use rayon::prelude::*;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnit, UnitToField},
-    ProofResult, VerifierMessageBytes,
+    ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
 
@@ -68,7 +68,7 @@ where
     where
         ProverState: UnitToField<F>
             + FieldToUnit<F>
-            + VerifierMessageBytes
+            + UnitToBytes
             + PoWChallenge
             + DigestWriter<MerkleConfig>,
     {
@@ -154,7 +154,7 @@ where
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         ProverState: UnitToField<F>
-            + VerifierMessageBytes
+            + UnitToBytes
             + FieldToUnit<F>
             + PoWChallenge
             + DigestWriter<MerkleConfig>,
@@ -316,7 +316,7 @@ where
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         ProverState: UnitToField<F>
-            + VerifierMessageBytes
+            + UnitToBytes
             + FieldToUnit<F>
             + PoWChallenge
             + DigestWriter<MerkleConfig>,
@@ -405,7 +405,7 @@ where
         ood_points: Vec<F>,
     ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
     where
-        ProverState: VerifierMessageBytes,
+        ProverState: UnitToBytes,
     {
         let stir_challenges_indexes = get_challenge_stir_queries(
             round_state.domain.size(),

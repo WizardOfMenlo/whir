@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use itertools::Itertools;
-use spongefish::{ProofResult, VerifierMessageBytes};
+use spongefish::{ProofResult, UnitToBytes};
 
 /// Generates a list of unique challenge queries within a folded domain.
 ///
@@ -15,7 +15,7 @@ pub fn get_challenge_stir_queries<T>(
     narg_string: &mut T,
 ) -> ProofResult<Vec<usize>>
 where
-    T: VerifierMessageBytes,
+    T: UnitToBytes,
 {
     let folded_domain_size = domain_size >> folding_factor;
     // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
@@ -57,7 +57,7 @@ mod tests {
         index: usize,
     }
 
-    impl VerifierMessageBytes for MockTranscript {
+    impl UnitToBytes for MockTranscript {
         fn fill_challenge_bytes(
             &mut self,
             buffer: &mut [u8],

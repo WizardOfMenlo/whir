@@ -10,7 +10,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use spongefish::{
     ByteDomainSeparator, ByteReader, ByteWriter, DomainSeparator, ProofError, ProofResult,
-    ProverPrivateState, VerifierState,
+    ProverState, VerifierState,
 };
 
 use super::{HashCounter, IdentityDigestConverter};
@@ -136,7 +136,7 @@ impl<F: Field> DigestDomainSeparator<MerkleTreeParams<F>> for DomainSeparator {
     }
 }
 
-impl<F: Field> DigestWriter<MerkleTreeParams<F>> for ProverPrivateState {
+impl<F: Field> DigestWriter<MerkleTreeParams<F>> for ProverState {
     fn add_digest(&mut self, digest: Blake3Digest) -> ProofResult<()> {
         self.add_bytes(&digest.0)
             .map_err(ProofError::InvalidDomainSeparator)

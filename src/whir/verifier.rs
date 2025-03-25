@@ -5,7 +5,7 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use spongefish::{
     codecs::arkworks_algebra::{DeserializeField, UnitToField},
-    ProofError, ProofResult, VerifierMessageBytes,
+    ProofError, ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
 
@@ -52,10 +52,8 @@ where
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        VerifierState: VerifierMessageBytes
-            + DeserializeField<F>
-            + UnitToField<F>
-            + DigestReader<MerkleConfig>,
+        VerifierState:
+            UnitToBytes + DeserializeField<F> + UnitToField<F> + DigestReader<MerkleConfig>,
     {
         let root = verifier_state.read_digest()?;
 
@@ -82,7 +80,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
-        VerifierState: VerifierMessageBytes
+        VerifierState: UnitToBytes
             + UnitToField<F>
             + DeserializeField<F>
             + PoWChallenge
@@ -381,7 +379,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
     where
-        VerifierState: VerifierMessageBytes
+        VerifierState: UnitToBytes
             + UnitToField<F>
             + DeserializeField<F>
             + PoWChallenge

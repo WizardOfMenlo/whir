@@ -7,7 +7,7 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{DomainSeparator, ProverPrivateState, VerifierState};
+use spongefish::{DomainSeparator, ProverState, VerifierState};
 use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
@@ -194,7 +194,7 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverPrivateState: DigestWriter<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     match args.protocol_type {
@@ -216,7 +216,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverPrivateState: DigestWriter<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
@@ -327,7 +327,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverPrivateState: DigestWriter<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
