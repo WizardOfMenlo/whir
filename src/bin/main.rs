@@ -317,6 +317,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(HashCounter::get() as f64 / reps as f64);
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_whir_pcs<F, MerkleConfig>(
     args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
