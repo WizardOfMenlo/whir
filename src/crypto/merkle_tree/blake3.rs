@@ -7,15 +7,16 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use nimue::{
-    Arthur, ByteIOPattern, ByteReader, ByteWriter, IOPattern, Merlin, ProofError, ProofResult,
-};
 use rand::RngCore;
+use spongefish::{
+    ByteDomainSeparator, ByteReader, ByteWriter, DomainSeparator, ProofError, ProofResult,
+    ProverPrivateState, VerifierState,
+};
 
 use super::{HashCounter, IdentityDigestConverter};
 use crate::whir::{
     fs_utils::{DigestReader, DigestWriter},
-    iopattern::DigestIOPattern,
+    iopattern::DigestDomainSeparator,
 };
 
 #[derive(
@@ -129,19 +130,20 @@ pub fn default_config<F: CanonicalSerialize + Send>(
     )
 }
 
-impl<F: Field> DigestIOPattern<MerkleTreeParams<F>> for IOPattern {
+impl<F: Field> DigestDomainSeparator<MerkleTreeParams<F>> for DomainSeparator {
     fn add_digest(self, label: &str) -> Self {
         self.add_bytes(32, label)
     }
 }
 
-impl<F: Field> DigestWriter<MerkleTreeParams<F>> for Merlin {
+impl<F: Field> DigestWriter<MerkleTreeParams<F>> for ProverPrivateState {
     fn add_digest(&mut self, digest: Blake3Digest) -> ProofResult<()> {
-        self.add_bytes(&digest.0).map_err(ProofError::InvalidIO)
+        self.add_bytes(&digest.0)
+            .map_err(ProofError::InvalidDomainSeparator)
     }
 }
 
-impl<F: Field> DigestReader<MerkleTreeParams<F>> for Arthur<'_> {
+impl<F: Field> DigestReader<MerkleTreeParams<F>> for VerifierState<'_> {
     fn read_digest(&mut self) -> ProofResult<Blake3Digest> {
         let mut digest = [0; 32];
         self.fill_next_bytes(&mut digest)?;

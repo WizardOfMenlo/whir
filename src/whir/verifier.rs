@@ -3,11 +3,11 @@ use std::iter;
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldReader},
-    ByteChallenges, ProofError, ProofResult,
+use spongefish::{
+    codecs::arkworks_algebra::{DeserializeField, UnitToField},
+    ProofError, ProofResult, VerifierMessageBytes,
 };
-use nimue_pow::{self, PoWChallenge};
+use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     parameters::WhirConfig,
@@ -41,26 +41,29 @@ impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: nimue_pow::PowStrategy,
+    PowStrategy: spongefish_pow::PowStrategy,
 {
     pub const fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self { params }
     }
 
-    fn parse_commitment<Arthur>(
+    fn parse_commitment<VerifierState>(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        Arthur: FieldReader<F> + FieldChallenges<F> + DigestReader<MerkleConfig>,
+        VerifierState: VerifierMessageBytes
+            + DeserializeField<F>
+            + UnitToField<F>
+            + DigestReader<MerkleConfig>,
     {
-        let root = arthur.read_digest()?;
+        let root = verifier_state.read_digest()?;
 
         let mut ood_points = vec![F::ZERO; self.params.committment_ood_samples];
         let mut ood_answers = vec![F::ZERO; self.params.committment_ood_samples];
         if self.params.committment_ood_samples > 0 {
-            arthur.fill_challenge_scalars(&mut ood_points)?;
-            arthur.fill_next_scalars(&mut ood_answers)?;
+            verifier_state.fill_challenge_scalars(&mut ood_points)?;
+            verifier_state.fill_next_scalars(&mut ood_answers)?;
         }
 
         Ok(ParsedCommitment {
@@ -71,22 +74,27 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    fn parse_proof<Arthur>(
+    fn parse_proof<VerifierState>(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement_points_len: usize, // Will be needed later
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
-        Arthur: FieldReader<F> + PoWChallenge + ByteChallenges + DigestReader<MerkleConfig>,
+        VerifierState: VerifierMessageBytes
+            + UnitToField<F>
+            + DeserializeField<F>
+            + PoWChallenge
+            + VerifierMessageBytes
+            + DigestReader<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness;
         let initial_combination_randomness;
         if self.params.initial_statement {
             // Derive combination randomness and first sumcheck polynomial
-            let [combination_randomness_gen] = arthur.challenge_scalars()?;
+            let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
             initial_combination_randomness = expand_randomness(
                 combination_randomness_gen,
                 parsed_commitment.ood_points.len() + statement_points_len,
@@ -95,13 +103,14 @@ where
             // Initial sumcheck
             sumcheck_rounds.reserve_exact(self.params.folding_factor.at_round(0));
             for _ in 0..self.params.folding_factor.at_round(0) {
-                let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
+                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-                let [folding_randomness_single] = arthur.challenge_scalars()?;
+                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
                 if self.params.starting_folding_pow_bits > 0. {
-                    arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+                    verifier_state
+                        .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
                 }
             }
 
@@ -114,12 +123,13 @@ where
             initial_combination_randomness = vec![F::ONE];
 
             let mut folding_randomness_vec = vec![F::ZERO; self.params.folding_factor.at_round(0)];
-            arthur.fill_challenge_scalars(&mut folding_randomness_vec)?;
+            verifier_state.fill_challenge_scalars(&mut folding_randomness_vec)?;
             folding_randomness = MultilinearPoint(folding_randomness_vec);
 
             // PoW
             if self.params.starting_folding_pow_bits > 0. {
-                arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+                verifier_state
+                    .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
             }
         }
 
@@ -134,20 +144,20 @@ where
             let (merkle_proof, answers) = &whir_proof.merkle_paths[r];
             let round_params = &self.params.round_parameters[r];
 
-            let new_root = arthur.read_digest()?;
+            let new_root = verifier_state.read_digest()?;
 
             let mut ood_points = vec![F::ZERO; round_params.ood_samples];
             let mut ood_answers = vec![F::ZERO; round_params.ood_samples];
             if round_params.ood_samples > 0 {
-                arthur.fill_challenge_scalars(&mut ood_points)?;
-                arthur.fill_next_scalars(&mut ood_answers)?;
+                verifier_state.fill_challenge_scalars(&mut ood_points)?;
+                verifier_state.fill_next_scalars(&mut ood_answers)?;
             }
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
                 self.params.folding_factor.at_round(r),
                 round_params.num_queries,
-                arthur,
+                verifier_state,
             )?;
 
             let stir_challenges_points = stir_challenges_indexes
@@ -169,10 +179,10 @@ where
             }
 
             if round_params.pow_bits > 0. {
-                arthur.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+                verifier_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
             }
 
-            let [combination_randomness_gen] = arthur.challenge_scalars()?;
+            let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
             let combination_randomness = expand_randomness(
                 combination_randomness_gen,
                 stir_challenges_indexes.len() + round_params.ood_samples,
@@ -181,13 +191,13 @@ where
             let mut sumcheck_rounds =
                 Vec::with_capacity(self.params.folding_factor.at_round(r + 1));
             for _ in 0..self.params.folding_factor.at_round(r + 1) {
-                let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
+                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-                let [folding_randomness_single] = arthur.challenge_scalars()?;
+                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
                 sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
                 if round_params.folding_pow_bits > 0. {
-                    arthur.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
+                    verifier_state.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
                 }
             }
 
@@ -216,7 +226,7 @@ where
         }
 
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_sumcheck_rounds];
-        arthur.fill_next_scalars(&mut final_coefficients)?;
+        verifier_state.fill_next_scalars(&mut final_coefficients)?;
         let final_coefficients = CoefficientList::new(final_coefficients);
 
         // Final queries verify
@@ -224,7 +234,7 @@ where
             domain_size,
             self.params.folding_factor.at_round(self.params.n_rounds()),
             self.params.final_queries,
-            arthur,
+            verifier_state,
         )?;
         let final_randomness_points = final_randomness_indexes
             .iter()
@@ -247,18 +257,18 @@ where
         }
 
         if self.params.final_pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
+            verifier_state.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
         }
 
         let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
         for _ in 0..self.params.final_sumcheck_rounds {
-            let sumcheck_poly_evals: [_; 3] = arthur.next_scalars()?;
+            let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
             let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-            let [folding_randomness_single] = arthur.challenge_scalars()?;
+            let [folding_randomness_single] = verifier_state.challenge_scalars()?;
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
             if self.params.final_folding_pow_bits > 0. {
-                arthur.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
+                verifier_state.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
             }
         }
         let final_sumcheck_randomness = MultilinearPoint(
@@ -365,21 +375,26 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn verify<Arthur>(
+    pub fn verify<VerifierState>(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         statement: &StatementVerifier<F>,
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
     where
-        Arthur: FieldReader<F> + ByteChallenges + PoWChallenge + DigestReader<MerkleConfig>,
+        VerifierState: VerifierMessageBytes
+            + UnitToField<F>
+            + DeserializeField<F>
+            + VerifierMessageBytes
+            + PoWChallenge
+            + DigestReader<MerkleConfig>,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
-        let parsed_commitment = self.parse_commitment(arthur)?;
+        let parsed_commitment = self.parse_commitment(verifier_state)?;
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
         let parsed = self.parse_proof(
-            arthur,
+            verifier_state,
             &parsed_commitment,
             statement.constraints.len(),
             whir_proof,

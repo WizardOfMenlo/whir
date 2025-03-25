@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use itertools::Itertools;
-use nimue::{ByteChallenges, ProofResult};
+use spongefish::{ProofResult, VerifierMessageBytes};
 
 /// Generates a list of unique challenge queries within a folded domain.
 ///
@@ -15,7 +15,7 @@ pub fn get_challenge_stir_queries<T>(
     transcript: &mut T,
 ) -> ProofResult<Vec<usize>>
 where
-    T: ByteChallenges,
+    T: VerifierMessageBytes,
 {
     let folded_domain_size = domain_size >> folding_factor;
     // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
@@ -48,7 +48,7 @@ pub trait DigestReader<MerkleConfig: Config> {
 
 #[cfg(test)]
 mod tests {
-    use nimue::IOPatternError;
+    use spongefish::DomainSeparatorError;
 
     use super::*;
 
@@ -58,7 +58,7 @@ mod tests {
     }
 
     impl ByteChallenges for MockTranscript {
-        fn fill_challenge_bytes(&mut self, buffer: &mut [u8]) -> Result<(), IOPatternError> {
+        fn fill_challenge_bytes(&mut self, buffer: &mut [u8]) -> Result<(), DomainSeparatorError> {
             if self.index + buffer.len() > self.data.len() {
                 return Err(String::from("Invalid input").into());
             }

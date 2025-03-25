@@ -7,8 +7,8 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use nimue::{Arthur, IOPattern, Merlin};
-use nimue_pow::blake3::Blake3PoW;
+use spongefish::{DomainSeparator, ProverState, VerifierState};
+use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -22,7 +22,7 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     whir::{
         fs_utils::{DigestReader, DigestWriter},
-        iopattern::DigestIOPattern,
+        iopattern::DigestDomainSeparator,
         statement::{Statement, StatementVerifier, Weights},
     },
 };
@@ -193,9 +193,9 @@ fn run_whir<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    IOPattern: DigestIOPattern<MerkleConfig>,
-    Merlin: DigestWriter<MerkleConfig>,
-    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
+    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     match args.protocol_type {
         WhirType::PCS => {
@@ -215,13 +215,13 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    IOPattern: DigestIOPattern<MerkleConfig>,
-    Merlin: DigestWriter<MerkleConfig>,
-    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
+    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier,
+        committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+        prover::Prover, verifier::Verifier,
     };
 
     // Runs as a LDT
@@ -261,11 +261,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::new("🌪️")
+    let io = DomainSeparator::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
-    let mut merlin = io.to_merlin();
+    let mut prover_state = io.to_prover_state();
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -284,18 +284,18 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = Committer::new(params.clone());
-    let witness = committer.commit(&mut merlin, polynomial).unwrap();
+    let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
     let prover = Prover(params.clone());
 
     let statement = Statement::new(num_variables);
     let statement_verifier = StatementVerifier::from_statement(&statement);
-    let proof = prover.prove(&mut merlin, statement, witness).unwrap();
+    let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
     dbg!(whir_prover_time.elapsed());
 
     // Serialize proof
-    let transcript = merlin.transcript().to_vec();
+    let transcript = prover_state.transcript().to_vec();
     let mut proof_bytes = vec![];
     proof.serialize_compressed(&mut proof_bytes).unwrap();
 
@@ -308,9 +308,9 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut arthur = io.to_arthur(&transcript);
+        let mut verifier_state = io.to_verifier_state(&transcript);
         verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
+            .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -325,13 +325,13 @@ fn run_whir_pcs<F, MerkleConfig>(
     F: FftField + CanonicalSerialize,
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    IOPattern: DigestIOPattern<MerkleConfig>,
-    Merlin: DigestWriter<MerkleConfig>,
-    for<'a> Arthur<'a>: DigestReader<MerkleConfig>,
+    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
+    ProverState: DigestWriter<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        statement::Statement, verifier::Verifier, whir_proof_size,
+        committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+        prover::Prover, statement::Statement, verifier::Verifier, whir_proof_size,
     };
 
     // Runs as a PCS
@@ -373,11 +373,11 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = IOPattern::new("🌪️")
+    let io = DomainSeparator::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
-    let mut merlin = io.to_merlin();
+    let mut prover_state = io.to_prover_state();
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
@@ -395,7 +395,9 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = Committer::new(params.clone());
-    let witness = committer.commit(&mut merlin, polynomial.clone()).unwrap();
+    let witness = committer
+        .commit(&mut prover_state, polynomial.clone())
+        .unwrap();
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
@@ -425,13 +427,13 @@ fn run_whir_pcs<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut merlin, statement.clone(), witness)
+        .prove(&mut prover_state, statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(merlin.transcript(), &proof) as f64 / 1024.0
+        whir_proof_size(prover_state.transcript(), &proof) as f64 / 1024.0
     );
 
     let statement_verifier = StatementVerifier::from_statement(&statement);
@@ -441,9 +443,9 @@ fn run_whir_pcs<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut arthur = io.to_arthur(merlin.transcript());
+        let mut verifier_state = io.to_verifier_state(prover_state.transcript());
         verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
+            .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();
     }
     println!(
