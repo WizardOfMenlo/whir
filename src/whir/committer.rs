@@ -5,7 +5,7 @@ use ark_poly::EvaluationDomain;
 use rayon::prelude::*;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnit, UnitToField},
-    ByteWriter, ProofResult,
+    ProofResult,
 };
 
 use super::{parameters::WhirConfig, utils::sample_ood_points};
@@ -71,7 +71,7 @@ where
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        ProverState: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestWriter<MerkleConfig>,
+        ProverState: FieldToUnit<F> + UnitToField<F> + DigestWriter<MerkleConfig>,
     {
         // Retrieve the base domain, ensuring it is set.
         let base_domain = self.0.starting_domain.base_domain.unwrap();
