@@ -35,7 +35,7 @@ where
             ))
         }));
 
-        // Commit the answers to the transcript
+        // Commit the answers to the narg_string
         prover_state.add_scalars(&ood_answers)?;
     }
 

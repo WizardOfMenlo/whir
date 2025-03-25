@@ -24,14 +24,14 @@ where
 }
 
 pub fn whir_proof_size<MerkleConfig, F>(
-    transcript: &[u8],
+    narg_string: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
@@ -129,7 +129,7 @@ mod tests {
         let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
         let verifier = Verifier::new(params);
-        let mut verifier_state = io.to_verifier_state(prover_state.transcript());
+        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
         assert!(verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .is_ok());

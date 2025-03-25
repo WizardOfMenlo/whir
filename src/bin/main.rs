@@ -7,7 +7,7 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{DomainSeparator, ProverState, VerifierState};
+use spongefish::{DomainSeparator, ProverPrivateState, VerifierState};
 use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
@@ -194,7 +194,7 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
+    ProverPrivateState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     match args.protocol_type {
@@ -216,7 +216,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
+    ProverPrivateState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
@@ -295,11 +295,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(whir_prover_time.elapsed());
 
     // Serialize proof
-    let transcript = prover_state.transcript().to_vec();
+    let narg_string = prover_state.narg_string().to_vec();
     let mut proof_bytes = vec![];
     proof.serialize_compressed(&mut proof_bytes).unwrap();
 
-    let proof_size = transcript.len() + proof_bytes.len();
+    let proof_size = narg_string.len() + proof_bytes.len();
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
@@ -308,7 +308,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = io.to_verifier_state(&transcript);
+        let mut verifier_state = io.to_verifier_state(&narg_string);
         verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();
@@ -326,7 +326,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
+    ProverPrivateState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     use whir::whir::{
@@ -433,7 +433,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(prover_state.transcript(), &proof) as f64 / 1024.0
+        whir_proof_size(prover_state.narg_string(), &proof) as f64 / 1024.0
     );
 
     let statement_verifier = StatementVerifier::from_statement(&statement);
@@ -443,7 +443,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = io.to_verifier_state(prover_state.transcript());
+        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
         verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();

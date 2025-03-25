@@ -115,7 +115,7 @@ where
         )
         .unwrap();
 
-        // Retrieve the Merkle tree root and add it to the transcript.
+        // Retrieve the Merkle tree root and add it to the narg_string.
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
@@ -196,7 +196,7 @@ mod tests {
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
-        // Set up the DomainSeparator and initialize a ProverState transcript.
+        // Set up the DomainSeparator and initialize a ProverState narg_string.
         let io = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);

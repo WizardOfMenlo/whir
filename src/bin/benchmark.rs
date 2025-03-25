@@ -11,9 +11,9 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{VerifierState, DomainSeparator, ProverState};
-use spongefish_pow::blake3::Blake3PoW;
 use serde::Serialize;
+use spongefish::{DomainSeparator, ProverPrivateState, VerifierState};
+use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{
@@ -222,7 +222,7 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
+    ProverPrivateState: DigestWriter<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
 {
     let security_level = args.security_level;
@@ -272,8 +272,8 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run LDT
         use whir::whir::{
-            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig, prover::Prover,
-            verifier::Verifier, whir_proof_size,
+            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+            prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
         let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
@@ -296,17 +296,21 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
 
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial.clone()).unwrap();
+        let witness = committer
+            .commit(&mut prover_state, polynomial.clone())
+            .unwrap();
 
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
         let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
-        let proof = prover.prove(&mut prover_state, statement_new, witness).unwrap();
+        let proof = prover
+            .prove(&mut prover_state, statement_new, witness)
+            .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-        let whir_ldt_argument_size = whir_proof_size(prover_state.transcript(), &proof);
+        let whir_ldt_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
         let whir_ldt_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -315,7 +319,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut verifier_state = io.to_verifier_state(prover_state.transcript());
+            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
             verifier
                 .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
@@ -342,8 +346,8 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run PCS
         use whir::whir::{
-            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig, prover::Prover,
-            verifier::Verifier, whir_proof_size,
+            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+            prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
         let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -384,7 +388,7 @@ fn run_whir<F, MerkleConfig>(
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
-        let whir_argument_size = whir_proof_size(prover_state.transcript(), &proof);
+        let whir_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
         let whir_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -393,7 +397,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut verifier_state = io.to_verifier_state(prover_state.transcript());
+            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
             verifier
                 .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
