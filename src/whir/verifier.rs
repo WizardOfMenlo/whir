@@ -82,12 +82,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<ParsedProof<F>>
     where
-        VerifierState: VerifierMessageBytes
-            + UnitToField<F>
-            + DeserializeField<F>
-            + PoWChallenge
-            + VerifierMessageBytes
-            + DigestReader<MerkleConfig>,
+        VerifierState: VerifierMessageBytes + UnitToField<F> + DeserializeField<F> + PoWChallenge + DigestReader<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness;
@@ -382,12 +377,7 @@ where
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
     where
-        VerifierState: VerifierMessageBytes
-            + UnitToField<F>
-            + DeserializeField<F>
-            + VerifierMessageBytes
-            + PoWChallenge
-            + DigestReader<MerkleConfig>,
+        VerifierState: VerifierMessageBytes + UnitToField<F> + DeserializeField<F> + PoWChallenge + DigestReader<MerkleConfig>,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
