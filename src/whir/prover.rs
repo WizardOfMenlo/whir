@@ -368,10 +368,15 @@ where
                     self.0.final_folding_pow_bits,
                 )?;
             let start_idx = self.0.folding_factor.total_number(round_state.round);
-            let mut arr = final_folding_randomness.clone().0;
-            arr.reverse();
-            round_state.randomness_vec[start_idx..start_idx + final_folding_randomness.0.len()]
-                .copy_from_slice(&arr);
+            let rand_dst = &mut round_state.randomness_vec
+                [start_idx..start_idx + final_folding_randomness.0.len()];
+
+            for (dst, src) in rand_dst
+                .iter_mut()
+                .zip(final_folding_randomness.0.iter().rev())
+            {
+                *dst = *src;
+            }
         }
 
         let mut randomness_vec_rev = round_state.randomness_vec;
