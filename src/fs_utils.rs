@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_add_ood() {
-        let iop = DomainSeparator::new("test_protocol");
+        let iop: DomainSeparator = DomainSeparator::new("test_protocol");
 
         // Apply OOD query addition
         let updated_iop = <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(iop.clone(), 3);
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_pow() {
-        let iop = DomainSeparator::new("test_protocol");
+        let iop: DomainSeparator = DomainSeparator::new("test_protocol");
 
         // Apply PoW challenge
         let updated_iop = iop.clone().pow(10.0);
