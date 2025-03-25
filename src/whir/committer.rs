@@ -151,7 +151,7 @@ mod tests {
             FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
         },
         poly_utils::multilinear::MultilinearPoint,
-        whir::iopattern::WhirDomainSeparator,
+        whir::domainsep::WhirDomainSeparator,
     };
 
     #[test]

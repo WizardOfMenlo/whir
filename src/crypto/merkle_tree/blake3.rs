@@ -16,7 +16,7 @@ use spongefish::{
 use super::{HashCounter, IdentityDigestConverter};
 use crate::whir::{
     fs_utils::{DigestReader, DigestWriter},
-    iopattern::DigestDomainSeparator,
+    domainsep::DigestDomainSeparator,
 };
 
 #[derive(

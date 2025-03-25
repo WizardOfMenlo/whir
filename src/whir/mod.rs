@@ -2,8 +2,8 @@ use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
+pub mod domainsep;
 pub mod fs_utils;
-pub mod iopattern;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
@@ -49,7 +49,7 @@ mod tests {
         },
         whir::{
             committer::Committer,
-            iopattern::WhirDomainSeparator,
+            domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, StatementVerifier, Weights},

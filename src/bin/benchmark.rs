@@ -27,7 +27,7 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
         fs_utils::{DigestReader, DigestWriter},
-        iopattern::DigestDomainSeparator,
+        domainsep::DigestDomainSeparator,
         statement::{Statement, StatementVerifier, Weights},
     },
 };
@@ -272,7 +272,7 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run LDT
         use whir::whir::{
-            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+            committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
             prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
@@ -346,7 +346,7 @@ fn run_whir<F, MerkleConfig>(
     ) = {
         // Run PCS
         use whir::whir::{
-            committer::Committer, iopattern::WhirDomainSeparator, parameters::WhirConfig,
+            committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
             prover::Prover, verifier::Verifier, whir_proof_size,
         };
 
