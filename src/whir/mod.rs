@@ -2,8 +2,8 @@ use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
+pub mod domainsep;
 pub mod fs_utils;
-pub mod iopattern;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
@@ -24,20 +24,20 @@ where
 }
 
 pub fn whir_proof_size<MerkleConfig, F>(
-    transcript: &[u8],
+    narg_string: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
 mod tests {
-    use nimue::IOPattern;
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::DomainSeparator;
+    use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::{fields::Field64, merkle_tree::blake3 as merkle_tree},
@@ -49,7 +49,7 @@ mod tests {
         },
         whir::{
             committer::Committer,
-            iopattern::WhirIOPattern,
+            domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, StatementVerifier, Weights},
@@ -114,24 +114,24 @@ mod tests {
         let sum = linear_claim_weight.weighted_sum(&poly);
         statement.add_constraint(linear_claim_weight, sum);
 
-        let io = IOPattern::new("🌪️")
+        let io = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        let mut merlin = io.to_merlin();
+        let mut prover_state = io.to_prover_state();
 
         let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         let prover = Prover(params.clone());
         let statement_verifier = StatementVerifier::from_statement(&statement);
 
-        let proof = prover.prove(&mut merlin, statement, witness).unwrap();
+        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
         let verifier = Verifier::new(params);
-        let mut arthur = io.to_arthur(merlin.transcript());
+        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
         assert!(verifier
-            .verify(&mut arthur, &statement_verifier, &proof)
+            .verify(&mut verifier_state, &statement_verifier, &proof)
             .is_ok());
     }
 

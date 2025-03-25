@@ -1,11 +1,11 @@
 use ark_ff::Field;
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ProofResult,
-};
-use nimue_pow::{PoWChallenge, PowStrategy};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    ProofResult,
+};
+use spongefish_pow::{PoWChallenge, PowStrategy};
 
 use super::SumcheckPolynomial;
 use crate::{
@@ -135,27 +135,27 @@ where
     }
 
     /// Do `folding_factor` rounds of sumcheck, and return the proof.
-    pub fn compute_sumcheck_polynomials<S, Merlin>(
+    pub fn compute_sumcheck_polynomials<S, ProverState>(
         &mut self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         folding_factor: usize,
         pow_bits: f64,
     ) -> ProofResult<MultilinearPoint<F>>
     where
-        Merlin: FieldWriter<F> + FieldChallenges<F> + PoWChallenge,
+        ProverState: FieldToUnit<F> + UnitToField<F> + PoWChallenge,
         S: PowStrategy,
     {
         let mut res = Vec::with_capacity(folding_factor);
 
         for _ in 0..folding_factor {
             let sumcheck_poly = self.compute_sumcheck_polynomial();
-            merlin.add_scalars(sumcheck_poly.evaluations())?;
-            let [folding_randomness]: [F; 1] = merlin.challenge_scalars()?;
+            prover_state.add_scalars(sumcheck_poly.evaluations())?;
+            let [folding_randomness]: [F; 1] = prover_state.challenge_scalars()?;
             res.push(folding_randomness);
 
             // Do PoW if needed
             if pow_bits > 0. {
-                merlin.challenge_pow::<S>(pow_bits)?;
+                prover_state.challenge_pow::<S>(pow_bits)?;
             }
 
             self.compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
