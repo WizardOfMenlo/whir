@@ -12,7 +12,10 @@ use super::Witness;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::{fs_utils::DigestToUnitSerialize, parameters::WhirConfig, utils::sample_ood_points},
+    whir::{
+        parameters::WhirConfig,
+        utils::{sample_ood_points, DigestToUnitSerialize},
+    },
 };
 
 /// Responsible for committing polynomials using a Merkle-based scheme.

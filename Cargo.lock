@@ -1143,7 +1143,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "spongefish"
 version = "0.2.0"
-source = "git+https://github.com/arkworks-rs/spongefish#d944ea991c584296b397f35c587c33139b440733"
+source = "git+https://github.com/arkworks-rs/spongefish#55abdae56e036d8f83b0a9eae8243aa6f64ef3aa"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -1159,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "spongefish-pow"
 version = "0.1.0"
-source = "git+https://github.com/arkworks-rs/spongefish#d944ea991c584296b397f35c587c33139b440733"
+source = "git+https://github.com/arkworks-rs/spongefish#55abdae56e036d8f83b0a9eae8243aa6f64ef3aa"
 dependencies = [
  "blake3",
  "bytemuck",

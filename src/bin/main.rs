@@ -23,8 +23,8 @@ use whir::{
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
-        fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
         statement::{Statement, StatementVerifier, Weights},
+        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
 

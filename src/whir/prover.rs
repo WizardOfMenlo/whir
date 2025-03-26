@@ -24,9 +24,8 @@ use crate::{
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
-        fs_utils::{get_challenge_stir_queries, DigestToUnitSerialize},
         parameters::RoundConfig,
-        utils::sample_ood_points,
+        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
     },
 };
 

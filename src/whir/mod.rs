@@ -3,7 +3,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
 pub mod domainsep;
-pub mod fs_utils;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
