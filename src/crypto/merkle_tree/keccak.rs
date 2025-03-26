@@ -3,10 +3,9 @@ use std::{borrow::Borrow, marker::PhantomData};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
-    sponge::Absorb,
 };
 use ark_ff::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 use sha3::Digest;
 use spongefish::{
@@ -15,37 +14,15 @@ use spongefish::{
 };
 
 use super::{HashCounter, IdentityDigestConverter};
-use crate::whir::{
-    domainsep::DigestDomainSeparator,
-    utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+use crate::{
+    crypto::merkle_tree::digest::GenericDigest,
+    whir::{
+        domainsep::DigestDomainSeparator,
+        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+    },
 };
 
-#[derive(
-    Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,
-)]
-pub struct KeccakDigest([u8; 32]);
-
-impl Absorb for KeccakDigest {
-    fn to_sponge_bytes(&self, dest: &mut Vec<u8>) {
-        dest.extend_from_slice(&self.0);
-    }
-
-    fn to_sponge_field_elements<F: ark_ff::PrimeField>(&self, dest: &mut Vec<F>) {
-        dest.push(F::from_be_bytes_mod_order(&self.0));
-    }
-}
-
-impl From<[u8; 32]> for KeccakDigest {
-    fn from(value: [u8; 32]) -> Self {
-        Self(value)
-    }
-}
-
-impl AsRef<[u8]> for KeccakDigest {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
+pub type KeccakDigest = GenericDigest<32>;
 
 pub struct KeccakLeafHash<F>(PhantomData<F>);
 pub struct KeccakTwoToOneCRHScheme;
@@ -66,9 +43,9 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
         let mut buf = Vec::new();
         input.borrow().serialize_compressed(&mut buf)?;
 
-        let output = sha3::Keccak256::digest(&buf).into();
+        let output: [_; 32] = sha3::Keccak256::digest(&buf).into();
         HashCounter::add();
-        Ok(KeccakDigest(output))
+        Ok(output.into())
     }
 }
 
@@ -86,14 +63,14 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let output = sha3::Keccak256::new()
+        let output: [_; 32] = sha3::Keccak256::new()
             .chain_update(left_input.borrow().0)
             .chain_update(right_input.borrow().0)
             .finalize()
             .into();
 
         HashCounter::add();
-        Ok(KeccakDigest(output))
+        Ok(output.into())
     }
 
     fn compress<T: Borrow<Self::Output>>(
@@ -151,6 +128,6 @@ impl<F: Field> DigestToUnitDeserialize<MerkleTreeParams<F>> for VerifierState<'_
     fn read_digest(&mut self) -> ProofResult<KeccakDigest> {
         let mut digest = [0; 32];
         self.fill_next_bytes(&mut digest)?;
-        Ok(KeccakDigest(digest))
+        Ok(digest.into())
     }
 }
