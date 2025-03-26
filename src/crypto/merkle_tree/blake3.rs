@@ -9,10 +9,20 @@ use rand::RngCore;
 
 use super::{digest::GenericDigest, parameters::MerkleTreeParams, HashCounter};
 
+/// Digest type used in Blake3-based Merkle trees.
+///
+/// Alias for a 32-byte generic digest.
 pub type Blake3Digest = GenericDigest<32>;
+
+/// Merkle tree configuration using Blake3 as both leaf and node hasher.
 pub type Blake3MerkleTreeParams<F> =
     MerkleTreeParams<F, Blake3LeafHash<F>, Blake3Compress, Blake3Digest>;
 
+/// Leaf hash function using Blake3 over compressed `[F]` input.
+///
+/// This struct implements `CRHScheme` where the input is a slice of
+/// canonical-serializable field elements `[F]`, and the output is a
+/// 32-byte Blake3 digest.
 #[derive(Clone)]
 pub struct Blake3LeafHash<F>(PhantomData<F>);
 
@@ -38,6 +48,10 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
     }
 }
 
+/// Node compression function using Blake3 over two 32-byte digests.
+///
+/// This struct implements `TwoToOneCRHScheme`, combining two digests
+/// by concatenation and hashing with Blake3.
 #[derive(Clone)]
 pub struct Blake3Compress;
 

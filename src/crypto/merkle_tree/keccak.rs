@@ -11,10 +11,20 @@ use sha3::Digest;
 use super::{parameters::MerkleTreeParams, HashCounter};
 use crate::crypto::merkle_tree::digest::GenericDigest;
 
+/// Digest type used in Keccak-based Merkle trees.
+///
+/// Alias for a 32-byte generic digest.
 pub type KeccakDigest = GenericDigest<32>;
+
+/// Merkle tree configuration using Keccak as both leaf and node hasher..
 pub type KeccakMerkleTreeParams<F> =
     MerkleTreeParams<F, KeccakLeafHash<F>, KeccakCompress, KeccakDigest>;
 
+/// Leaf hash function using Keccak256 over compressed `[F]` input.
+///
+/// This struct implements `CRHScheme` where the input is a slice of
+/// canonical-serializable field elements `[F]`, and the output is a
+/// 32-byte Keccak digest.
 #[derive(Clone)]
 pub struct KeccakLeafHash<F>(PhantomData<F>);
 
@@ -40,6 +50,10 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     }
 }
 
+/// Node compression function using Keccak256 over two 32-byte digests.
+///
+/// This struct implements `TwoToOneCRHScheme`, combining two digests
+/// by concatenation and hashing with Keccak256.
 #[derive(Clone)]
 pub struct KeccakCompress;
 
