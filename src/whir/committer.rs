@@ -4,7 +4,7 @@ use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
 
@@ -12,7 +12,7 @@ use super::{parameters::WhirConfig, utils::sample_ood_points};
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::fs_utils::DigestWriter,
+    whir::fs_utils::DigestToUnitSerialize,
 };
 
 /// Represents the commitment and evaluation data for a polynomial.
@@ -71,7 +71,7 @@ where
         polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        ProverState: FieldToUnit<F> + UnitToField<F> + DigestWriter<MerkleConfig>,
+        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
     {
         // Retrieve the base domain, ensuring it is set.
         let base_domain = self.0.starting_domain.base_domain.unwrap();

@@ -22,7 +22,7 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     whir::{
         domainsep::DigestDomainSeparator,
-        fs_utils::{DigestReader, DigestWriter},
+        fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
         statement::{Statement, StatementVerifier, Weights},
     },
 };
@@ -194,8 +194,8 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
+    ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     match args.protocol_type {
         WhirType::PCS => {
@@ -216,8 +216,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
+    ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     use whir::whir::{
         committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
@@ -327,8 +327,8 @@ fn run_whir_pcs<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
+    ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     use whir::whir::{
         committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,

@@ -9,14 +9,14 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use spongefish::{
-    ByteDomainSeparator, ByteReader, ByteWriter, DomainSeparator, ProofError, ProofResult,
-    ProverState, VerifierState,
+    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
+    ProofResult, ProverState, VerifierState,
 };
 
 use super::{HashCounter, IdentityDigestConverter};
 use crate::whir::{
     domainsep::DigestDomainSeparator,
-    fs_utils::{DigestReader, DigestWriter},
+    fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
 };
 
 #[derive(
@@ -136,14 +136,14 @@ impl<F: Field> DigestDomainSeparator<MerkleTreeParams<F>> for DomainSeparator {
     }
 }
 
-impl<F: Field> DigestWriter<MerkleTreeParams<F>> for ProverState {
+impl<F: Field> DigestToUnitSerialize<MerkleTreeParams<F>> for ProverState {
     fn add_digest(&mut self, digest: Blake3Digest) -> ProofResult<()> {
         self.add_bytes(&digest.0)
             .map_err(ProofError::InvalidDomainSeparator)
     }
 }
 
-impl<F: Field> DigestReader<MerkleTreeParams<F>> for VerifierState<'_> {
+impl<F: Field> DigestToUnitDeserialize<MerkleTreeParams<F>> for VerifierState<'_> {
     fn read_digest(&mut self) -> ProofResult<Blake3Digest> {
         let mut digest = [0; 32];
         self.fill_next_bytes(&mut digest)?;

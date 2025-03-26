@@ -1,6 +1,6 @@
 use ark_ff::FftField;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
 
@@ -17,7 +17,7 @@ pub(crate) fn sample_ood_points<F, ProverState, E>(
 ) -> ProofResult<(Vec<F>, Vec<F>)>
 where
     F: FftField,
-    ProverState: FieldToUnit<F> + UnitToField<F>,
+    ProverState: FieldToUnitSerialize<F> + UnitToField<F>,
     E: Fn(&MultilinearPoint<F>) -> F,
 {
     let mut ood_points = vec![F::ZERO; num_samples];

@@ -27,7 +27,7 @@ use whir::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
         domainsep::DigestDomainSeparator,
-        fs_utils::{DigestReader, DigestWriter},
+        fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
         statement::{Statement, StatementVerifier, Weights},
     },
 };
@@ -222,8 +222,8 @@ fn run_whir<F, MerkleConfig>(
     MerkleConfig: Config<Leaf = [F]> + Clone,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestWriter<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestReader<MerkleConfig>,
+    ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();

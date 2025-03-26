@@ -4,7 +4,7 @@ use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnit, UnitToField},
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
@@ -24,7 +24,7 @@ use crate::{
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
-        fs_utils::{get_challenge_stir_queries, DigestWriter},
+        fs_utils::{get_challenge_stir_queries, DigestToUnitSerialize},
         parameters::RoundConfig,
         utils::sample_ood_points,
     },
@@ -67,10 +67,10 @@ where
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
         ProverState: UnitToField<F>
-            + FieldToUnit<F>
+            + FieldToUnitSerialize<F>
             + UnitToBytes
             + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>,
     {
         assert!(
             self.validate_parameters()
@@ -155,9 +155,9 @@ where
     where
         ProverState: UnitToField<F>
             + UnitToBytes
-            + FieldToUnit<F>
+            + FieldToUnitSerialize<F>
             + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -317,9 +317,9 @@ where
     where
         ProverState: UnitToField<F>
             + UnitToBytes
-            + FieldToUnit<F>
+            + FieldToUnitSerialize<F>
             + PoWChallenge
-            + DigestWriter<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>,
     {
         // Directly send coefficients of the polynomial to the verifier.
         prover_state.add_scalars(folded_coefficients.coeffs())?;

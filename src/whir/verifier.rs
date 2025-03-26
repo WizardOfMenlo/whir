@@ -4,7 +4,7 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use spongefish::{
-    codecs::arkworks_algebra::{DeserializeField, UnitToField},
+    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
     ProofError, ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
@@ -19,7 +19,7 @@ use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
-    whir::fs_utils::{get_challenge_stir_queries, DigestReader},
+    whir::fs_utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
 };
 
 pub struct Verifier<F, MerkleConfig, PowStrategy>
@@ -52,8 +52,10 @@ where
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        VerifierState:
-            UnitToBytes + DeserializeField<F> + UnitToField<F> + DigestReader<MerkleConfig>,
+        VerifierState: UnitToBytes
+            + FieldToUnitDeserialize<F>
+            + UnitToField<F>
+            + DigestToUnitDeserialize<MerkleConfig>,
     {
         let root = verifier_state.read_digest()?;
 
@@ -82,9 +84,9 @@ where
     where
         VerifierState: UnitToBytes
             + UnitToField<F>
-            + DeserializeField<F>
+            + FieldToUnitDeserialize<F>
             + PoWChallenge
-            + DigestReader<MerkleConfig>,
+            + DigestToUnitDeserialize<MerkleConfig>,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness;
@@ -381,9 +383,9 @@ where
     where
         VerifierState: UnitToBytes
             + UnitToField<F>
-            + DeserializeField<F>
+            + FieldToUnitDeserialize<F>
             + PoWChallenge
-            + DigestReader<MerkleConfig>,
+            + DigestToUnitDeserialize<MerkleConfig>,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
