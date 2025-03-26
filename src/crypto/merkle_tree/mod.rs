@@ -5,6 +5,7 @@ use ark_crypto_primitives::{merkle_tree::DigestConverter, Error};
 pub mod blake3;
 pub mod digest;
 pub mod keccak;
+pub mod parameters;
 
 #[derive(Debug, Default)]
 pub struct HashCounter;
