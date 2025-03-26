@@ -48,7 +48,7 @@ mod tests {
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
         whir::{
-            committer::Committer,
+            committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
@@ -142,15 +142,15 @@ mod tests {
         statement.add_constraint(linear_claim_weight, sum);
 
         // Define the Fiat-Shamir IOPattern for committing and proving
-        let io = DomainSeparator::new("🌪️")
+        let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
         // Initialize the Merlin transcript from the IOPattern
-        let mut prover_state = io.to_prover_state();
+        let mut prover_state = domainsep.to_prover_state();
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = Committer::new(params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
@@ -162,15 +162,28 @@ mod tests {
         // Generate a STARK proof for the given statement and witness
         let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
 
-        // Create a verifier with matching parameters
-        let verifier = Verifier::new(params);
+        // Create a commitment reader
+        let commitment_reader = CommitmentReader::new(&params);
 
-        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
-        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+        // Create a verifier with matching parameters
+        let verifier = Verifier::new(&params);
+
+        // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        // Parse the commitment
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
 
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(&mut verifier_state, &statement_verifier, &proof)
+            .verify(
+                &mut verifier_state,
+                &parsed_commitment,
+                &statement_verifier,
+                &proof
+            )
             .is_ok());
     }
 
