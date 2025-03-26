@@ -43,9 +43,9 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
         let mut buf = Vec::new();
         input.borrow().serialize_compressed(&mut buf)?;
 
-        let output = sha3::Keccak256::digest(&buf).into();
+        let output: [_; 32] = sha3::Keccak256::digest(&buf).into();
         HashCounter::add();
-        Ok(GenericDigest::<32>(output))
+        Ok(output.into())
     }
 }
 
@@ -63,14 +63,14 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let output = sha3::Keccak256::new()
+        let output: [_; 32] = sha3::Keccak256::new()
             .chain_update(left_input.borrow().0)
             .chain_update(right_input.borrow().0)
             .finalize()
             .into();
 
         HashCounter::add();
-        Ok(GenericDigest::<32>(output))
+        Ok(output.into())
     }
 
     fn compress<T: Borrow<Self::Output>>(

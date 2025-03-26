@@ -39,9 +39,9 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
         let mut buf = Vec::new();
         input.borrow().serialize_compressed(&mut buf)?;
 
-        let output = GenericDigest::<32>(blake3::hash(&buf).into());
+        let output: [_; 32] = blake3::hash(&buf).into();
         HashCounter::add();
-        Ok(output)
+        Ok(output.into())
     }
 }
 
@@ -59,11 +59,10 @@ impl TwoToOneCRHScheme for Blake3TwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let output = GenericDigest::<32>(
-            blake3::hash(&[left_input.borrow().0, right_input.borrow().0].concat()).into(),
-        );
+        let output: [_; 32] =
+            blake3::hash(&[left_input.borrow().0, right_input.borrow().0].concat()).into();
         HashCounter::add();
-        Ok(output)
+        Ok(output.into())
     }
 
     fn compress<T: Borrow<Self::Output>>(
