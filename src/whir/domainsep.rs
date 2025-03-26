@@ -29,12 +29,8 @@ impl<F, MerkleConfig, DomainSeparator> WhirDomainSeparator<F, MerkleConfig> for 
 where
     F: FftField,
     MerkleConfig: Config,
-    DomainSeparator: ByteDomainSeparator
-        + FieldDomainSeparator<F>
-        + SumcheckSingleDomainSeparator<F>
-        + WhirPoWDomainSeparator
-        + OODDomainSeparator<F>
-        + DigestDomainSeparator<MerkleConfig>,
+    DomainSeparator:
+        ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MerkleConfig>,
 {
     fn commit_statement<PowStrategy>(
         self,
