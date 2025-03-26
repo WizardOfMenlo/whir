@@ -12,7 +12,7 @@ use super::{parameters::WhirConfig, utils::sample_ood_points};
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::fs_utils::DigestToUnitSerialize,
+    whir::utils::DigestToUnitSerialize,
 };
 
 /// Represents the commitment and evaluation data for a polynomial.
