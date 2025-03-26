@@ -361,7 +361,7 @@ where
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
         let parsed = self.parse_proof(
             verifier_state,
-            &parsed_commitment,
+            parsed_commitment,
             statement.constraints.len(),
             whir_proof,
         )?;
@@ -369,7 +369,7 @@ where
         let computed_folds = self
             .params
             .fold_optimisation
-            .stir_evaluations_verifier(&parsed, &self.params);
+            .stir_evaluations_verifier(&parsed, self.params);
 
         let mut prev_sumcheck = None;
 
@@ -486,7 +486,7 @@ where
             prev_sumcheck.map_or(F::ZERO, |(poly, rand)| poly.evaluate_at_point(&rand.into()));
 
         // Check the final sumcheck evaluation
-        let evaluation_of_v_poly = self.compute_w_poly(&parsed_commitment, statement, &parsed);
+        let evaluation_of_v_poly = self.compute_w_poly(parsed_commitment, statement, &parsed);
         let final_value = parsed
             .final_coefficients
             .evaluate(&parsed.final_sumcheck_randomness);
