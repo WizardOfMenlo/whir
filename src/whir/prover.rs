@@ -285,11 +285,15 @@ where
         )?;
 
         let start_idx = self.0.folding_factor.total_number(round_state.round);
-        let mut arr = folding_randomness.clone().0;
-        arr.reverse();
+        let dst_randomness =
+            &mut round_state.randomness_vec[start_idx..][..folding_randomness.0.len()];
 
-        round_state.randomness_vec[start_idx..start_idx + folding_randomness.0.len()]
-            .copy_from_slice(&arr);
+        for (dst, src) in dst_randomness
+            .iter_mut()
+            .zip(folding_randomness.0.iter().rev())
+        {
+            *dst = *src;
+        }
 
         let round_state = RoundState {
             round: round_state.round + 1,
