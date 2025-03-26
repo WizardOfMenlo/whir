@@ -10,7 +10,6 @@ use rand::RngCore;
 
 pub mod blake3;
 pub mod keccak;
-pub mod mock;
 
 #[derive(Debug, Default)]
 pub struct HashCounter;
