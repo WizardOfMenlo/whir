@@ -261,11 +261,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = DomainSeparator::new("🌪️")
+    let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
-    let mut prover_state = io.to_prover_state();
+    let mut prover_state = domainsep.to_prover_state();
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -308,7 +308,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = io.to_verifier_state(&narg_string);
+        let mut verifier_state = domainsep.to_verifier_state(&narg_string);
         verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();
@@ -374,11 +374,11 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
 
-    let io = DomainSeparator::new("🌪️")
+    let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
         .add_whir_proof(&params);
 
-    let mut prover_state = io.to_prover_state();
+    let mut prover_state = domainsep.to_prover_state();
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
@@ -444,7 +444,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
         verifier
             .verify(&mut verifier_state, &statement_verifier, &proof)
             .unwrap();

@@ -285,11 +285,11 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = DomainSeparator::new("🌪️")
+        let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        let mut prover_state = io.to_prover_state();
+        let mut prover_state = domainsep.to_prover_state();
 
         let whir_ldt_prover_time = Instant::now();
 
@@ -319,7 +319,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+            let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
             verifier
                 .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
@@ -355,11 +355,11 @@ fn run_whir<F, MerkleConfig>(
             println!("WARN: more PoW bits required than what specified.");
         }
 
-        let io = DomainSeparator::new("🌪️")
+        let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        let mut prover_state = io.to_prover_state();
+        let mut prover_state = domainsep.to_prover_state();
 
         let points: Vec<_> = (0..args.num_evaluations)
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
@@ -397,7 +397,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
-            let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+            let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
             verifier
                 .verify(&mut verifier_state, &statement_verifier, &proof)
                 .unwrap();
