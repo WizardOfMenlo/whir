@@ -14,8 +14,6 @@ pub type KeccakMerkleTreeParams<F> =
 
 #[derive(Clone)]
 pub struct KeccakLeafHash<F>(PhantomData<F>);
-#[derive(Clone)]
-pub struct KeccakCompress;
 
 impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     type Input = [F];
@@ -38,6 +36,9 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
         Ok(output.into())
     }
 }
+
+#[derive(Clone)]
+pub struct KeccakCompress;
 
 impl TwoToOneCRHScheme for KeccakCompress {
     type Input = KeccakDigest;

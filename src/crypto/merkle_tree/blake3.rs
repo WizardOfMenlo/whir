@@ -12,8 +12,6 @@ pub type Blake3MerkleTreeParams<F> =
 
 #[derive(Clone)]
 pub struct Blake3LeafHash<F>(PhantomData<F>);
-#[derive(Clone)]
-pub struct Blake3Compress;
 
 impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
     type Input = [F];
@@ -36,6 +34,9 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
         Ok(output.into())
     }
 }
+
+#[derive(Clone)]
+pub struct Blake3Compress;
 
 impl TwoToOneCRHScheme for Blake3Compress {
     type Input = Blake3Digest;
