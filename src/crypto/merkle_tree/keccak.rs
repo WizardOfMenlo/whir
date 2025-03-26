@@ -1,31 +1,21 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-use ark_crypto_primitives::{
-    crh::{CRHScheme, TwoToOneCRHScheme},
-    merkle_tree::Config,
-};
-use ark_ff::Field;
+use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 use sha3::Digest;
-use spongefish::{
-    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
-    ProofResult, ProverState, VerifierState,
-};
 
-use super::{HashCounter, IdentityDigestConverter};
-use crate::{
-    crypto::merkle_tree::digest::GenericDigest,
-    whir::{
-        domainsep::DigestDomainSeparator,
-        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
-    },
-};
+use super::{parameters::MerkleTreeParams, HashCounter};
+use crate::crypto::merkle_tree::digest::GenericDigest;
 
 pub type KeccakDigest = GenericDigest<32>;
+pub type KeccakMerkleTreeParams<F> =
+    MerkleTreeParams<F, KeccakLeafHash<F>, KeccakCompress, KeccakDigest>;
 
+#[derive(Clone)]
 pub struct KeccakLeafHash<F>(PhantomData<F>);
-pub struct KeccakTwoToOneCRHScheme;
+#[derive(Clone)]
+pub struct KeccakCompress;
 
 impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     type Input = [F];
@@ -49,7 +39,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     }
 }
 
-impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
+impl TwoToOneCRHScheme for KeccakCompress {
     type Input = KeccakDigest;
     type Output = KeccakDigest;
     type Parameters = ();
@@ -79,55 +69,5 @@ impl TwoToOneCRHScheme for KeccakTwoToOneCRHScheme {
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
         Self::evaluate(parameters, left_input, right_input)
-    }
-}
-
-pub type LeafH<F> = KeccakLeafHash<F>;
-pub type CompressH = KeccakTwoToOneCRHScheme;
-
-#[derive(Debug, Default, Clone)]
-pub struct MerkleTreeParams<F>(PhantomData<F>);
-
-impl<F: CanonicalSerialize + Send> Config for MerkleTreeParams<F> {
-    type Leaf = [F];
-
-    type LeafDigest = <LeafH<F> as CRHScheme>::Output;
-    type LeafInnerDigestConverter = IdentityDigestConverter<KeccakDigest>;
-    type InnerDigest = <CompressH as TwoToOneCRHScheme>::Output;
-
-    type LeafHash = LeafH<F>;
-    type TwoToOneHash = CompressH;
-}
-
-pub fn default_config<F: CanonicalSerialize + Send>(
-    rng: &mut impl RngCore,
-) -> (
-    <LeafH<F> as CRHScheme>::Parameters,
-    <CompressH as TwoToOneCRHScheme>::Parameters,
-) {
-    (
-        <LeafH<F> as CRHScheme>::setup(rng).expect("Leaf hash setup failed"),
-        <CompressH as TwoToOneCRHScheme>::setup(rng).expect("Compress hash setup failed"),
-    )
-}
-
-impl<F: Field> DigestDomainSeparator<MerkleTreeParams<F>> for DomainSeparator {
-    fn add_digest(self, label: &str) -> Self {
-        self.add_bytes(32, label)
-    }
-}
-
-impl<F: Field> DigestToUnitSerialize<MerkleTreeParams<F>> for ProverState {
-    fn add_digest(&mut self, digest: KeccakDigest) -> ProofResult<()> {
-        self.add_bytes(&digest.0)
-            .map_err(ProofError::InvalidDomainSeparator)
-    }
-}
-
-impl<F: Field> DigestToUnitDeserialize<MerkleTreeParams<F>> for VerifierState<'_> {
-    fn read_digest(&mut self) -> ProofResult<KeccakDigest> {
-        let mut digest = [0; 32];
-        self.fill_next_bytes(&mut digest)?;
-        Ok(digest.into())
     }
 }

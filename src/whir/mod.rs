@@ -40,7 +40,13 @@ mod tests {
     use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
-        crypto::{fields::Field64, merkle_tree::blake3 as merkle_tree},
+        crypto::{
+            fields::Field64,
+            merkle_tree::{
+                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
+                parameters::default_config,
+            },
+        },
         parameters::{
             FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
         },
@@ -58,7 +64,7 @@ mod tests {
     };
 
     /// Merkle tree configuration type for commitment layers.
-    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
+    type MerkleConfig = Blake3MerkleTreeParams<F>;
     /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
@@ -86,7 +92,8 @@ mod tests {
         // Randomness source
         let mut rng = ark_std::test_rng();
         // Generate Merkle parameters: hash function and compression function
-        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
 
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);

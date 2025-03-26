@@ -128,7 +128,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        crypto::{fields::Field64, merkle_tree::keccak},
+        crypto::{
+            fields::Field64,
+            merkle_tree::{
+                keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
+                parameters::default_config,
+            },
+        },
         parameters::{
             FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
         },
@@ -140,12 +146,13 @@ mod tests {
     fn test_basic_commitment() {
         // Define the field type and Merkle tree configuration.
         type F = Field64;
-        type MerkleConfig = keccak::MerkleTreeParams<F>;
+        type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
 
         // Generate Merkle tree hash parameters
-        let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
         // Set up Whir protocol parameters.
         let security_level = 100;
@@ -239,10 +246,11 @@ mod tests {
     #[test]
     fn test_large_polynomial() {
         type F = Field64;
-        type MerkleConfig = keccak::MerkleTreeParams<F>;
+        type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
             MultivariateParameters::<F>::new(10),
@@ -278,10 +286,11 @@ mod tests {
     #[test]
     fn test_commitment_without_ood_samples() {
         type F = Field64;
-        type MerkleConfig = keccak::MerkleTreeParams<F>;
+        type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) = keccak::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
             MultivariateParameters::<F>::new(5),
