@@ -8,33 +8,12 @@ use spongefish::{
     ProofResult,
 };
 
-use super::{parameters::WhirConfig, utils::sample_ood_points};
+use super::Witness;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::fs_utils::DigestToUnitSerialize,
+    whir::{fs_utils::DigestToUnitSerialize, parameters::WhirConfig, utils::sample_ood_points},
 };
-
-/// Represents the commitment and evaluation data for a polynomial.
-///
-/// This structure holds all necessary components to verify a commitment,
-/// including the polynomial itself, the Merkle tree used for commitment,
-/// and out-of-domain (OOD) evaluations.
-pub struct Witness<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    /// The committed polynomial in coefficient form.
-    pub(crate) polynomial: CoefficientList<F>,
-    /// The Merkle tree constructed from the polynomial evaluations.
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
-    /// The leaves of the Merkle tree, derived from folded polynomial evaluations.
-    pub(crate) merkle_leaves: Vec<F>,
-    /// Out-of-domain challenge points used for polynomial verification.
-    pub(crate) ood_points: Vec<F>,
-    /// The corresponding polynomial evaluations at the OOD challenge points.
-    pub(crate) ood_answers: Vec<F>,
-}
 
 /// Responsible for committing polynomials using a Merkle-based scheme.
 ///
@@ -42,12 +21,12 @@ where
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct Committer<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
 where
     F: FftField,
     MerkleConfig: Config;
 
-impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
@@ -203,7 +182,7 @@ mod tests {
         let mut prover_state = io.to_prover_state();
 
         // Run the Commitment Phase
-        let committer = Committer::new(params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer
             .commit(&mut prover_state, polynomial.clone())
             .unwrap();
@@ -282,7 +261,7 @@ mod tests {
         let io = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = io.to_prover_state();
 
-        let committer = Committer::new(params);
+        let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Expansion factor is 2
@@ -323,7 +302,7 @@ mod tests {
         let io = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = io.to_prover_state();
 
-        let committer = Committer::new(params);
+        let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         assert!(

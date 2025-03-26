@@ -21,6 +21,7 @@ use whir::{
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     whir::{
+        committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
         fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
         statement::{Statement, StatementVerifier, Weights},
@@ -220,7 +221,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     use whir::whir::{
-        committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
+        committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
         prover::Prover, verifier::Verifier,
     };
 
@@ -283,7 +284,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let whir_prover_time = Instant::now();
 
-    let committer = Committer::new(params.clone());
+    let committer = CommitmentWriter::new(params.clone());
     let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
     let prover = Prover(params.clone());
@@ -303,14 +304,23 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
-    let verifier = Verifier::new(params);
+    let commitment_reader = CommitmentReader::new(&params);
+    let verifier = Verifier::new(&params);
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut verifier_state = domainsep.to_verifier_state(&narg_string);
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
         verifier
-            .verify(&mut verifier_state, &statement_verifier, &proof)
+            .verify(
+                &mut verifier_state,
+                &parsed_commitment,
+                &statement_verifier,
+                &proof,
+            )
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -331,7 +341,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     use whir::whir::{
-        committer::Committer, domainsep::WhirDomainSeparator, parameters::WhirConfig,
+        committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
         prover::Prover, statement::Statement, verifier::Verifier, whir_proof_size,
     };
 
@@ -395,7 +405,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     );
     let whir_prover_time = Instant::now();
 
-    let committer = Committer::new(params.clone());
+    let committer = CommitmentWriter::new(params.clone());
     let witness = committer
         .commit(&mut prover_state, polynomial.clone())
         .unwrap();
@@ -439,14 +449,23 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let statement_verifier = StatementVerifier::from_statement(&statement);
     // Just not to count that initial inversion (which could be precomputed)
-    let verifier = Verifier::new(params);
+    let commitment_reader = CommitmentReader::new(&params);
+    let verifier = Verifier::new(&params);
 
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
         let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
         verifier
-            .verify(&mut verifier_state, &statement_verifier, &proof)
+            .verify(
+                &mut verifier_state,
+                &parsed_commitment,
+                &statement_verifier,
+                &proof,
+            )
             .unwrap();
     }
     println!(

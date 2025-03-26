@@ -10,6 +10,7 @@ use spongefish::{
 use spongefish_pow::{self, PoWChallenge};
 
 use super::{
+    committer::reader::ParsedCommitment,
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
@@ -22,55 +23,22 @@ use crate::{
     whir::fs_utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
 };
 
-pub struct Verifier<F, MerkleConfig, PowStrategy>
+pub struct Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    params: WhirConfig<F, MerkleConfig, PowStrategy>,
+    params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
 }
 
-#[derive(Clone)]
-struct ParsedCommitment<F, D> {
-    root: D,
-    ood_points: Vec<F>,
-    ood_answers: Vec<F>,
-}
-
-impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(params: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self { params }
-    }
-
-    fn parse_commitment<VerifierState>(
-        &self,
-        verifier_state: &mut VerifierState,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
-    where
-        VerifierState: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MerkleConfig>,
-    {
-        let root = verifier_state.read_digest()?;
-
-        let mut ood_points = vec![F::ZERO; self.params.committment_ood_samples];
-        let mut ood_answers = vec![F::ZERO; self.params.committment_ood_samples];
-        if self.params.committment_ood_samples > 0 {
-            verifier_state.fill_challenge_scalars(&mut ood_points)?;
-            verifier_state.fill_next_scalars(&mut ood_answers)?;
-        }
-
-        Ok(ParsedCommitment {
-            root,
-            ood_points,
-            ood_answers,
-        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -377,6 +345,7 @@ where
     pub fn verify<VerifierState>(
         &self,
         verifier_state: &mut VerifierState,
+        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &StatementVerifier<F>,
         whir_proof: &WhirProof<MerkleConfig, F>,
     ) -> ProofResult<()>
@@ -389,7 +358,6 @@ where
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
-        let parsed_commitment = self.parse_commitment(verifier_state)?;
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
         let parsed = self.parse_proof(
             verifier_state,
