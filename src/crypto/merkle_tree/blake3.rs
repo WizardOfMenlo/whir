@@ -3,48 +3,22 @@ use std::{borrow::Borrow, marker::PhantomData};
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
     merkle_tree::Config,
-    sponge::Absorb,
 };
 use ark_ff::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 use spongefish::{
     ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
     ProofResult, ProverState, VerifierState,
 };
 
-use super::{HashCounter, IdentityDigestConverter};
+use super::{digest::GenericDigest, HashCounter, IdentityDigestConverter};
 use crate::whir::{
     domainsep::DigestDomainSeparator,
     utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
 };
 
-#[derive(
-    Debug, Default, Clone, Copy, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize,
-)]
-pub struct Blake3Digest([u8; 32]);
-
-impl AsRef<[u8]> for Blake3Digest {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<[u8; 32]> for Blake3Digest {
-    fn from(value: [u8; 32]) -> Self {
-        Self(value)
-    }
-}
-
-impl Absorb for Blake3Digest {
-    fn to_sponge_bytes(&self, dest: &mut Vec<u8>) {
-        dest.extend_from_slice(&self.0);
-    }
-
-    fn to_sponge_field_elements<F: ark_ff::PrimeField>(&self, dest: &mut Vec<F>) {
-        dest.push(F::from_be_bytes_mod_order(&self.0));
-    }
-}
+pub type Blake3Digest = GenericDigest<32>;
 
 pub struct Blake3LeafHash<F>(PhantomData<F>);
 pub struct Blake3TwoToOneCRHScheme;
@@ -65,7 +39,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
         let mut buf = Vec::new();
         input.borrow().serialize_compressed(&mut buf)?;
 
-        let output = Blake3Digest(blake3::hash(&buf).into());
+        let output = GenericDigest::<32>(blake3::hash(&buf).into());
         HashCounter::add();
         Ok(output)
     }
@@ -85,7 +59,7 @@ impl TwoToOneCRHScheme for Blake3TwoToOneCRHScheme {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, ark_crypto_primitives::Error> {
-        let output = Blake3Digest(
+        let output = GenericDigest::<32>(
             blake3::hash(&[left_input.borrow().0, right_input.borrow().0].concat()).into(),
         );
         HashCounter::add();
@@ -147,6 +121,6 @@ impl<F: Field> DigestToUnitDeserialize<MerkleTreeParams<F>> for VerifierState<'_
     fn read_digest(&mut self) -> ProofResult<Blake3Digest> {
         let mut digest = [0; 32];
         self.fill_next_bytes(&mut digest)?;
-        Ok(Blake3Digest(digest))
+        Ok(digest.into())
     }
 }

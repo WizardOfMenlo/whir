@@ -9,6 +9,7 @@ use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 
 pub mod blake3;
+pub mod digest;
 pub mod keccak;
 
 #[derive(Debug, Default)]
