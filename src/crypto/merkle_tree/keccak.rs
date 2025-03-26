@@ -1,6 +1,9 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
+use ark_crypto_primitives::{
+    crh::{CRHScheme, TwoToOneCRHScheme},
+    Error,
+};
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 use sha3::Digest;
@@ -20,14 +23,14 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     type Output = KeccakDigest;
     type Parameters = ();
 
-    fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, ark_crypto_primitives::Error> {
+    fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, Error> {
         Ok(())
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
         (): &Self::Parameters,
         input: T,
-    ) -> Result<Self::Output, ark_crypto_primitives::Error> {
+    ) -> Result<Self::Output, Error> {
         let mut buf = Vec::new();
         input.borrow().serialize_compressed(&mut buf)?;
 
@@ -45,7 +48,7 @@ impl TwoToOneCRHScheme for KeccakCompress {
     type Output = KeccakDigest;
     type Parameters = ();
 
-    fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, ark_crypto_primitives::Error> {
+    fn setup<R: RngCore>(_: &mut R) -> Result<Self::Parameters, Error> {
         Ok(())
     }
 
@@ -53,7 +56,7 @@ impl TwoToOneCRHScheme for KeccakCompress {
         (): &Self::Parameters,
         left_input: T,
         right_input: T,
-    ) -> Result<Self::Output, ark_crypto_primitives::Error> {
+    ) -> Result<Self::Output, Error> {
         let output: [_; 32] = sha3::Keccak256::new()
             .chain_update(left_input.borrow().0)
             .chain_update(right_input.borrow().0)
@@ -68,7 +71,7 @@ impl TwoToOneCRHScheme for KeccakCompress {
         parameters: &Self::Parameters,
         left_input: T,
         right_input: T,
-    ) -> Result<Self::Output, ark_crypto_primitives::Error> {
+    ) -> Result<Self::Output, Error> {
         Self::evaluate(parameters, left_input, right_input)
     }
 }
