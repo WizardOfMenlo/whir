@@ -314,11 +314,7 @@ where
         folded_coefficients: &CoefficientList<F>,
     ) -> ProofResult<WhirProof<MerkleConfig, F>>
     where
-        ProverState: UnitToField<F>
-            + UnitToBytes
-            + FieldToUnitSerialize<F>
-            + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>,
+        ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge,
     {
         // Directly send coefficients of the polynomial to the verifier.
         prover_state.add_scalars(folded_coefficients.coeffs())?;

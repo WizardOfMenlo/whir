@@ -2,7 +2,7 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    ProofResult, UnitToBytes,
+    ProofResult,
 };
 
 use crate::whir::{parameters::WhirConfig, utils::DigestToUnitDeserialize};
@@ -36,10 +36,8 @@ where
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        VerifierState: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MerkleConfig>,
+        VerifierState:
+            FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
     {
         let root = verifier_state.read_digest()?;
 
