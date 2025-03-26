@@ -36,10 +36,8 @@ where
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
     where
-        VerifierState: UnitToBytes
-            + FieldToUnitDeserialize<F>
-            + UnitToField<F>
-            + DigestToUnitDeserialize<MerkleConfig>,
+        VerifierState:
+            FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
     {
         let root = verifier_state.read_digest()?;
 
