@@ -1,6 +1,7 @@
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MultiPath, TwoToOneParam};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+pub mod batching;
 pub mod committer;
 pub mod domainsep;
 pub mod fs_utils;
@@ -12,6 +13,82 @@ pub mod stir_evaluations;
 pub mod utils;
 pub mod verifier;
 
+///
+/// Trait to abstract away committed data access by the verifier. Parsed
+/// commitment data should implement this trait.
+///
+pub(crate) trait WhirCommitmentData<F, M>
+where
+    M: Config,
+{
+    /// Returns the committed out-of-domain points and answers
+    fn ood_data(&self) -> (&[F], &[F]);
+
+    ///
+    /// returns the committed root in case of single root otherwise returns some
+    /// dummy value. Verifier should use [RoundZeroProofValidator] trait to
+    /// validate committed Merkle roots.
+    ///
+    fn committed_root(&self) -> &<M as Config>::InnerDigest;
+
+    fn batching_randomness(&self) -> Option<F>;
+}
+
+///
+/// Trait to validate the zero-th round (i.e., the round whose Merkle roots are
+/// part of the commitment). [WhirProof] and [BatchedWhirProof] types implement
+/// this trait.
+///
+pub(crate) trait RoundZeroProofValidator<C> {
+    ///
+    /// Merkle Tree configuration that was used to compute the hashes of leaf
+    /// and inner nodes
+    ///
+    type MerkleConfig: Config;
+
+    ///
+    /// Given a commitment this method validates the first round of Merkle path
+    /// against that committed data and checks that the stir indices match the
+    /// indices in the tree.
+    ///
+    fn validate_first_round(
+        &self,
+        commitment: &C,
+        stir_challenges_indexes: &[usize],
+        leaf_hash: &LeafParam<Self::MerkleConfig>,
+        inner_node_hash: &TwoToOneParam<Self::MerkleConfig>,
+    ) -> bool;
+}
+
+///
+/// Trait to abstract away access to Round by round proof data. If the zero-th
+/// round of proof has multiple roots (as in case of batched proof), the
+/// MultiPath returned is the multipath corresponding to first Merkle root (this
+/// is useful for getting the indexes of STIR queries). For validating the
+/// zero-th  round always use the methods of the trait [RoundZeroProofValidator]
+/// which will ensure that each root in the Merkle tree has the same set of stir
+/// query indices.
+///
+pub(crate) trait WhirProofRoundData<F, MerkleConfig>
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    ///
+    /// Returns the path to the root of the Merkle tree and the corresponding
+    /// Leaf node values. If the WhirProof has multiple roots, then the
+    /// MultiPath returned in is a dummy and inconsistent value. The Leaf node
+    /// value is the batched value of the lead node.
+    ///
+    fn round_data(
+        &self,
+        whir_round: usize,
+        batching_randomness: Option<F>,
+    ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>);
+
+    fn statement_values(&self) -> &[F];
+}
+
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct WhirProof<MerkleConfig, F>
@@ -21,6 +98,28 @@ where
 {
     pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
     pub statement_values_at_random_point: Vec<F>,
+}
+
+impl<F, MerkleConfig> WhirProofRoundData<F, MerkleConfig> for WhirProof<MerkleConfig, F>
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn round_data(
+        &self,
+        whir_round: usize,
+        _: Option<F>,
+    ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>) {
+        assert!(
+            whir_round < self.merkle_paths.len(),
+            "Whir round number must the less than the number of entries"
+        );
+        self.merkle_paths[whir_round].clone()
+    }
+
+    fn statement_values(&self) -> &[F] {
+        &self.statement_values_at_random_point
+    }
 }
 
 pub fn whir_proof_size<MerkleConfig, F>(
@@ -104,6 +203,7 @@ mod tests {
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             fold_optimisation: fold_type,
+            enable_batching: false,
         };
 
         // Build global configuration from multivariate + protocol parameters

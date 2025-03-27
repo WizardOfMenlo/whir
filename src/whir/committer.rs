@@ -42,7 +42,9 @@ where
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct Committer<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
+pub struct Committer<F, MerkleConfig, PowStrategy>(
+    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
+)
 where
     F: FftField,
     MerkleConfig: Config;
@@ -119,7 +121,6 @@ where
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
-        // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
             prover_state,
             self.0.committment_ood_samples,
@@ -187,6 +188,7 @@ mod tests {
             fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
+            enable_batching: false,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -275,6 +277,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                enable_batching: false,
             },
         );
 
@@ -314,6 +317,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                enable_batching: false,
             },
         );
 
