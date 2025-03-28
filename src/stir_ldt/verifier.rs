@@ -38,6 +38,7 @@ struct ParsedCommitment<D> {
 #[derive(Clone)]
 struct ParsedProof<F: Field> {
     rounds: Vec<ParsedRound<F>>,
+    round_1_polys: Option<Vec<DensePolynomial<F>>>,
     final_domain_gen: F,
     final_domain_gen_inv: F,
     final_domain_offset: F,
@@ -218,6 +219,7 @@ where
 
         Ok(ParsedProof {
             rounds: ctx.rounds,
+            round_1_polys: ctx.first_round_coeffs,
             final_domain_gen: ctx.domain_gen,
             final_domain_gen_inv: ctx.domain_gen_inv,
             final_domain_offset: ctx.domain_offset,
@@ -253,6 +255,7 @@ where
         let domain_offset = self.params.starting_domain.backing_domain.coset_offset();
         let mut ctx = ParseProofContext {
             r_fold,
+            first_round_coeffs: stir_proof.first_round_coeffs.clone(),
             domain_size: self.params.starting_domain.size(),
             root_of_unity,
             root_of_unity_inv: root_of_unity.inverse().unwrap(),
@@ -364,22 +367,30 @@ where
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
 
-        let mut r_shift_evals: Vec<F> = all_r_shift_indexes[0]
-            .iter()
-            .zip(all_r_shift_virtual_evals[0].iter())
-            .map(|(index, coset_eval)| {
-                let coset_offset_inv =
-                    domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
-                compute_fold_univariate(
-                    coset_eval,
-                    r_folds[0],
-                    coset_offset_inv,
-                    coset_gen_inv,
-                    self.two_inv,
-                    self.params.folding_factor,
-                )
-            })
-            .collect();
+        // At this point we can I guess omit the compute fold univariate, if the strategy is
+        // `ProverHelps`.
+        let mut r_shift_evals: Vec<F> = match parsed.round_1_polys {
+            None => all_r_shift_indexes[0]
+                .iter()
+                .zip(all_r_shift_virtual_evals[0].iter())
+                .map(|(index, coset_eval)| {
+                    let coset_offset_inv =
+                        domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
+                    compute_fold_univariate(
+                        coset_eval,
+                        r_folds[0],
+                        coset_offset_inv,
+                        coset_gen_inv,
+                        self.two_inv,
+                        self.params.folding_factor,
+                    )
+                })
+                .collect(),
+            Some(polys) => polys
+                .iter()
+                .map(|poly| poly.evaluate(&r_folds[0]))
+                .collect(),
+        };
 
         for (r_index, round) in parsed.rounds.iter().enumerate() {
             // The next virtual function is defined by the following
@@ -491,8 +502,9 @@ where
     }
 }
 
-struct ParseProofContext<F, D> {
+struct ParseProofContext<F: Field, D> {
     r_fold: F,
+    first_round_coeffs: Option<Vec<DensePolynomial<F>>>,
     domain_size: usize,
     root_of_unity: F,
     root_of_unity_inv: F,

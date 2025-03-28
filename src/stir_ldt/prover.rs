@@ -6,7 +6,7 @@ use super::{
 use crate::{
     domain::Domain,
     parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations},
+    poly_utils::{self, fold::restructure_evaluations, univariate::naive_interpolation},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -35,31 +35,6 @@ where
     MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
-    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
-        // Check that for each round the repetition parameters are appropriate.
-        // This is the inequality from Construction 5.2, bullet point 6.
-        // let mut degree = 1 << self.0.uv_parameters.log_degree;
-        // for round_param in self.0.round_parameters.iter() {
-        //     degree /= 1 << self.0.folding_factor;
-        //     if round_param.num_queries + round_param.ood_samples <= degree {
-        //         return false;
-        //     }
-        // }
-
-        // Check that the degrees add up
-        assert_eq!(
-            config.uv_parameters.log_degree,
-            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
-        )
-    }
-
-    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
-        assert_eq!(
-            (witness.polynomial.degree() + 1),
-            1 << self.0.uv_parameters.log_degree,
-        )
-    }
-
     pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self::validate_config(&config);
         Self(config)
@@ -83,12 +58,14 @@ where
         }
 
         let mut ctx = RoundContext {
+            round_1: true,
             f_domain: self.0.starting_domain.clone(),
             r_fold,
             f_poly: witness.polynomial.clone(),
             merkle: witness.merkle_tree.clone(),
             evals: witness.merkle_leaves.clone(),
             merkle_proofs: vec![],
+            first_round_coeffs: None,
         };
 
         for round_config in &self.0.round_parameters {
@@ -114,85 +91,29 @@ where
         DensePolynomial::from_coefficients_vec(coeffs)
     }
 
-    fn folding_phase(
-        &self,
-        g_poly: &DensePolynomial<F>,
-        ctx: &RoundContext<F, MerkleConfig>,
-    ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
-        // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
-        let g_domain = ctx.f_domain.scale_with_offset(2);
-        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
-        // implement the shifting in the ntt engine.
-        let g_evals = g_poly
-            .evaluate_over_domain_by_ref(g_domain.backing_domain)
-            .evals;
+    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
+        // Check that for each round the repetition parameters are appropriate.
+        // This is the inequality from Construction 5.2, bullet point 6.
+        // let mut degree = 1 << self.0.uv_parameters.log_degree;
+        // for round_param in self.0.round_parameters.iter() {
+        //     degree /= 1 << self.0.folding_factor;
+        //     if round_param.num_queries + round_param.ood_samples <= degree {
+        //         return false;
+        //     }
+        // }
 
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
-
-        // TODO: if fold_type is always Naive, this is just an assertion, nothing happens here
-        //
-        // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
-        // This allows for the evaluation of the virutal function using an interpolation on the rows.
-        // TODO: for stir we do only Naive, so this will need to be adapted.
-        let g_evals_folded = restructure_evaluations(
-            g_evals_folded,
-            FoldType::Naive,
-            g_domain.backing_domain.group_gen(),
-            g_domain.backing_domain.group_gen_inv(),
-            self.0.folding_factor,
-        );
-
-        // The leaves of the merkle tree are the k points that are the
-        // roots of unity of the index in the previous domain. This
-        // allows for the evaluation of the virtual function.
-        #[cfg(not(feature = "parallel"))]
-        let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
-
-        #[cfg(feature = "parallel")]
-        let leaf_iterator = g_evals_folded.par_chunks_exact(1 << self.0.folding_factor);
-
-        let g_merkle = MerkleTree::<MerkleConfig>::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leaf_iterator,
+        // Check that the degrees add up
+        assert_eq!(
+            config.uv_parameters.log_degree,
+            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
         )
-        .unwrap();
-
-        (g_domain, g_evals_folded, g_merkle)
     }
 
-    fn stir_phase(
-        &self,
-        merlin: &mut Merlin,
-        num_queries: usize,
-        ctx: &mut RoundContext<F, MerkleConfig>,
-    ) -> ProofResult<Vec<usize>> {
-        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
-        let size_of_folded_domain = ctx.f_domain.folded_size(self.0.folding_factor);
-        // Obtain t random integers between 0 and size of the folded domain.
-        // These are the r_shifts from the paper.
-
-        // TODO: this could return fewer than `round_parameters.num_queries` elements
-        let r_shift_indexes =
-            utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
-
-        let virtual_evals = self.indexes_to_coset_evaluations(
-            r_shift_indexes.clone(),
-            1 << self.0.folding_factor,
-            &ctx.evals,
-        );
-
-        // Merkle proof for the previous evaluations.
-        let merkle_proof = ctx
-            .merkle
-            .generate_multi_proof(r_shift_indexes.clone())
-            .unwrap();
-
-        ctx.merkle_proofs.push((merkle_proof, virtual_evals));
-
-        Ok(r_shift_indexes)
+    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
+        assert_eq!(
+            (witness.polynomial.degree() + 1),
+            1 << self.0.uv_parameters.log_degree,
+        )
     }
 
     fn normal_round(
@@ -288,7 +209,126 @@ where
 
         Ok(StirProof {
             merkle_proofs: ctx.merkle_proofs,
+            first_round_coeffs: ctx.first_round_coeffs,
         })
+    }
+
+    fn folding_phase(
+        &self,
+        g_poly: &DensePolynomial<F>,
+        ctx: &RoundContext<F, MerkleConfig>,
+    ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
+        // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
+        let g_domain = ctx.f_domain.scale_with_offset(2);
+        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
+        // implement the shifting in the ntt engine.
+        let g_evals = g_poly
+            .evaluate_over_domain_by_ref(g_domain.backing_domain)
+            .evals;
+
+        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
+        // They also partially overlap and undo one another. We should merge them.
+        let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
+
+        // TODO: if fold_type is always Naive, this is just an assertion, nothing happens here
+        //
+        // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
+        // This allows for the evaluation of the virutal function using an interpolation on the rows.
+        // TODO: for stir we do only Naive, so this will need to be adapted.
+        let g_evals_folded = restructure_evaluations(
+            g_evals_folded,
+            FoldType::Naive,
+            g_domain.backing_domain.group_gen(),
+            g_domain.backing_domain.group_gen_inv(),
+            self.0.folding_factor,
+        );
+
+        // The leaves of the merkle tree are the k points that are the
+        // roots of unity of the index in the previous domain. This
+        // allows for the evaluation of the virtual function.
+        #[cfg(not(feature = "parallel"))]
+        let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
+
+        #[cfg(feature = "parallel")]
+        let leaf_iterator = g_evals_folded.par_chunks_exact(1 << self.0.folding_factor);
+
+        let g_merkle = MerkleTree::<MerkleConfig>::new(
+            &self.0.leaf_hash_params,
+            &self.0.two_to_one_params,
+            leaf_iterator,
+        )
+        .unwrap();
+
+        (g_domain, g_evals_folded, g_merkle)
+    }
+
+    fn stir_phase(
+        &self,
+        merlin: &mut Merlin,
+        num_queries: usize,
+        ctx: &mut RoundContext<F, MerkleConfig>,
+    ) -> ProofResult<Vec<usize>> {
+        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
+        let size_of_folded_domain = ctx.f_domain.folded_size(self.0.folding_factor);
+        // Obtain t random integers between 0 and size of the folded domain.
+        // These are the r_shifts from the paper.
+
+        // TODO: this could return fewer than `round_parameters.num_queries` elements
+        let r_shift_indexes =
+            utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
+
+        let virtual_evals = self.indexes_to_coset_evaluations(
+            r_shift_indexes.clone(),
+            1 << self.0.folding_factor,
+            &ctx.evals,
+        );
+
+        // Merkle proof for the previous evaluations.
+        let merkle_proof = ctx
+            .merkle
+            .generate_multi_proof(r_shift_indexes.clone())
+            .unwrap();
+
+        ctx.merkle_proofs
+            .push((merkle_proof, virtual_evals.clone()));
+
+        if ctx.round_1 {
+            match self.0.fold_optimization {
+                FoldType::Naive => (),
+                FoldType::ProverHelps => {
+                    // Here we actually interpolate the polynomial at the points, and write it down.
+                    let coset_gen = ctx
+                        .f_domain
+                        .backing_domain
+                        .group_gen()
+                        .pow([size_of_folded_domain as u64]);
+                    let polys: Vec<DensePolynomial<F>> = r_shift_indexes
+                        .iter()
+                        .zip(virtual_evals)
+                        .map(|(i, evals)| {
+                            let coset_offset =
+                                ctx.f_domain.backing_domain.group_gen().pow([*i as u64]);
+                            let coset_points: Vec<F> =
+                                std::iter::successors(Some(coset_offset), |prev| {
+                                    Some(*prev * coset_gen)
+                                })
+                                .take(1 << self.0.folding_factor)
+                                .collect();
+                            let mut coeffs: Vec<F> = naive_interpolation(
+                                coset_points.iter().zip(evals.clone()).map(|(x, y)| (*x, y)),
+                            )
+                            .coeffs()
+                            .to_vec();
+                            coeffs.resize(1 << self.0.folding_factor, F::ZERO);
+                            DensePolynomial::from_coefficients_vec(coeffs)
+                        })
+                        .collect();
+                    ctx.first_round_coeffs = Some(polys);
+                }
+            }
+            ctx.round_1 = false;
+        }
+        Ok(r_shift_indexes)
     }
 
     fn indexes_to_coset_evaluations(
@@ -312,6 +352,7 @@ where
 }
 
 struct RoundContext<F: FftField, MerkleConfig: Config> {
+    round_1: bool,
     f_domain: Domain<F>,
     r_fold: F,
     f_poly: DensePolynomial<F>,
@@ -320,4 +361,5 @@ struct RoundContext<F: FftField, MerkleConfig: Config> {
     merkle: MerkleTree<MerkleConfig>,
     evals: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    first_round_coeffs: Option<Vec<DensePolynomial<F>>>,
 }
