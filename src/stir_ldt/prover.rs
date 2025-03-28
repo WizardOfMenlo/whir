@@ -6,7 +6,7 @@ use super::{
 use crate::{
     domain::Domain,
     parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations},
+    poly_utils::{self, fold::restructure_evaluations, univariate::naive_interpolation},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -58,12 +58,14 @@ where
         }
 
         let mut ctx = RoundContext {
+            round_1: true,
             f_domain: self.0.starting_domain.clone(),
             r_fold,
             f_poly: witness.polynomial.clone(),
             merkle: witness.merkle_tree.clone(),
             evals: witness.merkle_leaves.clone(),
             merkle_proofs: vec![],
+            first_round_coeffs: None,
         };
 
         for round_config in &self.0.round_parameters {
@@ -207,6 +209,7 @@ where
 
         Ok(StirProof {
             merkle_proofs: ctx.merkle_proofs,
+            first_round_coeffs: ctx.first_round_coeffs,
         })
     }
 
@@ -286,8 +289,45 @@ where
             .generate_multi_proof(r_shift_indexes.clone())
             .unwrap();
 
-        ctx.merkle_proofs.push((merkle_proof, virtual_evals));
+        ctx.merkle_proofs
+            .push((merkle_proof, virtual_evals.clone()));
 
+        if ctx.round_1 {
+            match self.0.fold_optimization {
+                FoldType::Naive => (),
+                FoldType::ProverHelps => {
+                    // Here we actually interpolate the polynomial at the points, and write it down.
+                    let coset_gen = ctx
+                        .f_domain
+                        .backing_domain
+                        .group_gen()
+                        .pow([size_of_folded_domain as u64]);
+                    let polys: Vec<DensePolynomial<F>> = r_shift_indexes
+                        .iter()
+                        .zip(virtual_evals)
+                        .map(|(i, evals)| {
+                            let coset_offset =
+                                ctx.f_domain.backing_domain.group_gen().pow([*i as u64]);
+                            let coset_points: Vec<F> =
+                                std::iter::successors(Some(coset_offset), |prev| {
+                                    Some(*prev * coset_gen)
+                                })
+                                .take(1 << self.0.folding_factor)
+                                .collect();
+                            let mut coeffs: Vec<F> = naive_interpolation(
+                                coset_points.iter().zip(evals.clone()).map(|(x, y)| (*x, y)),
+                            )
+                            .coeffs()
+                            .to_vec();
+                            coeffs.resize(1 << self.0.folding_factor, F::ZERO);
+                            DensePolynomial::from_coefficients_vec(coeffs)
+                        })
+                        .collect();
+                    ctx.first_round_coeffs = Some(polys);
+                }
+            }
+            ctx.round_1 = false;
+        }
         Ok(r_shift_indexes)
     }
 
@@ -312,6 +352,7 @@ where
 }
 
 struct RoundContext<F: FftField, MerkleConfig: Config> {
+    round_1: bool,
     f_domain: Domain<F>,
     r_fold: F,
     f_poly: DensePolynomial<F>,
@@ -320,4 +361,5 @@ struct RoundContext<F: FftField, MerkleConfig: Config> {
     merkle: MerkleTree<MerkleConfig>,
     evals: Vec<F>,
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    first_round_coeffs: Option<Vec<DensePolynomial<F>>>,
 }

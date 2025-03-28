@@ -1,5 +1,6 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::Field;
+use ark_poly::univariate::DensePolynomial;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
@@ -16,6 +17,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
 {
     merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    first_round_coeffs: Option<Vec<DensePolynomial<F>>>,
 }
 
 pub fn stir_proof_size<MerkleConfig, F>(
