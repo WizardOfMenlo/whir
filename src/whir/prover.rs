@@ -304,7 +304,7 @@ where
             prev_merkle: merkle_tree,
             prev_merkle_answers: evals,
             merkle_proofs: round_state.merkle_proofs,
-            randomness_vec: round_state.randomness_vec.clone(),
+            randomness_vec: round_state.randomness_vec,
             statement: round_state.statement,
         };
 
