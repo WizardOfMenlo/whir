@@ -148,12 +148,12 @@ mod tests {
         // Add linear constraint to the statement
         statement.add_constraint(linear_claim_weight, sum);
 
-        // Define the Fiat-Shamir IOPattern for committing and proving
+        // Define the Fiat-Shamir domain separator for committing and proving
         let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
 
-        // Initialize the Merlin transcript from the IOPattern
+        // Initialize the Merlin transcript from the domain separator
         let mut prover_state = domainsep.to_prover_state();
 
         // Create a commitment to the polynomial and generate auxiliary witness data
