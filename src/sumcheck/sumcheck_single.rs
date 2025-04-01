@@ -248,51 +248,54 @@ where
         folding_randomness: &MultilinearPoint<F>,
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
-        // Threshold below which sequential computation is faster
-        //
-        // This was chosen based on experiments with the `compress` function.
-        // It is possible that the threshold can be tuned further.
-        const PARALLEL_THRESHOLD: usize = 4096;
-
         assert_eq!(folding_randomness.num_variables(), 1);
         assert!(self.num_variables() >= 1);
 
         let randomness = folding_randomness.0[0];
-        let input_len = self.evaluation_of_p.evals().len();
 
         let fold_chunk = |slice: &[F]| -> F { (slice[1] - slice[0]) * randomness + slice[0] };
 
         #[cfg(feature = "parallel")]
-        let (evaluations_of_p, evaluations_of_eq) = if input_len >= PARALLEL_THRESHOLD {
-            rayon::join(
-                || {
+        let (evaluations_of_p, evaluations_of_eq) = {
+            // Threshold below which sequential computation is faster
+            //
+            // This was chosen based on experiments with the `compress` function.
+            // It is possible that the threshold can be tuned further.
+            const PARALLEL_THRESHOLD: usize = 4096;
+
+            if self.evaluation_of_p.evals().len() >= PARALLEL_THRESHOLD
+                && self.weights.evals().len() >= PARALLEL_THRESHOLD
+            {
+                rayon::join(
+                    || {
+                        self.evaluation_of_p
+                            .evals()
+                            .par_chunks_exact(2)
+                            .map(fold_chunk)
+                            .collect()
+                    },
+                    || {
+                        self.weights
+                            .evals()
+                            .par_chunks_exact(2)
+                            .map(fold_chunk)
+                            .collect()
+                    },
+                )
+            } else {
+                (
                     self.evaluation_of_p
                         .evals()
-                        .par_chunks_exact(2)
+                        .chunks_exact(2)
                         .map(fold_chunk)
-                        .collect()
-                },
-                || {
+                        .collect(),
                     self.weights
                         .evals()
-                        .par_chunks_exact(2)
+                        .chunks_exact(2)
                         .map(fold_chunk)
-                        .collect()
-                },
-            )
-        } else {
-            (
-                self.evaluation_of_p
-                    .evals()
-                    .chunks_exact(2)
-                    .map(fold_chunk)
-                    .collect(),
-                self.weights
-                    .evals()
-                    .chunks_exact(2)
-                    .map(fold_chunk)
-                    .collect(),
-            )
+                        .collect(),
+                )
+            }
         };
 
         #[cfg(not(feature = "parallel"))]
