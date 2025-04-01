@@ -70,9 +70,9 @@ parallel = [
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 
-# [[bench]]
-# name = "expand_from_coeff"
-# harness = false
+[[bench]]
+name = "expand_from_coeff"
+harness = false
 
 [[bench]]
 name = "compress"
