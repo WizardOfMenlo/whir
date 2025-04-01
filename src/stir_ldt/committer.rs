@@ -1,7 +1,5 @@
 use super::parameters::StirConfig;
-use crate::{
-    ntt::expand_from_coeff, parameters::FoldType, poly_utils::fold::restructure_evaluations, utils,
-};
+use crate::{ntt::expand_from_coeff, poly_utils::fold::restructure_evaluations, utils};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::{FftField, Field};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};

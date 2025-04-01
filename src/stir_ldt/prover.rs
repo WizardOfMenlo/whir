@@ -5,8 +5,7 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations, univariate::naive_interpolation},
+    poly_utils::{self},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
