@@ -10,7 +10,7 @@ use whir::{
 fn bench_compress(c: &mut Criterion) {
     let mut group = c.benchmark_group("compress");
 
-    for &size in &[4u64, 64, 1024, 1 << 14, 1 << 20] {
+    for &size in &[4u64, 64, 1024, 1 << 11, 1 << 12, 1 << 14, 1 << 20, 1 << 26] {
         // Skip invalid cases
         if size < 2 || !size.is_power_of_two() {
             continue;

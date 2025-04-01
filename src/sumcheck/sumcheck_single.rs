@@ -1,5 +1,3 @@
-use std::mem::MaybeUninit;
-
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -250,59 +248,70 @@ where
         folding_randomness: &MultilinearPoint<F>,
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
+        // Threshold below which sequential computation is faster
+        //
+        // This was chosen based on experiments with the `compress` function.
+        // It is possible that the threshold can be tuned further.
+        const PARALLEL_THRESHOLD: usize = 4096;
+
         assert_eq!(folding_randomness.num_variables(), 1);
         assert!(self.num_variables() >= 1);
 
-        let r = folding_randomness.0[0];
-        let evals_p = self.evaluation_of_p.evals();
-        let evals_w = self.weights.evals();
-        let half = evals_p.len() / 2;
+        let randomness = folding_randomness.0[0];
+        let input_len = self.evaluation_of_p.evals().len();
 
-        // SAFETY: we'll fully initialize every element exactly once
-        let mut new_p: Vec<MaybeUninit<F>> = Vec::with_capacity(half);
-        let mut new_w: Vec<MaybeUninit<F>> = Vec::with_capacity(half);
-
-        unsafe {
-            new_p.set_len(half);
-            new_w.set_len(half);
-        }
+        let fold_chunk = |slice: &[F]| -> F { (slice[1] - slice[0]) * randomness + slice[0] };
 
         #[cfg(feature = "parallel")]
-        rayon::scope(|s| {
-            s.spawn(|_| {
-                new_p.par_iter_mut().enumerate().for_each(|(i, out)| {
-                    let a = evals_p[2 * i];
-                    let b = evals_p[2 * i + 1];
-                    *out = MaybeUninit::new((b - a) * r + a);
-                });
-            });
-            s.spawn(|_| {
-                new_w.par_iter_mut().enumerate().for_each(|(i, out)| {
-                    let a = evals_w[2 * i];
-                    let b = evals_w[2 * i + 1];
-                    *out = MaybeUninit::new((b - a) * r + a);
-                });
-            });
-        });
+        let (evaluations_of_p, evaluations_of_eq) = if input_len >= PARALLEL_THRESHOLD {
+            rayon::join(
+                || {
+                    self.evaluation_of_p
+                        .evals()
+                        .par_chunks_exact(2)
+                        .map(fold_chunk)
+                        .collect()
+                },
+                || {
+                    self.weights
+                        .evals()
+                        .par_chunks_exact(2)
+                        .map(fold_chunk)
+                        .collect()
+                },
+            )
+        } else {
+            (
+                self.evaluation_of_p
+                    .evals()
+                    .chunks_exact(2)
+                    .map(fold_chunk)
+                    .collect(),
+                self.weights
+                    .evals()
+                    .chunks_exact(2)
+                    .map(fold_chunk)
+                    .collect(),
+            )
+        };
 
         #[cfg(not(feature = "parallel"))]
-        for i in 0..half {
-            let a = evals_p[2 * i];
-            let b = evals_p[2 * i + 1];
-            new_p[i] = MaybeUninit::new((b - a) * r + a);
+        let (evaluations_of_p, evaluations_of_eq) = (
+            self.evaluation_of_p
+                .evals()
+                .chunks_exact(2)
+                .map(fold_chunk)
+                .collect(),
+            self.weights
+                .evals()
+                .chunks_exact(2)
+                .map(fold_chunk)
+                .collect(),
+        );
 
-            let c = evals_w[2 * i];
-            let d = evals_w[2 * i + 1];
-            new_w[i] = MaybeUninit::new((d - c) * r + c);
-        }
-
-        // SAFETY: all elements were fully initialized above
-        let new_p = unsafe { std::mem::transmute::<Vec<MaybeUninit<F>>, Vec<F>>(new_p) };
-        let new_w = unsafe { std::mem::transmute::<Vec<MaybeUninit<F>>, Vec<F>>(new_w) };
-
-        // Update
-        self.evaluation_of_p = EvaluationsList::new(new_p);
-        self.weights = EvaluationsList::new(new_w);
+        // Update internal state
+        self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
+        self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
     }
 }
