@@ -44,7 +44,9 @@ rand = "0.8"
 clap = { version = "4.4.17", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = ["arkworks-algebra"] }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = [
+    "arkworks-algebra",
+] }
 spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
 rayon = { version = "1.10.0", optional = true }
 thiserror = "2.0"
@@ -68,6 +70,10 @@ parallel = [
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 
+# [[bench]]
+# name = "expand_from_coeff"
+# harness = false
+
 [[bench]]
-name = "expand_from_coeff"
+name = "compress"
 harness = false
