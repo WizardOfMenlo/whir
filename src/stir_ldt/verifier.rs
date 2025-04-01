@@ -12,6 +12,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use crate::{
+    parameters::FoldType,
     poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
     utils,
 };
@@ -38,7 +39,6 @@ struct ParsedCommitment<D> {
 #[derive(Clone)]
 struct ParsedProof<F: Field> {
     rounds: Vec<ParsedRound<F>>,
-    round_1_polys: Option<Vec<DensePolynomial<F>>>,
     final_domain_gen: F,
     final_domain_gen_inv: F,
     final_domain_offset: F,
@@ -219,7 +219,6 @@ where
 
         Ok(ParsedProof {
             rounds: ctx.rounds,
-            round_1_polys: ctx.first_round_coeffs,
             final_domain_gen: ctx.domain_gen,
             final_domain_gen_inv: ctx.domain_gen_inv,
             final_domain_offset: ctx.domain_offset,
@@ -255,7 +254,6 @@ where
         let domain_offset = self.params.starting_domain.backing_domain.coset_offset();
         let mut ctx = ParseProofContext {
             r_fold,
-            first_round_coeffs: stir_proof.first_round_coeffs.clone(),
             domain_size: self.params.starting_domain.size(),
             root_of_unity,
             root_of_unity_inv: root_of_unity.inverse().unwrap(),
@@ -369,8 +367,8 @@ where
 
         // At this point we can I guess omit the compute fold univariate, if the strategy is
         // `ProverHelps`.
-        let mut r_shift_evals: Vec<F> = match parsed.round_1_polys {
-            None => all_r_shift_indexes[0]
+        let mut r_shift_evals: Vec<F> = match self.params.fold_optimization {
+            FoldType::Naive => all_r_shift_indexes[0]
                 .iter()
                 .zip(all_r_shift_virtual_evals[0].iter())
                 .map(|(index, coset_eval)| {
@@ -386,8 +384,9 @@ where
                     )
                 })
                 .collect(),
-            Some(polys) => polys
+            FoldType::ProverHelps => all_r_shift_virtual_evals[0]
                 .iter()
+                .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.to_vec()))
                 .map(|poly| poly.evaluate(&r_folds[0]))
                 .collect(),
         };
@@ -504,7 +503,6 @@ where
 
 struct ParseProofContext<F: Field, D> {
     r_fold: F,
-    first_round_coeffs: Option<Vec<DensePolynomial<F>>>,
     domain_size: usize,
     root_of_unity: F,
     root_of_unity_inv: F,

@@ -53,7 +53,7 @@ where
         // NOTE: This a prover helps, the following ones need to be Naive
         let folded_evals = restructure_evaluations(
             folded_evals,
-            FoldType::Naive, // This will eventually change to `FoldType::ProverHelps`.
+            self.0.fold_optimization,
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
             self.0.folding_factor,
