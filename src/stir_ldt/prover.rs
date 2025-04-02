@@ -34,6 +34,10 @@ where
     MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
+    //==============================================================================================
+    // 1. Constructor and public interface
+    //==============================================================================================
+
     pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self::validate_config(&config);
         Self(config)
@@ -72,21 +76,9 @@ where
         self.final_round(merlin, ctx)
     }
 
-    fn fold(coeffs: &[F], r_fold: F, folding_factor: usize) -> DensePolynomial<F> {
-        #[cfg(not(feature = "parallel"))]
-        let coeffs = coeffs
-            .chunks_exact(1 << folding_factor)
-            .map(|coeffs| DensePolynomial::from_coefficients_slice(coeffs).evaluate(&r_fold))
-            .collect();
-
-        #[cfg(feature = "parallel")]
-        let coeffs = coeffs
-            .par_chunks_exact(1 << folding_factor)
-            .map(|coeffs| DensePolynomial::from_coefficients_slice(coeffs).evaluate(&r_fold))
-            .collect();
-
-        DensePolynomial::from_coefficients_vec(coeffs)
-    }
+    //==============================================================================================
+    // 2. Validation helpers
+    //==============================================================================================
 
     fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
         // Check that for each round the repetition parameters are appropriate.
@@ -111,6 +103,102 @@ where
             (witness.polynomial.degree() + 1),
             1 << self.0.uv_parameters.log_degree,
         )
+    }
+
+    //==============================================================================================
+    // 3. Core polynomial operations
+    //==============================================================================================
+
+    fn fold(coeffs: &[F], r_fold: F, folding_factor: usize) -> DensePolynomial<F> {
+        #[cfg(not(feature = "parallel"))]
+        let coeffs = coeffs
+            .chunks_exact(1 << folding_factor)
+            .map(|coeffs| DensePolynomial::from_coefficients_slice(coeffs).evaluate(&r_fold))
+            .collect();
+
+        #[cfg(feature = "parallel")]
+        let coeffs = coeffs
+            .par_chunks_exact(1 << folding_factor)
+            .map(|coeffs| DensePolynomial::from_coefficients_slice(coeffs).evaluate(&r_fold))
+            .collect();
+
+        DensePolynomial::from_coefficients_vec(coeffs)
+    }
+
+    //==============================================================================================
+    // 4. Protocol phases (ordered by workflow)
+    //==============================================================================================
+
+    fn folding_phase(
+        &self,
+        g_poly: &DensePolynomial<F>,
+        ctx: &RoundContext<F, MerkleConfig>,
+    ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
+        // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
+        let g_domain = ctx.f_domain.scale_with_offset(2);
+        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
+        // implement the shifting in the ntt engine.
+        let g_evals = g_poly
+            .evaluate_over_domain_by_ref(g_domain.backing_domain)
+            .evals;
+
+        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
+        // They also partially overlap and undo one another. We should merge them.
+        let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
+
+        // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
+        // This allows for the evaluation of the virutal function using an interpolation on the rows.
+        //
+        // The leaves of the merkle tree are the k points that are the
+        // roots of unity of the index in the previous domain. This
+        // allows for the evaluation of the virtual function.
+        #[cfg(not(feature = "parallel"))]
+        let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
+
+        #[cfg(feature = "parallel")]
+        let leaf_iterator = g_evals_folded.par_chunks_exact(1 << self.0.folding_factor);
+
+        let g_merkle = MerkleTree::<MerkleConfig>::new(
+            &self.0.leaf_hash_params,
+            &self.0.two_to_one_params,
+            leaf_iterator,
+        )
+        .unwrap();
+
+        (g_domain, g_evals_folded, g_merkle)
+    }
+
+    fn stir_phase(
+        &self,
+        merlin: &mut Merlin,
+        num_queries: usize,
+        ctx: &mut RoundContext<F, MerkleConfig>,
+    ) -> ProofResult<Vec<usize>> {
+        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
+        let size_of_folded_domain = ctx.f_domain.folded_size(self.0.folding_factor);
+        // Obtain t random integers between 0 and size of the folded domain.
+        // These are the r_shifts from the paper.
+
+        // TODO: this could return fewer than `round_parameters.num_queries` elements
+        let r_shift_indexes =
+            utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
+
+        let virtual_evals = self.indexes_to_coset_evaluations(
+            r_shift_indexes.clone(),
+            1 << self.0.folding_factor,
+            &ctx.evals,
+        );
+
+        // Merkle proof for the previous evaluations.
+        let merkle_proof = ctx
+            .merkle
+            .generate_multi_proof(r_shift_indexes.clone())
+            .unwrap();
+
+        ctx.merkle_proofs
+            .push((merkle_proof, virtual_evals.clone()));
+
+        Ok(r_shift_indexes)
     }
 
     fn normal_round(
@@ -209,77 +297,9 @@ where
         })
     }
 
-    fn folding_phase(
-        &self,
-        g_poly: &DensePolynomial<F>,
-        ctx: &RoundContext<F, MerkleConfig>,
-    ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
-        // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
-        let g_domain = ctx.f_domain.scale_with_offset(2);
-        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
-        // implement the shifting in the ntt engine.
-        let g_evals = g_poly
-            .evaluate_over_domain_by_ref(g_domain.backing_domain)
-            .evals;
-
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
-
-        // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
-        // This allows for the evaluation of the virutal function using an interpolation on the rows.
-        //
-        // The leaves of the merkle tree are the k points that are the
-        // roots of unity of the index in the previous domain. This
-        // allows for the evaluation of the virtual function.
-        #[cfg(not(feature = "parallel"))]
-        let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
-
-        #[cfg(feature = "parallel")]
-        let leaf_iterator = g_evals_folded.par_chunks_exact(1 << self.0.folding_factor);
-
-        let g_merkle = MerkleTree::<MerkleConfig>::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leaf_iterator,
-        )
-        .unwrap();
-
-        (g_domain, g_evals_folded, g_merkle)
-    }
-
-    fn stir_phase(
-        &self,
-        merlin: &mut Merlin,
-        num_queries: usize,
-        ctx: &mut RoundContext<F, MerkleConfig>,
-    ) -> ProofResult<Vec<usize>> {
-        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
-        let size_of_folded_domain = ctx.f_domain.folded_size(self.0.folding_factor);
-        // Obtain t random integers between 0 and size of the folded domain.
-        // These are the r_shifts from the paper.
-
-        // TODO: this could return fewer than `round_parameters.num_queries` elements
-        let r_shift_indexes =
-            utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
-
-        let virtual_evals = self.indexes_to_coset_evaluations(
-            r_shift_indexes.clone(),
-            1 << self.0.folding_factor,
-            &ctx.evals,
-        );
-
-        // Merkle proof for the previous evaluations.
-        let merkle_proof = ctx
-            .merkle
-            .generate_multi_proof(r_shift_indexes.clone())
-            .unwrap();
-
-        ctx.merkle_proofs
-            .push((merkle_proof, virtual_evals.clone()));
-
-        Ok(r_shift_indexes)
-    }
+    //==============================================================================================
+    // 5. Utility functions
+    //==============================================================================================
 
     fn indexes_to_coset_evaluations(
         &self,
