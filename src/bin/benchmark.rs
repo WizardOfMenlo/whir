@@ -8,6 +8,8 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::{FftField, Field};
+use ark_poly::univariate::DensePolynomial;
+use ark_poly::DenseUVPolynomial;
 use ark_serialize::CanonicalSerialize;
 use nimue::{DefaultHash, IOPattern};
 use nimue_pow::blake3::Blake3PoW;
@@ -19,6 +21,7 @@ use whir::{
     },
     parameters::*,
     poly_utils::coeffs::CoefficientList,
+    stir_ldt::stir_proof_size,
     whir::Statement,
 };
 
@@ -36,7 +39,7 @@ struct Args {
     pow_bits: Option<usize>,
 
     #[arg(short = 'd', long, default_value = "20")]
-    num_variables: usize,
+    log_num_coeffs: usize,
 
     #[arg(short = 'e', long = "evaluations", default_value = "1")]
     num_evaluations: usize,
@@ -64,7 +67,7 @@ struct Args {
 }
 
 #[derive(Debug, Serialize)]
-struct BenchmarkOutput {
+struct WhirBenchmarkOutput {
     security_level: usize,
     pow_bits: usize,
     starting_rate: usize,
@@ -91,6 +94,25 @@ struct BenchmarkOutput {
     whir_ldt_verifier_hashes: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct StirBenchmarkOutput {
+    security_level: usize,
+    pow_bits: usize,
+    starting_rate: usize,
+    log_degree: usize,
+    folding_factor: usize,
+    soundness_type: SoundnessType,
+    field: AvailableFields,
+    merkle_tree: AvailableMerkle,
+
+    // Stir LDT
+    stir_ldt_prover_time: Duration,
+    stir_ldt_argument_size: usize,
+    stir_ldt_prover_hashes: usize,
+    stir_ldt_verifier_time: Duration,
+    stir_ldt_verifier_hashes: usize,
+}
+
 type PowStrategy = Blake3PoW;
 
 fn main() {
@@ -99,7 +121,7 @@ fn main() {
     let merkle = args.merkle_tree;
 
     if args.pow_bits.is_none() {
-        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
+        args.pow_bits = Some(default_max_pow(args.log_num_coeffs, args.rate));
     }
 
     let mut rng = ark_std::test_rng();
@@ -110,7 +132,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
@@ -118,7 +141,8 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
@@ -126,7 +150,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
@@ -134,7 +159,8 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
@@ -142,7 +168,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
@@ -150,7 +177,8 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
@@ -158,7 +186,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
@@ -166,7 +195,8 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
@@ -174,7 +204,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
@@ -182,7 +213,8 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
@@ -190,7 +222,8 @@ fn main() {
             use merkle_tree::blake3 as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
@@ -198,13 +231,14 @@ fn main() {
             use merkle_tree::keccak as mt;
 
             let (leaf_hash_params, two_to_one_params) = mt::default_config::<F>(&mut rng);
-            run_whir::<F, mt::MerkleTreeParams<F>>(args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, mt::MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
     }
 }
 
 fn run_whir<F, MerkleConfig>(
-    args: Args,
+    args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -214,7 +248,7 @@ fn run_whir<F, MerkleConfig>(
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
-    let num_variables = args.num_variables;
+    let num_variables = args.log_num_coeffs;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
@@ -384,7 +418,7 @@ fn run_whir<F, MerkleConfig>(
         )
     };
 
-    let output = BenchmarkOutput {
+    let output = WhirBenchmarkOutput {
         security_level,
         pow_bits,
         starting_rate,
@@ -414,7 +448,133 @@ fn run_whir<F, MerkleConfig>(
     let mut out_file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open("outputs/bench_output.json")
+        .open("outputs/whir_bench_output.json")
+        .unwrap();
+    use std::io::Write;
+    writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
+}
+
+fn run_stir_ldt<F, MerkleConfig>(
+    args: &Args,
+    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
+    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+) where
+    F: FftField + CanonicalSerialize,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+{
+    let security_level = args.security_level;
+    let pow_bits = args.pow_bits.unwrap();
+    let log_degree = args.log_num_coeffs;
+    let starting_rate = args.rate;
+    let folding_factor = args.folding_factor;
+    let soundness_type = args.soundness_type;
+    let fold_optimisation = args.fold_optimisation;
+
+    std::fs::create_dir_all("outputs").unwrap();
+
+    let num_coeffs = 1 << log_degree;
+
+    let mv_params = UnivariateParameters::<F>::new(log_degree);
+
+    let stir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        security_level,
+        pow_bits,
+        folding_factor,
+        leaf_hash_params,
+        two_to_one_params,
+        fold_optimisation,
+        soundness_type,
+        starting_log_inv_rate: starting_rate,
+        _pow_parameters: Default::default(),
+    };
+
+    let polynomial = DensePolynomial::from_coefficients_vec(
+        (0..num_coeffs)
+            .map(<F as Field>::BasePrimeField::from)
+            .collect(),
+    );
+
+    let (
+        stir_ldt_prover_time,
+        stir_ldt_argument_size,
+        stir_ldt_prover_hashes,
+        stir_ldt_verifier_time,
+        stir_ldt_verifier_hashes,
+    ) = {
+        use whir::stir_ldt::{
+            committer::Committer, iopattern::StirIOPattern, parameters::StirConfig, prover::Prover,
+            verifier::Verifier,
+        };
+        let params = StirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, stir_params);
+
+        if !params.check_pow_bits() {
+            println!("WARN: more PoW bits required than what specified.");
+        }
+
+        let io = IOPattern::<DefaultHash>::new("🌪️")
+            .commit_statement(&params)
+            .add_stir_proof(&params)
+            .clone();
+
+        let mut merlin = io.to_merlin();
+
+        let stir_ldt_prover_time = Instant::now();
+
+        HashCounter::reset();
+
+        let committer = Committer::new(params.clone());
+        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+
+        let prover = Prover::new(params.clone());
+
+        let stir_proof = prover.prove(&mut merlin, &witness).unwrap();
+
+        let stir_ldt_prover_time = stir_ldt_prover_time.elapsed();
+        let stir_ldt_argument_size = stir_proof_size(merlin.transcript(), &stir_proof);
+        let stir_ldt_prover_hashes = HashCounter::get();
+
+        let verifier = Verifier::new(params);
+
+        HashCounter::reset();
+        let stir_ldt_verifier_time = Instant::now();
+
+        let mut arthur = io.to_arthur(merlin.transcript());
+        verifier.verify(&mut arthur, &stir_proof).unwrap();
+        let stir_ldt_verifier_time = stir_ldt_verifier_time.elapsed();
+        let stir_ldt_verifier_hashes = HashCounter::get();
+
+        (
+            stir_ldt_prover_time,
+            stir_ldt_argument_size,
+            stir_ldt_prover_hashes,
+            stir_ldt_verifier_time,
+            stir_ldt_verifier_hashes,
+        )
+    };
+
+    let output = StirBenchmarkOutput {
+        security_level,
+        pow_bits,
+        starting_rate,
+        log_degree,
+        folding_factor,
+        soundness_type,
+        field: args.field,
+        merkle_tree: args.merkle_tree,
+
+        // Stir LDT
+        stir_ldt_prover_time,
+        stir_ldt_argument_size,
+        stir_ldt_prover_hashes,
+        stir_ldt_verifier_time,
+        stir_ldt_verifier_hashes,
+    };
+
+    let mut out_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("outputs/stir_bench_output.json")
         .unwrap();
     use std::io::Write;
     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
