@@ -268,7 +268,7 @@ where
                 let mut statement = Statement::new(folded_coefficients.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
-                    let weights = Weights::evaluation(point.clone());
+                    let weights = Weights::evaluation(point);
                     statement.add_constraint(weights, eval);
                 }
                 SumcheckSingle::new(
