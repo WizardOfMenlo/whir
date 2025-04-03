@@ -3,13 +3,13 @@ use std::iter;
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::{FftField, Field};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldReader},
-    Arthur, ByteChallenges, ByteReader, ProofError, ProofResult,
-};
-use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
+    BytesToUnitDeserialize, ProofError, ProofResult, UnitToBytes, VerifierState,
+};
+use spongefish_pow::{self, PoWChallenge};
 
 use crate::{
     poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
@@ -21,13 +21,13 @@ use super::{
     StirProof,
 };
 
-pub struct Verifier<F, MerkleConfig, PowStrategy>
+pub struct Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,
 {
     two_inv: F,
-    params: StirConfig<F, MerkleConfig, PowStrategy>,
+    params: &'a StirConfig<F, MerkleConfig, PowStrategy>,
 }
 
 #[derive(Clone)]
@@ -65,14 +65,14 @@ struct ParsedRound<F> {
     folded_domain_size: usize,
 }
 
-impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    PowStrategy: nimue_pow::PowStrategy,
+    PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub fn new(params: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub fn new(params: &'a StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Verifier {
             two_inv: F::from(2).inverse().unwrap(),
             params,
@@ -81,9 +81,9 @@ where
 
     fn parse_commitment(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<MerkleConfig::InnerDigest>> {
-        let root: [u8; 32] = arthur.next_bytes()?;
+        let root: [u8; 32] = verifier_state.next_bytes()?;
 
         Ok(ParsedCommitment { root: root.into() })
     }
@@ -93,23 +93,23 @@ where
         round_config: &RoundConfig,
         merkle_proof: &MultiPath<MerkleConfig>,
         virtual_evals: &[Vec<F>],
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         ctx: &mut ParseProofContext<F, MerkleConfig::InnerDigest>,
     ) -> ProofResult<()> {
         // TODO: does this have to happen before the other arthur calls?
-        let next_root: [u8; 32] = arthur.next_bytes()?;
+        let next_root: [u8; 32] = verifier_state.next_bytes()?;
 
         // PHASE 2:
         let mut ood_points = vec![F::ZERO; round_config.ood_samples];
         let mut ood_evals = vec![F::ZERO; round_config.ood_samples];
         if round_config.ood_samples > 0 {
-            arthur.fill_challenge_scalars(&mut ood_points)?;
-            arthur.fill_next_scalars(&mut ood_evals)?;
+            verifier_state.fill_challenge_scalars(&mut ood_points)?;
+            verifier_state.fill_next_scalars(&mut ood_evals)?;
         }
 
         // PHASE 3:
         let mut shift_queries_seed = [0u8; 32];
-        arthur.fill_challenge_bytes(&mut shift_queries_seed)?;
+        verifier_state.fill_challenge_bytes(&mut shift_queries_seed)?;
         let mut stir_gen = ChaCha20Rng::from_seed(shift_queries_seed);
         let folded_domain_size = ctx.domain_size / (1 << self.params.folding_factor);
         let r_shift_indexes = utils::dedup(
@@ -136,10 +136,10 @@ where
         }
 
         if round_config.pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
+            verifier_state.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
         }
 
-        let [r_comb] = arthur.challenge_scalars()?;
+        let [r_comb] = verifier_state.challenge_scalars()?;
 
         ctx.rounds.push(ParsedRound {
             r_fold: ctx.r_fold,
@@ -157,7 +157,7 @@ where
         });
 
         // Update context
-        let [new_r_fold] = arthur.challenge_scalars()?;
+        let [new_r_fold] = verifier_state.challenge_scalars()?;
         ctx.r_fold = new_r_fold;
 
         ctx.prev_root = next_root.into();
@@ -179,16 +179,16 @@ where
         &self,
         final_merkle_proof: &MultiPath<MerkleConfig>,
         final_virtual_evals: &[Vec<F>],
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         ctx: ParseProofContext<F, MerkleConfig::InnerDigest>,
     ) -> ProofResult<ParsedProof<F>> {
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_log_degree];
-        arthur.fill_next_scalars(&mut final_coefficients)?;
+        verifier_state.fill_next_scalars(&mut final_coefficients)?;
         let p_poly = DensePolynomial::from_coefficients_vec(final_coefficients);
 
         // Final queries verify
         let mut final_shift_queries_seed = [0u8; 32];
-        arthur.fill_challenge_bytes(&mut final_shift_queries_seed)?;
+        verifier_state.fill_challenge_bytes(&mut final_shift_queries_seed)?;
         let mut final_gen = ChaCha20Rng::from_seed(final_shift_queries_seed);
         let folded_domain_size = ctx.domain_size / (1 << self.params.folding_factor);
         let final_r_shift_indexes = utils::dedup(
@@ -213,7 +213,7 @@ where
         }
 
         if self.params.final_pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
+            verifier_state.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
         }
 
         Ok(ParsedProof {
@@ -232,7 +232,7 @@ where
 
     fn parse_proof(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<MerkleConfig::InnerDigest>,
         stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<ParsedProof<F>> {
@@ -242,11 +242,11 @@ where
         );
 
         // Derive initial combination randomness
-        let [r_fold] = arthur.challenge_scalars()?;
+        let [r_fold] = verifier_state.challenge_scalars()?;
 
         // PoW
         if self.params.starting_folding_pow_bits > 0. {
-            arthur.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+            verifier_state.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
         }
 
         let root_of_unity = self.params.starting_domain.backing_domain.group_gen();
@@ -280,23 +280,29 @@ where
             .iter()
             .zip(&stir_proof.merkle_proofs)
         {
-            self.parse_round(round_config, merkle_proof, virtual_evals, arthur, &mut ctx)?;
+            self.parse_round(
+                round_config,
+                merkle_proof,
+                virtual_evals,
+                verifier_state,
+                &mut ctx,
+            )?;
         }
 
         let (final_merkle_proof, final_virtual_evals) = stir_proof.merkle_proofs.last().unwrap();
-        self.parse_final_round(final_merkle_proof, final_virtual_evals, arthur, ctx)
+        self.parse_final_round(final_merkle_proof, final_virtual_evals, verifier_state, ctx)
     }
 
     pub fn verify(
         &self,
-        arthur: &mut Arthur,
+        verifier_state: &mut VerifierState,
         stir_proof: &StirProof<F, MerkleConfig>,
     ) -> ProofResult<()> {
         // PHASE 1:
         // We first do a pass in which we rederive all the FS challenges and verify Merkle paths.
         // We take care of all the crytpo here.
-        let parsed_commitment = self.parse_commitment(arthur)?;
-        let parsed = self.parse_proof(arthur, &parsed_commitment, stir_proof)?;
+        let parsed_commitment = self.parse_commitment(verifier_state)?;
+        let parsed = self.parse_proof(verifier_state, &parsed_commitment, stir_proof)?;
         let r_folds: Vec<F> = parsed
             .rounds
             .iter()

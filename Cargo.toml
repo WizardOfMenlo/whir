@@ -3,36 +3,63 @@ name = "whir"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 default-run = "main"
+rust-version = "1.83.0"
+
+[lints.clippy]
+# all lints that are on by default (correctness, suspicious, style, complexity, perf)
+all = { level = "warn", priority = -1 }
+
+# new lints that are still under development
+nursery = { level = "warn", priority = -1 }
+# avoid lints that are too pedantic
+doc_markdown = "allow"
+
+# lints which are rather strict or have occasional false positives
+pedantic = { level = "warn", priority = -1 }
+# avoid lints that are too pedantic
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+default_trait_access = "allow"
+module_name_repetitions = "allow"
+missing_safety_doc = "allow"
+many_single_char_names = "allow"
+should_panic_without_expect = "allow"
+suboptimal_flops = "allow"
+similar_names = "allow"
+redundant_closure_for_method_calls = "allow"
 
 [dependencies]
-ark-std = "0.4"
-ark-ff = { version = "0.4", features = ["asm"] }
-ark-serialize = "0.4"
-ark-crypto-primitives = { version = "0.4", features = ["merkle_tree"] }
-ark-poly = "0.4"
-ark-test-curves = { version = "0.4", features = ["bls12_381_curve"] }
-derivative = { version = "2", features = ["use_core"] }
+ark-std = { version = "0.5", features = ["std"] }
+ark-ff = { version = "0.5", features = ["asm", "std"] }
+ark-serialize = "0.5"
+ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
+ark-poly = "0.5"
 blake3 = "1.5.0"
-blake2 = "0.10"
 sha3 = "0.10"
 rand = "0.8"
 rand_chacha = "0.3"
 clap = { version = "4.4.17", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-nimue = { git = "https://github.com/arkworks-rs/nimue", features = ["ark"] }
-nimue-pow = { git = "https://github.com/arkworks-rs/nimue"}
-lazy_static = "1.4"
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = ["arkworks-algebra"] }
+spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
 rayon = { version = "1.10.0", optional = true }
+thiserror = "2.0"
+itertools = "0.14"
+
+[dev-dependencies]
+proptest = "1.0"
+criterion = "0.5"
 
 [profile.release]
 debug = true
 
 [features]
 default = ["parallel"]
-#default = []
 parallel = [
     "dep:rayon",
     "ark-poly/parallel",
@@ -40,12 +67,8 @@ parallel = [
     "ark-crypto-primitives/parallel",
 ]
 rayon = ["dep:rayon"]
+asm = ["ark-ff/asm"]
 
-[patch.crates-io]
-ark-std = { git = "https://github.com/arkworks-rs/std" }
-ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
-ark-test-curves = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-ff = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-poly = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-serialize = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
-ark-ec = { git = "https://github.com/WizardOfMenlo/algebra", branch = "fft_extensions" }
+[[bench]]
+name = "expand_from_coeff"
+harness = false

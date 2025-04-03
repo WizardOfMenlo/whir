@@ -1,74 +1,106 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::poly_utils::MultilinearPoint;
-
 pub mod committer;
-pub mod iopattern;
+pub mod domainsep;
 pub mod parameters;
+pub mod parsed_proof;
 pub mod prover;
+pub mod statement;
+pub mod stir_evaluations;
+pub mod utils;
 pub mod verifier;
-
-#[derive(Debug, Clone)]
-pub struct Statement<F> {
-    pub points: Vec<MultilinearPoint<F>>,
-    pub evaluations: Vec<F>,
-}
 
 // Only includes the authentication paths
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct WhirProof<MerkleConfig, F>(Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>)
+pub struct WhirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize;
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+    pub statement_values_at_random_point: Vec<F>,
+}
 
 pub fn whir_proof_size<MerkleConfig, F>(
-    transcript: &[u8],
+    narg_string: &[u8],
     whir_proof: &WhirProof<MerkleConfig, F>,
 ) -> usize
 where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    transcript.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
 mod tests {
-    use nimue::{DefaultHash, IOPattern};
-    use nimue_pow::blake3::Blake3PoW;
+    use ark_ff::Field;
+    use spongefish::DomainSeparator;
+    use spongefish_pow::blake3::Blake3PoW;
 
-    use crate::crypto::fields::Field64;
-    use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, MultivariateParameters, SoundnessType, ProtocolParameters};
-    use crate::poly_utils::coeffs::CoefficientList;
-    use crate::poly_utils::MultilinearPoint;
-    use crate::whir::Statement;
-    use crate::whir::{
-        committer::Committer, iopattern::WhirIOPattern, parameters::WhirConfig, prover::Prover,
-        verifier::Verifier,
+    use crate::{
+        crypto::{
+            fields::Field64,
+            merkle_tree::{
+                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
+                parameters::default_config,
+            },
+        },
+        parameters::{
+            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
+        },
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
+        whir::{
+            committer::{CommitmentReader, CommitmentWriter},
+            domainsep::WhirDomainSeparator,
+            parameters::WhirConfig,
+            prover::Prover,
+            statement::{Statement, StatementVerifier, Weights},
+            verifier::Verifier,
+        },
     };
 
-    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
+    /// Merkle tree configuration type for commitment layers.
+    type MerkleConfig = Blake3MerkleTreeParams<F>;
+    /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
+    /// Field type used in the tests.
     type F = Field64;
 
+    /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
+    ///
+    /// This function:
+    /// - builds a multilinear polynomial with a specified number of variables,
+    /// - constructs a STARK statement with constraints based on evaluations and linear relations,
+    /// - commits to the polynomial using a Merkle-based commitment scheme,
+    /// - generates a proof using the WHIR prover,
+    /// - verifies the proof using the WHIR verifier.
     fn make_whir_things(
         num_variables: usize,
-        folding_factor: usize,
+        folding_factor: FoldingFactor,
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
         fold_type: FoldType,
     ) {
+        // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
 
+        // Randomness source
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+        // Generate Merkle parameters: hash function and compression function
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
 
-        let mv_params = MultivariateParameters::<F>::new(num_variables);
+        // Configure multivariate polynomial parameters
+        let mv_params = MultivariateParameters::new(num_variables);
 
+        // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
@@ -80,41 +112,86 @@ mod tests {
             fold_optimisation: fold_type,
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        // Build global configuration from multivariate + protocol parameters
+        let params = WhirConfig::new(mv_params, whir_params);
 
-        let polynomial = CoefficientList::new(vec![F::from(1); num_coeffs]);
+        // Define the multilinear polynomial: constant 1 across all inputs
+        let polynomial = CoefficientList::new(vec![F::ONE; num_coeffs]);
 
+        // Generate `num_points` random points in the multilinear domain
         let points: Vec<_> = (0..num_points)
             .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
             .collect();
 
-        let statement = Statement {
-            points: points.clone(),
-            evaluations: points
-                .iter()
-                .map(|point| polynomial.evaluate(point))
-                .collect(),
-        };
+        // Initialize a statement with no constraints yet
+        let mut statement = Statement::new(num_variables);
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        // For each random point, evaluate the polynomial and create a constraint
+        for point in &points {
+            let eval = polynomial.evaluate(point);
+            let weights = Weights::evaluation(point.clone());
+            statement.add_constraint(weights, eval);
+        }
+
+        // Construct a coefficient vector for linear sumcheck constraint
+        let input = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
+
+        // Define weights for linear combination
+        let linear_claim_weight = Weights::linear(input.into());
+
+        // Convert polynomial to extension field representation
+        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+
+        // Compute the weighted sum of the polynomial (for sumcheck)
+        let sum = linear_claim_weight.weighted_sum(&poly);
+
+        // Add linear constraint to the statement
+        statement.add_constraint(linear_claim_weight, sum);
+
+        // Define the Fiat-Shamir domain separator for committing and proving
+        let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
-            .add_whir_proof(&params)
-            .clone();
+            .add_whir_proof(&params);
 
-        let mut merlin = io.to_merlin();
+        // Initialize the Merlin transcript from the domain separator
+        let mut prover_state = domainsep.to_prover_state();
 
-        let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        // Create a commitment to the polynomial and generate auxiliary witness data
+        let committer = CommitmentWriter::new(params.clone());
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
+        // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
 
-        let proof = prover
-            .prove(&mut merlin, statement.clone(), witness)
+        // Extract verifier-side version of the statement (only public data)
+        let statement_verifier = StatementVerifier::from_statement(&statement);
+
+        // Generate a STARK proof for the given statement and witness
+        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+
+        // Create a commitment reader
+        let commitment_reader = CommitmentReader::new(&params);
+
+        // Create a verifier with matching parameters
+        let verifier = Verifier::new(&params);
+
+        // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        // Parse the commitment
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
             .unwrap();
 
-        let verifier = Verifier::new(params);
-        let mut arthur = io.to_arthur(merlin.transcript());
-        assert!(verifier.verify(&mut arthur, &statement, &proof).is_ok());
+        // Verify that the generated proof satisfies the statement
+        assert!(verifier
+            .verify(
+                &mut verifier_state,
+                &parsed_commitment,
+                &statement_verifier,
+                &proof
+            )
+            .is_ok());
     }
 
     #[test]
@@ -131,14 +208,14 @@ mod tests {
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
-            for num_variables in num_variables {
+            for num_variable in num_variables {
                 for fold_type in fold_types {
                     for num_points in num_points {
                         for soundness_type in soundness_type {
                             for pow_bits in pow_bits {
                                 make_whir_things(
-                                    num_variables,
-                                    folding_factor,
+                                    num_variable,
+                                    FoldingFactor::Constant(folding_factor),
                                     num_points,
                                     soundness_type,
                                     pow_bits,

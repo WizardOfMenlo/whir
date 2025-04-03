@@ -9,4 +9,3 @@ pub mod stir_ldt;
 pub mod sumcheck; // Sumcheck specialised
 pub mod utils; // Utils in general
 pub mod whir; // The real prover
-pub mod whir_ldt; // Whir as a LDT // Shared parameters

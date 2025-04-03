@@ -3,7 +3,7 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub mod committer;
-pub mod iopattern;
+pub mod domainsep;
 pub mod parameters;
 pub mod prover;
 pub mod verifier;
@@ -33,18 +33,27 @@ where
 mod tests {
     use ark_poly::univariate::DensePolynomial;
     use ark_poly::DenseUVPolynomial;
-    use nimue::{DefaultHash, IOPattern};
-    use nimue_pow::blake3::Blake3PoW;
+    use spongefish::{DefaultHash, DomainSeparator};
+    use spongefish_pow::blake3::Blake3PoW;
 
-    use crate::crypto::fields::Field64;
-    use crate::crypto::merkle_tree::blake3 as merkle_tree;
-    use crate::parameters::{FoldType, ProtocolParameters, SoundnessType, UnivariateParameters};
-    use crate::stir_ldt::{
-        committer::Committer, iopattern::StirIOPattern, parameters::StirConfig, prover::Prover,
-        verifier::Verifier,
+    use crate::{
+        crypto::{
+            fields::Field64,
+            merkle_tree::{
+                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
+                parameters::default_config,
+            },
+        },
+        parameters::{
+            FoldType, FoldingFactor, ProtocolParameters, SoundnessType, UnivariateParameters,
+        },
+        stir_ldt::{
+            committer::CommitmentWriter, domainsep::StirDomainSeparator, parameters::StirConfig,
+            prover::Prover, verifier::Verifier,
+        },
     };
 
-    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
+    type MerkleConfig = Blake3MerkleTreeParams<F>;
     type PowStrategy = Blake3PoW;
     type F = Field64;
 
@@ -66,14 +75,16 @@ mod tests {
         let num_coeffs = 1 << log_degree;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
 
         let mv_params = UnivariateParameters::<F>::new(log_degree);
 
         let stir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: false,
             security_level: 32,
             pow_bits,
-            folding_factor,
+            folding_factor: FoldingFactor::Constant(folding_factor),
             leaf_hash_params,
             two_to_one_params,
             fold_optimisation: fold_type,
@@ -86,22 +97,22 @@ mod tests {
 
         let polynomial = DensePolynomial::from_coefficients_vec(vec![F::from(1); num_coeffs]);
 
-        let io = IOPattern::<DefaultHash>::new("🌪️")
+        let domainsep = DomainSeparator::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
             .add_stir_proof(&params)
             .clone();
 
-        let mut merlin = io.to_merlin();
+        let mut prover_state = domainsep.to_prover_state();
 
-        let committer = Committer::new(params.clone());
-        let witness = committer.commit(&mut merlin, polynomial).unwrap();
+        let committer = CommitmentWriter::new(params.clone());
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         let prover = Prover::new(params.clone());
 
-        let proof = prover.prove(&mut merlin, &witness).unwrap();
+        let proof = prover.prove(&mut prover_state, &witness).unwrap();
 
-        let verifier = Verifier::new(params);
-        let mut arthur = io.to_arthur(merlin.transcript());
+        let verifier = Verifier::new(&params);
+        let mut arthur = domainsep.to_verifier_state(prover_state.narg_string());
         assert!(verifier.verify(&mut arthur, &proof,).is_ok());
     }
 

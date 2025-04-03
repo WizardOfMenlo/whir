@@ -2,23 +2,59 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
+    strategy:
+      matrix:
+        features: ["--features parallel", "--no-default-features"]
+    runs-on: ubuntu-latest
+    name: Build & Test (${{ matrix.features }})
 
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Build
+        run: cargo build --release --verbose ${{ matrix.features }}
+      - name: Run tests
+        run: cargo test --release --verbose ${{ matrix.features }}
+
+  cargo-clippy:
+    strategy:
+      matrix:
+        features: ["--features parallel", "--no-default-features"]
+    runs-on: ubuntu-latest
+    name: Clippy (${{ matrix.features }})
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: clippy
+      - name: Clippy Check
+        run: cargo clippy --workspace --all-targets ${{ matrix.features }} -- -Dwarnings
+
+  cargo-fmt:
+    name: Cargo fmt
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Switch toolchain
-      run: rustup update nightly && rustup default nightly
-    - name: Build
-      run: cargo build --release --verbose
-    - name: Run tests
-      run: cargo test --release --verbose
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - name: Rustfmt Check
+        run: cargo fmt --all --check

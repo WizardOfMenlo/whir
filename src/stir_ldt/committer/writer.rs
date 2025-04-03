@@ -1,31 +1,27 @@
-use super::parameters::StirConfig;
-use crate::{
-    ntt::expand_from_coeff, parameters::FoldType, poly_utils::fold::restructure_evaluations, utils,
-};
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
-use ark_ff::{FftField, Field};
-use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
-use nimue::{plugins::ark::FieldChallenges, ByteWriter, Merlin, ProofResult};
-
+use ark_ff::FftField;
+use ark_poly::{
+    polynomial::DenseUVPolynomial, univariate::DensePolynomial, EvaluationDomain, Polynomial,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    ProofResult,
+};
 
-pub struct Witness<F, MerkleConfig>
-where
-    F: Field,
-    MerkleConfig: Config,
-{
-    pub(crate) polynomial: DensePolynomial<F>,
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
-    pub(crate) merkle_leaves: Vec<F>,
-}
+use super::Witness;
+use crate::{
+    ntt::expand_from_coeff, parameters::FoldType, poly_utils::fold::transform_evaluations,
+    stir_ldt::parameters::StirConfig, whir::utils::DigestToUnitSerialize,
+};
 
-pub struct Committer<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)
 where
     F: FftField,
     MerkleConfig: Config;
 
-impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
@@ -35,24 +31,20 @@ where
         Self(config)
     }
 
-    pub fn commit(
+    pub fn commit<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        merlin: &mut ProverState,
         polynomial: DensePolynomial<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
     {
         let num_coeffs = polynomial.degree() + 1;
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / num_coeffs;
-        let evals = expand_from_coeff(&polynomial.coeffs[..], expansion);
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let folded_evals = utils::stack_evaluations(evals, self.0.folding_factor);
-        // NOTE: This a prover helps, the following ones need to be Naive
-        let folded_evals = restructure_evaluations(
-            folded_evals,
+        let mut evals = expand_from_coeff(&polynomial.coeffs[..], expansion);
+        transform_evaluations(
+            evals.as_mut_slice(),
             FoldType::Naive, // This will eventually change to `FoldType::ProverHelps`.
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
@@ -63,7 +55,7 @@ where
         // This is not necessary for the commit, but in further rounds
         // we will need the extension field. For symplicity we do it here too.
         // TODO: Commit to base field directly.
-        let folded_evals = folded_evals
+        let folded_evals = evals
             .into_iter()
             .map(F::from_base_prime_field)
             .collect::<Vec<_>>();
@@ -83,7 +75,7 @@ where
 
         let root = merkle_tree.root();
 
-        merlin.add_bytes(root.as_ref())?;
+        merlin.add_digest(root)?;
 
         let polynomial = DensePolynomial::from_coefficients_vec(
             polynomial

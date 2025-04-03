@@ -1,42 +1,43 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use nimue::plugins::ark::*;
-
-use crate::{
-    fs_utils::{OODIOPattern, WhirPoWIOPattern},
-    sumcheck::prover_not_skipping::SumcheckNotSkippingIOPattern,
-};
+use spongefish::codecs::arkworks_algebra::{ByteDomainSeparator, FieldDomainSeparator};
 
 use super::parameters::StirConfig;
+use crate::fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator};
+use crate::whir::domainsep::DigestDomainSeparator;
 
-pub trait StirIOPattern<F: FftField> {
-    fn commit_statement<MerkleConfig: Config, PowStrategy>(
+// pub trait DigestDomainSeparator<MerkleConfig: Config> {
+//     #[must_use]
+//     fn add_digest(self, label: &str) -> Self;
+// }
+
+pub trait StirDomainSeparator<F: FftField, MerkleConfig: Config> {
+    #[must_use]
+    fn commit_statement<PowStrategy>(
         self,
         params: &StirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self;
-    fn add_stir_proof<MerkleConfig: Config, PowStrategy>(
-        self,
-        params: &StirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self;
+
+    #[must_use]
+    fn add_stir_proof<PowStrategy>(self, params: &StirConfig<F, MerkleConfig, PowStrategy>)
+        -> Self;
 }
 
-impl<F> StirIOPattern<F> for IOPattern
+impl<F, MerkleConfig, DomainSeparator> StirDomainSeparator<F, MerkleConfig> for DomainSeparator
 where
     F: FftField,
-    IOPattern: ByteIOPattern
-        + FieldIOPattern<F>
-        + SumcheckNotSkippingIOPattern<F>
-        + WhirPoWIOPattern
-        + OODIOPattern<F>,
+    MerkleConfig: Config,
+    DomainSeparator:
+        ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MerkleConfig>,
 {
-    fn commit_statement<MerkleConfig: Config, PowStrategy>(
+    fn commit_statement<PowStrategy>(
         self,
         _params: &StirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
-        self.add_bytes(32, "merkle_digest")
+        self.add_digest("merkle_digest")
     }
 
-    fn add_stir_proof<MerkleConfig: Config, PowStrategy>(
+    fn add_stir_proof<PowStrategy>(
         mut self,
         params: &StirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
@@ -47,7 +48,7 @@ where
 
         for r in &params.round_parameters {
             self = self
-                .add_bytes(32, "merkle_digest")
+                .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
                 .challenge_bytes(32, "stir_queries_seed")
                 .pow(r.pow_bits)

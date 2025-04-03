@@ -7,7 +7,7 @@ use ark_ff::FftField;
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{ProtocolParameters, SoundnessType, UnivariateParameters},
+    parameters::{FoldingFactor, ProtocolParameters, SoundnessType, UnivariateParameters},
 };
 
 #[derive(Clone)]
@@ -60,12 +60,13 @@ where
         stir_parameters: ProtocolParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
         // We need to fold at least some time
-        assert!(
-            stir_parameters.folding_factor > 0,
-            "folding factor should be non zero"
-        );
+        let folding_factor = match stir_parameters.folding_factor {
+            FoldingFactor::Constant(folding_factor) => folding_factor,
+            FoldingFactor::ConstantFromSecondRound(_, _) => todo!(),
+        };
+        assert!(folding_factor > 0, "folding factor should be non zero");
         // If less, just send the damn polynomials
-        assert!(uv_parameters.log_degree >= stir_parameters.folding_factor);
+        assert!(uv_parameters.log_degree >= folding_factor);
         let protocol_security_level =
             0.max(stir_parameters.security_level - stir_parameters.pow_bits);
 
@@ -76,7 +77,7 @@ where
         .expect("Should have found an appropriate domain");
 
         // Upper bound on the number of rounds.
-        let max_num_rounds = ((uv_parameters.log_degree) / stir_parameters.folding_factor) - 1;
+        let max_num_rounds = ((uv_parameters.log_degree) / folding_factor) - 1;
 
         let field_size_bits = F::field_size_in_bits();
 
@@ -86,16 +87,16 @@ where
             uv_parameters.log_degree,
             stir_parameters.starting_log_inv_rate,
             Self::log_eta(stir_parameters.starting_log_inv_rate),
-        ) + (stir_parameters.folding_factor as f64).log2();
+        ) + (folding_factor as f64).log2();
         let starting_folding_pow_bits =
             0_f64.max(stir_parameters.security_level as f64 - prox_gaps_error);
 
         let mut round_parameters = Vec::with_capacity(max_num_rounds);
-        let mut log_degree = uv_parameters.log_degree - stir_parameters.folding_factor;
+        let mut log_degree = uv_parameters.log_degree - folding_factor;
         let mut log_inv_rate = stir_parameters.starting_log_inv_rate;
         for _ in 0..max_num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
-            let next_rate = log_inv_rate + (stir_parameters.folding_factor - 1);
+            let next_rate = log_inv_rate + (folding_factor - 1);
 
             let log_next_eta = Self::log_eta(next_rate);
             let num_queries = Self::queries(
@@ -135,7 +136,7 @@ where
                 log_inv_rate,
             });
 
-            log_degree -= stir_parameters.folding_factor;
+            log_degree -= folding_factor;
             log_inv_rate = next_rate;
         }
 
@@ -159,7 +160,7 @@ where
             soundness_type: stir_parameters.soundness_type,
             starting_log_inv_rate: stir_parameters.starting_log_inv_rate,
             starting_folding_pow_bits,
-            folding_factor: stir_parameters.folding_factor,
+            folding_factor,
             round_parameters,
             final_queries,
             final_pow_bits,

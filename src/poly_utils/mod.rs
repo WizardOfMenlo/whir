@@ -1,93 +1,29 @@
+use crate::poly_utils::multilinear::MultilinearPoint;
+use crate::utils::to_binary;
 use ark_ff::Field;
 use rand::{
     distributions::{Distribution, Standard},
     Rng, RngCore,
 };
 
-use crate::utils::to_binary;
-
 use self::hypercube::BinaryHypercubePoint;
 
 pub mod coeffs;
+pub mod dense;
 pub mod evals;
 pub mod fold;
-pub mod gray_lag_poly;
 pub mod hypercube;
-pub mod sequential_lag_poly;
-pub mod streaming_evaluation_helper;
 pub mod univariate;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultilinearPoint<F>(pub Vec<F>);
-
-impl<F> MultilinearPoint<F>
-where
-    F: Field,
-{
-    pub fn n_variables(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn from_binary_hypercube_point(point: BinaryHypercubePoint, num_variables: usize) -> Self {
-        Self(
-            to_binary(point.0, num_variables)
-                .into_iter()
-                .map(|x| if x { F::ONE } else { F::ZERO })
-                .collect(),
-        )
-    }
-
-    pub fn to_hypercube(&self) -> Option<BinaryHypercubePoint> {
-        let mut counter = 0;
-        for &coord in &self.0 {
-            if coord == F::ZERO {
-                counter <<= 1;
-            } else if coord == F::ONE {
-                counter = (counter << 1) + 1;
-            } else {
-                return None;
-            }
-        }
-
-        Some(BinaryHypercubePoint(counter))
-    }
-
-    pub fn expand_from_univariate(point: F, num_variables: usize) -> Self {
-        let mut res = Vec::with_capacity(num_variables);
-        let mut cur = point;
-        for _ in 0..num_variables {
-            res.push(cur);
-            cur = cur * cur;
-        }
-
-        // Reverse so higher power is first
-        res.reverse();
-
-        MultilinearPoint(res)
-    }
-}
-
-impl<F> MultilinearPoint<F>
-where
-    Standard: Distribution<F>,
-{
-    pub fn rand(rng: &mut impl RngCore, num_variables: usize) -> Self {
-        MultilinearPoint((0..num_variables).map(|_| rng.gen()).collect())
-    }
-}
-
-impl<F> From<F> for MultilinearPoint<F> {
-    fn from(value: F) -> Self {
-        MultilinearPoint(vec![value])
-    }
-}
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// pub struct MultilinearPoint<F>(pub Vec<F>);
 
 pub fn eq_poly<F>(coords: &MultilinearPoint<F>, point: BinaryHypercubePoint) -> F
 where
     F: Field,
 {
     let mut point = point.0;
-    let n_variables = coords.n_variables();
+    let n_variables = coords.num_variables();
     assert!(point < (1 << n_variables));
 
     let mut acc = F::ONE;
@@ -105,7 +41,7 @@ pub fn eq_poly_outside<F>(coords: &MultilinearPoint<F>, point: &MultilinearPoint
 where
     F: Field,
 {
-    assert_eq!(coords.n_variables(), point.n_variables());
+    assert_eq!(coords.num_variables(), point.num_variables());
 
     let mut acc = F::ONE;
 
@@ -123,7 +59,7 @@ where
     let two = F::ONE + F::ONE;
     let two_inv = two.inverse().unwrap();
 
-    let n_variables = coords.n_variables();
+    let n_variables = coords.num_variables();
     assert!(point < 3usize.pow(n_variables as u32));
 
     let mut acc = F::ONE;
@@ -253,9 +189,9 @@ mod tests {
         let point1 = MultilinearPoint::expand_from_univariate(F::from(1), num_variables);
         let point2 = MultilinearPoint::expand_from_univariate(F::from(2), num_variables);
 
-        assert_eq!(point0.n_variables(), num_variables);
-        assert_eq!(point1.n_variables(), num_variables);
-        assert_eq!(point2.n_variables(), num_variables);
+        assert_eq!(point0.num_variables(), num_variables);
+        assert_eq!(point1.num_variables(), num_variables);
+        assert_eq!(point2.num_variables(), num_variables);
 
         assert_eq!(
             MultilinearPoint::from_binary_hypercube_point(BinaryHypercubePoint(0), num_variables),
@@ -285,3 +221,5 @@ mod tests {
         );
     }
 }
+pub mod lagrange_iterator;
+pub mod multilinear;

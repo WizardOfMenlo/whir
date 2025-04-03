@@ -1,3 +1,14 @@
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_ff::FftField;
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+use spongefish::{
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    ProofResult, UnitToBytes,
+};
+use spongefish_pow::{self, PoWChallenge};
+
 use super::{
     committer::Witness,
     parameters::{RoundConfig, StirConfig},
@@ -6,22 +17,12 @@ use super::{
 use crate::{
     domain::Domain,
     parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations},
+    poly_utils::{self, fold::transform_evaluations},
     utils::{self, expand_randomness},
+    whir::utils::DigestToUnitSerialize,
 };
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
-use ark_ff::FftField;
-use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
-use nimue::{
-    plugins::ark::{FieldChallenges, FieldWriter},
-    ByteChallenges, ByteWriter, Merlin, ProofResult,
-};
-use nimue_pow::{self, PoWChallenge};
 use rand::{Rng, SeedableRng};
-
 use rand_chacha::ChaCha20Rng;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)
 where
@@ -33,7 +34,7 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
-    PowStrategy: nimue_pow::PowStrategy,
+    PowStrategy: spongefish_pow::PowStrategy,
 {
     fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
         // Check that for each round the repetition parameters are appropriate.
@@ -65,21 +66,25 @@ where
         Self(config)
     }
 
-    pub fn prove(
+    pub fn prove<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         witness: &Witness<F, MerkleConfig>,
     ) -> ProofResult<StirProof<F, MerkleConfig>>
     where
-        Merlin: FieldChallenges<F> + ByteWriter,
+        ProverState: UnitToField<F>
+            + FieldToUnitSerialize<F>
+            + UnitToBytes
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>,
     {
         self.validate_witness(witness);
 
-        let [r_fold] = merlin.challenge_scalars()?;
+        let [r_fold] = prover_state.challenge_scalars()?;
 
         // PoW: we need to compensate in order to achieve the target number of bits of security.
         if self.0.starting_folding_pow_bits > 0. {
-            merlin.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
+            prover_state.challenge_pow::<PowStrategy>(self.0.starting_folding_pow_bits)?;
         }
 
         let mut ctx = RoundContext {
@@ -92,10 +97,10 @@ where
         };
 
         for round_config in &self.0.round_parameters {
-            self.normal_round(merlin, round_config, &mut ctx)?;
+            self.normal_round(prover_state, round_config, &mut ctx)?;
         }
 
-        self.final_round(merlin, ctx)
+        self.final_round(prover_state, ctx)
     }
 
     fn fold(coeffs: &[F], r_fold: F, folding_factor: usize) -> DensePolynomial<F> {
@@ -123,21 +128,15 @@ where
         let g_domain = ctx.f_domain.scale_with_offset(2);
         // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
         // implement the shifting in the ntt engine.
-        let g_evals = g_poly
+        let mut g_evals = g_poly
             .evaluate_over_domain_by_ref(g_domain.backing_domain)
             .evals;
 
-        // TODO: `stack_evaluations` and `restructure_evaluations` are really in-place algorithms.
-        // They also partially overlap and undo one another. We should merge them.
-        let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
-
-        // TODO: if fold_type is always Naive, this is just an assertion, nothing happens here
-        //
         // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
         // This allows for the evaluation of the virutal function using an interpolation on the rows.
         // TODO: for stir we do only Naive, so this will need to be adapted.
-        let g_evals_folded = restructure_evaluations(
-            g_evals_folded,
+        transform_evaluations(
+            g_evals.as_mut_slice(),
             FoldType::Naive,
             g_domain.backing_domain.group_gen(),
             g_domain.backing_domain.group_gen_inv(),
@@ -151,7 +150,7 @@ where
         let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
 
         #[cfg(feature = "parallel")]
-        let leaf_iterator = g_evals_folded.par_chunks_exact(1 << self.0.folding_factor);
+        let leaf_iterator = g_evals.par_chunks_exact(1 << self.0.folding_factor);
 
         let g_merkle = MerkleTree::<MerkleConfig>::new(
             &self.0.leaf_hash_params,
@@ -160,16 +159,23 @@ where
         )
         .unwrap();
 
-        (g_domain, g_evals_folded, g_merkle)
+        (g_domain, g_evals, g_merkle)
     }
 
-    fn stir_phase(
+    fn stir_phase<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         num_queries: usize,
         ctx: &mut RoundContext<F, MerkleConfig>,
-    ) -> ProofResult<Vec<usize>> {
-        let stir_gen = &mut ChaCha20Rng::from_seed(merlin.challenge_bytes()?);
+    ) -> ProofResult<Vec<usize>>
+    where
+        ProverState: UnitToField<F>
+            + UnitToBytes
+            + FieldToUnitSerialize<F>
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>,
+    {
+        let stir_gen = &mut ChaCha20Rng::from_seed(prover_state.challenge_bytes()?);
         let size_of_folded_domain = ctx.f_domain.folded_size(self.0.folding_factor);
         // Obtain t random integers between 0 and size of the folded domain.
         // These are the r_shifts from the paper.
@@ -195,12 +201,19 @@ where
         Ok(r_shift_indexes)
     }
 
-    fn normal_round(
+    fn normal_round<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         round_config: &RoundConfig,
         ctx: &mut RoundContext<F, MerkleConfig>,
-    ) -> ProofResult<()> {
+    ) -> ProofResult<()>
+    where
+        ProverState: UnitToField<F>
+            + UnitToBytes
+            + FieldToUnitSerialize<F>
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>,
+    {
         // Fold the coefficients
         let g_poly = Self::fold(&ctx.f_poly, ctx.r_fold, self.0.folding_factor);
 
@@ -208,15 +221,15 @@ where
         let (g_domain, g_evals_folded, g_merkle) = self.folding_phase(&g_poly, ctx);
         let g_root = g_merkle.root();
         // Commit to (aka Send) the polynomial.
-        merlin.add_bytes(g_root.as_ref())?;
+        prover_state.add_digest(g_root)?;
 
         // PHASE 2 (OOD sampling):
         // These are the ri_out's from the paper.
         let mut ood_points = vec![F::ZERO; round_config.ood_samples];
         // These are the beta's from the paper.
         if round_config.ood_samples > 0 {
-            merlin.fill_challenge_scalars(&mut ood_points)?;
-            merlin.add_scalars(
+            prover_state.fill_challenge_scalars(&mut ood_points)?;
+            prover_state.add_scalars(
                 &ood_points
                     .iter()
                     .map(|ood_point| g_poly.evaluate(ood_point))
@@ -225,7 +238,7 @@ where
         }
 
         // PHASE 3 (STIR queries):
-        let r_shift_indexes = self.stir_phase(merlin, round_config.num_queries, ctx)?;
+        let r_shift_indexes = self.stir_phase(prover_state, round_config.num_queries, ctx)?;
         let l_k = ctx
             .f_domain
             .scale(1 << self.0.folding_factor)
@@ -238,14 +251,14 @@ where
 
         // PoW
         if round_config.pow_bits > 0. {
-            merlin.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
+            prover_state.challenge_pow::<PowStrategy>(round_config.pow_bits)?;
         }
 
         // The quotient polynomial is then computed
         let q_poly = poly_utils::univariate::poly_quotient(&g_poly, &quotient_set);
 
         // Randomness for combination
-        let [r_comb] = merlin.challenge_scalars()?;
+        let [r_comb] = prover_state.challenge_scalars()?;
         let comb_rand_coeffs = expand_randomness(r_comb, quotient_set.len() + 1);
 
         // This is the polynomial 1 + r * x + r^2 * x^2 + ... + r^n * x^n where n = |quotient_set|
@@ -253,7 +266,7 @@ where
 
         let f_prime_poly = &q_poly * scaling_polynomial;
 
-        let [new_folding_randomness] = merlin.challenge_scalars()?;
+        let [new_folding_randomness] = prover_state.challenge_scalars()?;
 
         // Update RoundContext
         ctx.f_domain = g_domain;
@@ -265,11 +278,18 @@ where
         Ok(())
     }
 
-    fn final_round(
+    fn final_round<ProverState>(
         &self,
-        merlin: &mut Merlin,
+        prover_state: &mut ProverState,
         mut ctx: RoundContext<F, MerkleConfig>,
-    ) -> ProofResult<StirProof<F, MerkleConfig>> {
+    ) -> ProofResult<StirProof<F, MerkleConfig>>
+    where
+        ProverState: UnitToField<F>
+            + UnitToBytes
+            + FieldToUnitSerialize<F>
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>,
+    {
         // Fold the coefficients
         let g_poly = Self::fold(&ctx.f_poly, ctx.r_fold, self.0.folding_factor);
 
@@ -277,13 +297,13 @@ where
         let mut p_poly = g_poly.coeffs; // One last fold of the f function. If log_initial_degree % folding_factor = 0, then this is constant.
         p_poly.resize(1 << self.0.final_log_degree, F::ZERO);
         // Send the coefficients directly
-        merlin.add_scalars(&p_poly)?;
+        prover_state.add_scalars(&p_poly)?;
 
-        self.stir_phase(merlin, self.0.final_queries, &mut ctx)?;
+        self.stir_phase(prover_state, self.0.final_queries, &mut ctx)?;
 
         // PoW
         if self.0.final_pow_bits > 0. {
-            merlin.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
+            prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
         }
 
         Ok(StirProof {
@@ -300,7 +320,7 @@ where
     where
         F: FftField,
         MerkleConfig: Config<Leaf = [F]>,
-        PowStrategy: nimue_pow::PowStrategy,
+        PowStrategy: spongefish_pow::PowStrategy,
     {
         assert!(evals.len() % fold_size == 0);
         let stir_challenges_virtual_evals: Vec<Vec<F>> = stir_challenges_indexes
