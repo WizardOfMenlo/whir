@@ -300,7 +300,7 @@ where
             domain: new_domain,
             sumcheck_prover: Some(sumcheck_prover),
             folding_randomness,
-            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
+            coefficients: folded_coefficients,
             prev_merkle: merkle_tree,
             prev_merkle_answers: evals,
             merkle_proofs: round_state.merkle_proofs,
