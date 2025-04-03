@@ -67,7 +67,6 @@ where
         for (round, r) in params.round_parameters.iter().enumerate() {
             let folded_domain_size = domain_size >> params.folding_factor.at_round(round);
             let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
-
             self = self
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)

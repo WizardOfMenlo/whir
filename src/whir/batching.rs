@@ -6,8 +6,8 @@
 /// - Prover commits to multiple Merkle roots of evaluations of each polynomial
 ///
 /// - Verifier samples a batching_randomness field element. For soundness
-///   reasons, Fiat-Shamir batching randomness must be sampled after the Merkle
-///   roots have been committed.
+///   reasons, batching_randomness must be sampled after the Merkle roots have
+///   been committed.
 ///
 /// - Prover computes the weighted sum of each individual polynomial based on
 ///   batching_randomness to compute a single polynomial to proceed during
@@ -34,8 +34,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use spongefish::{
     codecs::arkworks_algebra::{
-        ByteDomainSeparator, ByteReader, ByteWriter, DeserializeField, FieldDomainSeparator,
-        FieldToUnit, UnitToField,
+        ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, FieldDomainSeparator,
+        FieldToUnitDeserialize, FieldToUnitSerialize, UnitToField,
     },
     ProofError, ProofResult, UnitToBytes,
 };
@@ -46,12 +46,12 @@ use crate::{
     poly_utils::coeffs::CoefficientList,
     sumcheck::SumcheckSingleDomainSeparator,
     whir::{
-        committer::{Committer, Witness},
+        committer::{CommitmentReader, CommitmentWriter, Witness},
         domainsep::{DigestDomainSeparator, WhirDomainSeparator},
-        fs_utils::{DigestReader, DigestWriter},
         parameters::WhirConfig,
         prover::Prover,
         statement::{Statement, StatementVerifier},
+        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
         verifier::Verifier,
         RoundZeroProofValidator, WhirCommitmentData, WhirProof, WhirProofRoundData,
     },
@@ -265,7 +265,7 @@ where
     }
 }
 
-impl<F, MerkleConfig, PowStrategy> Committer<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: MTConfig<Leaf = [F]>,
@@ -276,7 +276,10 @@ where
         polynomial_list: &[CoefficientList<F::BasePrimeField>],
     ) -> ProofResult<BatchedWitness<F, MerkleConfig>>
     where
-        ProverFSState: FieldToUnit<F> + UnitToField<F> + ByteWriter + DigestWriter<MerkleConfig>,
+        ProverFSState: FieldToUnitSerialize<F>
+            + BytesToUnitSerialize
+            + DigestToUnitSerialize<MerkleConfig>
+            + UnitToField<F>,
     {
         assert!(
             polynomial_list.len() > 1,
@@ -297,7 +300,7 @@ where
         let mut witness_list = Vec::new();
 
         for poly in polynomial_list {
-            let individual_commitment = Committer::commit(self, prover_state, poly.clone())?;
+            let individual_commitment = CommitmentWriter::commit(self, prover_state, poly.clone())?;
             witness_list.push(individual_commitment);
         }
 
@@ -372,10 +375,10 @@ where
     ) -> ProofResult<BatchedWhirProof<MerkleConfig, F>>
     where
         ProverState: UnitToField<F>
-            + FieldToUnit<F>
+            + FieldToUnitSerialize<F>
             + UnitToBytes
             + spongefish_pow::PoWChallenge
-            + DigestWriter<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>,
     {
         assert!(self.validate_parameters() && self.validate_statement(&statement));
 
@@ -417,9 +420,8 @@ where
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
-pub(crate) struct ParsedBatchCommitment<F, D> {
+pub struct ParsedBatchCommitment<F, D> {
     root: Vec<D>,
     batching_randomness: F,
     ood_points: Vec<F>,
@@ -516,24 +518,57 @@ where
     }
 }
 
-impl<F, MerkleConfig, PowStrategy> Verifier<F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: MTConfig<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    #[allow(dead_code)]
-    pub(crate) fn parse_batched_commitment<VerifierState>(
+    pub fn verify_batched<VerifierState>(
+        &self,
+        verifier_state: &mut VerifierState,
+        parsed_commitment: &ParsedBatchCommitment<F, MerkleConfig::InnerDigest>,
+        statement: &StatementVerifier<F>,
+        whir_proof: &BatchedWhirProof<MerkleConfig, F>,
+    ) -> ProofResult<()>
+    where
+        VerifierState: UnitToBytes
+            + UnitToField<F>
+            + FieldToUnitDeserialize<F>
+            + PoWChallenge
+            + DigestToUnitDeserialize<MerkleConfig>
+            + BytesToUnitDeserialize,
+    {
+        // Parse proof and validate it STIR queries against the committed Merkle roots.
+        let parsed_proof = self.parse_proof(
+            verifier_state,
+            parsed_commitment,
+            whir_proof,
+            statement.constraints.len(),
+        )?;
+
+        // Verify generically
+        self.verify_parsed(statement, parsed_commitment, &parsed_proof)
+    }
+}
+
+impl<'a, F, MerkleConfig, PowStrategy> CommitmentReader<'a, F, MerkleConfig, PowStrategy>
+where
+    F: FftField,
+    MerkleConfig: MTConfig<Leaf = [F]>,
+    PowStrategy: spongefish_pow::PowStrategy,
+{
+    pub fn parse_batched_commitment<VerifierState>(
         &self,
         expected_batch_size: usize,
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedBatchCommitment<F, MerkleConfig::InnerDigest>>
     where
         VerifierState: UnitToBytes
-            + DeserializeField<F>
+            + FieldToUnitDeserialize<F>
             + UnitToField<F>
-            + DigestReader<MerkleConfig>
-            + ByteReader,
+            + DigestToUnitDeserialize<MerkleConfig>
+            + BytesToUnitDeserialize,
     {
         let mut batch_size_le_bytes: [u8; 4] = [0, 0, 0, 0];
         verifier_state.fill_next_bytes(&mut batch_size_le_bytes)?;
@@ -562,37 +597,6 @@ where
             ood_answers: vec![],
         })
     }
-
-    pub fn verify_batched<VerifierState>(
-        &self,
-        verifier_state: &mut VerifierState,
-        statement: &StatementVerifier<F>,
-        expected_batch_size: usize,
-        whir_proof: &BatchedWhirProof<MerkleConfig, F>,
-    ) -> ProofResult<()>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + DeserializeField<F>
-            + PoWChallenge
-            + DigestReader<MerkleConfig>
-            + ByteReader,
-    {
-        // Parse commitment
-        let parsed_commitment =
-            self.parse_batched_commitment(expected_batch_size, verifier_state)?;
-
-        // Parse proof and validate it STIR queries against the committed Merkle roots.
-        let parsed_proof = self.parse_proof(
-            verifier_state,
-            &parsed_commitment,
-            whir_proof,
-            statement.constraints.len(),
-        )?;
-
-        // Verify generically
-        self.verify_parsed(statement, &parsed_commitment, &parsed_proof)
-    }
 }
 
 #[cfg(test)]
@@ -604,7 +608,13 @@ mod batching_tests {
 
     use super::*;
     use crate::{
-        crypto::{fields::Field64, merkle_tree::blake3 as merkle_tree},
+        crypto::{
+            fields::Field64,
+            merkle_tree::{
+                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
+                parameters::default_config,
+            },
+        },
         parameters::{
             FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
         },
@@ -612,7 +622,7 @@ mod batching_tests {
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
         whir::{
-            committer::Committer,
+            committer::CommitmentWriter,
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
@@ -622,7 +632,7 @@ mod batching_tests {
     };
 
     /// Merkle tree configuration type for commitment layers.
-    type MerkleConfig = merkle_tree::MerkleTreeParams<F>;
+    type MerkleConfig = Blake3MerkleTreeParams<F>;
     /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
@@ -659,7 +669,8 @@ mod batching_tests {
         // Randomness source
         let mut rng = ark_std::test_rng();
         // Generate Merkle parameters: hash function and compression function
-        let (leaf_hash_params, two_to_one_params) = merkle_tree::default_config::<F>(&mut rng);
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
 
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);
@@ -706,7 +717,7 @@ mod batching_tests {
         let mut prover_state = io.to_prover_state();
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = Committer::new(params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let batched_witness = committer
             .batch_commit(&mut prover_state, &[poly1, poly2])
             .unwrap();
@@ -748,14 +759,26 @@ mod batching_tests {
             .unwrap();
 
         // Create a verifier with matching parameters
-        let verifier = Verifier::new(params);
+        let verifier = Verifier::new(&params);
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
 
+        // Create a commitment reader
+        let commitment_reader = CommitmentReader::new(&params);
+
+        let parsed_commitment = commitment_reader
+            .parse_batched_commitment(2, &mut verifier_state)
+            .unwrap();
+
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify_batched(&mut verifier_state, &statement_verifier, 2, &proof)
+            .verify_batched(
+                &mut verifier_state,
+                &parsed_commitment,
+                &statement_verifier,
+                &proof
+            )
             .is_ok());
     }
 

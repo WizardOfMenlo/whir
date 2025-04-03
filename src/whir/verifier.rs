@@ -59,20 +59,6 @@ where
     }
 }
 
-impl<F, M: Config> WhirCommitmentData<F, M> for ParsedCommitment<F, M::InnerDigest> {
-    fn committed_root(&self) -> &<M as Config>::InnerDigest {
-        &self.root
-    }
-
-    fn ood_data(&self) -> (&[F], &[F]) {
-        (&self.ood_points, &self.ood_answers)
-    }
-
-    fn batching_randomness(&self) -> Option<F> {
-        None
-    }
-}
-
 impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,

@@ -205,7 +205,7 @@ where
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
-        // Handle OOD samples
+        // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
             prover_state,
             round_params.ood_samples,
