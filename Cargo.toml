@@ -60,7 +60,7 @@ criterion = "0.5"
 debug = true
 
 [features]
-default = ["parallel"]
+default = ["parallel", "batching" ]
 parallel = [
     "dep:rayon",
     "ark-poly/parallel",
@@ -69,6 +69,7 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
+batching = []
 
 [[bench]]
 name = "expand_from_coeff"
