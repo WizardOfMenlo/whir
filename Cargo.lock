@@ -1286,6 +1286,7 @@ dependencies = [
  "itertools 0.14.0",
  "proptest",
  "rand",
+ "rand_chacha",
  "rayon",
  "serde",
  "serde_json",
