@@ -15,18 +15,16 @@ const TEST_CASES: &[(u32, usize)] = &[
     (20, 2),
 ];
 
+// TODO: Avoid benchmarking the setup
 #[divan::bench(args = TEST_CASES)]
 fn expand_from_coeff(case: &(u32, usize)) {
     let (exp, expansion) = *case;
-    
+
     // Compute 2^exp
     let size = 1 << exp;
     let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
 
-    ntt::expand_from_coeff(
-        black_box(&coeffs),
-        black_box(expansion)
-    );
+    black_box(ntt::expand_from_coeff(&coeffs, expansion));
 }
 
 fn main() {
