@@ -1,30 +1,38 @@
-use divan::black_box;
+use divan::{black_box, AllocProfiler, Bencher};
 use whir::{crypto::fields::Field64, ntt};
+
+#[global_allocator]
+static ALLOC: AllocProfiler = AllocProfiler::system();
 
 // Test cases with polynomial sizes defined as exponents of 2 and expansion factors
 const TEST_CASES: &[(u32, usize)] = &[
-    (1, 2),
-    (2, 4),
-    (3, 2),
-    (4, 2),
-    (5, 4),
-    (6, 8),
-    (7, 4),
-    (10, 4),
-    (11, 2),
+    (18, 2),
     (20, 2),
+    (22, 2),
+    (24, 2),
+    (26, 2),
+    (18, 4),
+    (20, 4),
+    (22, 4),
+    (24, 4),
+    (26, 4),
 ];
 
-// TODO: Avoid benchmarking the setup
-#[divan::bench(args = TEST_CASES)]
-fn expand_from_coeff(case: &(u32, usize)) {
-    let (exp, expansion) = *case;
+fn thread_counts() -> Vec<usize> {
+    vec![/* available parallelism */ 0, 1, 4, 8]
+}
 
-    // Compute 2^exp
-    let size = 1 << exp;
-    let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
+#[divan::bench(args = TEST_CASES, threads = thread_counts())]
+fn expand_from_coeff(bencher: Bencher, case: &(u32, usize)) {
+    bencher
+        .with_inputs(|| {
+            let (exp, expansion) = *case;
 
-    black_box(ntt::expand_from_coeff(&coeffs, expansion));
+            let size = 1 << exp;
+            let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
+            (coeffs, expansion)
+        })
+        .bench_values(|(coeffs, expansion)| black_box(ntt::expand_from_coeff(&coeffs, expansion)))
 }
 
 fn main() {
