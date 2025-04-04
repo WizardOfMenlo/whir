@@ -40,17 +40,17 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    fn validate_parameters(&self) -> bool {
+    pub(crate) fn validate_parameters(&self) -> bool {
         self.0.mv_parameters.num_variables
             == self.0.folding_factor.total_number(self.0.n_rounds()) + self.0.final_sumcheck_rounds
     }
 
-    fn validate_statement(&self, statement: &Statement<F>) -> bool {
+    pub(crate) fn validate_statement(&self, statement: &Statement<F>) -> bool {
         statement.num_variables() == self.0.mv_parameters.num_variables
             && (self.0.initial_statement || statement.constraints.is_empty())
     }
 
-    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
+    pub(crate) fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
         assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
         if !self.0.initial_statement {
             assert!(witness.ood_points.is_empty());

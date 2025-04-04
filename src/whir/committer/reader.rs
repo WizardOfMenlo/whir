@@ -5,7 +5,7 @@ use spongefish::{
     ProofResult,
 };
 
-use crate::whir::{parameters::WhirConfig, utils::DigestToUnitDeserialize};
+use crate::whir::{parameters::WhirConfig, utils::DigestToUnitDeserialize, WhirCommitmentData};
 
 #[derive(Clone)]
 pub struct ParsedCommitment<F, D> {
@@ -53,5 +53,19 @@ where
             ood_points,
             ood_answers,
         })
+    }
+}
+
+impl<F, M: Config> WhirCommitmentData<F, M> for ParsedCommitment<F, M::InnerDigest> {
+    fn committed_root(&self) -> &<M as Config>::InnerDigest {
+        &self.root
+    }
+
+    fn ood_data(&self) -> (&[F], &[F]) {
+        (&self.ood_points, &self.ood_answers)
+    }
+
+    fn batching_randomness(&self) -> Option<F> {
+        None
     }
 }

@@ -376,6 +376,8 @@ where
     ///
     /// These define the hashing function used when combining two child nodes into a parent node.
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    pub enable_batching: bool,
 }
 
 impl<MerkleConfig, PowStrategy> Display for WhirParameters<MerkleConfig, PowStrategy>

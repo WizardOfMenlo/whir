@@ -49,6 +49,9 @@ where
     // Merkle tree parameters
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    // Batching related flag
+    pub enable_batching: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -91,18 +94,19 @@ where
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate);
 
-        let committment_ood_samples = if whir_parameters.initial_statement {
-            Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                num_variables,
-                log_inv_rate,
-                log_eta_start,
-                field_size_bits,
-            )
-        } else {
-            0
-        };
+        let committment_ood_samples =
+            if whir_parameters.initial_statement && !whir_parameters.enable_batching {
+                Self::ood_samples(
+                    whir_parameters.security_level,
+                    whir_parameters.soundness_type,
+                    num_variables,
+                    log_inv_rate,
+                    log_eta_start,
+                    field_size_bits,
+                )
+            } else {
+                0
+            };
 
         let starting_folding_pow_bits = if whir_parameters.initial_statement {
             Self::folding_pow_bits(
@@ -140,14 +144,18 @@ where
                 log_inv_rate,
             );
 
-            let ood_samples = Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                num_variables,
-                next_rate,
-                log_next_eta,
-                field_size_bits,
-            );
+            let ood_samples = if whir_parameters.enable_batching && round == 0 {
+                0
+            } else {
+                Self::ood_samples(
+                    whir_parameters.security_level,
+                    whir_parameters.soundness_type,
+                    num_variables,
+                    next_rate,
+                    log_next_eta,
+                    field_size_bits,
+                )
+            };
 
             let query_error =
                 Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, num_queries);
@@ -220,6 +228,7 @@ where
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
+            enable_batching: whir_parameters.enable_batching,
         }
     }
 
@@ -649,6 +658,7 @@ mod tests {
             fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
+            enable_batching: false,
         }
     }
 
