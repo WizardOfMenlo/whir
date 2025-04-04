@@ -5,12 +5,15 @@ use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult, UnitToBytes,
 };
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use crate::poly_utils::multilinear::MultilinearPoint;
 
 /// A utility function to sample Out-of-Domain (OOD) points and evaluate them
 ///
 /// This operates on the prover side.
+#[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
 pub(crate) fn sample_ood_points<F, ProverState, E>(
     prover_state: &mut ProverState,
     num_samples: usize,

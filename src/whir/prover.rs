@@ -8,6 +8,8 @@ use spongefish::{
     ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
+#[cfg(feature = "tracing")]
+use tracing::{instrument, span, Level};
 
 use super::{
     committer::Witness,
@@ -58,6 +60,7 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<ProverState>(
         &self,
         prover_state: &mut ProverState,
@@ -129,7 +132,7 @@ where
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         randomness_vec.resize(self.0.mv_parameters.num_variables, F::ZERO);
 
-        let round_state = RoundState {
+        let mut round_state = RoundState {
             domain: self.0.starting_domain.clone(),
             round: 0,
             sumcheck_prover,
@@ -142,15 +145,39 @@ where
             statement,
         };
 
-        self.round(prover_state, round_state)
+        // Run WHIR rounds
+        for _round in 0..=self.0.n_rounds() {
+            self.round(prover_state, &mut round_state)?;
+        }
+
+        // Extract WhirProof
+        let mut randomness_vec_rev = round_state.randomness_vec;
+        randomness_vec_rev.reverse();
+        let statement_values_at_random_point = round_state
+            .statement
+            .constraints
+            .iter()
+            .filter_map(|(weights, _)| {
+                if let Weights::Linear { weight } = weights {
+                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(WhirProof {
+            merkle_paths: round_state.merkle_proofs,
+            statement_values_at_random_point,
+        })
     }
 
     #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
     fn round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+        round_state: &mut RoundState<F, MerkleConfig>,
+    ) -> ProofResult<()>
     where
         ProverState: UnitToField<F>
             + UnitToBytes
@@ -195,12 +222,16 @@ where
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
         let leafs_iter = evals.par_chunks_exact(1 << folding_factor_next);
-        let merkle_tree = MerkleTree::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+        let merkle_tree = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+            MerkleTree::new(
+                &self.0.leaf_hash_params,
+                &self.0.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap()
+        };
 
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
@@ -216,7 +247,7 @@ where
         // STIR Queries
         let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
             prover_state,
-            &round_state,
+            round_state,
             num_variables,
             round_params,
             ood_points,
@@ -234,7 +265,7 @@ where
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
         self.0.fold_optimisation.stir_evaluations_prover(
-            &round_state,
+            round_state,
             &stir_challenges_indexes,
             &answers,
             self.0.folding_factor,
@@ -244,6 +275,13 @@ where
 
         // PoW
         if round_params.pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = round_params.pow_bits
+            )
+            .entered();
             prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
         }
 
@@ -268,7 +306,7 @@ where
                 let mut statement = Statement::new(folded_coefficients.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
-                    let weights = Weights::evaluation(point.clone());
+                    let weights = Weights::evaluation(point);
                     statement.add_constraint(weights, eval);
                 }
                 SumcheckSingle::new(
@@ -295,28 +333,25 @@ where
             *dst = *src;
         }
 
-        let round_state = RoundState {
-            round: round_state.round + 1,
-            domain: new_domain,
-            sumcheck_prover: Some(sumcheck_prover),
-            folding_randomness,
-            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
-            prev_merkle: merkle_tree,
-            prev_merkle_answers: evals,
-            merkle_proofs: round_state.merkle_proofs,
-            randomness_vec: round_state.randomness_vec,
-            statement: round_state.statement,
-        };
+        // Update round state
+        round_state.round += 1;
+        round_state.domain = new_domain;
+        round_state.sumcheck_prover = Some(sumcheck_prover);
+        round_state.folding_randomness = folding_randomness;
+        round_state.coefficients = folded_coefficients;
+        round_state.prev_merkle = merkle_tree;
+        round_state.prev_merkle_answers = evals;
 
-        self.round(prover_state, round_state)
+        Ok(())
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_coefficients.num_coeffs())))]
     fn final_round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        mut round_state: RoundState<F, MerkleConfig>,
+        round_state: &mut RoundState<F, MerkleConfig>,
         folded_coefficients: &CoefficientList<F>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    ) -> ProofResult<()>
     where
         ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge,
     {
@@ -351,6 +386,13 @@ where
 
         // PoW
         if self.0.final_pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = self.0.final_pow_bits
+            )
+            .entered();
             prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
         }
 
@@ -358,6 +400,7 @@ where
         if self.0.final_sumcheck_rounds > 0 {
             let final_folding_randomness = round_state
                 .sumcheck_prover
+                .clone()
                 .unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 })
@@ -377,27 +420,7 @@ where
                 *dst = *src;
             }
         }
-
-        let mut randomness_vec_rev = round_state.randomness_vec;
-        randomness_vec_rev.reverse();
-
-        let statement_values_at_random_point = round_state
-            .statement
-            .constraints
-            .iter()
-            .filter_map(|(weights, _)| {
-                if let Weights::Linear { weight } = weights {
-                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(WhirProof {
-            merkle_paths: round_state.merkle_proofs,
-            statement_values_at_random_point,
-        })
+        Ok(())
     }
 
     fn compute_stir_queries<ProverState>(

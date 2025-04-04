@@ -9,6 +9,8 @@ mod wavelet;
 use ark_ff::FftField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use self::matrix::MatrixMut;
 pub use self::{
@@ -18,6 +20,7 @@ pub use self::{
 };
 
 /// RS encode at a rate 1/`expansion`.
+#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
 pub fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> {
     let engine = cooley_tukey::NttEngine::<F>::new_from_cache();
     let expanded_size = coeffs.len() * expansion;

@@ -1,6 +1,8 @@
 use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::MultilinearPoint;
 // Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
@@ -33,6 +35,7 @@ use crate::{
 /// - \( o^{-1} \) is the inverse coset offset
 /// - \( g^{-i} \) is the inverse generator raised to index \( i \)
 /// - The function is recursively applied until the vector reduces to size 1.
+#[cfg_attr(feature = "tracing", instrument(skip_all))]
 pub fn compute_fold<F: Field>(
     answers: &[F],
     folding_randomness: &[F],
@@ -125,6 +128,7 @@ pub fn compute_fold_univariate<F: Field>(
 ///
 /// # Panics
 /// Panics if the input size is not divisible by `2^folding_factor`.
+#[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = evals.len(), folding_factor)))]
 pub fn transform_evaluations<F: FftField>(
     evals: &mut [F],
     fold_type: FoldType,

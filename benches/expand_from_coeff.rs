@@ -1,32 +1,36 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use whir::{crypto::fields::Field64, ntt::expand_from_coeff};
+use divan::{black_box, AllocProfiler, Bencher};
+use whir::{crypto::fields::Field64, ntt};
 
-fn bench_expand_from_coeff(c: &mut Criterion) {
-    // Test cases with polynomial sizes defined as exponents of 2 and expansion factors
-    let test_cases = [
-        (1, 2),
-        (2, 4),
-        (3, 2),
-        (4, 2),
-        (5, 4),
-        (6, 8),
-        (7, 4),
-        (10, 4),
-        (11, 2),
-        (20, 2),
-    ];
+#[global_allocator]
+static ALLOC: AllocProfiler = AllocProfiler::system();
 
-    for &(exp, expansion) in &test_cases {
-        // Compute 2^exp
-        let size = 1 << exp;
-        let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
+// Test cases with polynomial sizes defined as exponents of 2 and expansion factors
+const TEST_CASES: &[(u32, usize)] = &[
+    (18, 2),
+    (20, 2),
+    (22, 2),
+    (24, 2),
+    (26, 2),
+    (18, 4),
+    (20, 4),
+    (22, 4),
+    (24, 4),
+    (26, 4),
+];
 
-        c.bench_function(
-            &format!("expand_from_coeff size=2^{exp} exp={expansion}"),
-            |b| b.iter(|| expand_from_coeff(black_box(&coeffs), black_box(expansion))),
-        );
-    }
+#[divan::bench(args = TEST_CASES)]
+fn expand_from_coeff(bencher: Bencher, case: &(u32, usize)) {
+    bencher
+        .with_inputs(|| {
+            let (exp, expansion) = *case;
+
+            let size = 1 << exp;
+            let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
+            (coeffs, expansion)
+        })
+        .bench_values(|(coeffs, expansion)| black_box(ntt::expand_from_coeff(&coeffs, expansion)));
 }
 
-criterion_group!(benches, bench_expand_from_coeff);
-criterion_main!(benches);
+fn main() {
+    divan::main();
+}

@@ -6,6 +6,8 @@ use spongefish::{
     ProofResult,
 };
 use spongefish_pow::{PoWChallenge, PowStrategy};
+#[cfg(feature = "tracing")]
+use tracing::{instrument, span, Level};
 
 use super::SumcheckPolynomial;
 use crate::{
@@ -33,7 +35,7 @@ use crate::{
 /// - The result `h(X)` is a quadratic polynomial in `X`.
 ///
 /// The sumcheck protocol ensures that the claimed sum is correct.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SumcheckSingle<F> {
     /// Evaluations of the polynomial `p(X)`.
     evaluation_of_p: EvaluationsList<F>,
@@ -85,6 +87,7 @@ where
     /// - `b` represents points in `{0,1,2}^1`.
     /// - `w(b, X)` are the generic weights applied to `p(b, X)`.
     /// - `h(X)` is a quadratic polynomial.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.evaluation_of_p.num_evals())))]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables() >= 1);
 
@@ -155,6 +158,7 @@ where
     /// - Samples random values to progressively reduce the polynomial.
     /// - Applies proof-of-work grinding if required.
     /// - Returns the sampled folding randomness values used in each reduction step.
+    #[cfg_attr(feature = "tracing", instrument(skip(self, prover_state)))]
     pub fn compute_sumcheck_polynomials<S, ProverState>(
         &mut self,
         prover_state: &mut ProverState,
@@ -175,6 +179,8 @@ where
 
             // Do PoW if needed
             if pow_bits > 0. {
+                #[cfg(feature = "tracing")]
+                let _span = span!(Level::INFO, "challenge_pow", pow_bits).entered();
                 prover_state.challenge_pow::<S>(pow_bits)?;
             }
 
@@ -202,6 +208,7 @@ where
     /// \end{equation}
     ///
     /// where `w_{z_i}(X)` represents the constraint encoding at point `z_i`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn add_new_equality(
         &mut self,
         points: &[MultilinearPoint<F>],
@@ -242,9 +249,10 @@ where
     /// - Shrinks `p(X)` and `w(X)` by half.
     /// - Fixes `X_1 = r`, reducing the dimensionality.
     /// - Updates `sum` using `sumcheck_poly`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.evaluation_of_p.num_evals())))]
     pub fn compress(
         &mut self,
-        combination_randomness: F, // Scale the initial point
+        combination_randomness: F,
         folding_randomness: &MultilinearPoint<F>,
         sumcheck_poly: &SumcheckPolynomial<F>,
     ) {
@@ -253,39 +261,66 @@ where
 
         let randomness = folding_randomness.0[0];
 
+        let fold_chunk = |slice: &[F]| -> F { (slice[1] - slice[0]) * randomness + slice[0] };
+
         #[cfg(feature = "parallel")]
-        let (evaluations_of_p, evaluations_of_eq) = rayon::join(
-            || {
-                self.evaluation_of_p
-                    .evals()
-                    .par_chunks_exact(2)
-                    .map(|at| (at[1] - at[0]) * randomness + at[0])
-                    .collect()
-            },
-            || {
-                self.weights
-                    .evals()
-                    .par_chunks_exact(2)
-                    .map(|at| (at[1] - at[0]) * randomness + at[0])
-                    .collect()
-            },
-        );
+        let (evaluations_of_p, evaluations_of_eq) = {
+            // Threshold below which sequential computation is faster
+            //
+            // This was chosen based on experiments with the `compress` function.
+            // It is possible that the threshold can be tuned further.
+            const PARALLEL_THRESHOLD: usize = 4096;
+
+            if self.evaluation_of_p.evals().len() >= PARALLEL_THRESHOLD
+                && self.weights.evals().len() >= PARALLEL_THRESHOLD
+            {
+                rayon::join(
+                    || {
+                        self.evaluation_of_p
+                            .evals()
+                            .par_chunks_exact(2)
+                            .map(fold_chunk)
+                            .collect()
+                    },
+                    || {
+                        self.weights
+                            .evals()
+                            .par_chunks_exact(2)
+                            .map(fold_chunk)
+                            .collect()
+                    },
+                )
+            } else {
+                (
+                    self.evaluation_of_p
+                        .evals()
+                        .chunks_exact(2)
+                        .map(fold_chunk)
+                        .collect(),
+                    self.weights
+                        .evals()
+                        .chunks_exact(2)
+                        .map(fold_chunk)
+                        .collect(),
+                )
+            }
+        };
 
         #[cfg(not(feature = "parallel"))]
         let (evaluations_of_p, evaluations_of_eq) = (
             self.evaluation_of_p
                 .evals()
                 .chunks_exact(2)
-                .map(|at| (at[1] - at[0]) * randomness + at[0])
+                .map(fold_chunk)
                 .collect(),
             self.weights
                 .evals()
                 .chunks_exact(2)
-                .map(|at| (at[1] - at[0]) * randomness + at[0])
+                .map(fold_chunk)
                 .collect(),
         );
 
-        // Update
+        // Update internal state
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
         self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);

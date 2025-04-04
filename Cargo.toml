@@ -45,15 +45,18 @@ rand_chacha = "0.3"
 clap = { version = "4.4.17", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = ["arkworks-algebra"] }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = [
+    "arkworks-algebra",
+] }
 spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
 rayon = { version = "1.10.0", optional = true }
 thiserror = "2.0"
 itertools = "0.14"
+tracing = { version = "0.1.41", optional = true }
 
 [dev-dependencies]
 proptest = "1.0"
-criterion = "0.5"
+divan = { version = "2.10.0", package = "codspeed-divan-compat" }
 
 [profile.release]
 debug = true
@@ -68,7 +71,12 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
+tracing = ["dep:tracing"]
 
 [[bench]]
 name = "expand_from_coeff"
+harness = false
+
+[[bench]]
+name = "sumcheck"
 harness = false
