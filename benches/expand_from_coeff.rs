@@ -18,11 +18,7 @@ const TEST_CASES: &[(u32, usize)] = &[
     (26, 4),
 ];
 
-fn thread_counts() -> Vec<usize> {
-    vec![/* available parallelism */ 0, 1, 4, 8]
-}
-
-#[divan::bench(args = TEST_CASES, threads = thread_counts())]
+#[divan::bench(args = TEST_CASES)]
 fn expand_from_coeff(bencher: Bencher, case: &(u32, usize)) {
     bencher
         .with_inputs(|| {

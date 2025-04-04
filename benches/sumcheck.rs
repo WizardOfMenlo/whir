@@ -11,11 +11,8 @@ use whir::{
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26];
-fn thread_counts() -> Vec<usize> {
-    vec![/* available parallelism */ 0, 1, 4, 8]
-}
 
-#[divan::bench(args = SIZES, threads = thread_counts())]
+#[divan::bench(args = SIZES)]
 fn sumcheck_first_round(bencher: Bencher, size: u64) {
     bencher
         .with_inputs(|| {
