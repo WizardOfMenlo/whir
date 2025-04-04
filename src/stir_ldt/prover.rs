@@ -5,8 +5,7 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    parameters::FoldType,
-    poly_utils::{self, fold::restructure_evaluations},
+    poly_utils::{self},
     utils::{self, expand_randomness},
 };
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
@@ -35,30 +34,9 @@ where
     MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: nimue_pow::PowStrategy,
 {
-    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
-        // Check that for each round the repetition parameters are appropriate.
-        // This is the inequality from Construction 5.2, bullet point 6.
-        // let mut degree = 1 << self.0.uv_parameters.log_degree;
-        // for round_param in self.0.round_parameters.iter() {
-        //     degree /= 1 << self.0.folding_factor;
-        //     if round_param.num_queries + round_param.ood_samples <= degree {
-        //         return false;
-        //     }
-        // }
-
-        // Check that the degrees add up
-        assert_eq!(
-            config.uv_parameters.log_degree,
-            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
-        )
-    }
-
-    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
-        assert_eq!(
-            (witness.polynomial.degree() + 1),
-            1 << self.0.uv_parameters.log_degree,
-        )
-    }
+    //==============================================================================================
+    // 1. Constructor and public interface
+    //==============================================================================================
 
     pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self::validate_config(&config);
@@ -98,6 +76,39 @@ where
         self.final_round(merlin, ctx)
     }
 
+    //==============================================================================================
+    // 2. Validation helpers
+    //==============================================================================================
+
+    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
+        // Check that for each round the repetition parameters are appropriate.
+        // This is the inequality from Construction 5.2, bullet point 6.
+        // let mut degree = 1 << self.0.uv_parameters.log_degree;
+        // for round_param in self.0.round_parameters.iter() {
+        //     degree /= 1 << self.0.folding_factor;
+        //     if round_param.num_queries + round_param.ood_samples <= degree {
+        //         return false;
+        //     }
+        // }
+
+        // Check that the degrees add up
+        assert_eq!(
+            config.uv_parameters.log_degree,
+            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
+        )
+    }
+
+    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
+        assert_eq!(
+            (witness.polynomial.degree() + 1),
+            1 << self.0.uv_parameters.log_degree,
+        )
+    }
+
+    //==============================================================================================
+    // 3. Core polynomial operations
+    //==============================================================================================
+
     fn fold(coeffs: &[F], r_fold: F, folding_factor: usize) -> DensePolynomial<F> {
         #[cfg(not(feature = "parallel"))]
         let coeffs = coeffs
@@ -113,6 +124,10 @@ where
 
         DensePolynomial::from_coefficients_vec(coeffs)
     }
+
+    //==============================================================================================
+    // 4. Protocol phases (ordered by workflow)
+    //==============================================================================================
 
     fn folding_phase(
         &self,
@@ -131,19 +146,9 @@ where
         // They also partially overlap and undo one another. We should merge them.
         let g_evals_folded = utils::stack_evaluations(g_evals, self.0.folding_factor);
 
-        // TODO: if fold_type is always Naive, this is just an assertion, nothing happens here
-        //
         // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
         // This allows for the evaluation of the virutal function using an interpolation on the rows.
-        // TODO: for stir we do only Naive, so this will need to be adapted.
-        let g_evals_folded = restructure_evaluations(
-            g_evals_folded,
-            FoldType::Naive,
-            g_domain.backing_domain.group_gen(),
-            g_domain.backing_domain.group_gen_inv(),
-            self.0.folding_factor,
-        );
-
+        //
         // The leaves of the merkle tree are the k points that are the
         // roots of unity of the index in the previous domain. This
         // allows for the evaluation of the virtual function.
@@ -190,7 +195,8 @@ where
             .generate_multi_proof(r_shift_indexes.clone())
             .unwrap();
 
-        ctx.merkle_proofs.push((merkle_proof, virtual_evals));
+        ctx.merkle_proofs
+            .push((merkle_proof, virtual_evals.clone()));
 
         Ok(r_shift_indexes)
     }
@@ -290,6 +296,10 @@ where
             merkle_proofs: ctx.merkle_proofs,
         })
     }
+
+    //==============================================================================================
+    // 5. Utility functions
+    //==============================================================================================
 
     fn indexes_to_coset_evaluations(
         &self,

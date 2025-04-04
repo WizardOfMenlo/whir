@@ -12,6 +12,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use crate::{
+    parameters::FoldType,
     poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
     utils,
 };
@@ -364,22 +365,31 @@ where
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
 
-        let mut r_shift_evals: Vec<F> = all_r_shift_indexes[0]
-            .iter()
-            .zip(all_r_shift_virtual_evals[0].iter())
-            .map(|(index, coset_eval)| {
-                let coset_offset_inv =
-                    domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
-                compute_fold_univariate(
-                    coset_eval,
-                    r_folds[0],
-                    coset_offset_inv,
-                    coset_gen_inv,
-                    self.two_inv,
-                    self.params.folding_factor,
-                )
-            })
-            .collect();
+        // At this point we can I guess omit the compute fold univariate, if the strategy is
+        // `ProverHelps`.
+        let mut r_shift_evals: Vec<F> = match self.params.fold_optimization {
+            FoldType::Naive => all_r_shift_indexes[0]
+                .iter()
+                .zip(all_r_shift_virtual_evals[0].iter())
+                .map(|(index, coset_eval)| {
+                    let coset_offset_inv =
+                        domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
+                    compute_fold_univariate(
+                        coset_eval,
+                        r_folds[0],
+                        coset_offset_inv,
+                        coset_gen_inv,
+                        self.two_inv,
+                        self.params.folding_factor,
+                    )
+                })
+                .collect(),
+            FoldType::ProverHelps => all_r_shift_virtual_evals[0]
+                .iter()
+                .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.to_vec()))
+                .map(|poly| poly.evaluate(&r_folds[0]))
+                .collect(),
+        };
 
         for (r_index, round) in parsed.rounds.iter().enumerate() {
             // The next virtual function is defined by the following
@@ -491,7 +501,7 @@ where
     }
 }
 
-struct ParseProofContext<F, D> {
+struct ParseProofContext<F: Field, D> {
     r_fold: F,
     domain_size: usize,
     root_of_unity: F,
