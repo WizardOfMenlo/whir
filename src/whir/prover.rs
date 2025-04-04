@@ -341,7 +341,7 @@ where
         round_state.coefficients = folded_coefficients;
         round_state.prev_merkle = merkle_tree;
         round_state.prev_merkle_answers = evals;
-      
+
         Ok(())
     }
 
