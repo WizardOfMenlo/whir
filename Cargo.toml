@@ -54,7 +54,7 @@ itertools = "0.14"
 
 [dev-dependencies]
 proptest = "1.0"
-divan = "0.1.17"
+divan = { version = "2.10.0", package = "codspeed-divan-compat" }
 
 [profile.release]
 debug = true
