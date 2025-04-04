@@ -1,10 +1,5 @@
 use crate::poly_utils::multilinear::MultilinearPoint;
-use crate::utils::to_binary;
 use ark_ff::Field;
-use rand::{
-    distributions::{Distribution, Standard},
-    Rng, RngCore,
-};
 
 use self::hypercube::BinaryHypercubePoint;
 
@@ -123,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_equality3() {
         let point = MultilinearPoint(vec![F::from(0), F::from(0)]);
 

@@ -27,10 +27,9 @@ use whir::{
             HashCounter,
         },
     },
-    parameters::*,
     parameters::{
         default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
-        SoundnessType,
+        SoundnessType, UnivariateParameters,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     stir_ldt::stir_proof_size,
@@ -131,6 +130,7 @@ struct StirBenchmarkOutput {
 
 type PowStrategy = Blake3PoW;
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let mut args = Args::parse();
     let field = args.field;
@@ -554,7 +554,6 @@ fn run_whir<F, MerkleConfig>(
         .create(true)
         .open("outputs/whir_bench_output.json")
         .unwrap();
-    use std::io::Write;
     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
 }
 
@@ -568,6 +567,7 @@ fn run_stir_ldt<F, MerkleConfig>(
     MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
     ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
@@ -621,8 +621,7 @@ fn run_stir_ldt<F, MerkleConfig>(
 
         let domain_separator = DomainSeparator::new("🌪️")
             .commit_statement(&params)
-            .add_stir_proof(&params)
-            .clone();
+            .add_stir_proof(&params);
 
         let mut prover_state = domain_separator.to_prover_state();
 
@@ -641,13 +640,19 @@ fn run_stir_ldt<F, MerkleConfig>(
         let stir_ldt_argument_size = stir_proof_size(prover_state.narg_string(), &stir_proof);
         let stir_ldt_prover_hashes = HashCounter::get();
 
+        let commitment_reader = whir::stir_ldt::committer::CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
 
         HashCounter::reset();
         let stir_ldt_verifier_time = Instant::now();
 
         let mut verifier_state = domain_separator.to_verifier_state(prover_state.narg_string());
-        verifier.verify(&mut verifier_state, &stir_proof).unwrap();
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        verifier
+            .verify(&mut verifier_state, &parsed_commitment, &stir_proof)
+            .unwrap();
         let stir_ldt_verifier_time = stir_ldt_verifier_time.elapsed();
         let stir_ldt_verifier_hashes = HashCounter::get();
 

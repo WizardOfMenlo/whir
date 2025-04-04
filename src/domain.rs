@@ -94,6 +94,7 @@ where
         }
     }
 
+    #[must_use]
     pub fn scale_with_offset(&self, power: usize) -> Self {
         Self {
             root_of_unity: self.root_of_unity,

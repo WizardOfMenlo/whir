@@ -6,6 +6,7 @@ pub mod committer;
 pub mod domainsep;
 pub mod parameters;
 pub mod prover;
+pub mod utils;
 pub mod verifier;
 
 // Only includes the authentication paths
@@ -48,8 +49,11 @@ mod tests {
             FoldType, FoldingFactor, ProtocolParameters, SoundnessType, UnivariateParameters,
         },
         stir_ldt::{
-            committer::CommitmentWriter, domainsep::StirDomainSeparator, parameters::StirConfig,
-            prover::Prover, verifier::Verifier,
+            committer::{CommitmentReader, CommitmentWriter},
+            domainsep::StirDomainSeparator,
+            parameters::StirConfig,
+            prover::Prover,
+            verifier::Verifier,
         },
     };
 
@@ -99,8 +103,7 @@ mod tests {
 
         let domainsep = DomainSeparator::<DefaultHash>::new("🌪️")
             .commit_statement(&params)
-            .add_stir_proof(&params)
-            .clone();
+            .add_stir_proof(&params);
 
         let mut prover_state = domainsep.to_prover_state();
 
@@ -110,10 +113,16 @@ mod tests {
         let prover = Prover::new(params.clone());
 
         let proof = prover.prove(&mut prover_state, &witness).unwrap();
+        let commitment_reader = CommitmentReader::new(&params);
 
         let verifier = Verifier::new(&params);
-        let mut arthur = domainsep.to_verifier_state(prover_state.narg_string());
-        assert!(verifier.verify(&mut arthur, &proof,).is_ok());
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        assert!(verifier
+            .verify(&mut verifier_state, &parsed_commitment, &proof,)
+            .is_ok());
     }
 
     #[test]

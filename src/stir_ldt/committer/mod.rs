@@ -5,6 +5,7 @@ use ark_poly::univariate::DensePolynomial;
 pub mod reader;
 pub mod writer;
 
+pub use reader::CommitmentReader;
 pub use writer::CommitmentWriter;
 
 pub struct Witness<F, MerkleConfig>

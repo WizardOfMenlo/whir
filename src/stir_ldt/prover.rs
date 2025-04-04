@@ -18,7 +18,7 @@ use crate::{
     domain::Domain,
     parameters::FoldType,
     poly_utils::{self, fold::transform_evaluations},
-    utils::{self, expand_randomness},
+    utils::{self, expand_randomness, indexes_to_coset_evaluations},
     whir::utils::DigestToUnitSerialize,
 };
 use rand::{Rng, SeedableRng};
@@ -51,14 +51,14 @@ where
         assert_eq!(
             config.uv_parameters.log_degree,
             (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
-        )
+        );
     }
 
     fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
         assert_eq!(
             (witness.polynomial.degree() + 1),
             1 << self.0.uv_parameters.log_degree,
-        )
+        );
     }
 
     pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
@@ -184,11 +184,8 @@ where
         let r_shift_indexes =
             utils::dedup((0..num_queries).map(|_| stir_gen.gen_range(0..size_of_folded_domain)));
 
-        let virtual_evals = self.indexes_to_coset_evaluations(
-            r_shift_indexes.clone(),
-            1 << self.0.folding_factor,
-            &ctx.evals,
-        );
+        let virtual_evals =
+            indexes_to_coset_evaluations(&r_shift_indexes, 1 << self.0.folding_factor, &ctx.evals);
 
         // Merkle proof for the previous evaluations.
         let merkle_proof = ctx
@@ -309,25 +306,6 @@ where
         Ok(StirProof {
             merkle_proofs: ctx.merkle_proofs,
         })
-    }
-
-    fn indexes_to_coset_evaluations(
-        &self,
-        stir_challenges_indexes: Vec<usize>,
-        fold_size: usize,
-        evals: &[F],
-    ) -> Vec<Vec<F>>
-    where
-        F: FftField,
-        MerkleConfig: Config<Leaf = [F]>,
-        PowStrategy: spongefish_pow::PowStrategy,
-    {
-        assert!(evals.len() % fold_size == 0);
-        let stir_challenges_virtual_evals: Vec<Vec<F>> = stir_challenges_indexes
-            .iter()
-            .map(|i| evals[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect();
-        stir_challenges_virtual_evals
     }
 }
 

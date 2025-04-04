@@ -84,7 +84,7 @@ pub struct UnivariateParameters<F> {
 }
 
 impl<F> UnivariateParameters<F> {
-    pub fn new(log_degree: usize) -> Self {
+    pub const fn new(log_degree: usize) -> Self {
         Self {
             log_degree,
             _field: PhantomData,

@@ -27,7 +27,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     MerkleConfig::InnerDigest: AsRef<[u8]>,
 {
-    pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
 

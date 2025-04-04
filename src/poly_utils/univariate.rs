@@ -33,7 +33,7 @@ pub fn naive_interpolation<F: Field>(
 
     // Compute the ans polynomial (this is just a naive interpolation)
     let mut ans_polynomial = DensePolynomial::from_coefficients_slice(&[]);
-    for (a, eval) in points.iter() {
+    for (a, eval) in &points {
         // Computes the vanishing (apart from x - a)
         let vanishing_adjusted =
             &vanishing_poly / &DensePolynomial::from_coefficients_slice(&[-*a, F::ONE]);

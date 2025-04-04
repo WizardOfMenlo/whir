@@ -1,3 +1,4 @@
+use ark_ff::FftField;
 use ark_ff::Field;
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
@@ -41,9 +42,9 @@ pub fn base_decomposition(mut value: usize, base: u8, n_bits: usize) -> Vec<u8> 
 /// This function returns a vector containing the sequence:
 /// `[1, base, base^2, base^3, ..., base^(len-1)]`
 pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
-    return std::iter::successors(Some(F::ONE), |&prev| Some(base * prev))
+    std::iter::successors(Some(F::ONE), |&prev| Some(base * prev))
         .take(len)
-        .collect();
+        .collect()
 }
 
 // Deduplicates AND orders a vector
@@ -52,6 +53,22 @@ pub fn dedup<T: Ord>(iter: impl IntoIterator<Item = T>) -> Vec<T> {
     vec.sort_unstable();
     vec.dedup();
     vec
+}
+
+pub fn indexes_to_coset_evaluations<F>(
+    stir_challenges_indexes: &[usize],
+    fold_size: usize,
+    evals: &[F],
+) -> Vec<Vec<F>>
+where
+    F: FftField,
+{
+    assert!(evals.len() % fold_size == 0);
+    let stir_challenges_virtual_evals: Vec<Vec<F>> = stir_challenges_indexes
+        .iter()
+        .map(|i| evals[i * fold_size..(i + 1) * fold_size].to_vec())
+        .collect();
+    stir_challenges_virtual_evals
 }
 
 // FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)

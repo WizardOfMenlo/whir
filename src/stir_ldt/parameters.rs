@@ -129,10 +129,10 @@ where
             );
 
             round_parameters.push(RoundConfig {
-                ood_samples,
-                num_queries,
                 pow_bits,
                 folding_pow_bits,
+                num_queries,
+                ood_samples,
                 log_inv_rate,
             });
 
@@ -152,7 +152,7 @@ where
                 - Self::rbr_queries(stir_parameters.soundness_type, log_inv_rate, final_queries),
         );
 
-        StirConfig {
+        Self {
             security_level: stir_parameters.security_level,
             max_pow_bits: stir_parameters.pow_bits,
             uv_parameters,
@@ -303,6 +303,7 @@ where
     }
 
     // Used to select the number of queries
+    #[allow(clippy::cast_sign_loss)]
     pub fn queries(
         soundness_type: SoundnessType,
         protocol_security_level: usize,
@@ -310,7 +311,7 @@ where
     ) -> usize {
         let num_queries_f = match soundness_type {
             SoundnessType::UniqueDecoding => {
-                let rate = 1. / ((1 << log_inv_rate) as f64);
+                let rate = 1. / f64::from(1 << log_inv_rate);
                 let denom = (0.5 * (1. + rate)).log2();
 
                 -(protocol_security_level as f64) / denom
@@ -332,7 +333,7 @@ where
         let num_queries = num_queries as f64;
         match soundness_type {
             SoundnessType::UniqueDecoding => {
-                let rate = 1. / ((1 << log_inv_rate) as f64);
+                let rate = 1. / f64::from(1 << log_inv_rate);
                 let denom = -(0.5 * (1. + rate)).log2();
 
                 num_queries * denom
@@ -340,6 +341,63 @@ where
             SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate as f64,
             SoundnessType::ConjectureList => num_queries * log_inv_rate as f64,
         }
+    }
+
+    fn report_parameters(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        field_size_bits: usize,
+        log_degree: usize,
+        r: &RoundConfig,
+        next_rate: usize,
+        log_eta: f64,
+    ) -> Result<(), std::fmt::Error> {
+        if r.ood_samples > 0 {
+            writeln!(
+                f,
+                "{:.1} bits -- OOD sample",
+                Self::rbr_ood_sample(
+                    self.soundness_type,
+                    log_degree,
+                    next_rate,
+                    log_eta,
+                    field_size_bits,
+                    r.ood_samples
+                )
+            )?;
+        }
+        let query_error = Self::rbr_queries(self.soundness_type, r.log_inv_rate, r.num_queries);
+        writeln!(
+            f,
+            "{:.1} bits -- query error: {:.1}, pow: {:.1}",
+            query_error + r.pow_bits,
+            query_error,
+            r.pow_bits,
+        )?;
+        let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
+            self.soundness_type,
+            field_size_bits,
+            log_degree,
+            next_rate,
+            log_eta,
+        );
+        let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
+            self.soundness_type,
+            field_size_bits,
+            log_degree,
+            next_rate,
+            log_eta,
+        );
+        writeln!(
+            f,
+            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+            prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
+            self.folding_factor,
+            prox_gaps_error,
+            sumcheck_error,
+            r.folding_pow_bits,
+        )?;
+        Ok(())
     }
 }
 
@@ -402,54 +460,7 @@ where
             let next_rate = r.log_inv_rate + (self.folding_factor - 1);
             let log_eta = Self::log_eta(next_rate);
 
-            if r.ood_samples > 0 {
-                writeln!(
-                    f,
-                    "{:.1} bits -- OOD sample",
-                    Self::rbr_ood_sample(
-                        self.soundness_type,
-                        log_degree,
-                        next_rate,
-                        log_eta,
-                        field_size_bits,
-                        r.ood_samples
-                    )
-                )?;
-            }
-
-            let query_error = Self::rbr_queries(self.soundness_type, r.log_inv_rate, r.num_queries);
-            writeln!(
-                f,
-                "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-                query_error + r.pow_bits,
-                query_error,
-                r.pow_bits,
-            )?;
-
-            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                self.soundness_type,
-                field_size_bits,
-                log_degree,
-                next_rate,
-                log_eta,
-            );
-            let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-                self.soundness_type,
-                field_size_bits,
-                log_degree,
-                next_rate,
-                log_eta,
-            );
-
-            writeln!(
-                f,
-                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
-                self.folding_factor,
-                prox_gaps_error,
-                sumcheck_error,
-                r.folding_pow_bits,
-            )?;
+            self.report_parameters(f, field_size_bits, log_degree, r, next_rate, log_eta)?;
 
             log_degree -= self.folding_factor;
         }

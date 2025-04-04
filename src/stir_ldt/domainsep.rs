@@ -53,7 +53,7 @@ where
                 .challenge_bytes(32, "stir_queries_seed")
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
-                .challenge_scalars(1, "folding_randomness")
+                .challenge_scalars(1, "folding_randomness");
         }
 
         self.add_scalars(1 << params.final_log_degree, "final_coeffs")
