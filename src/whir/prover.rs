@@ -247,7 +247,7 @@ where
         // STIR Queries
         let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
             prover_state,
-            &round_state,
+            round_state,
             num_variables,
             round_params,
             ood_points,
@@ -265,7 +265,7 @@ where
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
         self.0.fold_optimisation.stir_evaluations_prover(
-            &round_state,
+            round_state,
             &stir_challenges_indexes,
             &answers,
             self.0.folding_factor,
@@ -400,8 +400,7 @@ where
         if self.0.final_sumcheck_rounds > 0 {
             let final_folding_randomness = round_state
                 .sumcheck_prover
-                .as_ref()
-                .cloned()
+                .clone()
                 .unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 })
