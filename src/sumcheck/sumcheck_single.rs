@@ -7,7 +7,7 @@ use spongefish::{
 };
 use spongefish_pow::{PoWChallenge, PowStrategy};
 #[cfg(feature = "tracing")]
-use tracing::instrument;
+use tracing::{instrument, span, Level};
 
 use super::SumcheckPolynomial;
 use crate::{
@@ -87,6 +87,7 @@ where
     /// - `b` represents points in `{0,1,2}^1`.
     /// - `w(b, X)` are the generic weights applied to `p(b, X)`.
     /// - `h(X)` is a quadratic polynomial.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.evaluation_of_p.num_evals())))]
     pub fn compute_sumcheck_polynomial(&self) -> SumcheckPolynomial<F> {
         assert!(self.num_variables() >= 1);
 
@@ -178,6 +179,8 @@ where
 
             // Do PoW if needed
             if pow_bits > 0. {
+                #[cfg(feature = "tracing")]
+                let _span = span!(Level::INFO, "challenge_pow", pow_bits).entered();
                 prover_state.challenge_pow::<S>(pow_bits)?;
             }
 
@@ -205,6 +208,7 @@ where
     /// \end{equation}
     ///
     /// where `w_{z_i}(X)` represents the constraint encoding at point `z_i`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn add_new_equality(
         &mut self,
         points: &[MultilinearPoint<F>],
@@ -245,6 +249,7 @@ where
     /// - Shrinks `p(X)` and `w(X)` by half.
     /// - Fixes `X_1 = r`, reducing the dimensionality.
     /// - Updates `sum` using `sumcheck_poly`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.evaluation_of_p.num_evals())))]
     pub fn compress(
         &mut self,
         combination_randomness: F,

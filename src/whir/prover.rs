@@ -275,6 +275,13 @@ where
 
         // PoW
         if round_params.pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = round_params.pow_bits
+            )
+            .entered();
             prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
         }
 
@@ -378,6 +385,13 @@ where
 
         // PoW
         if self.0.final_pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = self.0.final_pow_bits
+            )
+            .entered();
             prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
         }
 
