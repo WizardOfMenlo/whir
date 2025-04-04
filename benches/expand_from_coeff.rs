@@ -32,7 +32,7 @@ fn expand_from_coeff(bencher: Bencher, case: &(u32, usize)) {
             let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
             (coeffs, expansion)
         })
-        .bench_values(|(coeffs, expansion)| black_box(ntt::expand_from_coeff(&coeffs, expansion)))
+        .bench_values(|(coeffs, expansion)| black_box(ntt::expand_from_coeff(&coeffs, expansion)));
 }
 
 fn main() {
