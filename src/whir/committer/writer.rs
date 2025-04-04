@@ -7,6 +7,8 @@ use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::Witness;
 use crate::{
@@ -47,6 +49,7 @@ where
     /// - Constructs a Merkle tree from the evaluations.
     /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
     pub fn commit<ProverState>(
         &self,
         prover_state: &mut ProverState,

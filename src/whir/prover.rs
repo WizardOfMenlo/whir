@@ -8,6 +8,8 @@ use spongefish::{
     ProofResult, UnitToBytes,
 };
 use spongefish_pow::{self, PoWChallenge};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::{
     committer::Witness,
@@ -58,6 +60,7 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<ProverState>(
         &self,
         prover_state: &mut ProverState,
@@ -146,6 +149,7 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     fn round<ProverState>(
         &self,
         prover_state: &mut ProverState,
@@ -311,6 +315,7 @@ where
         self.round(prover_state, round_state)
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     fn final_round<ProverState>(
         &self,
         prover_state: &mut ProverState,
