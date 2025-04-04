@@ -54,7 +54,7 @@ itertools = "0.14"
 
 [dev-dependencies]
 proptest = "1.0"
-criterion = "0.5"
+divan = "0.1.17"
 
 [profile.release]
 debug = true
