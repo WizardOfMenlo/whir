@@ -101,7 +101,7 @@ pub fn compute_fold<F: Field>(
 ///
 /// # Panics
 /// Panics if the input size is not divisible by `2^folding_factor`.
-#[cfg_attr(feature = "tracing", instrument(skip_all))]
+#[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = evals.len(), folding_factor)))]
 pub fn transform_evaluations<F: FftField>(
     evals: &mut [F],
     fold_type: FoldType,

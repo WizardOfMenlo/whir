@@ -6,6 +6,8 @@ use spongefish::{
     ProofResult,
 };
 use spongefish_pow::{PoWChallenge, PowStrategy};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::SumcheckPolynomial;
 use crate::{
@@ -155,6 +157,7 @@ where
     /// - Samples random values to progressively reduce the polynomial.
     /// - Applies proof-of-work grinding if required.
     /// - Returns the sampled folding randomness values used in each reduction step.
+    #[cfg_attr(feature = "tracing", instrument(skip(self, prover_state)))]
     pub fn compute_sumcheck_polynomials<S, ProverState>(
         &mut self,
         prover_state: &mut ProverState,

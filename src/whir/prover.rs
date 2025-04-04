@@ -9,7 +9,7 @@ use spongefish::{
 };
 use spongefish_pow::{self, PoWChallenge};
 #[cfg(feature = "tracing")]
-use tracing::instrument;
+use tracing::{instrument, span, Level};
 
 use super::{
     committer::Witness,
@@ -222,12 +222,16 @@ where
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
         let leafs_iter = evals.par_chunks_exact(1 << folding_factor_next);
-        let merkle_tree = MerkleTree::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+        let merkle_tree = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+            MerkleTree::new(
+                &self.0.leaf_hash_params,
+                &self.0.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap()
+        };
 
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
