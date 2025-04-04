@@ -147,7 +147,7 @@ where
         // roots of unity of the index in the previous domain. This
         // allows for the evaluation of the virtual function.
         #[cfg(not(feature = "parallel"))]
-        let leaf_iterator = g_evals_folded.chunks_exact(1 << self.0.folding_factor);
+        let leaf_iterator = g_evals.chunks_exact(1 << self.0.folding_factor);
 
         #[cfg(feature = "parallel")]
         let leaf_iterator = g_evals.par_chunks_exact(1 << self.0.folding_factor);
