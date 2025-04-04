@@ -1,4 +1,6 @@
 use ark_ff::Field;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 #[cfg(feature = "parallel")]
 use {
     rayon::{join, prelude::*},
@@ -111,6 +113,7 @@ where
     /// - The number of variables decreases: `m = n - k`
     /// - Uses multivariate evaluation over chunks of coefficients.
     #[must_use]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.coeffs.len())))]
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
@@ -161,6 +164,7 @@ impl<F> CoefficientList<F> {
     /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field extension of F.
     ///
     /// Note that this is currently restricted to the case where F is a prime field.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.coeffs.len())))]
     pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
         CoefficientList::new(
             self.coeffs

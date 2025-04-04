@@ -3,6 +3,8 @@ use std::{fmt::Debug, ops::Index};
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 
@@ -71,6 +73,7 @@ impl<F: Field> Weights<F> {
     ///
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
@@ -113,6 +116,7 @@ impl<F: Field> Weights<F> {
     ///
     /// **Precondition:**
     /// If `self` is in linear mode, `poly.num_variables()` must match `weight.num_variables()`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
     pub fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
         match self {
             Self::Linear { weight } => {
@@ -220,6 +224,7 @@ impl<F: Field> Statement<F> {
     /// **Returns:**
     /// - `EvaluationsList<F>`: The combined polynomial `W(X)`.
     /// - `F`: The combined sum `S`.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables(), num_constraints = self.constraints.len())))]
     pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
         let evaluations_vec = vec![F::ZERO; 1 << self.num_variables];
         let mut combined_evals = EvaluationsList::new(evaluations_vec);

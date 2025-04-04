@@ -7,6 +7,8 @@ use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
+#[cfg(feature = "tracing")]
+use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
@@ -47,6 +49,7 @@ where
     /// - Constructs a Merkle tree from the evaluations.
     /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
     pub fn commit<ProverState>(
         &self,
         prover_state: &mut ProverState,
@@ -75,10 +78,14 @@ where
         // This is not necessary for the commit, but in further rounds
         // we will need the extension field. For symplicity we do it here too.
         // TODO: Commit to base field directly.
-        let folded_evals = evals
-            .into_iter()
-            .map(F::from_base_prime_field)
-            .collect::<Vec<_>>();
+        let folded_evals = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
+            evals
+                .into_iter()
+                .map(F::from_base_prime_field)
+                .collect::<Vec<_>>()
+        };
 
         // Determine leaf size based on folding factor.
         let fold_size = 1 << self.0.folding_factor.at_round(0);
@@ -90,12 +97,16 @@ where
         let leafs_iter = folded_evals.par_chunks_exact(fold_size);
 
         // Construct the Merkle tree with given hash parameters.
-        let merkle_tree = MerkleTree::<MerkleConfig>::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+        let merkle_tree = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+            MerkleTree::<MerkleConfig>::new(
+                &self.0.leaf_hash_params,
+                &self.0.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap()
+        };
 
         // Retrieve the Merkle tree root and add it to the narg_string.
         let root = merkle_tree.root();

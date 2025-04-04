@@ -51,6 +51,7 @@ spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
 rayon = { version = "1.10.0", optional = true }
 thiserror = "2.0"
 itertools = "0.14"
+tracing = { version = "0.1.41", optional = true }
 
 [dev-dependencies]
 proptest = "1.0"
@@ -69,6 +70,7 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
+tracing = ["dep:tracing"]
 
 [[bench]]
 name = "expand_from_coeff"
