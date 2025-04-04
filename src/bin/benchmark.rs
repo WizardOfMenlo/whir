@@ -9,8 +9,7 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::{FftField, Field};
-use ark_poly::univariate::DensePolynomial;
-use ark_poly::DenseUVPolynomial;
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use serde::Serialize;

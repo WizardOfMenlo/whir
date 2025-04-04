@@ -1,5 +1,4 @@
-use ark_ff::FftField;
-use ark_ff::Field;
+use ark_ff::{FftField, Field};
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?

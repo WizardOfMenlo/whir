@@ -1,6 +1,8 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
@@ -21,8 +23,6 @@ use crate::{
     utils::{self, expand_randomness, indexes_to_coset_evaluations},
     whir::utils::DigestToUnitSerialize,
 };
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha20Rng;
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)
 where

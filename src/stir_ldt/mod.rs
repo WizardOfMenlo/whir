@@ -32,8 +32,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_poly::univariate::DensePolynomial;
-    use ark_poly::DenseUVPolynomial;
+    use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
     use spongefish::{DefaultHash, DomainSeparator};
     use spongefish_pow::blake3::Blake3PoW;
 

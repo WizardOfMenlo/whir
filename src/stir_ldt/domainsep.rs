@@ -3,8 +3,10 @@ use ark_ff::FftField;
 use spongefish::codecs::arkworks_algebra::{ByteDomainSeparator, FieldDomainSeparator};
 
 use super::parameters::StirConfig;
-use crate::fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator};
-use crate::whir::domainsep::DigestDomainSeparator;
+use crate::{
+    fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator},
+    whir::domainsep::DigestDomainSeparator,
+};
 
 // pub trait DigestDomainSeparator<MerkleConfig: Config> {
 //     #[must_use]

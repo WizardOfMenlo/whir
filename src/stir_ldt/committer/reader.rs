@@ -5,8 +5,7 @@ use spongefish::{
     ProofResult,
 };
 
-use crate::stir_ldt::parameters::StirConfig;
-use crate::whir::utils::DigestToUnitDeserialize;
+use crate::{stir_ldt::parameters::StirConfig, whir::utils::DigestToUnitDeserialize};
 
 #[derive(Clone)]
 pub struct ParsedCommitment<D> {

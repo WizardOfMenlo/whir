@@ -11,15 +11,14 @@ use spongefish::{
 };
 use spongefish_pow::{self, PoWChallenge};
 
-use crate::{
-    poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
-    utils,
-};
-
 use super::{
     committer::reader::ParsedCommitment,
     parameters::{RoundConfig, StirConfig},
     StirProof,
+};
+use crate::{
+    poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
+    utils,
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy>

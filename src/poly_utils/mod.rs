@@ -1,7 +1,7 @@
-use crate::poly_utils::multilinear::MultilinearPoint;
 use ark_ff::Field;
 
 use self::hypercube::BinaryHypercubePoint;
+use crate::poly_utils::multilinear::MultilinearPoint;
 
 pub mod coeffs;
 pub mod dense;
@@ -75,13 +75,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly_utils::eq_poly3;
-    use crate::poly_utils::hypercube::BinaryHypercube;
-    use crate::{crypto::fields::Field64, poly_utils::eq_poly};
-
-    use super::coeffs::CoefficientList;
-    use super::BinaryHypercubePoint;
-    use super::MultilinearPoint;
+    use super::{coeffs::CoefficientList, BinaryHypercubePoint, MultilinearPoint};
+    use crate::{
+        crypto::fields::Field64,
+        poly_utils::{eq_poly, eq_poly3, hypercube::BinaryHypercube},
+    };
 
     type F = Field64;
 
