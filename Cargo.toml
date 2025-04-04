@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "sumcheck"
 harness = false
+
+[[bench]]
+name = "whir"
+harness = false
