@@ -55,7 +55,7 @@ tracing = { version = "0.1.41", optional = true }
 
 [dev-dependencies]
 proptest = "1.0"
-criterion = "0.5"
+divan = { version = "2.10.0", package = "codspeed-divan-compat" }
 
 [profile.release]
 debug = true

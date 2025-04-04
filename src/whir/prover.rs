@@ -338,9 +338,10 @@ where
         round_state.domain = new_domain;
         round_state.sumcheck_prover = Some(sumcheck_prover);
         round_state.folding_randomness = folding_randomness;
-        round_state.coefficients = folded_coefficients; // TODO: Is this redundant with `sumcheck_prover.coeff` ?
+        round_state.coefficients = folded_coefficients;
         round_state.prev_merkle = merkle_tree;
         round_state.prev_merkle_answers = evals;
+      
         Ok(())
     }
 
