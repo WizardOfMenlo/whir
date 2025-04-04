@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::Field;
 
 use crate::{
     parameters::FoldingFactor,
@@ -16,7 +16,7 @@ use crate::{
 ///   and evaluation reduces to computing `f(𝑟)` via multilinear interpolation.
 ///
 /// These modes are unified in this enum to simplify dispatch and centralize logic.
-pub(crate) enum StirEvalContext<'a, F: FftField> {
+pub(crate) enum StirEvalContext<'a, F: Field> {
     /// Naive evaluation strategy.
     ///
     /// Requires detailed information about the current folding round and domain.
@@ -44,7 +44,7 @@ pub(crate) enum StirEvalContext<'a, F: FftField> {
     },
 }
 
-impl<F: FftField> StirEvalContext<'_, F> {
+impl<F: Field> StirEvalContext<'_, F> {
     /// Computes STIR evaluations based on the context strategy.
     ///
     /// # Naive Strategy
