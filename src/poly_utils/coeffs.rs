@@ -7,7 +7,7 @@ use {
     std::mem::size_of,
 };
 
-use super::{dense::WhirDensePolynomial, evals::EvaluationsList, hypercube::BinaryHypercubePoint};
+use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
 use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
@@ -39,25 +39,6 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
-    /// Evaluates the polynomial at a binary hypercube point `(0,1)^n`.
-    ///
-    /// This is a special case of evaluation where the input consists only of 0s and 1s.
-    ///
-    /// Ensures that:
-    /// - `point` is within the valid range `{0, ..., 2^n - 1}`
-    /// - The length of `coeffs` matches `2^n`
-    ///
-    /// Uses a **fast path** by converting the point to a `MultilinearPoint`.
-    pub fn evaluate_hypercube(&self, point: BinaryHypercubePoint) -> F {
-        assert_eq!(self.coeffs.len(), 1 << self.num_variables);
-        assert!(point.0 < (1 << self.num_variables));
-        // TODO: Optimized implementation
-        self.evaluate(&MultilinearPoint::from_binary_hypercube_point(
-            point,
-            self.num_variables,
-        ))
-    }
-
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field
@@ -372,44 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_hypercube() {
-        let coeff0 = F::from(10);
-        let coeff1 = F::from(3);
-        let coeff2 = F::from(5);
-        let coeff3 = F::from(7);
-
-        let coeffs = vec![
-            coeff0, // Constant term
-            coeff1, // X_2 coefficient
-            coeff2, // X_1 coefficient
-            coeff3, // X_1 * X_2 coefficient
-        ];
-        let coeff_list = CoefficientList::new(coeffs);
-
-        // Evaluations at hypercube points (expected values derived manually)
-        // f(0,0) = coeffs[0]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b00)),
-            coeff0
-        );
-        // f(0,1) = coeffs[0] + coeffs[1]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b01)),
-            coeff0 + coeff1
-        );
-        // f(1,0) = coeffs[0] + coeffs[2]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b10)),
-            coeff0 + coeff2
-        );
-        // f(1,1) = coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3]
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0b11)),
-            coeff0 + coeff1 + coeff2 + coeff3
-        );
-    }
-
-    #[test]
     fn test_evaluate_multilinear() {
         let coeff0 = F::from(8);
         let coeff1 = F::from(2);
@@ -426,25 +369,6 @@ mod tests {
         // Expected value based on multilinear evaluation
         let expected_value = coeff0 + coeff1 * x1 + coeff2 * x0 + coeff3 * x0 * x1;
         assert_eq!(coeff_list.evaluate(&point), expected_value);
-    }
-
-    #[test]
-    fn test_evaluate_single_variable() {
-        let coeff0 = F::from(4);
-        let coeff1 = F::from(7);
-
-        let coeffs = vec![coeff0, coeff1];
-        let coeff_list = CoefficientList::new(coeffs);
-
-        // Single-variable polynomial evaluations
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(0)),
-            coeff0
-        );
-        assert_eq!(
-            coeff_list.evaluate_hypercube(BinaryHypercubePoint(1)),
-            coeff0 + coeff1
-        );
     }
 
     #[test]
