@@ -132,7 +132,7 @@ where
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         randomness_vec.resize(self.0.mv_parameters.num_variables, F::ZERO);
 
-        let round_state = RoundState {
+        let mut round_state = RoundState {
             domain: self.0.starting_domain.clone(),
             round: 0,
             sumcheck_prover,
@@ -145,16 +145,39 @@ where
             statement,
         };
 
-        self.round(prover_state, round_state)
+        // Run WHIR rounds
+        for _round in 0..=self.0.n_rounds() {
+            self.round(prover_state, &mut round_state)?;
+        }
+
+        // Extract WhirProof
+        let mut randomness_vec_rev = round_state.randomness_vec;
+        randomness_vec_rev.reverse();
+        let statement_values_at_random_point = round_state
+            .statement
+            .constraints
+            .iter()
+            .filter_map(|(weights, _)| {
+                if let Weights::Linear { weight } = weights {
+                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(WhirProof {
+            merkle_paths: round_state.merkle_proofs,
+            statement_values_at_random_point,
+        })
     }
 
     #[allow(clippy::too_many_lines)]
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
     fn round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        mut round_state: RoundState<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+        round_state: &mut RoundState<F, MerkleConfig>,
+    ) -> ProofResult<()>
     where
         ProverState: UnitToField<F>
             + UnitToBytes
@@ -299,29 +322,24 @@ where
             *dst = *src;
         }
 
-        let round_state = RoundState {
-            round: round_state.round + 1,
-            domain: new_domain,
-            sumcheck_prover: Some(sumcheck_prover),
-            folding_randomness,
-            coefficients: folded_coefficients, // TODO: Is this redundant with `sumcheck_prover.coeff` ?
-            prev_merkle: merkle_tree,
-            prev_merkle_answers: evals,
-            merkle_proofs: round_state.merkle_proofs,
-            randomness_vec: round_state.randomness_vec,
-            statement: round_state.statement,
-        };
-
-        self.round(prover_state, round_state)
+        // Update round state
+        round_state.round += 1;
+        round_state.domain = new_domain;
+        round_state.sumcheck_prover = Some(sumcheck_prover);
+        round_state.folding_randomness = folding_randomness;
+        round_state.coefficients = folded_coefficients; // TODO: Is this redundant with `sumcheck_prover.coeff` ?
+        round_state.prev_merkle = merkle_tree;
+        round_state.prev_merkle_answers = evals;
+        Ok(())
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_coefficients.num_coeffs())))]
     fn final_round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        mut round_state: RoundState<F, MerkleConfig>,
+        round_state: &mut RoundState<F, MerkleConfig>,
         folded_coefficients: &CoefficientList<F>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    ) -> ProofResult<()>
     where
         ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge,
     {
@@ -363,6 +381,8 @@ where
         if self.0.final_sumcheck_rounds > 0 {
             let final_folding_randomness = round_state
                 .sumcheck_prover
+                .as_ref()
+                .cloned()
                 .unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 })
@@ -382,27 +402,7 @@ where
                 *dst = *src;
             }
         }
-
-        let mut randomness_vec_rev = round_state.randomness_vec;
-        randomness_vec_rev.reverse();
-
-        let statement_values_at_random_point = round_state
-            .statement
-            .constraints
-            .iter()
-            .filter_map(|(weights, _)| {
-                if let Weights::Linear { weight } = weights {
-                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(WhirProof {
-            merkle_paths: round_state.merkle_proofs,
-            statement_values_at_random_point,
-        })
+        Ok(())
     }
 
     fn compute_stir_queries<ProverState>(

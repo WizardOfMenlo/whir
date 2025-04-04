@@ -33,7 +33,7 @@ use crate::{
 /// - The result `h(X)` is a quadratic polynomial in `X`.
 ///
 /// The sumcheck protocol ensures that the claimed sum is correct.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SumcheckSingle<F> {
     /// Evaluations of the polynomial `p(X)`.
     evaluation_of_p: EvaluationsList<F>,
