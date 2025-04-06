@@ -6,58 +6,97 @@ use crate::{
     sumcheck::SumcheckPolynomial,
 };
 
+/// Represents a single folding round in the WHIR protocol.
+///
+/// This structure enables recursive compression and verification of a Reed–Solomon
+/// proximity test under algebraic constraints.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ParsedRound<F> {
+    /// Folding randomness vector used in this round.
     pub(crate) folding_randomness: MultilinearPoint<F>,
+    /// Out-of-domain query points.
     pub(crate) ood_points: Vec<F>,
+    /// OOD answers at each query point.
     pub(crate) ood_answers: Vec<F>,
+    /// Indexes of STIR constraint polynomials used in this round.
     pub(crate) stir_challenges_indexes: Vec<usize>,
+    /// STIR constraint evaluation points.
     pub(crate) stir_challenges_points: Vec<F>,
+    /// Answers to the STIR constraints at each evaluation point.
     pub(crate) stir_challenges_answers: Vec<Vec<F>>,
+    /// Randomness used to linearly combine constraints.
     pub(crate) combination_randomness: Vec<F>,
+    /// Sumcheck messages and challenge values for verifying correctness.
     pub(crate) sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
+    /// Inverse of the domain generator used in this round.
     pub(crate) domain_gen_inv: F,
 }
 
+/// Represents a fully parsed and structured WHIR proof.
+///
+/// The structure is designed to support recursive verification and evaluation
+/// of folded functions under STIR-style constraints.
 #[derive(Default, Clone)]
 pub(crate) struct ParsedProof<F> {
+    /// Initial random coefficients used to combine constraints before folding.
     pub(crate) initial_combination_randomness: Vec<F>,
+    /// Initial sumcheck messages and challenges for the first constraint.
     pub(crate) initial_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
+    /// All folding rounds, each reducing the problem dimension.
     pub(crate) rounds: Vec<ParsedRound<F>>,
+    /// Inverse of the domain generator used in the final round.
     pub(crate) final_domain_gen_inv: F,
+    /// Indexes of the final constraint polynomials.
     pub(crate) final_randomness_indexes: Vec<usize>,
+    /// Evaluation points for the final constraint polynomials.
     pub(crate) final_randomness_points: Vec<F>,
+    /// Evaluation results of the final constraints.
     pub(crate) final_randomness_answers: Vec<Vec<F>>,
+    /// Folding randomness used in the final recursive step.
     pub(crate) final_folding_randomness: MultilinearPoint<F>,
+    /// Final sumcheck proof for verifying the last constraint.
     pub(crate) final_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
+    /// Challenge vector used to evaluate the last polynomial.
     pub(crate) final_sumcheck_randomness: MultilinearPoint<F>,
+    /// Coefficients of the final small polynomial.
     pub(crate) final_coefficients: CoefficientList<F>,
+    /// Evaluation values of the statement being proven at a random point.
     pub(crate) statement_values_at_random_point: Vec<F>,
 }
 
 impl<F: Field> ParsedProof<F> {
+    /// Computes all intermediate fold evaluations using prover-assisted folding.
+    ///
+    /// For each round, this evaluates the STIR answers as multilinear polynomials
+    /// at the provided folding randomness point. This simulates what the verifier
+    /// would receive in a sound recursive sumcheck-based proximity test.
+    ///
+    /// Returns:
+    /// - A vector of vectors, where each inner vector contains the evaluated result
+    ///   of each multilinear polynomial at its corresponding folding point.
     pub fn compute_folds_helped(&self) -> Vec<Vec<F>> {
-        let mut result = Vec::with_capacity(self.rounds.len() + 1);
-
-        for round in &self.rounds {
-            let mut evals = Vec::with_capacity(round.stir_challenges_answers.len());
-
-            let stir_evals_context = StirEvalContext::ProverHelps {
-                folding_randomness: &round.folding_randomness,
-            };
-
-            stir_evals_context.evaluate(&round.stir_challenges_answers, &mut evals);
-            result.push(evals);
-        }
-
-        // Add final round
-        let mut final_evals = Vec::with_capacity(self.final_randomness_answers.len());
-
-        let stir_evals_context = StirEvalContext::ProverHelps {
-            folding_randomness: &self.final_folding_randomness,
+        // Closure to apply folding evaluation logic.
+        let evaluate_answers = |answers: &[Vec<F>], randomness: &MultilinearPoint<F>| {
+            let mut out = Vec::with_capacity(answers.len());
+            StirEvalContext::ProverHelps {
+                folding_randomness: randomness,
+            }
+            .evaluate(answers, &mut out);
+            out
         };
-        stir_evals_context.evaluate(&self.final_randomness_answers, &mut final_evals);
-        result.push(final_evals);
+
+        let mut result: Vec<_> = self
+            .rounds
+            .iter()
+            .map(|round| {
+                evaluate_answers(&round.stir_challenges_answers, &round.folding_randomness)
+            })
+            .collect();
+
+        result.push(evaluate_answers(
+            &self.final_randomness_answers,
+            &self.final_folding_randomness,
+        ));
         result
     }
 }
