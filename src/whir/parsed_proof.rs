@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::Field;
 
 use super::stir_evaluations::StirEvalContext;
 use crate::{
@@ -35,7 +35,7 @@ pub(crate) struct ParsedProof<F> {
     pub(crate) statement_values_at_random_point: Vec<F>,
 }
 
-impl<F: FftField> ParsedProof<F> {
+impl<F: Field> ParsedProof<F> {
     pub fn compute_folds_helped(&self) -> Vec<Vec<F>> {
         let mut result = Vec::with_capacity(self.rounds.len() + 1);
 
