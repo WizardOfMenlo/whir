@@ -10,7 +10,7 @@ use whir::{
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
-const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26];
+const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20];
 
 #[divan::bench(args = SIZES)]
 fn sumcheck_first_round(bencher: Bencher, size: u64) {
