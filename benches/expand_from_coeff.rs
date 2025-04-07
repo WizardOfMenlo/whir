@@ -6,16 +6,13 @@ static ALLOC: AllocProfiler = AllocProfiler::system();
 
 // Test cases with polynomial sizes defined as exponents of 2 and expansion factors
 const TEST_CASES: &[(u32, usize)] = &[
+    (16, 2),
     (18, 2),
     (20, 2),
-    (22, 2),
-    (24, 2),
-    (26, 2),
+    (16, 4),
     (18, 4),
     (20, 4),
     (22, 4),
-    (24, 4),
-    (26, 4),
 ];
 
 #[divan::bench(args = TEST_CASES)]
