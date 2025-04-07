@@ -531,7 +531,7 @@ where
                 .collect(),
             FoldType::ProverHelps => all_r_shift_virtual_evals[0]
                 .iter()
-                .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.to_vec()))
+                .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.clone()))
                 .map(|poly| poly.evaluate(&r_folds[0]))
                 .collect(),
         }

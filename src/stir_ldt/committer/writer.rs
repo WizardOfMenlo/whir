@@ -12,7 +12,7 @@ use spongefish::{
 
 use super::Witness;
 use crate::{
-    ntt::expand_from_coeff, parameters::FoldType, poly_utils::fold::transform_evaluations,
+    ntt::expand_from_coeff, poly_utils::fold::transform_evaluations,
     stir_ldt::parameters::StirConfig, whir::utils::DigestToUnitSerialize,
 };
 
