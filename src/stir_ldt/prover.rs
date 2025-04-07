@@ -36,30 +36,9 @@ where
     MerkleConfig::InnerDigest: AsRef<[u8]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
-        // Check that for each round the repetition parameters are appropriate.
-        // This is the inequality from Construction 5.2, bullet point 6.
-        // let mut degree = 1 << self.0.uv_parameters.log_degree;
-        // for round_param in self.0.round_parameters.iter() {
-        //     degree /= 1 << self.0.folding_factor;
-        //     if round_param.num_queries + round_param.ood_samples <= degree {
-        //         return false;
-        //     }
-        // }
-
-        // Check that the degrees add up
-        assert_eq!(
-            config.uv_parameters.log_degree,
-            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
-        );
-    }
-
-    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
-        assert_eq!(
-            (witness.polynomial.degree() + 1),
-            1 << self.0.uv_parameters.log_degree,
-        );
-    }
+    //==============================================================================================
+    // 1. Constructor and public interface
+    //==============================================================================================
 
     pub fn new(config: StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self::validate_config(&config);
@@ -103,6 +82,39 @@ where
         self.final_round(prover_state, ctx)
     }
 
+    //==============================================================================================
+    // 2. Validation helpers
+    //==============================================================================================
+
+    fn validate_config(config: &StirConfig<F, MerkleConfig, PowStrategy>) {
+        // Check that for each round the repetition parameters are appropriate.
+        // This is the inequality from Construction 5.2, bullet point 6.
+        // let mut degree = 1 << self.0.uv_parameters.log_degree;
+        // for round_param in self.0.round_parameters.iter() {
+        //     degree /= 1 << self.0.folding_factor;
+        //     if round_param.num_queries + round_param.ood_samples <= degree {
+        //         return false;
+        //     }
+        // }
+
+        // Check that the degrees add up
+        assert_eq!(
+            config.uv_parameters.log_degree,
+            (config.round_parameters.len() + 1) * config.folding_factor + config.final_log_degree,
+        );
+    }
+
+    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) {
+        assert_eq!(
+            (witness.polynomial.degree() + 1),
+            1 << self.0.uv_parameters.log_degree,
+        );
+    }
+
+    //==============================================================================================
+    // 3. Core polynomial operations
+    //==============================================================================================
+
     fn fold(coeffs: &[F], r_fold: F, folding_factor: usize) -> DensePolynomial<F> {
         #[cfg(not(feature = "parallel"))]
         let coeffs = coeffs
@@ -119,6 +131,10 @@ where
         DensePolynomial::from_coefficients_vec(coeffs)
     }
 
+    //==============================================================================================
+    // 4. Protocol phases (ordered by workflow)
+    //==============================================================================================
+
     fn folding_phase(
         &self,
         g_poly: &DensePolynomial<F>,
@@ -126,7 +142,7 @@ where
     ) -> (Domain<F>, Vec<F>, MerkleTree<MerkleConfig>) {
         // (1.) Fold the coefficients (2.) compute fft of polynomial (3.) commit
         let g_domain = ctx.f_domain.scale_with_offset(2);
-        // TODO: This is not doing the efficient evaulations. In order to make it faster we need to
+        // TODO: This is not doing the efficient evaluations. In order to make it faster we need to
         // implement the shifting in the ntt engine.
         let mut g_evals = g_poly
             .evaluate_over_domain_by_ref(g_domain.backing_domain)
@@ -134,7 +150,7 @@ where
 
         // At this point folded evals is a matrix of size (new_domain.size()) X (1 << folding_factor)
         // This allows for the evaluation of the virutal function using an interpolation on the rows.
-        // TODO: for stir we do only Naive, so this will need to be adapted.
+        // TODO: for stir we do only Naive.
         transform_evaluations(
             g_evals.as_mut_slice(),
             FoldType::Naive,

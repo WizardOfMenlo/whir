@@ -45,7 +45,7 @@ where
         let mut evals = expand_from_coeff(&polynomial.coeffs[..], expansion);
         transform_evaluations(
             evals.as_mut_slice(),
-            FoldType::Naive, // This will eventually change to `FoldType::ProverHelps`.
+            self.0.fold_optimization,
             base_domain.group_gen(),
             base_domain.group_gen_inv(),
             self.0.folding_factor,

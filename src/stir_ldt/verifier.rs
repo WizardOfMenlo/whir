@@ -17,6 +17,7 @@ use super::{
     StirProof,
 };
 use crate::{
+    parameters::FoldType,
     poly_utils::{fold::compute_fold_univariate, univariate::naive_interpolation},
     utils,
 };
@@ -511,22 +512,45 @@ where
     where
         F: FftField,
     {
-        all_r_shift_indexes[0]
-            .iter()
-            .zip(all_r_shift_virtual_evals[0].iter())
-            .map(|(index, coset_eval)| {
-                let coset_offset_inv =
-                    domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
-                compute_fold_univariate(
-                    coset_eval,
-                    r_folds[0],
-                    coset_offset_inv,
-                    coset_gen_inv,
-                    self.two_inv,
-                    self.params.folding_factor,
-                )
-            })
-            .collect()
+        match self.params.fold_optimization {
+            FoldType::Naive => all_r_shift_indexes[0]
+                .iter()
+                .zip(all_r_shift_virtual_evals[0].iter())
+                .map(|(index, coset_eval)| {
+                    let coset_offset_inv =
+                        domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
+                    compute_fold_univariate(
+                        coset_eval,
+                        r_folds[0],
+                        coset_offset_inv,
+                        coset_gen_inv,
+                        self.two_inv,
+                        self.params.folding_factor,
+                    )
+                })
+                .collect(),
+            FoldType::ProverHelps => all_r_shift_virtual_evals[0]
+                .iter()
+                .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.to_vec()))
+                .map(|poly| poly.evaluate(&r_folds[0]))
+                .collect(),
+        }
+        // all_r_shift_indexes[0]
+        //     .iter()
+        //     .zip(all_r_shift_virtual_evals[0].iter())
+        //     .map(|(index, coset_eval)| {
+        //         let coset_offset_inv =
+        //             domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
+        //         compute_fold_univariate(
+        //             coset_eval,
+        //             r_folds[0],
+        //             coset_offset_inv,
+        //             coset_gen_inv,
+        //             self.two_inv,
+        //             self.params.folding_factor,
+        //         )
+        //     })
+        //     .collect()
     }
 }
 

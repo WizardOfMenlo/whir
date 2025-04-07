@@ -7,7 +7,9 @@ use ark_ff::FftField;
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{FoldingFactor, ProtocolParameters, SoundnessType, UnivariateParameters},
+    parameters::{
+        FoldType, FoldingFactor, ProtocolParameters, SoundnessType, UnivariateParameters,
+    },
 };
 
 #[derive(Clone)]
@@ -26,8 +28,8 @@ where
     pub(crate) starting_folding_pow_bits: f64,
 
     pub(crate) folding_factor: usize,
+    pub(crate) fold_optimization: FoldType,
     pub(crate) round_parameters: Vec<RoundConfig>,
-    // pub(crate) fold_optimisation: FoldType, Just doing prover helps
     pub(crate) final_queries: usize,
     pub(crate) final_pow_bits: f64,
     pub(crate) final_log_inv_rate: usize,
@@ -161,6 +163,7 @@ where
             starting_log_inv_rate: stir_parameters.starting_log_inv_rate,
             starting_folding_pow_bits,
             folding_factor,
+            fold_optimization: stir_parameters.fold_optimisation,
             round_parameters,
             final_queries,
             final_pow_bits,
