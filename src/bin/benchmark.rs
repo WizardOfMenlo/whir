@@ -639,7 +639,7 @@ fn run_stir_ldt<F, MerkleConfig>(
         let stir_ldt_argument_size = stir_proof_size(prover_state.narg_string(), &stir_proof);
         let stir_ldt_prover_hashes = HashCounter::get();
 
-        let commitment_reader = whir::stir_ldt::committer::CommitmentReader::new(&params);
+        let commitment_reader = whir::stir_ldt::committer::CommitmentReader::new();
         let verifier = Verifier::new(&params);
 
         HashCounter::reset();

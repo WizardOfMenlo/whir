@@ -112,12 +112,12 @@ mod tests {
         let prover = Prover::new(params.clone());
 
         let proof = prover.prove(&mut prover_state, &witness).unwrap();
-        let commitment_reader = CommitmentReader::new(&params);
+        let commitment_reader = CommitmentReader::new();
 
         let verifier = Verifier::new(&params);
         let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
         let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
+            .parse_commitment::<F, MerkleConfig, _>(&mut verifier_state)
             .unwrap();
         assert!(verifier
             .verify(&mut verifier_state, &parsed_commitment, &proof,)

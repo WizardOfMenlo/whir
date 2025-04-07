@@ -5,41 +5,38 @@ use spongefish::{
     ProofResult,
 };
 
-use crate::{stir_ldt::parameters::StirConfig, whir::utils::DigestToUnitDeserialize};
+use crate::whir::utils::DigestToUnitDeserialize;
 
 #[derive(Clone)]
 pub struct ParsedCommitment<D> {
     pub root: D,
 }
 
-pub struct CommitmentReader<'a, F, MerkleConfig, PowStrategy>(
-    // TODO: Refactor to use this.
-    #[allow(unused)] &'a StirConfig<F, MerkleConfig, PowStrategy>,
-)
-where
-    F: FftField,
-    MerkleConfig: Config;
+pub struct CommitmentReader {}
 
-impl<'a, F, MerkleConfig, PowStrategy> CommitmentReader<'a, F, MerkleConfig, PowStrategy>
-where
-    F: FftField,
-    MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: spongefish_pow::PowStrategy,
-{
-    pub const fn new(params: &'a StirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Self(params)
+impl CommitmentReader {
+    pub const fn new() -> Self {
+        Self {}
     }
 
-    pub fn parse_commitment<VerifierState>(
+    pub fn parse_commitment<F, MerkleConfig, VerifierState>(
         &self,
         verifier_state: &mut VerifierState,
     ) -> ProofResult<ParsedCommitment<MerkleConfig::InnerDigest>>
     where
+        F: FftField,
+        MerkleConfig: Config<Leaf = [F]>,
         VerifierState:
             FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
     {
         let root = verifier_state.read_digest()?;
 
         Ok(ParsedCommitment { root })
+    }
+}
+
+impl Default for CommitmentReader {
+    fn default() -> Self {
+        Self::new()
     }
 }
