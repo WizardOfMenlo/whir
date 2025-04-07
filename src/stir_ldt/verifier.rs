@@ -60,16 +60,6 @@ struct ParsedRound<F> {
     folded_domain_size: usize,
 }
 
-type ToBeReplaced<F> = (
-    Vec<F>,
-    Vec<Vec<usize>>,
-    Vec<Vec<Vec<F>>>,
-    Vec<F>,
-    Vec<F>,
-    Vec<F>,
-    Vec<F>,
-);
-
 impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -291,6 +281,7 @@ where
         self.parse_final_round(final_merkle_proof, final_virtual_evals, verifier_state, ctx)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn verify(
         &self,
         verifier_state: &mut VerifierState,
@@ -313,7 +304,69 @@ where
             domain_gen_invs,
             domain_offsets,
             domain_offset_invs,
-        ) = extract_round_parameters(&parsed);
+        ) = {
+            let parsed: &ParsedProof<F> = &parsed;
+            let r_folds: Vec<F> = parsed
+                .rounds
+                .iter()
+                .map(|r| &r.r_fold)
+                .chain(iter::once(&parsed.final_r_fold))
+                .copied()
+                .collect();
+
+            let all_r_shift_indexes: Vec<Vec<usize>> = parsed
+                .rounds
+                .iter()
+                .map(|r| &r.r_shift_indexes)
+                .chain(iter::once(&parsed.final_r_shift_indexes))
+                .cloned()
+                .collect();
+
+            let all_r_shift_virtual_evals: Vec<Vec<Vec<F>>> = parsed
+                .rounds
+                .iter()
+                .map(|r| &r.r_shift_virtual_evals)
+                .chain(iter::once(&parsed.final_r_shift_virtual_evals))
+                .cloned()
+                .collect();
+
+            let domain_gens: Vec<_> = parsed
+                .rounds
+                .iter()
+                .map(|r| r.domain_gen)
+                .chain(iter::once(parsed.final_domain_gen))
+                .collect();
+
+            let domain_gen_invs: Vec<_> = parsed
+                .rounds
+                .iter()
+                .map(|r| r.domain_gen_inv)
+                .chain(iter::once(parsed.final_domain_gen_inv))
+                .collect();
+
+            let domain_offsets: Vec<_> = parsed
+                .rounds
+                .iter()
+                .map(|r| r.domain_offset)
+                .chain(iter::once(parsed.final_domain_offset))
+                .collect();
+
+            let domain_offset_invs: Vec<_> = parsed
+                .rounds
+                .iter()
+                .map(|r| r.domain_offset_inv)
+                .chain(iter::once(parsed.final_domain_offset_inv))
+                .collect();
+            (
+                r_folds,
+                all_r_shift_indexes,
+                all_r_shift_virtual_evals,
+                domain_gens,
+                domain_gen_invs,
+                domain_offsets,
+                domain_offset_invs,
+            )
+        };
 
         // Suppose we have a function f evaluated on L = off * <gen>. To evaluate the k-wise fold of
         // f at a point i in L^k, we need points k in L to evaluate the virtual oracle. These points
@@ -475,72 +528,6 @@ where
             })
             .collect()
     }
-}
-
-fn extract_round_parameters<F>(parsed: &ParsedProof<F>) -> ToBeReplaced<F>
-where
-    F: FftField,
-{
-    let r_folds: Vec<F> = parsed
-        .rounds
-        .iter()
-        .map(|r| &r.r_fold)
-        .chain(iter::once(&parsed.final_r_fold))
-        .copied()
-        .collect();
-
-    let all_r_shift_indexes: Vec<Vec<usize>> = parsed
-        .rounds
-        .iter()
-        .map(|r| &r.r_shift_indexes)
-        .chain(iter::once(&parsed.final_r_shift_indexes))
-        .cloned()
-        .collect();
-
-    let all_r_shift_virtual_evals: Vec<Vec<Vec<F>>> = parsed
-        .rounds
-        .iter()
-        .map(|r| &r.r_shift_virtual_evals)
-        .chain(iter::once(&parsed.final_r_shift_virtual_evals))
-        .cloned()
-        .collect();
-
-    let domain_gens: Vec<_> = parsed
-        .rounds
-        .iter()
-        .map(|r| r.domain_gen)
-        .chain(iter::once(parsed.final_domain_gen))
-        .collect();
-
-    let domain_gen_invs: Vec<_> = parsed
-        .rounds
-        .iter()
-        .map(|r| r.domain_gen_inv)
-        .chain(iter::once(parsed.final_domain_gen_inv))
-        .collect();
-
-    let domain_offsets: Vec<_> = parsed
-        .rounds
-        .iter()
-        .map(|r| r.domain_offset)
-        .chain(iter::once(parsed.final_domain_offset))
-        .collect();
-
-    let domain_offset_invs: Vec<_> = parsed
-        .rounds
-        .iter()
-        .map(|r| r.domain_offset_inv)
-        .chain(iter::once(parsed.final_domain_offset_inv))
-        .collect();
-    (
-        r_folds,
-        all_r_shift_indexes,
-        all_r_shift_virtual_evals,
-        domain_gens,
-        domain_gen_invs,
-        domain_offsets,
-        domain_offset_invs,
-    )
 }
 
 struct ParseProofContext<F, D> {
