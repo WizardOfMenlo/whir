@@ -1,16 +1,22 @@
 use core::panic;
-use std::{f64::consts::LOG2_10, fmt::Display, marker::PhantomData};
+use std::{
+    f64::consts::LOG2_10,
+    fmt::{Debug, Display},
+    marker::PhantomData,
+};
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
     parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
+    utils::ark_eq,
 };
-
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -47,11 +53,13 @@ where
     pub pow_strategy: PhantomData<PowStrategy>,
 
     // Merkle tree parameters
+    #[serde(with = "crate::ark_serde")]
     pub leaf_hash_params: LeafParam<MerkleConfig>,
+    #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoundConfig {
     pub pow_bits: f64,
     pub folding_pow_bits: f64,
@@ -428,6 +436,40 @@ where
     }
 }
 
+impl<F, MerkleConfig, PowStrategy> PartialEq for WhirConfig<F, MerkleConfig, PowStrategy>
+where
+    F: FftField,
+    MerkleConfig: Config,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.mv_parameters == other.mv_parameters
+            && self.soundness_type == other.soundness_type
+            && self.security_level == other.security_level
+            && self.max_pow_bits == other.max_pow_bits
+            && self.starting_folding_pow_bits == other.starting_folding_pow_bits
+            && self.round_parameters == other.round_parameters
+            && self.final_queries == other.final_queries
+            && self.final_log_inv_rate == other.final_log_inv_rate
+            && self.final_pow_bits == other.final_pow_bits
+            && self.final_folding_pow_bits == other.final_folding_pow_bits
+            && self.committment_ood_samples == other.committment_ood_samples
+            && ark_eq(&self.leaf_hash_params, &other.leaf_hash_params)
+            && ark_eq(&self.two_to_one_params, &other.two_to_one_params)
+            && self.folding_factor == other.folding_factor
+            && self.initial_statement == other.initial_statement
+    }
+}
+
+impl<F, MerkleConfig, PowStrategy> Debug for WhirConfig<F, MerkleConfig, PowStrategy>
+where
+    F: FftField,
+    MerkleConfig: Config,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WhirConfig({:?})", self.to_string())
+    }
+}
+
 impl<F, MerkleConfig, PowStrategy> Display for WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -435,7 +477,7 @@ where
 {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.mv_parameters.fmt(f)?;
+        write!(f, "{}", &self.mv_parameters)?;
         writeln!(f, ", folding factor: {:?}", self.folding_factor)?;
         writeln!(
             f,
@@ -449,7 +491,7 @@ where
             self.starting_folding_pow_bits
         )?;
         for r in &self.round_parameters {
-            r.fmt(f)?;
+            write!(f, "{}", r)?;
         }
 
         writeln!(
@@ -624,12 +666,15 @@ mod tests {
     use ark_std::test_rng;
 
     use super::*;
-    use crate::crypto::{
-        fields::Field64,
-        merkle_tree::{
-            keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-            parameters::default_config,
+    use crate::{
+        crypto::{
+            fields::{Field256, Field64},
+            merkle_tree::{
+                keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
+                parameters::default_config,
+            },
         },
+        utils::test_serde,
     };
 
     /// Generates default WHIR parameters
@@ -665,6 +710,24 @@ mod tests {
         assert_eq!(config.max_pow_bits, 20);
         assert_eq!(config.soundness_type, SoundnessType::ConjectureList);
         assert!(config.initial_statement);
+    }
+
+    #[test]
+    fn test_whir_params_serde() {
+        test_serde(&default_whir_params::<Field64>());
+        test_serde(&default_whir_params::<Field256>());
+    }
+
+    #[test]
+    fn test_whir_config_serde() {
+        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
+
+        let params = default_whir_params::<Field64>();
+
+        let mv_params = MultivariateParameters::<Field64>::new(10);
+        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+
+        test_serde(&config);
     }
 
     #[test]

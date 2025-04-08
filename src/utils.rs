@@ -1,4 +1,19 @@
+#[cfg(test)]
+use std::fmt::Debug;
+
 use ark_ff::Field;
+use ark_serialize::CanonicalSerialize;
+#[cfg(test)]
+use serde::{Deserialize, Serialize};
+
+/// Workaround for Ark types that are missing comparisons
+pub fn ark_eq<T: CanonicalSerialize>(a: &T, b: &T) -> bool {
+    let mut buf_a = Vec::new();
+    let mut buf_b = Vec::new();
+    a.serialize_uncompressed(&mut buf_a).unwrap();
+    b.serialize_uncompressed(&mut buf_b).unwrap();
+    buf_a == buf_b
+}
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
@@ -97,6 +112,13 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
         // Leaf case: Add the accumulated scalar to the final output slot.
         out[0] += scalar;
     }
+}
+
+#[cfg(test)]
+pub fn test_serde<T: Debug + PartialEq + Serialize + for<'a> Deserialize<'a>>(value: &T) {
+    let json = serde_json::to_string_pretty(value).unwrap();
+    let deserialized = serde_json::from_str(&json).unwrap();
+    assert_eq!(value, &deserialized);
 }
 
 #[cfg(test)]

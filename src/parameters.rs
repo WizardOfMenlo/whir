@@ -1,14 +1,21 @@
-use std::{fmt::Display, marker::PhantomData, str::FromStr};
+use std::{
+    fmt::{Debug, Display},
+    marker::PhantomData,
+    str::FromStr,
+};
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::whir::{
-    parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
-    stir_evaluations::StirEvalContext,
+use crate::{
+    utils::ark_eq,
+    whir::{
+        parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
+        stir_evaluations::StirEvalContext,
+    },
 };
 
 /// Computes the default maximum proof-of-work (PoW) bits.
@@ -20,7 +27,7 @@ pub const fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize
 }
 
 /// Defines the soundness type for the proof system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SoundnessType {
     /// Unique decoding guarantees a single valid witness.
     UniqueDecoding,
@@ -54,7 +61,8 @@ impl FromStr for SoundnessType {
 }
 
 /// Represents the parameters for a multivariate polynomial.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct MultivariateParameters<F> {
     /// The number of variables in the polynomial.
     pub(crate) num_variables: usize,
@@ -78,7 +86,7 @@ impl<F> Display for MultivariateParameters<F> {
 }
 
 /// Defines the folding strategy for polynomial commitments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoldType {
     /// A naive approach with minimal optimizations.
     Naive,
@@ -233,7 +241,7 @@ pub enum FoldingFactorError {
 }
 
 /// Defines the folding factor for polynomial commitments.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoldingFactor {
     /// A fixed folding factor used in all rounds.
     Constant(usize),
@@ -347,7 +355,7 @@ impl FoldingFactor {
 }
 
 /// Configuration parameters for WHIR proofs.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WhirParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
@@ -371,11 +379,39 @@ where
     /// Parameters for hashing Merkle tree leaves.
     ///
     /// These define how individual leaves in the Merkle tree are hashed.
+    #[serde(with = "crate::ark_serde")]
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     /// Parameters for hashing inner nodes in the Merkle tree.
     ///
     /// These define the hashing function used when combining two child nodes into a parent node.
+    #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+}
+
+impl<MerkleConfig, PowStrategy> Debug for WhirParameters<MerkleConfig, PowStrategy>
+where
+    MerkleConfig: Config,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WhirParameters {self}")
+    }
+}
+
+impl<MerkleConfig, PowStrategy> PartialEq for WhirParameters<MerkleConfig, PowStrategy>
+where
+    MerkleConfig: Config,
+{
+    fn eq(&self, other: &Self) -> bool {
+        ark_eq(&self.leaf_hash_params, &other.leaf_hash_params)
+            && ark_eq(&self.two_to_one_params, &other.two_to_one_params)
+            && self.initial_statement == other.initial_statement
+            && self.starting_log_inv_rate == other.starting_log_inv_rate
+            && self.folding_factor == other.folding_factor
+            && self.soundness_type == other.soundness_type
+            && self.security_level == other.security_level
+            && self.pow_bits == other.pow_bits
+            && self.fold_optimisation == other.fold_optimisation
+    }
 }
 
 impl<MerkleConfig, PowStrategy> Display for WhirParameters<MerkleConfig, PowStrategy>
@@ -398,7 +434,9 @@ where
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::{crypto::fields::Field256, utils::test_serde};
 
     #[test]
     fn test_default_max_pow() {
@@ -443,6 +481,11 @@ mod tests {
         let params = MultivariateParameters::<u32>::new(5);
         assert_eq!(params.num_variables, 5);
         assert_eq!(params.to_string(), "Number of variables: 5");
+    }
+
+    #[test]
+    fn test_multivariate_parameters_serde() {
+        test_serde(&MultivariateParameters::<Field256>::new(10));
     }
 
     #[test]

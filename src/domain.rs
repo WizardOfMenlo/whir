@@ -2,12 +2,14 @@ use ark_ff::FftField;
 use ark_poly::{
     EvaluationDomain, GeneralEvaluationDomain, MixedRadixEvaluationDomain, Radix2EvaluationDomain,
 };
+use serde::{Deserialize, Serialize};
 
 /// Represents an evaluation domain used in FFT-based polynomial arithmetic.
 ///
 /// This domain is constructed over a multiplicative subgroup of a finite field, enabling
 /// efficient Fast Fourier Transforms (FFTs).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Domain<F>
 where
     F: FftField,
@@ -16,8 +18,10 @@ where
     ///
     /// This is useful when operating in an extension field `F`, where `F::PrimeSubfield`
     /// represents the base field from which the extension was built.
+    #[serde(with = "crate::ark_serde")]
     pub base_domain: Option<GeneralEvaluationDomain<F::BasePrimeField>>,
     /// The actual working domain used for FFT operations.
+    #[serde(with = "crate::ark_serde")]
     pub backing_domain: GeneralEvaluationDomain<F>,
 }
 
