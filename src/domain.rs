@@ -2,6 +2,7 @@ use ark_ff::FftField;
 use ark_poly::{
     EvaluationDomain, GeneralEvaluationDomain, MixedRadixEvaluationDomain, Radix2EvaluationDomain,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 /// Represents an evaluation domain used in FFT-based polynomial arithmetic.
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// This domain is constructed over a multiplicative subgroup of a finite field, enabling
 /// efficient Fast Fourier Transforms (FFTs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct Domain<F>
 where
     F: FftField,

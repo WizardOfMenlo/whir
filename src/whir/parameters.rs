@@ -7,6 +7,7 @@ use std::{
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -16,7 +17,10 @@ use crate::{
     utils::ark_eq,
 };
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound = r#"
+    LeafParam<MerkleConfig>: CanonicalSerialize + CanonicalDeserialize,
+    TwoToOneParam<MerkleConfig>: CanonicalSerialize + CanonicalDeserialize
+"#)]
 pub struct WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
