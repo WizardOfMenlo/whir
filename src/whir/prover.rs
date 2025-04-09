@@ -12,7 +12,7 @@ use spongefish_pow::{self, PoWChallenge};
 use tracing::{instrument, span, Level};
 
 use super::{
-    committer::Witness,
+    committer::{BatchingData, Witness},
     parameters::WhirConfig,
     statement::{Statement, Weights},
     WhirProof,
@@ -27,7 +27,10 @@ use crate::{
     utils::expand_randomness,
     whir::{
         parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
+        utils::{
+            get_challenge_stir_queries, sample_ood_points, validate_stir_queries,
+            DigestToUnitSerialize,
+        },
     },
 };
 
@@ -54,10 +57,65 @@ where
 
     pub(crate) fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
         assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
-        if !self.0.initial_statement {
+        if !self.0.initial_statement || self.0.batch_size > 1 {
             assert!(witness.ood_points.is_empty());
         }
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
+    }
+
+    // Creates the merkle root paths if there are multiple oracles. Even in case of a single oracle, the first path is stored in the top level path and the rest are stored in other rounds
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    fn create_root_paths(
+        &self,
+        mut all_round_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+        batching_data: &[BatchingData<F, MerkleConfig>],
+        _batching_randomness: &F, // Only used in debug builds
+    ) -> ProofResult<(
+        Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>, // first round paths
+        Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>, // rest of the paths
+    )> {
+        assert!(
+            all_round_paths.len() > 0,
+            "There must be at least one round of merkle path"
+        );
+
+        let fold_sz = 1 << self.0.folding_factor.at_round(0);
+        let rest = all_round_paths.split_off(1); // Splits vector into two parts efficiently
+
+        if batching_data.is_empty() {
+            return Ok((all_round_paths, rest));
+        }
+
+        let (batched_mt, batched_stir) = all_round_paths.into_iter().next().unwrap();
+
+        let mut first_round_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)> =
+            Vec::with_capacity(batching_data.len());
+
+        let stir_indexes = batched_mt.leaf_indexes.clone();
+
+        for BatchingData {
+            merkle_tree,
+            merkle_leaves,
+        } in batching_data
+        {
+            let paths = merkle_tree
+                .generate_multi_proof(stir_indexes.clone())
+                .map_err(|_| spongefish::ProofError::InvalidProof)?;
+
+            let answers: Vec<_> = stir_indexes
+                .iter()
+                .map(|i| merkle_leaves[i * fold_sz..(i + 1) * fold_sz].to_vec())
+                .collect();
+
+            first_round_paths.push((paths, answers));
+        }
+
+        debug_assert!(
+            validate_stir_queries(_batching_randomness, &batched_stir, &first_round_paths,),
+            "The computed value of STIR queries must match the value in the leaf nodes"
+        );
+
+        Ok((first_round_paths, rest))
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -74,11 +132,9 @@ where
             + PoWChallenge
             + DigestToUnitSerialize<MerkleConfig>,
     {
-        assert!(
-            self.validate_parameters()
-                && self.validate_statement(&statement)
-                && self.validate_witness(&witness)
-        );
+        assert!(self.validate_parameters());
+        assert!(self.validate_statement(&statement));
+        assert!(self.validate_witness(&witness));
 
         // Convert witness ood_points into constraints
         let new_constraints = witness
@@ -165,8 +221,16 @@ where
                 }
             })
             .collect();
+
+        let (round0_merkle_paths, rest_paths) = self.create_root_paths(
+            round_state.merkle_proofs,
+            &witness.batching_data,
+            &witness.batching_randomness,
+        )?;
+
         Ok(WhirProof {
-            merkle_paths: round_state.merkle_proofs,
+            round0_merkle_paths,
+            merkle_paths: rest_paths,
             statement_values_at_random_point,
         })
     }

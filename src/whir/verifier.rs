@@ -1,6 +1,6 @@
 use std::iter;
 
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use spongefish::{
@@ -14,7 +14,7 @@ use super::{
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
-    RoundZeroProofValidator, WhirCommitmentData, WhirProof, WhirProofRoundData,
+    WhirProof,
 };
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
@@ -31,34 +31,6 @@ where
     params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
 }
 
-impl<F, MerkleConfig> RoundZeroProofValidator<ParsedCommitment<F, MerkleConfig::InnerDigest>>
-    for WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-{
-    type MerkleConfig = MerkleConfig;
-    fn validate_first_round(
-        &self,
-        commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        stir_challenges_indexes: &[usize],
-        leaf_hash: &LeafParam<MerkleConfig>,
-        inner_node_hash: &TwoToOneParam<MerkleConfig>,
-    ) -> bool {
-        let (merkle_proof, answers) = &self.merkle_paths[0];
-
-        merkle_proof
-            .verify(
-                &leaf_hash,
-                &inner_node_hash,
-                &commitment.root,
-                answers.iter().map(|a| a.as_ref()),
-            )
-            .unwrap()
-            && merkle_proof.leaf_indexes == *stir_challenges_indexes
-    }
-}
-
 impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -70,17 +42,14 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn parse_proof<VerifierState, CommitmentType, WhirProof>(
+    pub(crate) fn parse_proof<VerifierState>(
         &self,
         verifier_state: &mut VerifierState,
-        parsed_commitment: &CommitmentType,
-        whir_proof: &WhirProof,
+        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
+        whir_proof: &WhirProof<MerkleConfig, F>,
         statement_points_len: usize,
     ) -> ProofResult<ParsedProof<F>>
     where
-        CommitmentType: WhirCommitmentData<F, MerkleConfig>,
-        WhirProof: RoundZeroProofValidator<CommitmentType, MerkleConfig = MerkleConfig>
-            + WhirProofRoundData<F, MerkleConfig>,
         VerifierState: UnitToBytes
             + UnitToField<F>
             + FieldToUnitDeserialize<F>
@@ -132,7 +101,8 @@ where
             }
         }
 
-        let mut prev_root = parsed_commitment.committed_root().clone();
+        // Not needed in the first round
+        let mut prev_root = MerkleConfig::InnerDigest::default();
         let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
         let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(0)]);
         let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
@@ -164,7 +134,7 @@ where
                 .collect();
 
             let (merkle_proof, answers) =
-                whir_proof.round_data(r, parsed_commitment.batching_randomness());
+                whir_proof.round_data(r, parsed_commitment.batching_randomness);
 
             if r > 0 {
                 if !merkle_proof
@@ -253,7 +223,7 @@ where
 
         let (final_merkle_proof, final_randomness_answers) = whir_proof.round_data(
             self.params.n_rounds(),
-            parsed_commitment.batching_randomness(),
+            parsed_commitment.batching_randomness,
         );
 
         if self.params.n_rounds() == 0 {
@@ -401,15 +371,12 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn verify_parsed<CommitmentType>(
+    pub(crate) fn verify_parsed(
         &self,
         statement: &StatementVerifier<F>,
-        parsed_commitment: &CommitmentType,
+        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         parsed_proof: &ParsedProof<F>,
-    ) -> ProofResult<()>
-    where
-        CommitmentType: WhirCommitmentData<F, MerkleConfig>,
-    {
+    ) -> ProofResult<()> {
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
 
         let computed_folds = self

@@ -262,7 +262,7 @@ fn run_whir<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
-        enable_batching: false,
+        batch_size: 1,
     };
 
     let polynomial = CoefficientList::new(

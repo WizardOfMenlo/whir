@@ -265,7 +265,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
-        enable_batching: false,
+        batch_size: 1,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -388,7 +388,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
-        enable_batching: false,
+        batch_size: 1,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);

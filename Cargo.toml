@@ -61,7 +61,7 @@ divan = { version = "2.10.0", package = "codspeed-divan-compat" }
 debug = true
 
 [features]
-default = ["parallel", "batching" ]
+default = ["parallel"]
 parallel = [
     "dep:rayon",
     "ark-poly/parallel",
