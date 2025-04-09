@@ -6,6 +6,7 @@ use ark_crypto_primitives::{
 };
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha3::Digest;
 
 use super::{parameters::MerkleTreeParams, HashCounter};
@@ -16,7 +17,7 @@ use crate::crypto::merkle_tree::digest::GenericDigest;
 /// Alias for a 32-byte generic digest.
 pub type KeccakDigest = GenericDigest<32>;
 
-/// Merkle tree configuration using Keccak as both leaf and node hasher..
+/// Merkle tree configuration using Keccak as both leaf and node hasher.
 pub type KeccakMerkleTreeParams<F> =
     MerkleTreeParams<F, KeccakLeafHash<F>, KeccakCompress, KeccakDigest>;
 
@@ -25,8 +26,9 @@ pub type KeccakMerkleTreeParams<F> =
 /// This struct implements `CRHScheme` where the input is a slice of
 /// canonical-serializable field elements `[F]`, and the output is a
 /// 32-byte Keccak digest.
-#[derive(Clone)]
-pub struct KeccakLeafHash<F>(PhantomData<F>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct KeccakLeafHash<F>(#[serde(skip)] PhantomData<F>);
 
 impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
     type Input = [F];
@@ -54,7 +56,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for KeccakLeafHash<F> {
 ///
 /// This struct implements `TwoToOneCRHScheme`, combining two digests
 /// by concatenation and hashing with Keccak256.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeccakCompress;
 
 impl TwoToOneCRHScheme for KeccakCompress {
