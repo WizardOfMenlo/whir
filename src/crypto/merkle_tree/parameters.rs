@@ -28,7 +28,9 @@ use crate::whir::{
 /// - `CompressH`: Internal node hasher
 /// - `Digest`: Digest type
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct MerkleTreeParams<F, LeafH, CompressH, Digest> {
+    #[serde(skip)]
     _marker: PhantomData<(F, LeafH, CompressH, Digest)>,
 }
 

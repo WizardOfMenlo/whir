@@ -85,8 +85,10 @@ mod tests {
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
+
     /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
+
     /// Field type used in the tests.
     type F = Field64;
 

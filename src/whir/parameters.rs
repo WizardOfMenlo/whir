@@ -14,7 +14,7 @@ use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
     parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
-    utils::ark_eq,
+    utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound = r#"
@@ -54,6 +54,7 @@ where
     pub final_folding_pow_bits: f64,
 
     // PoW parameters
+    #[serde(skip)]
     pub pow_strategy: PhantomData<PowStrategy>,
 
     // Merkle tree parameters
@@ -63,7 +64,7 @@ where
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundConfig {
     pub pow_bits: f64,
     pub folding_pow_bits: f64,
@@ -440,6 +441,7 @@ where
     }
 }
 
+/// Manual implementation to allow error in `f64` and handle ark types missing `PartialEq`.
 impl<F, MerkleConfig, PowStrategy> PartialEq for WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -450,12 +452,20 @@ where
             && self.soundness_type == other.soundness_type
             && self.security_level == other.security_level
             && self.max_pow_bits == other.max_pow_bits
-            && self.starting_folding_pow_bits == other.starting_folding_pow_bits
+            && f64_eq_abs(
+                self.starting_folding_pow_bits,
+                other.starting_folding_pow_bits,
+                0.001,
+            )
             && self.round_parameters == other.round_parameters
             && self.final_queries == other.final_queries
             && self.final_log_inv_rate == other.final_log_inv_rate
-            && self.final_pow_bits == other.final_pow_bits
-            && self.final_folding_pow_bits == other.final_folding_pow_bits
+            && f64_eq_abs(self.final_pow_bits, other.final_pow_bits, 0.001)
+            && f64_eq_abs(
+                self.final_folding_pow_bits,
+                other.final_folding_pow_bits,
+                0.001,
+            )
             && self.committment_ood_samples == other.committment_ood_samples
             && ark_eq(&self.leaf_hash_params, &other.leaf_hash_params)
             && ark_eq(&self.two_to_one_params, &other.two_to_one_params)
@@ -464,13 +474,47 @@ where
     }
 }
 
+impl PartialEq for RoundConfig {
+    fn eq(&self, other: &Self) -> bool {
+        f64_eq_abs(self.pow_bits, other.pow_bits, 0.001)
+            && f64_eq_abs(self.folding_pow_bits, other.folding_pow_bits, 0.001)
+            && self.num_queries == other.num_queries
+            && self.ood_samples == other.ood_samples
+            && self.log_inv_rate == other.log_inv_rate
+    }
+}
+
+/// Workaround for `PowStrategy` not implementing `Debug`.
+/// TODO: Add Debug in spongefish (and other common traits).
 impl<F, MerkleConfig, PowStrategy> Debug for WhirConfig<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config,
+    LeafParam<MerkleConfig>: Debug,
+    TwoToOneParam<MerkleConfig>: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "WhirConfig({:?})", self.to_string())
+        f.debug_struct("WhirConfig")
+            .field("mv_parameters", &self.mv_parameters)
+            .field("soundness_type", &self.soundness_type)
+            .field("security_level", &self.security_level)
+            .field("max_pow_bits", &self.max_pow_bits)
+            .field("committment_ood_samples", &self.committment_ood_samples)
+            .field("initial_statement", &self.initial_statement)
+            .field("starting_domain", &self.starting_domain)
+            .field("starting_log_inv_rate", &self.starting_log_inv_rate)
+            .field("starting_folding_pow_bits", &self.starting_folding_pow_bits)
+            .field("round_parameters", &self.round_parameters)
+            .field("fold_optimisation", &self.fold_optimisation)
+            .field("final_queries", &self.final_queries)
+            .field("final_pow_bits", &self.final_pow_bits)
+            .field("final_log_inv_rate", &self.final_log_inv_rate)
+            .field("final_sumcheck_rounds", &self.final_sumcheck_rounds)
+            .field("final_folding_pow_bits", &self.final_folding_pow_bits)
+            .field("folding_factor", &self.folding_factor)
+            .field("leaf_hash_params", &self.leaf_hash_params)
+            .field("two_to_one_params", &self.two_to_one_params)
+            .finish()
     }
 }
 
