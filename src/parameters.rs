@@ -66,6 +66,7 @@ impl FromStr for SoundnessType {
 pub struct MultivariateParameters<F> {
     /// The number of variables in the polynomial.
     pub(crate) num_variables: usize,
+    #[serde(skip)]
     _field: PhantomData<F>,
 }
 
