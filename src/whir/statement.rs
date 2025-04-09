@@ -1,8 +1,10 @@
 use std::{fmt::Debug, ops::Index};
 
 use ark_ff::Field;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -15,7 +17,8 @@ use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
 ///
 /// - Evaluation mode: Represents an equality constraint at a specific `MultilinearPoint<F>`.
 /// - Linear mode: Represents a set of per-corner weights stored as `EvaluationsList<F>`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub enum Weights<F> {
     /// Represents a weight function that enforces equality constraints at a specific point.
     Evaluation { point: MultilinearPoint<F> },
@@ -160,14 +163,24 @@ impl<F: Field> Weights<F> {
 /// \begin{equation}
 /// W(X) = w_1(X) + \gamma w_2(X) + \gamma^2 w_3(X) + \dots + \gamma^{k-1} w_k(X)
 /// \end{equation}
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct Statement<F> {
     /// Number of variables defining the polynomial space.
     num_variables: usize,
     /// Constraints represented as pairs `(w(X), s)`, where
     /// - `w(X)` is a weighted polynomial function
     /// - `s` is the expected sum.
-    pub constraints: Vec<(Weights<F>, F)>,
+    pub constraints: Vec<Constraint<F>>,
+}
+
+/// A constraint as a weight function and a target sum.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+pub struct Constraint<F> {
+    pub weights: Weights<F>,
+    #[serde(with = "crate::ark_serde")]
+    pub sum: F,
 }
 
 impl<F: Field> Statement<F> {
@@ -190,13 +203,13 @@ impl<F: Field> Statement<F> {
     /// The number of variables in `w(X)` must match `self.num_variables`.
     pub fn add_constraint(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.push((weights, sum));
+        self.constraints.push(Constraint { weights, sum });
     }
 
     /// Inserts a constraint `(w(X), s)` at the front of the system.
     pub fn add_constraint_in_front(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.insert(0, (weights, sum));
+        self.constraints.insert(0, Constraint { weights, sum });
     }
 
     /// Inserts multiple constraints at the front of the system.
@@ -204,7 +217,12 @@ impl<F: Field> Statement<F> {
         for (weights, _) in &constraints {
             assert_eq!(weights.num_variables(), self.num_variables());
         }
-        self.constraints.splice(0..0, constraints);
+        self.constraints.splice(
+            0..0,
+            constraints
+                .into_iter()
+                .map(|(weights, sum)| Constraint { weights, sum }),
+        );
     }
 
     /// Combines all constraints into a single aggregated polynomial using a challenge.
@@ -230,9 +248,11 @@ impl<F: Field> Statement<F> {
         let mut combined_evals = EvaluationsList::new(evaluations_vec);
         let (combined_sum, _) = self.constraints.iter().fold(
             (F::ZERO, F::ONE),
-            |(mut acc_sum, gamma_pow), (weights, sum)| {
-                weights.accumulate(&mut combined_evals, gamma_pow);
-                acc_sum += *sum * gamma_pow;
+            |(mut acc_sum, gamma_pow), constraint| {
+                constraint
+                    .weights
+                    .accumulate(&mut combined_evals, gamma_pow);
+                acc_sum += constraint.sum * gamma_pow;
                 (acc_sum, gamma_pow * challenge)
             },
         );
@@ -385,16 +405,17 @@ impl<F: Field> StatementVerifier<F> {
     /// This is used during the verification phase to simplify constraint handling.
     pub fn from_statement(statement: &Statement<F>) -> Self {
         let mut verifier = Self::new(statement.num_variables());
-        for (weights, sum) in &statement.constraints {
-            match weights {
+        for constraint in &statement.constraints {
+            match &constraint.weights {
                 Weights::Linear { weight, .. } => {
                     verifier.add_constraint(
                         VerifierWeights::linear(weight.num_variables(), None),
-                        *sum,
+                        constraint.sum,
                     );
                 }
                 Weights::Evaluation { point } => {
-                    verifier.add_constraint(VerifierWeights::evaluation(point.clone()), *sum);
+                    verifier
+                        .add_constraint(VerifierWeights::evaluation(point.clone()), constraint.sum);
                 }
             }
         }
