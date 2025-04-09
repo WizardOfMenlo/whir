@@ -138,7 +138,7 @@ mod tests {
         let params = WhirConfig::new(mv_params, whir_params);
 
         // Test that the config is serializable
-        eprintln!("{:?}", params);
+        eprintln!("{params:?}");
         test_serde(&params);
 
         // Define the multilinear polynomial: constant 1 across all inputs

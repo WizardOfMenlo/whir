@@ -539,7 +539,7 @@ where
             self.starting_folding_pow_bits
         )?;
         for r in &self.round_parameters {
-            write!(f, "{}", r)?;
+            write!(f, "{r}")?;
         }
 
         writeln!(
