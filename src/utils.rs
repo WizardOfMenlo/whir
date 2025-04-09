@@ -115,9 +115,16 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
 }
 
 #[cfg(test)]
+#[track_caller]
 pub fn test_serde<T: Debug + PartialEq + Serialize + for<'a> Deserialize<'a>>(value: &T) {
+    // Test in human-readable format
     let json = serde_json::to_string_pretty(value).unwrap();
     let deserialized = serde_json::from_str(&json).unwrap();
+    assert_eq!(value, &deserialized);
+
+    // Test in schemaless binary format
+    let bytes = postcard::to_allocvec(value).unwrap();
+    let deserialized = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(value, &deserialized);
 }
 

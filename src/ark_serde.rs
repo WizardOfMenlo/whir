@@ -1,6 +1,4 @@
-//! Workaround for `ark_ff` failure to implement Serde, and Rust's failure to
-//! allow us to implement it.
-//!
+//! Workaround for `ark_ff` lacking Serde support.
 //! See <https://github.com/arkworks-rs/algebra/pull/506>
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -19,7 +17,7 @@ where
     // Write bytes
     if serializer.is_human_readable() {
         // ark_serialize doesn't have human-readable serialization. And Serde
-        // doesn't have good defaults for [u8]. So we implement hexadecimal
+        // doesn't have good defaults for [u8]. So we manually implement hexadecimal
         // serialization.
         let hex = hex::encode(buf);
         serializer.serialize_str(&hex)

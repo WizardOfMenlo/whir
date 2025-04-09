@@ -72,6 +72,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
+        utils::test_serde,
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
@@ -134,6 +135,10 @@ mod tests {
         // Build global configuration from multivariate + protocol parameters
         let params = WhirConfig::new(mv_params, whir_params);
 
+        // Test that the config is serializable
+        eprintln!("{:?}", params);
+        test_serde(&params);
+
         // Define the multilinear polynomial: constant 1 across all inputs
         let polynomial = CoefficientList::new(vec![F::ONE; num_coeffs]);
 
@@ -187,6 +192,9 @@ mod tests {
 
         // Generate a STARK proof for the given statement and witness
         let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+
+        // Test that the proof is serializable
+        test_serde(&proof);
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
