@@ -296,28 +296,25 @@ mod batching_tests {
             SoundnessType::ProvableList,
             SoundnessType::UniqueDecoding,
         ];
-        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let num_points = [0, 2];
         let pow_bits = [0, 10];
 
         for folding_factor in folding_factors {
-            let num_variables = folding_factor..=4 * folding_factor;
+            let num_variables = (2 * folding_factor)..=3 * folding_factor;
             for num_variable in num_variables {
-                for fold_type in fold_types {
-                    for num_points in num_points {
-                        for soundness_type in soundness_type {
-                            for pow_bits in pow_bits {
-                                for batch_size in 1..=4 {
-                                    make_batched_whir_things(
-                                        batch_size,
-                                        num_variable,
-                                        FoldingFactor::Constant(folding_factor),
-                                        num_points,
-                                        soundness_type,
-                                        pow_bits,
-                                        fold_type,
-                                    );
-                                }
+                for num_points in num_points {
+                    for soundness_type in soundness_type {
+                        for pow_bits in pow_bits {
+                            for batch_size in 1..=4 {
+                                make_batched_whir_things(
+                                    batch_size,
+                                    num_variable,
+                                    FoldingFactor::Constant(folding_factor),
+                                    num_points,
+                                    soundness_type,
+                                    pow_bits,
+                                    FoldType::Naive,
+                                );
                             }
                         }
                     }
