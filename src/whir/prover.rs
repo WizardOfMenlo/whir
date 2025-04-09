@@ -213,8 +213,8 @@ where
             .statement
             .constraints
             .iter()
-            .filter_map(|(weights, _)| {
-                if let Weights::Linear { weight } = weights {
+            .filter_map(|constraint| {
+                if let Weights::Linear { weight } = &constraint.weights {
                     Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
                 } else {
                     None

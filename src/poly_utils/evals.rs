@@ -1,6 +1,8 @@
 use std::ops::Index;
 
 use ark_ff::Field;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
 
@@ -8,10 +10,11 @@ use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::Multilin
 /// over the hypercube `{0,1}^{num_variables}`.
 ///
 /// The vector `evals` contains function evaluations at **lexicographically ordered** points.
-#[derive(Debug, Clone)]
-
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct EvaluationsList<F> {
     /// Stores evaluations in **lexicographic order**.
+    #[serde(with = "crate::ark_serde")]
     evals: Vec<F>,
     /// Number of variables in the multilinear polynomial.
     /// Ensures `evals.len() = 2^{num_variables}`.

@@ -1,13 +1,16 @@
 use ark_ff::Field;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
+use serde::{Deserialize, Serialize};
 
 use super::hypercube::BinaryHypercubePoint;
 
 /// A point `(x_1, ..., x_n)` in `F^n` for some field `F`.
 ///
 /// Often, `x_i` are binary. If strictly binary, `BinaryHypercubePoint` is used.
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct MultilinearPoint<F>(pub Vec<F>);
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+pub struct MultilinearPoint<F>(#[serde(with = "crate::ark_serde")] pub Vec<F>);
 
 impl<F> MultilinearPoint<F>
 where

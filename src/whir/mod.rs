@@ -1,5 +1,8 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
+
+use crate::utils::ark_eq;
 
 pub mod batching;
 pub mod committer;
@@ -13,7 +16,7 @@ pub mod utils;
 pub mod verifier;
 
 // Only includes the authentication paths
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
 pub struct WhirProof<MerkleConfig, F>
 where
     MerkleConfig: Config<Leaf = [F]>,
@@ -24,12 +27,14 @@ where
     /// polynomial is being committed then there will be more than on entry in
     /// this list.
     ///
+    #[serde(with = "crate::ark_serde")]
     pub round0_merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 
     /// Merkle Paths after first round.
+    #[serde(with = "crate::ark_serde")]
     pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 
-    /// Statement value at a random point.
+    #[serde(with = "crate::ark_serde")]
     pub statement_values_at_random_point: Vec<F>,
 }
 
@@ -42,6 +47,20 @@ where
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+}
+
+impl<MerkleConfig, F> PartialEq for WhirProof<MerkleConfig, F>
+where
+    MerkleConfig: Config<Leaf = [F]>,
+    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+{
+    fn eq(&self, other: &Self) -> bool {
+        ark_eq(&self.merkle_paths, &other.merkle_paths)
+            && ark_eq(
+                &self.statement_values_at_random_point,
+                &other.statement_values_at_random_point,
+            )
+    }
 }
 
 #[cfg(test)]
@@ -64,6 +83,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
+        utils::test_serde,
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
@@ -76,8 +96,10 @@ mod tests {
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
+
     /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
+
     /// Field type used in the tests.
     type F = Field64;
 
@@ -126,6 +148,10 @@ mod tests {
 
         // Build global configuration from multivariate + protocol parameters
         let params = WhirConfig::new(mv_params, whir_params);
+
+        // Test that the config is serializable
+        eprintln!("{params:?}");
+        test_serde(&params);
 
         // Define the multilinear polynomial: constant 1 across all inputs
         let polynomial = CoefficientList::new(vec![F::ONE; num_coeffs]);
@@ -180,6 +206,9 @@ mod tests {
 
         // Generate a STARK proof for the given statement and witness
         let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+
+        // Test that the proof is serializable
+        test_serde(&proof);
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
