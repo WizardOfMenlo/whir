@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
 use itertools::Itertools;
 use spongefish::{
@@ -89,6 +89,57 @@ pub trait DigestToUnitSerialize<MerkleConfig: Config> {
 
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}
+
+///
+/// Compute the combined stir queries in-place
+///
+pub(crate) fn fma_stir_queries<F: ark_ff::Field>(
+    scale_factor: F,
+    stir_queries: &[Vec<F>],
+    folded_queries: &mut [Vec<F>],
+) {
+    for (folded_vec, stir_vec) in folded_queries.iter_mut().zip(stir_queries.iter()) {
+        folded_vec
+            .iter_mut()
+            .zip(stir_vec.iter())
+            .for_each(|(fused_values, value)| *fused_values += *value * scale_factor);
+    }
+}
+
+#[allow(dead_code)] // Only used with debug build
+pub(crate) fn validate_stir_queries<F, MerkleConfig>(
+    batching_randomness: &F,
+    expected_stir_value: &[Vec<F>],
+    stir_list: &[(MultiPath<MerkleConfig>, Vec<Vec<F>>)],
+) -> bool
+where
+    F: ark_ff::Field,
+    MerkleConfig: Config<Leaf = [F]>,
+{
+    if stir_list.is_empty() {
+        return true;
+    }
+
+    let (basic_indexes, mut computed_stir) = stir_list.first().unwrap().clone();
+    let mut multiplier = *batching_randomness;
+
+    for (multi_path, stir_queries) in &stir_list[1..] {
+        if !multi_path
+            .leaf_indexes
+            .iter()
+            .zip(basic_indexes.leaf_indexes.iter())
+            .all(|(lhs, rhs)| lhs == rhs)
+        {
+            return false;
+        }
+
+        fma_stir_queries(multiplier, stir_queries.as_slice(), &mut computed_stir);
+        multiplier *= batching_randomness;
+    }
+
+    let result = expected_stir_value == computed_stir;
+    result
 }
 
 #[cfg(test)]

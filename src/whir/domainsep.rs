@@ -32,17 +32,44 @@ where
     DomainSeparator:
         ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MerkleConfig>,
 {
+    //
+    // FS Batch Commitment:
+    // P -> V
+    //  32-bit (4-bytes-le): Number of entries in the batch
+    //  For each batch entry:
+    //      Merkle Root of prover-id.
+    //      If there's only one entry, add ODD samples and their response
+    //
+    //  If more than on entry is there add
+    //  V -> P
+    //      Sample single scalar element
+    //
+
     fn commit_statement<PowStrategy>(
         self,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
-        // TODO: Add params
-        let mut this = self.add_digest("merkle_digest");
-        if params.committment_ood_samples > 0 {
-            assert!(params.initial_statement);
-            this = this.add_ood(params.committment_ood_samples);
+        // This is important for parser to know.
+        let mut this = self.add_bytes(4, "batch_size");
+
+        for i in 0..params.batch_size {
+            let label = format!("merkle-root-{}", &i);
+            // Add the root of each Merkle tree
+            this = this.add_digest(&label);
         }
-        this
+
+        if params.batch_size == 1 {
+            // Add OOD if present
+            if params.committment_ood_samples > 0 {
+                assert!(params.initial_statement);
+                this = this.add_ood(params.committment_ood_samples);
+            }
+            this
+        } else {
+            // No OOD for batched commitments
+            // Sample the batching combination randomness
+            this.challenge_scalars(1, "batching_randomness")
+        }
     }
 
     fn add_whir_proof<PowStrategy>(

@@ -64,6 +64,9 @@ where
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    // Batching related flag
+    pub batch_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,10 +109,12 @@ where
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate);
 
-        let committment_ood_samples = if whir_parameters.initial_statement {
+        let initial_soundness = whir_parameters.rbr_soundness(0);
+
+        let commitment_ood_samples = if whir_parameters.initial_statement {
             Self::ood_samples(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                initial_soundness,
                 num_variables,
                 log_inv_rate,
                 log_eta_start,
@@ -122,7 +127,7 @@ where
         let starting_folding_pow_bits = if whir_parameters.initial_statement {
             Self::folding_pow_bits(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                initial_soundness,
                 field_size_bits,
                 num_variables,
                 log_inv_rate,
@@ -131,7 +136,7 @@ where
         } else {
             {
                 let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                    whir_parameters.soundness_type,
+                    initial_soundness,
                     field_size_bits,
                     num_variables,
                     log_inv_rate,
@@ -149,25 +154,28 @@ where
             let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
 
             let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
-            let num_queries = Self::queries(
-                whir_parameters.soundness_type,
-                protocol_security_level,
-                log_inv_rate,
-            );
+
+            let soundness_type = whir_parameters.rbr_soundness(round);
+
+            let num_queries = Self::queries(soundness_type, protocol_security_level, log_inv_rate);
 
             let ood_samples = Self::ood_samples(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                soundness_type,
                 num_variables,
                 next_rate,
                 log_next_eta,
                 field_size_bits,
             );
 
-            let query_error =
-                Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, num_queries);
+            let query_error = Self::rbr_queries(
+                whir_parameters.rbr_soundness(round),
+                log_inv_rate,
+                num_queries,
+            );
+
             let combination_error = Self::rbr_soundness_queries_combination(
-                whir_parameters.soundness_type,
+                soundness_type,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -181,7 +189,7 @@ where
 
             let folding_pow_bits = Self::folding_pow_bits(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                soundness_type,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -200,15 +208,13 @@ where
             log_inv_rate = next_rate;
         }
 
-        let final_queries = Self::queries(
-            whir_parameters.soundness_type,
-            protocol_security_level,
-            log_inv_rate,
-        );
+        let soundness_final = whir_parameters.rbr_soundness(num_rounds);
+
+        let final_queries = Self::queries(soundness_final, protocol_security_level, log_inv_rate);
 
         let final_pow_bits = 0_f64.max(
             whir_parameters.security_level as f64
-                - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries),
+                - Self::rbr_queries(soundness_final, log_inv_rate, final_queries),
         );
 
         let final_folding_pow_bits =
@@ -218,7 +224,7 @@ where
             security_level: whir_parameters.security_level,
             max_pow_bits: whir_parameters.pow_bits,
             initial_statement: whir_parameters.initial_statement,
-            committment_ood_samples,
+            committment_ood_samples: commitment_ood_samples,
             mv_parameters,
             starting_domain,
             soundness_type: whir_parameters.soundness_type,
@@ -235,6 +241,7 @@ where
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
+            batch_size: whir_parameters.batch_size,
         }
     }
 
@@ -744,6 +751,7 @@ mod tests {
             fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
+            batch_size: 1,
         }
     }
 

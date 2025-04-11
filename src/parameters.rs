@@ -387,6 +387,9 @@ where
     /// These define the hashing function used when combining two child nodes into a parent node.
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    /// Number of polynomials committed in the batch.
+    pub batch_size: usize,
 }
 
 impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
@@ -430,6 +433,19 @@ where
             "Starting rate: 2^-{}, folding_factor: {:?}, fold_opt_type: {}",
             self.starting_log_inv_rate, self.folding_factor, self.fold_optimisation,
         )
+    }
+}
+
+impl<MerkleConfig, PowStrategy> WhirParameters<MerkleConfig, PowStrategy>
+where
+    MerkleConfig: Config,
+{
+    pub(crate) fn rbr_soundness(&self, round: usize) -> SoundnessType {
+        if self.batch_size > 1 && round == 0 {
+            SoundnessType::UniqueDecoding
+        } else {
+            self.soundness_type
+        }
     }
 }
 
