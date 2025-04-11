@@ -1403,6 +1403,7 @@ dependencies = [
  "postcard",
  "proptest",
  "rand",
+ "rand_chacha",
  "rayon",
  "serde",
  "serde_json",

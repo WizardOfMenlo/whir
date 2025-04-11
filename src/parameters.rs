@@ -86,6 +86,27 @@ impl<F> Display for MultivariateParameters<F> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct UnivariateParameters<F> {
+    pub(crate) log_degree: usize,
+    _field: PhantomData<F>,
+}
+
+impl<F> UnivariateParameters<F> {
+    pub const fn new(log_degree: usize) -> Self {
+        Self {
+            log_degree,
+            _field: PhantomData,
+        }
+    }
+}
+
+impl<F> Display for UnivariateParameters<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Degree: 2^{}", self.log_degree)
+    }
+}
+
 /// Defines the folding strategy for polynomial commitments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoldType {

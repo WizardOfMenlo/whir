@@ -15,9 +15,9 @@ use spongefish::{
 };
 
 use super::{digest::GenericDigest, IdentityDigestConverter};
-use crate::whir::{
-    domainsep::DigestDomainSeparator,
-    utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+use crate::{
+    fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+    whir::domainsep::DigestDomainSeparator,
 };
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).

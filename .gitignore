@@ -4,6 +4,7 @@ bench_utils/target
 *_proof
 artifacts
 outputs/temp/
+outputs/
 *.pdf
 scripts/__pycache__/
 .DS_Store
