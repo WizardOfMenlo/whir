@@ -357,7 +357,7 @@ impl FoldingFactor {
 
 /// Configuration parameters for WHIR proofs.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct WhirParameters<MerkleConfig, PowStrategy>
+pub struct ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
@@ -389,7 +389,7 @@ where
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 }
 
-impl<MerkleConfig, PowStrategy> Debug for WhirParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
@@ -398,7 +398,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> PartialEq for WhirParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig, PowStrategy> PartialEq for ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {
@@ -415,7 +415,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> Display for WhirParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig, PowStrategy> Display for ProtocolParameters<MerkleConfig, PowStrategy>
 where
     MerkleConfig: Config,
 {

@@ -147,7 +147,7 @@ mod tests {
             },
         },
         parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
         },
         poly_utils::multilinear::MultilinearPoint,
         whir::domainsep::WhirDomainSeparator,
@@ -173,7 +173,7 @@ mod tests {
         let folding_factor = 4;
         let first_round_folding_factor = 4;
 
-        let whir_params = WhirParameters::<MerkleConfig, Blake3PoW> {
+        let whir_params = ProtocolParameters::<MerkleConfig, Blake3PoW> {
             initial_statement: true,
             security_level,
             pow_bits,
@@ -265,7 +265,7 @@ mod tests {
 
         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
             MultivariateParameters::<F>::new(10),
-            WhirParameters {
+            ProtocolParameters {
                 initial_statement: true,
                 security_level: 100,
                 pow_bits: 20,
@@ -305,7 +305,7 @@ mod tests {
 
         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
             MultivariateParameters::<F>::new(5),
-            WhirParameters {
+            ProtocolParameters {
                 initial_statement: true,
                 security_level: 100,
                 pow_bits: 20,
