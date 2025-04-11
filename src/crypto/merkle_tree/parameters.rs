@@ -8,6 +8,7 @@ use ark_crypto_primitives::{
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use spongefish::{
     ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
     ProofResult, ProverState, VerifierState,
@@ -26,8 +27,10 @@ use crate::whir::{
 /// - `LeafH`: Leaf hash function
 /// - `CompressH`: Internal node hasher
 /// - `Digest`: Digest type
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct MerkleTreeParams<F, LeafH, CompressH, Digest> {
+    #[serde(skip)]
     _marker: PhantomData<(F, LeafH, CompressH, Digest)>,
 }
 

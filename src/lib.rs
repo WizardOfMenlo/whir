@@ -1,3 +1,4 @@
+pub mod ark_serde;
 pub mod cmdline_utils;
 pub mod crypto; // Crypto utils
 pub mod domain; // Domain that we are evaluating over

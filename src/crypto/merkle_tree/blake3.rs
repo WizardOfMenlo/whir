@@ -6,6 +6,7 @@ use ark_crypto_primitives::{
 };
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 use super::{digest::GenericDigest, parameters::MerkleTreeParams, HashCounter};
 
@@ -23,8 +24,9 @@ pub type Blake3MerkleTreeParams<F> =
 /// This struct implements `CRHScheme` where the input is a slice of
 /// canonical-serializable field elements `[F]`, and the output is a
 /// 32-byte Blake3 digest.
-#[derive(Clone)]
-pub struct Blake3LeafHash<F>(PhantomData<F>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Blake3LeafHash<F>(#[serde(skip)] PhantomData<F>);
 
 impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
     type Input = [F];
@@ -52,7 +54,7 @@ impl<F: CanonicalSerialize + Send> CRHScheme for Blake3LeafHash<F> {
 ///
 /// This struct implements `TwoToOneCRHScheme`, combining two digests
 /// by concatenation and hashing with Blake3.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blake3Compress;
 
 impl TwoToOneCRHScheme for Blake3Compress {

@@ -1,7 +1,7 @@
 use std::iter;
 
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
-use ark_ff::{FftField, Field};
+use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
