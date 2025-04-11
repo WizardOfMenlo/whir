@@ -12,6 +12,7 @@ pub struct ParsedCommitment<D> {
     pub root: D,
 }
 
+#[derive(Default)]
 pub struct CommitmentReader {}
 
 impl CommitmentReader {
@@ -32,11 +33,5 @@ impl CommitmentReader {
         let root = verifier_state.read_digest()?;
 
         Ok(ParsedCommitment { root })
-    }
-}
-
-impl Default for CommitmentReader {
-    fn default() -> Self {
-        Self::new()
     }
 }
