@@ -186,7 +186,7 @@ fn transpose_square_swap<F: Sized + Send>(mut a: MatrixMut<'_, F>, mut b: Matrix
 mod tests {
     use proptest::prelude::*;
 
-    use super::{super::utils::workload_size, *};
+    use super::*;
 
     type Pair = (usize, usize);
     type Triple = (usize, usize, usize);
