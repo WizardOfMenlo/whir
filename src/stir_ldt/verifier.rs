@@ -14,6 +14,7 @@ use spongefish_pow::{self, PoWChallenge};
 use super::{
     committer::reader::ParsedCommitment,
     parameters::{RoundConfig, StirConfig},
+    parsed_proof::{ParsedProof, ParsedRound},
     StirProof,
 };
 use crate::{
@@ -29,36 +30,6 @@ where
 {
     two_inv: F,
     params: &'a StirConfig<F, MerkleConfig, PowStrategy>,
-}
-
-#[derive(Clone)]
-struct ParsedProof<F: Field> {
-    rounds: Vec<ParsedRound<F>>,
-    final_domain_gen: F,
-    final_domain_gen_inv: F,
-    final_domain_offset: F,
-    final_domain_offset_inv: F,
-    final_r_shift_indexes: Vec<usize>,
-    final_r_shift_points: Vec<F>,
-    final_r_shift_virtual_evals: Vec<Vec<F>>,
-    final_r_fold: F,
-    p_poly: DensePolynomial<F>,
-}
-
-#[derive(Debug, Clone)]
-struct ParsedRound<F> {
-    r_fold: F,
-    ood_points: Vec<F>,
-    ood_evals: Vec<F>,
-    r_shift_indexes: Vec<usize>,
-    r_shift_points: Vec<F>,
-    r_shift_virtual_evals: Vec<Vec<F>>,
-    r_comb: F,
-    domain_gen: F,
-    domain_gen_inv: F,
-    domain_offset: F,
-    domain_offset_inv: F,
-    folded_domain_size: usize,
 }
 
 impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>

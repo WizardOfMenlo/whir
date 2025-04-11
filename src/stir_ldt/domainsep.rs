@@ -8,11 +8,6 @@ use crate::{
     whir::domainsep::DigestDomainSeparator,
 };
 
-// pub trait DigestDomainSeparator<MerkleConfig: Config> {
-//     #[must_use]
-//     fn add_digest(self, label: &str) -> Self;
-// }
-
 pub trait StirDomainSeparator<F: FftField, MerkleConfig: Config> {
     #[must_use]
     fn commit_statement<PowStrategy>(

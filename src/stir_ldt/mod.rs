@@ -5,6 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
+pub mod parsed_proof;
 pub mod prover;
 pub mod utils;
 pub mod verifier;
@@ -20,14 +21,14 @@ where
 }
 
 pub fn stir_proof_size<MerkleConfig, F>(
-    transcript: &[u8],
+    narg_string: &[u8],
     stir_proof: &StirProof<F, MerkleConfig>,
 ) -> usize
 where
     F: Field + Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
     MerkleConfig: Config<Leaf = [F]>,
 {
-    transcript.len() + stir_proof.serialized_size(ark_serialize::Compress::Yes)
+    narg_string.len() + stir_proof.serialized_size(ark_serialize::Compress::Yes)
 }
 
 #[cfg(test)]
