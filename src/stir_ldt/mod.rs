@@ -7,7 +7,6 @@ pub mod domainsep;
 pub mod parameters;
 pub mod parsed_proof;
 pub mod prover;
-pub mod utils;
 pub mod verifier;
 
 // Only includes the authentication paths
