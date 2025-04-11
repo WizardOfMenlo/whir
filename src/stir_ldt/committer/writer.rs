@@ -12,8 +12,8 @@ use spongefish::{
 
 use super::Witness;
 use crate::{
-    ntt::expand_from_coeff, poly_utils::fold::transform_evaluations,
-    stir_ldt::parameters::StirConfig, whir::utils::DigestToUnitSerialize,
+    fs_utils::DigestToUnitSerialize, ntt::expand_from_coeff,
+    poly_utils::fold::transform_evaluations, stir_ldt::parameters::StirConfig,
 };
 
 pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)

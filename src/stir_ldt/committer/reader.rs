@@ -2,7 +2,7 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::ProofResult;
 
-use crate::whir::utils::DigestToUnitDeserialize;
+use crate::fs_utils::DigestToUnitDeserialize;
 
 #[derive(Clone)]
 pub struct ParsedCommitment<D> {

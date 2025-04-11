@@ -18,10 +18,10 @@ use super::{
 };
 use crate::{
     domain::Domain,
+    fs_utils::DigestToUnitSerialize,
     parameters::FoldType,
     poly_utils::{self, fold::transform_evaluations},
     utils::{self, expand_randomness, indexes_to_coset_evaluations},
-    whir::utils::DigestToUnitSerialize,
 };
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(StirConfig<F, MerkleConfig, PowStrategy>)

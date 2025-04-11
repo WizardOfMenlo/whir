@@ -17,10 +17,11 @@ use super::{
     WhirProof,
 };
 use crate::{
+    fs_utils::DigestToUnitDeserialize,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
-    whir::utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
+    whir::utils::get_challenge_stir_queries,
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy>

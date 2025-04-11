@@ -26,6 +26,7 @@ use whir::{
             HashCounter,
         },
     },
+    fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     parameters::{
         default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
         SoundnessType, UnivariateParameters,
@@ -36,7 +37,6 @@ use whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
         statement::{Statement, StatementVerifier, Weights},
-        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
 
