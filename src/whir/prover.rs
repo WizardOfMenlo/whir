@@ -57,7 +57,7 @@ where
 
     pub(crate) fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
         assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
-        if !self.0.initial_statement || self.0.batch_size > 1 {
+        if !self.0.initial_statement {
             assert!(witness.ood_points.is_empty());
         }
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
@@ -96,6 +96,7 @@ where
         for BatchingData {
             merkle_tree,
             merkle_leaves,
+            ..
         } in batching_data
         {
             let paths = merkle_tree

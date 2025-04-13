@@ -73,7 +73,6 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
-batching = []
 tracing = ["dep:tracing"]
 
 [[bench]]

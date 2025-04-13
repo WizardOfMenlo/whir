@@ -63,7 +63,7 @@ where
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
-    // Batching related flag
+    // Batch size
     pub batch_size: usize,
 }
 
@@ -107,12 +107,10 @@ where
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate);
 
-        let initial_soundness = whir_parameters.rbr_soundness(0);
-
         let commitment_ood_samples = if whir_parameters.initial_statement {
             Self::ood_samples(
                 whir_parameters.security_level,
-                initial_soundness,
+                whir_parameters.soundness_type,
                 num_variables,
                 log_inv_rate,
                 log_eta_start,
@@ -125,7 +123,7 @@ where
         let starting_folding_pow_bits = if whir_parameters.initial_statement {
             Self::folding_pow_bits(
                 whir_parameters.security_level,
-                initial_soundness,
+                whir_parameters.soundness_type,
                 field_size_bits,
                 num_variables,
                 log_inv_rate,
@@ -134,7 +132,7 @@ where
         } else {
             {
                 let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                    initial_soundness,
+                    whir_parameters.soundness_type,
                     field_size_bits,
                     num_variables,
                     log_inv_rate,
@@ -153,27 +151,26 @@ where
 
             let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
 
-            let soundness_type = whir_parameters.rbr_soundness(round);
-
-            let num_queries = Self::queries(soundness_type, protocol_security_level, log_inv_rate);
+            let num_queries = Self::queries(
+                whir_parameters.soundness_type,
+                protocol_security_level,
+                log_inv_rate,
+            );
 
             let ood_samples = Self::ood_samples(
                 whir_parameters.security_level,
-                soundness_type,
+                whir_parameters.soundness_type,
                 num_variables,
                 next_rate,
                 log_next_eta,
                 field_size_bits,
             );
 
-            let query_error = Self::rbr_queries(
-                whir_parameters.rbr_soundness(round),
-                log_inv_rate,
-                num_queries,
-            );
+            let query_error =
+                Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, num_queries);
 
             let combination_error = Self::rbr_soundness_queries_combination(
-                soundness_type,
+                whir_parameters.soundness_type,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -187,7 +184,7 @@ where
 
             let folding_pow_bits = Self::folding_pow_bits(
                 whir_parameters.security_level,
-                soundness_type,
+                whir_parameters.soundness_type,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -206,13 +203,15 @@ where
             log_inv_rate = next_rate;
         }
 
-        let soundness_final = whir_parameters.rbr_soundness(num_rounds);
-
-        let final_queries = Self::queries(soundness_final, protocol_security_level, log_inv_rate);
+        let final_queries = Self::queries(
+            whir_parameters.soundness_type,
+            protocol_security_level,
+            log_inv_rate,
+        );
 
         let final_pow_bits = 0_f64.max(
             whir_parameters.security_level as f64
-                - Self::rbr_queries(soundness_final, log_inv_rate, final_queries),
+                - Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, final_queries),
         );
 
         let final_folding_pow_bits =

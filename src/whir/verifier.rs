@@ -501,7 +501,7 @@ where
 
         // Check the final sumcheck evaluation
         let evaluation_of_v_poly =
-            self.compute_w_poly(ood_points, ood_answers, statement, parsed_proof);
+            self.compute_w_poly(ood_points, &ood_answers, statement, parsed_proof);
         let final_value = parsed_proof
             .final_coefficients
             .evaluate(&parsed_proof.final_sumcheck_randomness);

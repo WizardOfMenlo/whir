@@ -436,19 +436,6 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> WhirParameters<MerkleConfig, PowStrategy>
-where
-    MerkleConfig: Config,
-{
-    pub(crate) fn rbr_soundness(&self, round: usize) -> SoundnessType {
-        if self.batch_size > 1 && round == 0 {
-            SoundnessType::UniqueDecoding
-        } else {
-            self.soundness_type
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 

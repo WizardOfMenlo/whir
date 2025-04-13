@@ -14,6 +14,13 @@ pub trait OODDomainSeparator<F: Field> {
     /// - If `num_samples == 0`, the DomainSeparator remains unchanged.
     #[must_use]
     fn add_ood(self, num_samples: usize) -> Self;
+
+    ///
+    /// Adds `num_samples` OOD queries and `num_samples*batch_size` number of
+    /// OOD response. If num_samples == 0 or batch_size == 0, nothing is added
+    ///
+    #[must_use]
+    fn add_committed_ood(self, num_samples: usize, batch_size: usize) -> Self;
 }
 
 impl<F, DomainSeparator> OODDomainSeparator<F> for DomainSeparator
@@ -22,12 +29,18 @@ where
     DomainSeparator: FieldDomainSeparator<F>,
 {
     fn add_ood(self, num_samples: usize) -> Self {
-        if num_samples > 0 {
-            self.challenge_scalars(num_samples, "ood_query")
-                .add_scalars(num_samples, "ood_ans")
-        } else {
-            self
+        self.add_committed_ood(num_samples, 1)
+    }
+
+    fn add_committed_ood(mut self, num_samples: usize, batch_size: usize) -> Self {
+        if num_samples > 0 && batch_size > 0 {
+            self = self.challenge_scalars(num_samples, "ood_query");
+
+            for i in 0..batch_size {
+                self = self.add_scalars(num_samples, &format!("ood_ans_{}", i))
+            }
         }
+        self
     }
 }
 
