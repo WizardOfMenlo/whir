@@ -4,19 +4,21 @@ use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    codecs::arkworks_algebra::{BytesToUnitSerialize, FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
-use super::Witness;
+use super::{BatchingData, Witness};
+#[cfg(debug_assertions)]
+use crate::poly_utils::multilinear::MultilinearPoint;
 use crate::{
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
     whir::{
         parameters::WhirConfig,
-        utils::{sample_ood_points, DigestToUnitSerialize},
+        utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
     },
 };
 
@@ -26,7 +28,9 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(
+    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
+)
 where
     F: FftField,
     MerkleConfig: Config;
@@ -47,13 +51,12 @@ where
     /// - Applies folding and restructuring optimizations.
     /// - Converts evaluations to an extension field.
     /// - Constructs a Merkle tree from the evaluations.
-    /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<ProverState>(
+    fn commit_single<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomial: CoefficientList<F::BasePrimeField>,
+        polynomial: &CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
@@ -112,22 +115,222 @@ where
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
-        // Handle OOD (Out-Of-Domain) samples
-        let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
-            self.0.committment_ood_samples,
-            self.0.mv_parameters.num_variables,
-            |point| polynomial.evaluate_at_extension(point),
-        )?;
-
         // Return the witness containing the polynomial, Merkle tree, and OOD results.
         Ok(Witness {
-            polynomial: polynomial.to_extension(),
+            polynomial: polynomial.clone().to_extension(),
             merkle_tree,
             merkle_leaves: folded_evals,
-            ood_points,
-            ood_answers,
+            ood_points: Vec::new(),
+            ood_answers: Vec::new(),
+            batching_data: Vec::new(),
+            batching_randomness: F::zero(),
         })
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
+    pub fn commit_batch<ProverFSState>(
+        &self,
+        prover_state: &mut ProverFSState,
+        polynomials: &[CoefficientList<F::BasePrimeField>],
+    ) -> ProofResult<Witness<F, MerkleConfig>>
+    where
+        ProverFSState: FieldToUnitSerialize<F>
+            + BytesToUnitSerialize
+            + DigestToUnitSerialize<MerkleConfig>
+            + UnitToField<F>,
+    {
+        assert!(!polynomials.is_empty());
+        assert_eq!(polynomials.len(), self.0.batch_size);
+
+        let num_vars = polynomials.first().unwrap().num_variables();
+        let num_coeffs = polynomials.first().unwrap().num_coeffs();
+
+        for poly in polynomials {
+            assert_eq!(poly.num_variables(), num_vars);
+            assert_eq!(poly.num_coeffs(), num_coeffs);
+        }
+
+        // 1. Create the Merkle tree and add _all_ the Merkle roots to transcript
+        let mut witness_list = polynomials
+            .into_iter()
+            .map(|poly| self.commit_single(prover_state, poly))
+            .collect::<ProofResult<Vec<_>>>()?;
+
+        // 2. Randomly sample the OOD challenge and compute the OOD Response
+        //    after _all_ merkle roots have been committed. Returns the
+        //    challenge OOD point that was used for computing the responses.
+        let ood_points = witness_list
+            .iter_mut()
+            .try_fold(
+                None as Option<Vec<F>>, /* OOD challenge point */
+                |ood_points, witness| {
+                    if let Some(ood_points) = ood_points {
+                        // OOD challenge points were previously computed
+                        compute_ood_response(
+                            prover_state,
+                            &ood_points,
+                            self.0.mv_parameters.num_variables,
+                            |point| witness.polynomial.evaluate(point),
+                        )
+                        .map(|ood_response| {
+                            witness.ood_answers = ood_response;
+                            Some(ood_points)
+                        })
+                    } else {
+                        // Compute the challenge OOD points and OOD response
+                        sample_ood_points(
+                            prover_state,
+                            self.0.committment_ood_samples,
+                            self.0.mv_parameters.num_variables,
+                            |point| witness.polynomial.evaluate(point),
+                        )
+                        .map(|(ood_point, ood_response)| {
+                            witness.ood_answers = ood_response;
+                            Some(ood_point)
+                        })
+                    }
+                },
+            )?
+            .unwrap_or_default();
+
+        if witness_list.len() == 1 {
+            // Without batching no extra step is needed
+            return Ok(Witness {
+                ood_points,
+                ..witness_list.into_iter().next().unwrap()
+            });
+        }
+
+        // Sample batching_randomness
+        let [batching_randomness] = prover_state.challenge_scalars()?;
+
+        Ok(Witness::new_batched(
+            witness_list,
+            ood_points,
+            batching_randomness,
+            &self.0,
+        ))
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
+    pub fn commit<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        polynomial: CoefficientList<F::BasePrimeField>,
+    ) -> ProofResult<Witness<F, MerkleConfig>>
+    where
+        ProverState: FieldToUnitSerialize<F>
+            + UnitToField<F>
+            + DigestToUnitSerialize<MerkleConfig>
+            + BytesToUnitSerialize,
+    {
+        self.commit_batch(prover_state, &[polynomial])
+    }
+}
+
+impl<F, MerkleConfig> Witness<F, MerkleConfig>
+where
+    F: FftField,
+    MerkleConfig: Config<Leaf = [F]>,
+{
+    // Takes a list of witnesses and computes the top level batching witness.
+    fn new_batched<PowStrategy>(
+        witness_list: Vec<Witness<F, MerkleConfig>>,
+        ood_points: Vec<F>,
+        batching_randomness: F,
+        config: &WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self {
+        assert!(
+            witness_list.len() > 1,
+            "Witnesses of size 1 should be handled elsewhere"
+        );
+
+        let num_vars = witness_list.first().unwrap().polynomial.num_variables();
+
+        for wit in &witness_list {
+            assert!(wit.polynomial.coeffs().len().is_power_of_two());
+            assert!(wit.merkle_leaves.len().is_power_of_two());
+            assert_eq!(wit.polynomial.num_variables(), num_vars);
+            assert_eq!(wit.merkle_leaves.len(), witness_list[0].merkle_leaves.len())
+        }
+
+        let poly_dim = witness_list.first().unwrap().polynomial.coeffs().len();
+        let oracle_len = witness_list.first().unwrap().merkle_leaves.len();
+
+        assert_eq!(oracle_len % poly_dim, 0);
+
+        let rate_factor = oracle_len / poly_dim;
+
+        let (first_witness, rest_witnesses) = witness_list.split_first().unwrap();
+
+        let mut batched_poly: Vec<F> = first_witness.polynomial.coeffs().to_vec();
+        let mut batched_oracle: Vec<F> = first_witness.merkle_leaves.clone();
+        let mut batched_ood_resp: Vec<F> = first_witness.ood_answers.clone();
+        let mut multiplier = batching_randomness;
+
+        for wit in rest_witnesses {
+            // TODO: Get rid of index based updates.
+            for (i, coefficient) in wit.polynomial.coeffs().iter().enumerate() {
+                batched_poly[i] += multiplier * coefficient;
+                for j in 0..rate_factor {
+                    let ndx = i + j * poly_dim;
+                    batched_oracle[ndx] += multiplier * wit.merkle_leaves[ndx];
+                }
+            }
+
+            batched_ood_resp
+                .iter_mut()
+                .zip(wit.ood_answers.iter())
+                .for_each(|(ood_resp, val)| *ood_resp += *val * multiplier);
+
+            multiplier *= batching_randomness;
+        }
+
+        let polynomial = CoefficientList::new(batched_poly);
+
+        #[cfg(debug_assertions)]
+        {
+            for (ood_point, ood_resp) in ood_points.iter().zip(batched_ood_resp.iter()) {
+                let expected = polynomial.evaluate(&MultilinearPoint::expand_from_univariate(
+                    ood_point.clone(),
+                    num_vars,
+                ));
+                assert_eq!(expected, ood_resp.clone());
+            }
+        }
+
+        let batched_tree = MerkleTree::<MerkleConfig>::blank(
+            &config.leaf_hash_params,
+            &config.two_to_one_params,
+            (ark_std::log2(batched_oracle.len()) as usize) + 1,
+        )
+        .unwrap();
+
+        Self {
+            polynomial,
+            merkle_leaves: batched_oracle,
+            merkle_tree: batched_tree,
+            ood_points,
+            ood_answers: batched_ood_resp,
+            batching_randomness,
+            batching_data: witness_list.into_iter().map(BatchingData::from).collect(),
+        }
+    }
+
+    pub fn roots(&self) -> Vec<MerkleConfig::InnerDigest> {
+        if self.batching_data.is_empty() {
+            vec![self.merkle_tree.root()]
+        } else {
+            self.batching_data
+                .iter()
+                .map(|w| w.merkle_tree.root())
+                .collect()
+        }
+    }
+
+    /// Returns the batched polynomial
+    pub fn batched_poly(&self) -> &CoefficientList<F> {
+        &self.polynomial
     }
 }
 
@@ -187,6 +390,7 @@ mod tests {
             fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
+            batch_size: 1,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -276,6 +480,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 
@@ -316,6 +521,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 
