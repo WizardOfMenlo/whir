@@ -460,19 +460,64 @@ where
     }
 }
 
+/// Represents the prover state during a single round of the WHIR protocol.
+///
+/// Each WHIR round folds the polynomial, commits to the new evaluations,
+/// responds to verifier queries, and updates internal randomness for the next step.
+/// This struct tracks all data needed to perform that round, and passes it forward
+/// across recursive iterations.
 pub(crate) struct RoundState<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
+    /// Index of the current WHIR round (0-based).
+    ///
+    /// Increases after each folding iteration.
     pub(crate) round: usize,
+
+    /// Domain over which the current polynomial is evaluated.
+    ///
+    /// Grows with each round due to NTT expansion.
     pub(crate) domain: Domain<F>,
+
+    /// Optional sumcheck prover used to enforce constraints.
+    ///
+    /// Present in rounds with non-empty constraint systems.
     pub(crate) sumcheck_prover: Option<SumcheckSingle<F>>,
+
+    /// Folding randomness sampled by the verifier.
+    ///
+    /// Used to reduce the number of variables in the polynomial.
     pub(crate) folding_randomness: MultilinearPoint<F>,
+
+    /// Current polynomial in coefficient form.
+    ///
+    /// Folded and evaluated to produce new commitments and Merkle trees.
     pub(crate) coefficients: CoefficientList<F>,
+
+    /// Merkle tree commitment to the polynomial evaluations from the previous round.
+    ///
+    /// Used to prove query openings from the folded function.
     pub(crate) prev_merkle: MerkleTree<MerkleConfig>,
+
+    /// Flat list of evaluations corresponding to `prev_merkle` leaves.
+    ///
+    /// Each folded function is evaluated on a domain and split into leaves.
     pub(crate) prev_merkle_answers: Vec<F>,
+
+    /// Merkle proofs and evaluations used to answer verifier queries.
+    ///
+    /// Each entry contains a multi-proof and the corresponding values.
     pub(crate) merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+
+    /// Accumulator for all folding randomness across rounds.
+    ///
+    /// Ordered with the most recent round’s randomness at the front.
     pub(crate) randomness_vec: Vec<F>,
+
+    /// Constraint system being enforced in this round.
+    ///
+    /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
 }
