@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
     domain::Domain,
+    fs_utils::DigestToUnitSerialize,
     ntt::expand_from_coeff,
     poly_utils::{
         coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
@@ -27,7 +28,7 @@ use crate::{
     utils::expand_randomness,
     whir::{
         parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
+        utils::{get_challenge_stir_queries, sample_ood_points},
     },
 };
 

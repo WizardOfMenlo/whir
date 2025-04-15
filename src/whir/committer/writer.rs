@@ -12,12 +12,10 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
+    fs_utils::DigestToUnitSerialize,
     ntt::expand_from_coeff,
     poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::{
-        parameters::WhirConfig,
-        utils::{sample_ood_points, DigestToUnitSerialize},
-    },
+    whir::{parameters::WhirConfig, utils::sample_ood_points},
 };
 
 /// Responsible for committing polynomials using a Merkle-based scheme.

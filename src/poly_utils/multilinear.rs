@@ -896,6 +896,24 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_wrong_inequality() {
+        let point = MultilinearPoint(vec![Field64::from(0), Field64::from(0)]);
+
+        let _x = point.eq_poly(BinaryHypercubePoint(4));
+    }
+
+    #[test]
+    fn test_from_hypercube_and_back() {
+        let hypercube_point = BinaryHypercubePoint(24);
+        assert_eq!(
+            Some(hypercube_point),
+            MultilinearPoint::<Field64>::from_binary_hypercube_point(hypercube_point, 5)
+                .to_hypercube()
+        );
+    }
+
+    #[test]
     fn test_multilinear_point_rand_not_all_same() {
         const K: usize = 20; // Number of trials
         const N: usize = 10; // Number of variables
