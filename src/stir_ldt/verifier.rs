@@ -1,5 +1,3 @@
-use std::iter;
-
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, Polynomial};
@@ -99,6 +97,10 @@ where
 
         let [r_comb] = verifier_state.challenge_scalars()?;
 
+        // Update context
+
+        ctx.prev_root = next_root.into();
+
         ctx.rounds.push(ParsedRound {
             r_fold: ctx.r_fold,
             ood_points,
@@ -114,24 +116,19 @@ where
             folded_domain_size,
         });
 
-        // Update context
         let [new_r_fold] = verifier_state.challenge_scalars()?;
         ctx.r_fold = new_r_fold;
-
-        ctx.prev_root = next_root.into();
-
         ctx.domain_gen *= ctx.domain_gen;
         ctx.domain_gen_inv *= ctx.domain_gen_inv;
-        ctx.domain_gen_exp *= ctx.domain_gen_exp;
-
         ctx.domain_offset = ctx.domain_offset * ctx.domain_offset * ctx.root_of_unity;
         ctx.domain_offset_inv =
             ctx.domain_offset_inv * ctx.domain_offset_inv * ctx.root_of_unity_inv;
+        ctx.domain_gen_exp *= ctx.domain_gen_exp;
+
         ctx.domain_offset_exp =
             ctx.domain_offset_exp * ctx.domain_offset_exp * ctx.root_of_unity_exp;
 
         ctx.domain_size /= 2;
-
         Ok(())
     }
 
@@ -253,6 +250,7 @@ where
         self.parse_final_round(final_merkle_proof, final_virtual_evals, verifier_state, ctx)
     }
 
+    // TODO: Make shorter
     #[allow(clippy::too_many_lines)]
     pub fn verify(
         &self,
@@ -268,76 +266,37 @@ where
 
         // PHASE 2:
         // We do a pass which at each point defines and update a virtual function
-        let (
-            r_folds,
-            all_r_shift_indexes,
-            all_r_shift_virtual_evals,
-            domain_gens,
-            domain_gen_invs,
-            domain_offsets,
-            domain_offset_invs,
-        ) = {
-            let parsed: &ParsedProof<F> = &parsed;
-            let r_folds: Vec<F> = parsed
-                .rounds
-                .iter()
-                .map(|r| &r.r_fold)
-                .chain(iter::once(&parsed.final_r_fold))
-                .copied()
-                .collect();
+        let init_r_fold = if parsed.rounds.is_empty() {
+            parsed.final_r_fold
+        } else {
+            parsed.rounds[0].r_fold
+        };
 
-            let all_r_shift_indexes: Vec<Vec<usize>> = parsed
-                .rounds
-                .iter()
-                .map(|r| &r.r_shift_indexes)
-                .chain(iter::once(&parsed.final_r_shift_indexes))
-                .cloned()
-                .collect();
+        let init_r_shift_indexes = if parsed.rounds.is_empty() {
+            parsed.final_r_shift_indexes.clone()
+        } else {
+            parsed.rounds[0].r_shift_indexes.clone()
+        };
 
-            let all_r_shift_virtual_evals: Vec<Vec<Vec<F>>> = parsed
-                .rounds
-                .iter()
-                .map(|r| &r.r_shift_virtual_evals)
-                .chain(iter::once(&parsed.final_r_shift_virtual_evals))
-                .cloned()
-                .collect();
+        let init_r_shift_virtual_evals = if parsed.rounds.is_empty() {
+            parsed.final_r_shift_virtual_evals.clone()
+        } else {
+            parsed.rounds[0].r_shift_virtual_evals.clone()
+        };
 
-            let domain_gens: Vec<_> = parsed
-                .rounds
-                .iter()
-                .map(|r| r.domain_gen)
-                .chain(iter::once(parsed.final_domain_gen))
-                .collect();
+        let init_domain_gen_inv = if parsed.rounds.is_empty() {
+            parsed.final_domain_gen_inv
+        } else {
+            self.params.starting_domain.backing_domain.group_gen_inv()
+        };
 
-            let domain_gen_invs: Vec<_> = parsed
-                .rounds
-                .iter()
-                .map(|r| r.domain_gen_inv)
-                .chain(iter::once(parsed.final_domain_gen_inv))
-                .collect();
-
-            let domain_offsets: Vec<_> = parsed
-                .rounds
-                .iter()
-                .map(|r| r.domain_offset)
-                .chain(iter::once(parsed.final_domain_offset))
-                .collect();
-
-            let domain_offset_invs: Vec<_> = parsed
-                .rounds
-                .iter()
-                .map(|r| r.domain_offset_inv)
-                .chain(iter::once(parsed.final_domain_offset_inv))
-                .collect();
-            (
-                r_folds,
-                all_r_shift_indexes,
-                all_r_shift_virtual_evals,
-                domain_gens,
-                domain_gen_invs,
-                domain_offsets,
-                domain_offset_invs,
-            )
+        let init_domain_offset_inv = if parsed.rounds.is_empty() {
+            parsed.final_domain_offset_inv
+        } else {
+            self.params
+                .starting_domain
+                .backing_domain
+                .coset_offset_inv()
         };
 
         // Suppose we have a function f evaluated on L = off * <gen>. To evaluate the k-wise fold of
@@ -349,23 +308,24 @@ where
 
         let coset_domain_size: usize = 1 << self.params.folding_factor;
         let mut coset_gen_inv =
-            domain_gen_invs[0].pow([
+            init_domain_gen_inv.pow([
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
 
         let mut r_shift_evals = self.get_r_shift_evals(
-            &r_folds,
-            &all_r_shift_indexes,
-            &all_r_shift_virtual_evals,
-            &domain_gen_invs,
-            &domain_offset_invs,
+            init_r_fold,
+            &init_r_shift_indexes,
+            &init_r_shift_virtual_evals,
+            init_domain_gen_inv,
+            init_domain_offset_inv,
             coset_gen_inv,
         );
 
-        for (r_index, round) in parsed.rounds.iter().enumerate() {
+        let mut round_iterator = parsed.rounds.into_iter().peekable();
+
+        while let Some(round) = round_iterator.next() {
             // The next virtual function is defined by the following
             // TODO: This actually is just a single value that we need
-            let r_num = r_index + 1;
             let r_comb = round.r_comb;
 
             let quotient_set: Vec<_> = round
@@ -391,20 +351,47 @@ where
                     .map(|(x, y)| (*x, y)),
             );
 
-            // The points that we are querying the new function at
-            let evaluation_indexes = &all_r_shift_indexes[r_num];
+            let (
+                next_r_fold,
+                next_evaluation_indexes,
+                next_virtual_evals,
+                next_domain_gen,
+                next_domain_gen_inv,
+                next_domain_offset,
+                next_domain_offset_inv,
+            ) = match round_iterator.peek() {
+                Some(next_round) => (
+                    next_round.r_fold,
+                    &next_round.r_shift_indexes,
+                    &next_round.r_shift_virtual_evals,
+                    next_round.domain_gen,
+                    next_round.domain_gen_inv,
+                    next_round.domain_offset,
+                    next_round.domain_offset_inv,
+                ),
+                None => (
+                    parsed.final_r_fold,
+                    &parsed.final_r_shift_indexes.clone(),
+                    &parsed.final_r_shift_virtual_evals.clone(),
+                    parsed.final_domain_gen,
+                    parsed.final_domain_gen_inv,
+                    parsed.final_domain_offset,
+                    parsed.final_domain_offset_inv,
+                ),
+            };
+
             // Note: The folded domain size of the next round is half that of `this` round.
-            coset_gen_inv = domain_gen_invs[r_num].pow([(round.folded_domain_size / 2) as u64]);
+            let next_folded_domain_size = round.folded_domain_size / 2;
+            coset_gen_inv = next_domain_gen_inv.pow([(next_folded_domain_size) as u64]);
 
             // The evaluations of the previous committed function need to be reshaped into
             // evaluations of the virtual function f'
-            let g_virtual_evals = &all_r_shift_virtual_evals[r_num];
-            let mut f_prime_virtual_evals = Vec::with_capacity(g_virtual_evals.len());
+            let mut f_prime_virtual_evals = Vec::with_capacity(next_virtual_evals.len());
 
-            for (index, answer) in evaluation_indexes.iter().zip(g_virtual_evals) {
+            for (index, answer) in next_evaluation_indexes.iter().zip(next_virtual_evals) {
                 // Coset eval is the evaluations of the virtual function on the coset
                 let coset_offset_inv =
-                    domain_offset_invs[r_num] * domain_gen_invs[r_num].pow([*index as u64]); // What does this do?
+                    next_domain_offset_inv * next_domain_gen_inv.pow([*index as u64]);
                 let mut coset_evals = Vec::with_capacity(1 << self.params.folding_factor);
                 #[allow(clippy::needless_range_loop)]
                 for j in 0..1 << self.params.folding_factor {
@@ -412,9 +399,8 @@ where
                     // The evaluation poincs are the i + j * folded_domain_size elements of the
                     // domain. for a domain whose represented by offset * <gen>,, this translates
                     // to a domain
-                    let x = domain_offsets[r_num]
-                        * domain_gens[r_num]
-                            .pow([(index + j * (round.folded_domain_size / 2)) as u64]);
+                    let x = next_domain_offset
+                        * next_domain_gen.pow([(index + j * (next_folded_domain_size)) as u64]);
 
                     let numerator = answer[j] - ans_polynomial.evaluate(&x);
 
@@ -440,7 +426,7 @@ where
 
                 let f_prime_eval = compute_fold_univariate(
                     &coset_evals,
-                    r_folds[r_num],
+                    next_r_fold,
                     coset_offset_inv,
                     coset_gen_inv,
                     self.two_inv,
@@ -473,26 +459,25 @@ where
 
     fn get_r_shift_evals(
         &self,
-        r_folds: &[F],
-        all_r_shift_indexes: &[Vec<usize>],
-        all_r_shift_virtual_evals: &[Vec<Vec<F>>],
-        domain_gen_invs: &[F],
-        domain_offset_invs: &[F],
+        r_fold: F,
+        r_shift_indexes: &[usize],
+        r_shift_evals_or_coeffs: &[Vec<F>],
+        domain_gen_inv: F,
+        domain_offset_inv: F,
         coset_gen_inv: F,
     ) -> Vec<F>
     where
         F: FftField,
     {
         match self.params.fold_optimization {
-            FoldType::Naive => all_r_shift_indexes[0]
+            FoldType::Naive => r_shift_indexes
                 .iter()
-                .zip(all_r_shift_virtual_evals[0].iter())
+                .zip(r_shift_evals_or_coeffs.iter())
                 .map(|(index, coset_eval)| {
-                    let coset_offset_inv =
-                        domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
+                    let coset_offset_inv = domain_offset_inv * domain_gen_inv.pow([*index as u64]);
                     compute_fold_univariate(
                         coset_eval,
-                        r_folds[0],
+                        r_fold,
                         coset_offset_inv,
                         coset_gen_inv,
                         self.two_inv,
@@ -500,28 +485,12 @@ where
                     )
                 })
                 .collect(),
-            FoldType::ProverHelps => all_r_shift_virtual_evals[0]
+            FoldType::ProverHelps => r_shift_evals_or_coeffs
                 .iter()
                 .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.clone()))
-                .map(|poly| poly.evaluate(&r_folds[0]))
+                .map(|poly| poly.evaluate(&r_fold))
                 .collect(),
         }
-        // all_r_shift_indexes[0]
-        //     .iter()
-        //     .zip(all_r_shift_virtual_evals[0].iter())
-        //     .map(|(index, coset_eval)| {
-        //         let coset_offset_inv =
-        //             domain_offset_invs[0] * domain_gen_invs[0].pow([*index as u64]);
-        //         compute_fold_univariate(
-        //             coset_eval,
-        //             r_folds[0],
-        //             coset_offset_inv,
-        //             coset_gen_inv,
-        //             self.two_inv,
-        //             self.params.folding_factor,
-        //         )
-        //     })
-        //     .collect()
     }
 }
 
