@@ -312,7 +312,7 @@ where
                 (self.params.starting_domain.backing_domain.size() / coset_domain_size) as u64
             ]);
 
-        let mut r_shift_evals = self.get_r_shift_evals(
+        let mut r_shift_evals = self.get_folded_evals(
             init_r_fold,
             &init_r_shift_indexes,
             &init_r_shift_virtual_evals,
@@ -457,27 +457,27 @@ where
         Ok(())
     }
 
-    fn get_r_shift_evals(
+    /// Computes the evaluations of the folding result for each queried coset.
+    /// Depending on the folding strategy, it either folds manually or evaluates
+    /// a polynomial given by the prover.
+    fn get_folded_evals(
         &self,
-        r_fold: F,
-        r_shift_indexes: &[usize],
-        r_shift_evals_or_coeffs: &[Vec<F>],
+        fold_challenge: F,
+        shift_indexes: &[usize],
+        evals_or_coeffs: &[Vec<F>],
         domain_gen_inv: F,
         domain_offset_inv: F,
         coset_gen_inv: F,
-    ) -> Vec<F>
-    where
-        F: FftField,
-    {
+    ) -> Vec<F> {
         match self.params.fold_optimization {
-            FoldType::Naive => r_shift_indexes
+            FoldType::Naive => shift_indexes
                 .iter()
-                .zip(r_shift_evals_or_coeffs.iter())
-                .map(|(index, coset_eval)| {
-                    let coset_offset_inv = domain_offset_inv * domain_gen_inv.pow([*index as u64]);
+                .zip(evals_or_coeffs.iter())
+                .map(|(&index, evals)| {
+                    let coset_offset_inv = domain_offset_inv * domain_gen_inv.pow([index as u64]);
                     compute_fold_univariate(
-                        coset_eval,
-                        r_fold,
+                        evals,
+                        fold_challenge,
                         coset_offset_inv,
                         coset_gen_inv,
                         self.two_inv,
@@ -485,10 +485,11 @@ where
                     )
                 })
                 .collect(),
-            FoldType::ProverHelps => r_shift_evals_or_coeffs
+
+            FoldType::ProverHelps => evals_or_coeffs
                 .iter()
                 .map(|coeffs| DensePolynomial::from_coefficients_vec(coeffs.clone()))
-                .map(|poly| poly.evaluate(&r_fold))
+                .map(|poly| poly.evaluate(&fold_challenge))
                 .collect(),
         }
     }
