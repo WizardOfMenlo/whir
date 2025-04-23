@@ -287,7 +287,7 @@ where
             final_sumcheck_rounds,
             final_sumcheck_randomness,
             final_coefficients,
-            statement_values_at_random_point: whir_proof.statement_values().to_vec(),
+            statement_values_at_random_point: whir_proof.statement_values_at_random_point.clone(),
         })
     }
 

@@ -23,77 +23,6 @@
 ///
 /// - After the first round, rest of the protocol proceeds as usual.
 ///
-use ark_crypto_primitives::merkle_tree::{Config as MTConfig, LeafParam, MultiPath, TwoToOneParam};
-use ark_ff::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-use crate::whir::{committer::reader::ParsedCommitment, utils::fma_stir_queries, WhirProof};
-
-impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: MTConfig<Leaf = [F]>,
-    F: Sized + Clone + ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-{
-    pub(crate) fn validate_first_round(
-        &self,
-        commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        stir_challenges_indexes: &[usize],
-        leaf_hash: &LeafParam<MerkleConfig>,
-        inner_node_hash: &TwoToOneParam<MerkleConfig>,
-    ) -> bool {
-        commitment.root.len() == self.round0_merkle_paths.len()
-            && self
-                .round0_merkle_paths
-                .iter()
-                .zip(commitment.root.iter())
-                .all(|((path, answers), root_hash)| {
-                    path.verify(
-                        leaf_hash,
-                        inner_node_hash,
-                        root_hash,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .unwrap()
-                        && path.leaf_indexes == *stir_challenges_indexes
-                })
-    }
-}
-
-impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: MTConfig<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize + Field,
-{
-    pub(crate) fn round_data(
-        &self,
-        whir_round: usize,
-        batching_randomness: F,
-    ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>) {
-        assert!(whir_round <= self.merkle_paths.len());
-        assert!(
-            self.round0_merkle_paths.len() > 0,
-            "There must be at least on round of data"
-        );
-
-        if whir_round == 0 {
-            let mut multiplier = batching_randomness;
-            let (merkle_paths, mut result) = self.round0_merkle_paths.first().unwrap().clone();
-
-            for (_, leaf) in &self.round0_merkle_paths[1..] {
-                fma_stir_queries(multiplier, leaf.as_slice(), result.as_mut_slice());
-                multiplier *= batching_randomness;
-            }
-
-            (merkle_paths, result)
-        } else {
-            self.merkle_paths[whir_round - 1].clone()
-        }
-    }
-
-    pub(crate) fn statement_values(&self) -> &[F] {
-        &self.statement_values_at_random_point
-    }
-}
 
 #[cfg(test)]
 mod batching_tests {
@@ -110,7 +39,7 @@ mod batching_tests {
             },
         },
         parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
         },
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
@@ -182,7 +111,7 @@ mod batching_tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
