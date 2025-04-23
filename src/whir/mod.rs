@@ -78,7 +78,7 @@ mod tests {
             },
         },
         parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters,
+            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
         },
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
@@ -132,7 +132,7 @@ mod tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             initial_statement: true,
             security_level: 32,
             pow_bits,

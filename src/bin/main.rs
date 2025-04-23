@@ -21,8 +21,8 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, FoldType, FoldingFactor, MultivariateParameters, SoundnessType,
-        WhirParameters,
+        default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
+        SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     whir::{
@@ -251,7 +251,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
         initial_statement: false,
         security_level,
         pow_bits,
@@ -374,7 +374,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = WhirParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
         initial_statement: true,
         security_level,
         pow_bits,

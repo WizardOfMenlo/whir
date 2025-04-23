@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{FoldType, FoldingFactor, MultivariateParameters, SoundnessType, WhirParameters},
+    parameters::{
+        FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
+    },
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -84,7 +86,7 @@ where
     #[allow(clippy::too_many_lines)]
     pub fn new(
         mv_parameters: MultivariateParameters<F>,
-        whir_parameters: WhirParameters<MerkleConfig, PowStrategy>,
+        whir_parameters: ProtocolParameters<MerkleConfig, PowStrategy>,
     ) -> Self {
         whir_parameters
             .folding_factor
@@ -732,12 +734,12 @@ mod tests {
     };
 
     /// Generates default WHIR parameters
-    fn default_whir_params<F: FftField>() -> WhirParameters<KeccakMerkleTreeParams<F>, u8> {
+    fn default_whir_params<F: FftField>() -> ProtocolParameters<KeccakMerkleTreeParams<F>, u8> {
         let mut rng = test_rng();
         let (leaf_hash_params, two_to_one_params) =
             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
-        WhirParameters {
+        ProtocolParameters {
             initial_statement: true,
             security_level: 100,
             pow_bits: 20,
