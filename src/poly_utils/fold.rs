@@ -4,6 +4,9 @@ use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use super::MultilinearPoint;
+// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
+// Compute the fold on that point
 use crate::{
     ntt::{intt_batch, transpose},
     parameters::FoldType,
@@ -72,6 +75,30 @@ pub fn compute_fold<F: Field>(
     }
 
     answers[0]
+}
+
+// Given the evaluation of f on the coset specified by coset_offset * <coset_gen>
+// Compute the univariate fold on that point
+pub fn compute_fold_univariate<F: Field>(
+    answers: &[F],
+    folding_randomness: F,
+    coset_offset_inv: F,
+    coset_gen_inv: F,
+    two_inv: F,
+    folding_factor: usize,
+) -> F {
+    // Either this or the other way around
+    let expanded_randomness =
+        MultilinearPoint::expand_from_univariate(folding_randomness, folding_factor).0;
+
+    compute_fold(
+        answers,
+        &expanded_randomness,
+        coset_offset_inv,
+        coset_gen_inv,
+        two_inv,
+        folding_factor,
+    )
 }
 
 /// Applies a folding transformation to evaluation vectors in-place.

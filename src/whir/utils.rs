@@ -1,4 +1,3 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use itertools::Itertools;
 use spongefish::{
@@ -81,14 +80,6 @@ where
         .collect_vec();
 
     Ok(indices)
-}
-
-pub trait DigestToUnitSerialize<MerkleConfig: Config> {
-    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
-}
-
-pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
-    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }
 
 #[cfg(test)]

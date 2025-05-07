@@ -1,5 +1,6 @@
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::Field;
-use spongefish::codecs::arkworks_algebra::FieldDomainSeparator;
+use spongefish::{codecs::arkworks_algebra::FieldDomainSeparator, ProofResult};
 use spongefish_pow::PoWDomainSeparator;
 
 /// Trait for adding out-of-domain (OOD) queries and their responses to an DomainSeparator.
@@ -14,6 +15,14 @@ pub trait OODDomainSeparator<F: Field> {
     /// - If `num_samples == 0`, the DomainSeparator remains unchanged.
     #[must_use]
     fn add_ood(self, num_samples: usize) -> Self;
+}
+
+pub trait DigestToUnitSerialize<MerkleConfig: Config> {
+    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
+}
+
+pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
+    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }
 
 impl<F, DomainSeparator> OODDomainSeparator<F> for DomainSeparator

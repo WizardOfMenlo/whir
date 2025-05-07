@@ -9,6 +9,7 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
 };
 use ark_ff::{FftField, Field};
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use serde::Serialize;
@@ -25,16 +26,17 @@ use whir::{
             HashCounter,
         },
     },
+    fs_utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     parameters::{
         default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
-        SoundnessType,
+        SoundnessType, UnivariateParameters,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    stir_ldt::stir_proof_size,
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
         statement::{Statement, StatementVerifier, Weights},
-        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
 
@@ -48,7 +50,7 @@ struct Args {
     pow_bits: Option<usize>,
 
     #[arg(short = 'd', long, default_value = "20")]
-    num_variables: usize,
+    log_num_coeffs: usize,
 
     #[arg(short = 'e', long = "evaluations", default_value = "1")]
     num_evaluations: usize,
@@ -79,7 +81,7 @@ struct Args {
 }
 
 #[derive(Debug, Serialize)]
-struct BenchmarkOutput {
+struct WhirBenchmarkOutput {
     security_level: usize,
     pow_bits: usize,
     starting_rate: usize,
@@ -106,15 +108,35 @@ struct BenchmarkOutput {
     whir_ldt_verifier_hashes: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct StirBenchmarkOutput {
+    security_level: usize,
+    pow_bits: usize,
+    starting_rate: usize,
+    log_degree: usize,
+    folding_factor: usize,
+    soundness_type: SoundnessType,
+    field: AvailableFields,
+    merkle_tree: AvailableMerkle,
+
+    // Stir LDT
+    stir_ldt_prover_time: Duration,
+    stir_ldt_argument_size: usize,
+    stir_ldt_prover_hashes: usize,
+    stir_ldt_verifier_time: Duration,
+    stir_ldt_verifier_hashes: usize,
+}
+
 type PowStrategy = Blake3PoW;
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let mut args = Args::parse();
     let field = args.field;
     let merkle = args.merkle_tree;
 
     if args.pow_bits.is_none() {
-        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
+        args.pow_bits = Some(default_max_pow(args.log_num_coeffs, args.rate));
     }
 
     let mut rng = ark_std::test_rng();
@@ -126,6 +148,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
@@ -134,6 +161,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
@@ -142,6 +174,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
@@ -150,6 +187,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
@@ -158,6 +200,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
@@ -166,6 +213,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
@@ -174,6 +226,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
@@ -182,6 +239,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
@@ -190,6 +252,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
@@ -198,6 +265,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
@@ -205,8 +277,12 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-
             run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, Blake3MerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
 
         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
@@ -215,6 +291,11 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_stir_ldt::<F, KeccakMerkleTreeParams<F>>(
+                &args,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
     }
 }
@@ -234,7 +315,7 @@ fn run_whir<F, MerkleConfig>(
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
-    let num_variables = args.num_variables;
+    let num_variables = args.log_num_coeffs;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
@@ -440,7 +521,7 @@ fn run_whir<F, MerkleConfig>(
         )
     };
 
-    let output = BenchmarkOutput {
+    let output = WhirBenchmarkOutput {
         security_level,
         pow_bits,
         starting_rate,
@@ -470,7 +551,141 @@ fn run_whir<F, MerkleConfig>(
     let mut out_file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open("outputs/bench_output.json")
+        .open("outputs/whir_bench_output.json")
+        .unwrap();
+    writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
+}
+
+fn run_stir_ldt<F, MerkleConfig>(
+    args: &Args,
+    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
+    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
+) where
+    F: FftField + CanonicalSerialize,
+    MerkleConfig: Config<Leaf = [F]> + Clone,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
+    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
+    ProverState: DigestToUnitSerialize<MerkleConfig>,
+    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
+{
+    let security_level = args.security_level;
+    let pow_bits = args.pow_bits.unwrap();
+    let log_degree = args.log_num_coeffs;
+    let starting_rate = args.rate;
+    let folding_factor = args.folding_factor;
+    let soundness_type = args.soundness_type;
+    let fold_optimisation = args.fold_optimisation;
+
+    std::fs::create_dir_all("outputs").unwrap();
+
+    let num_coeffs = 1 << log_degree;
+
+    let mv_params = UnivariateParameters::<F>::new(log_degree);
+
+    let stir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        initial_statement: false,
+        security_level,
+        pow_bits,
+        folding_factor: FoldingFactor::Constant(folding_factor),
+        leaf_hash_params,
+        two_to_one_params,
+        fold_optimisation,
+        soundness_type,
+        starting_log_inv_rate: starting_rate,
+        _pow_parameters: Default::default(),
+    };
+
+    let polynomial = DensePolynomial::from_coefficients_vec(
+        (0..num_coeffs)
+            .map(<F as Field>::BasePrimeField::from)
+            .collect(),
+    );
+
+    let (
+        stir_ldt_prover_time,
+        stir_ldt_argument_size,
+        stir_ldt_prover_hashes,
+        stir_ldt_verifier_time,
+        stir_ldt_verifier_hashes,
+    ) = {
+        use whir::stir_ldt::{
+            committer::CommitmentWriter, domainsep::StirDomainSeparator, parameters::StirConfig,
+            prover::Prover, verifier::Verifier,
+        };
+        let params = StirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, stir_params);
+
+        if !params.check_pow_bits() {
+            println!("WARN: more PoW bits required than what specified.");
+        }
+
+        let domain_separator = DomainSeparator::new("🌪️")
+            .commit_statement(&params)
+            .add_stir_proof(&params);
+
+        let mut prover_state = domain_separator.to_prover_state();
+
+        let stir_ldt_prover_time = Instant::now();
+
+        HashCounter::reset();
+
+        let committer = CommitmentWriter::new(params.clone());
+        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+
+        let prover = Prover::new(params.clone());
+
+        let stir_proof = prover.prove(&mut prover_state, &witness).unwrap();
+
+        let stir_ldt_prover_time = stir_ldt_prover_time.elapsed();
+        let stir_ldt_argument_size = stir_proof_size(prover_state.narg_string(), &stir_proof);
+        let stir_ldt_prover_hashes = HashCounter::get();
+
+        let commitment_reader = whir::stir_ldt::committer::CommitmentReader::new();
+        let verifier = Verifier::new(&params);
+
+        HashCounter::reset();
+        let stir_ldt_verifier_time = Instant::now();
+
+        let mut verifier_state = domain_separator.to_verifier_state(prover_state.narg_string());
+        let parsed_commitment = commitment_reader
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        verifier
+            .verify(&mut verifier_state, &parsed_commitment, &stir_proof)
+            .unwrap();
+        let stir_ldt_verifier_time = stir_ldt_verifier_time.elapsed();
+        let stir_ldt_verifier_hashes = HashCounter::get();
+
+        (
+            stir_ldt_prover_time,
+            stir_ldt_argument_size,
+            stir_ldt_prover_hashes,
+            stir_ldt_verifier_time,
+            stir_ldt_verifier_hashes,
+        )
+    };
+
+    let output = StirBenchmarkOutput {
+        security_level,
+        pow_bits,
+        starting_rate,
+        log_degree,
+        folding_factor,
+        soundness_type,
+        field: args.field,
+        merkle_tree: args.merkle_tree,
+
+        // Stir LDT
+        stir_ldt_prover_time,
+        stir_ldt_argument_size,
+        stir_ldt_prover_hashes,
+        stir_ldt_verifier_time,
+        stir_ldt_verifier_hashes,
+    };
+
+    let mut out_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("outputs/stir_bench_output.json")
         .unwrap();
     writeln!(out_file, "{}", serde_json::to_string(&output).unwrap()).unwrap();
 }
