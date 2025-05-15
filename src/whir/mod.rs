@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::ark_eq;
 
-pub mod batching;
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
@@ -22,20 +21,10 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
-    ///
-    /// List of Merkle paths leading to the committed roots. If more than one
-    /// polynomial is being committed then there will be more than on entry in
-    /// this list.
-    ///
+    /// Merkle proofs for each round.
+    /// Note that rounds may have more than one Merkle root (e.g. when batch opening multiple commitments)
     #[serde(with = "crate::ark_serde")]
-    pub round0_merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-
-    /// Merkle Paths after first round.
-    #[serde(with = "crate::ark_serde")]
-    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-
-    #[serde(with = "crate::ark_serde")]
-    pub statement_values_at_random_point: Vec<F>,
+    pub merkle_proofs: Vec<Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>>,
 }
 
 pub fn whir_proof_size<MerkleConfig, F>(
@@ -55,11 +44,7 @@ where
     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
 {
     fn eq(&self, other: &Self) -> bool {
-        ark_eq(&self.merkle_paths, &other.merkle_paths)
-            && ark_eq(
-                &self.statement_values_at_random_point,
-                &other.statement_values_at_random_point,
-            )
+        ark_eq(&self.merkle_proofs, &other.merkle_proofs)
     }
 }
 
@@ -196,7 +181,7 @@ mod tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
@@ -205,7 +190,9 @@ mod tests {
         let statement_verifier = StatementVerifier::from_statement(&statement);
 
         // Generate a STARK proof for the given statement and witness
-        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+        let proof = prover
+            .prove(&mut prover_state, statement, &witness)
+            .unwrap();
 
         // Test that the proof is serializable
         test_serde(&proof);

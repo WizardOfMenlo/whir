@@ -39,6 +39,13 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    pub fn new_zero(num_variables: usize) -> Self {
+        Self {
+            coeffs: vec![F::ZERO; 1 << num_variables],
+            num_variables,
+        }
+    }
+
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field

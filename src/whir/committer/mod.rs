@@ -1,4 +1,5 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::merkle_tree::{Config as MerkleConfig, MerkleTree};
+use ark_ff::Field;
 
 use crate::poly_utils::coeffs::CoefficientList;
 
@@ -8,64 +9,58 @@ pub mod writer;
 pub use reader::CommitmentReader;
 pub use writer::CommitmentWriter;
 
-///
-/// Represents the individual leaves  and merkle tree associated
-/// with the polynomial.
-///
-#[derive(Clone)]
-pub(crate) struct BatchingData<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
-    pub(crate) merkle_leaves: Vec<F>,
-}
+use super::statement::{Statement, Weights};
 
-/// Represents the commitment and evaluation data for a polynomial.
+/// Represents the commitment and evaluation data for a set of polynomials.
 ///
 /// This structure holds all necessary components to verify a commitment,
-/// including the polynomial itself, the Merkle tree used for commitment,
+/// including the polynomials themselves, the Merkle tree used for commitment,
 /// and out-of-domain (OOD) evaluations.
-pub struct Witness<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    /// The committed polynomial in coefficient form. In case of batching, its
-    /// the batched polynomial, i.e., the weighted sum of polynomials in
-    /// batching data.
-    pub(crate) polynomial: CoefficientList<F>,
+pub struct Witness<F: Field, M: MerkleConfig> {
+    /// The committed polynomials in coefficient form.
+    pub(crate) polynomials: Vec<CoefficientList<F>>,
 
-    /// The Merkle tree constructed from the polynomial evaluations. In case of
-    /// batching, it's the merkle tree of the batched polynomial.
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
+    /// The Merkle tree constructed from the polynomial evaluations.
+    /// A commitment creates one Merkle tree commiting to one or more polynomials.
+    pub(crate) merkle_tree: MerkleTree<M>,
 
     /// The leaves of the Merkle tree, derived from folded polynomial
-    /// evaluations. In case of batching, its the merkle leaves of the batched
-    /// tree. These leaves are computed as the weighted sum leaf values in the
-    /// batching_data.
+    /// evaluations.
+    /// For multiple polynomials the leaves are interleaved.
     pub(crate) merkle_leaves: Vec<F>,
 
     /// Out-of-domain challenge points used for polynomial verification.
+    /// The same point is used for all polynomials.
     pub(crate) ood_points: Vec<F>,
 
     /// The corresponding polynomial evaluations at the OOD challenge points.
+    /// One for each polynomial and OOD point.
     pub(crate) ood_answers: Vec<F>,
-
-    /// The individual commitments of each batching polynomial
-    pub(crate) batching_data: Vec<BatchingData<F, MerkleConfig>>,
-
-    /// The batching randomness. If there's no batching, this value is zero.
-    pub(crate) batching_randomness: F,
 }
 
-impl<F, MerkleConfig> From<Witness<F, MerkleConfig>> for BatchingData<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    fn from(value: Witness<F, MerkleConfig>) -> Self {
-        Self {
-            merkle_tree: value.merkle_tree,
-            merkle_leaves: value.merkle_leaves,
-        }
+impl<F: Field, M: MerkleConfig> Witness<F, M> {
+    pub fn num_polynomials(&self) -> usize {
+        self.polynomials.len()
+    }
+
+    pub fn num_variables(&self) -> usize {
+        assert!(!self.polynomials.is_empty());
+        self.polynomials[0].num_variables()
+    }
+
+    /// Returns the [`Statement`] for asserting the oods evaluations of each polynomial.
+    pub fn oods_constraints(&self) -> Vec<Statement<F>> {
+        self.ood_answers
+            .chunks_exact(self.num_polynomials())
+            .map(|answers| {
+                let mut statement = Statement::new(self.num_variables());
+                self.ood_points
+                    .iter()
+                    .map(|x| Weights::eval_univariate(self.num_variables(), *x))
+                    .zip(answers)
+                    .for_each(|(weights, answer)| statement.add_constraint(weights, *answer));
+                statement
+            })
+            .collect()
     }
 }

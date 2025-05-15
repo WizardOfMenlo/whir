@@ -27,6 +27,12 @@ pub enum Weights<F> {
 }
 
 impl<F: Field> Weights<F> {
+    /// Evaluate as univariate polynomial of degree 2^n-1.
+    pub fn eval_univariate(n: usize, point: F) -> Self {
+        let point = MultilinearPoint::expand_from_univariate(point, n);
+        Self::evaluation(point)
+    }
+
     /// Constructs a weight in evaluation mode, enforcing an equality constraint at `point`.
     ///
     /// Given a multilinear polynomial `p(X)`, this weight evaluates:
@@ -178,7 +184,10 @@ pub struct Statement<F> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct Constraint<F> {
+    /// Weights assigned to each polynomial in the witness
     pub weights: Weights<F>,
+
+    /// Sum
     #[serde(with = "crate::ark_serde")]
     pub sum: F,
 }
@@ -192,9 +201,20 @@ impl<F: Field> Statement<F> {
         }
     }
 
+    /// Check if the statement has any constraints.
+    pub const fn is_empty(&self) -> bool {
+        self.constraints.is_empty()
+    }
+
     /// Returns the number of variables defining the polynomial space.
     pub const fn num_variables(&self) -> usize {
         self.num_variables
+    }
+
+    /// Extend this statement with the constraints from another statement.
+    pub fn extend(&mut self, other: Self) {
+        assert_eq!(self.num_variables, other.num_variables);
+        self.constraints.extend(other.constraints.into_iter());
     }
 
     /// Adds a constraint `(w(X), s)` to the system.

@@ -78,6 +78,10 @@ impl<F> MultivariateParameters<F> {
             _field: PhantomData,
         }
     }
+
+    pub const fn num_coefficients(&self) -> usize {
+        1 << self.num_variables
+    }
 }
 
 impl<F> Display for MultivariateParameters<F> {

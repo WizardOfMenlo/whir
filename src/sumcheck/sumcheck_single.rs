@@ -51,18 +51,8 @@ where
 {
     /// Constructs a new `SumcheckSingle` instance from polynomial coefficients.
     ///
-    /// This function:
-    /// - Converts `coeffs` into evaluation form.
-    /// - Initializes an empty constraint table.
-    /// - Applies weighted constraints if provided.
-    ///
-    /// The provided `Statement` encodes constraints that contribute to the final sumcheck equation.
-    pub fn new(
-        coeffs: CoefficientList<F>,
-        statement: &Statement<F>,
-        combination_randomness: F,
-    ) -> Self {
-        let (weights, sum) = statement.combine(combination_randomness);
+    /// This function converts `coeffs` into evaluation form.
+    pub fn new(coeffs: CoefficientList<F>, weights: EvaluationsList<F>, sum: F) -> Self {
         Self {
             evaluation_of_p: coeffs.into(),
             weights,
@@ -358,7 +348,8 @@ mod tests {
         let weights = Weights::evaluation(eval_point);
         statement.add_constraint(weights, eval);
 
-        let mut prover = SumcheckSingle::new(polynomial, &statement, F::from(1));
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(polynomial, weights, sum);
 
         let poly_1 = prover.compute_sumcheck_polynomial();
 
@@ -392,7 +383,8 @@ mod tests {
         let weights = Weights::evaluation(eval_point);
         statement.add_constraint(weights, eval);
 
-        let mut prover = SumcheckSingle::new(polynomial, &statement, F::from(1));
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(polynomial, weights, sum);
 
         let poly_1 = prover.compute_sumcheck_polynomial();
         // First, check that is sums to the right value over the hypercube
@@ -437,7 +429,8 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
         let statement = Statement::new(2);
 
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected evaluation table after wavelet transform
         let expected_evaluation_of_p = vec![c1, c1 + c2, c1 + c3, c1 + c2 + c3 + c4];
@@ -461,7 +454,8 @@ mod tests {
         let statement = Statement::new(1);
 
         // Instantiate the Sumcheck prover
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected evaluations of the polynomial in evaluation form
         let expected_evaluation_of_p = vec![c1, c1 + c2];
@@ -492,7 +486,8 @@ mod tests {
         let statement = Statement::new(3);
 
         // Instantiate the Sumcheck prover
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected evaluations of the polynomial in evaluation form
         let expected_evaluation_of_p = vec![
@@ -532,7 +527,8 @@ mod tests {
         statement.add_constraint(weights, eval);
 
         // Instantiate the Sumcheck prover
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected sum update: sum = 5
         assert_eq!(prover.sum, eval);
@@ -576,7 +572,8 @@ mod tests {
         statement.add_constraint(weights2, eval2);
 
         // Instantiate the Sumcheck prover
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected sum update: sum = (5) + (4)
         let expected_sum = eval1 + eval2;
@@ -598,7 +595,8 @@ mod tests {
         let statement = Statement::new(2);
 
         // Instantiate the Sumcheck prover
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
         let sumcheck_poly = prover.compute_sumcheck_polynomial();
 
         // Since no equality constraints, sumcheck_poly should be **zero**
@@ -628,7 +626,8 @@ mod tests {
         statement.add_constraint(weights, eval);
 
         // Instantiate the Sumcheck prover with the polynomial and equality constraints
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
         let sumcheck_poly = prover.compute_sumcheck_polynomial();
 
         // The constraint directly contributes to the sum, hence sum = 5
@@ -690,7 +689,8 @@ mod tests {
         statement.add_constraint(weights, eval);
 
         // Instantiate the Sumcheck prover with the polynomial and equality constraints
-        let prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
         let sumcheck_poly = prover.compute_sumcheck_polynomial();
 
         // Expected sum update: sum = 5
@@ -753,7 +753,8 @@ mod tests {
         let statement = Statement::new(2);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Add a single constraint at (X1, X2) = (1,0) with weight 2
         let point = MultilinearPoint(vec![F::ONE, F::ZERO]);
@@ -801,7 +802,8 @@ mod tests {
         let statement = Statement::new(3);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Add constraints at (X1, X2, X3) = (1,0,1) with weight 2 and (0,1,0) with weight 3
         let point1 = MultilinearPoint(vec![F::ONE, F::ZERO, F::ONE]);
@@ -865,7 +867,8 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2]);
 
         let statement = Statement::new(1);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         let point = MultilinearPoint(vec![F::ONE]);
         let weight = F::ZERO;
@@ -895,7 +898,8 @@ mod tests {
         let statement = Statement::new(2);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Define random values for compression
         let combination_randomness = F::from(3);
@@ -971,7 +975,8 @@ mod tests {
         let statement = Statement::new(3);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Define random values for compression
         let combination_randomness = F::from(2);
@@ -1066,7 +1071,8 @@ mod tests {
         let statement = Statement::new(2);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Define zero folding randomness
         let combination_randomness = F::from(2);
@@ -1122,7 +1128,8 @@ mod tests {
         let statement = Statement::new(1);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Domain separator setup
         // Step 1: Initialize domain separator with a context label
@@ -1164,7 +1171,8 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
 
         let statement = Statement::new(2);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         let folding_factor = 2; // Increase folding factor
         let pow_bits = 1.; // Minimal grinding
@@ -1215,7 +1223,8 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4, c5, c6, c7, c8]);
 
         let statement = Statement::new(3);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         let folding_factor = 3;
         let pow_bits = 2.;
@@ -1261,7 +1270,8 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
 
         let statement = Statement::new(2);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let (weights, sum) = statement.combine(F::ONE);
+        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
 
         let folding_factor = 0; // Edge case: No folding
         let pow_bits = 1.;
