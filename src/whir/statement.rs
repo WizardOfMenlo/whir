@@ -397,6 +397,10 @@ impl<F: Field> StatementVerifier<F> {
         self.num_variables
     }
 
+    pub const fn num_constraints(&self) -> usize {
+        self.constraints.len()
+    }
+
     /// Adds a new constraint `(weights, sum)` to the verifier.
     ///
     /// Ensures that the constraint has the correct number of variables.

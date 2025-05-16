@@ -1,7 +1,6 @@
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MerkleTree, MultiPath, TwoToOneParam};
-use ark_ff::{FftField, Field};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
@@ -13,6 +12,7 @@ use spongefish_pow::{self, PoWChallenge};
 use tracing::{instrument, span, Level};
 
 use super::{
+    challenges::{ChallengeField, ChallengeIndices},
     committer::Witness,
     parameters::WhirConfig,
     statement::{Statement, Weights},
@@ -26,15 +26,9 @@ use crate::{
         multilinear::MultilinearPoint,
     },
     sumcheck::SumcheckSingle,
-    utils::expand_randomness,
     whir::{
-        committer::reader::ParsedCommitment,
         parameters::RoundConfig,
-        stir_evaluations,
-        utils::{
-            fma_stir_queries, get_challenge_stir_queries, sample_ood_points, validate_stir_queries,
-            DigestToUnitSerialize,
-        },
+        utils::{sample_ood_points, DigestToUnitSerialize},
     },
 };
 
@@ -113,18 +107,11 @@ where
         let initial_statement = statements.iter().any(|s| !s.is_empty());
         assert_eq!(initial_statement, self.0.initial_statement);
 
-        // Random linear combination of the batch polynomials
-        // TODO: Take powers of a single scalar?
-        let batch_randomness = {
-            let mut randomness = vec![F::ONE; polynomials.len()];
-            if randomness.len() > 1 {
-                prover_state.fill_challenge_scalars(&mut randomness)?;
-            }
-            randomness
-        };
+        // Random linear combination of the polynomials
+        let polynomial_randomness = prover_state.challenge_geometric_vec(polynomials.len());
         let coefficients = {
             let mut coeffs = vec![F::ZERO; self.0.mv_parameters.num_coefficients()];
-            for (poly, &r) in polynomials.iter().zip(batch_randomness.iter()) {
+            for (poly, &r) in polynomials.iter().zip(polynomial_randomness.iter()) {
                 for (c, &p) in coeffs.iter_mut().zip(poly.coeffs()) {
                     *c += r * p;
                 }
@@ -133,21 +120,15 @@ where
         };
 
         // Random linear combination of the constraints
-        // TODO: Take powers of a single scalar?
         let num_constraints = statements.iter().map(|s| s.constraints.len()).sum();
-        let statement_randomness = {
-            let mut randomness = vec![F::ONE; num_constraints];
-            if randomness.len() > 1 {
-                prover_state.fill_challenge_scalars(&mut randomness)?;
-            }
-            randomness
-        };
+        let constraint_randomness = prover_state.challenge_geometric_vec(num_constraints);
+        // Initial combined constraints, if any
         let weighted_sum = if num_constraints > 0 {
             let mut evals =
                 EvaluationsList::new(vec![F::ZERO; self.0.mv_parameters.num_coefficients()]);
             let mut sum = F::ZERO;
-            let mut s_randomness = statement_randomness.iter().copied();
-            for (s, &poly_randomness) in statements.iter().zip(batch_randomness.iter()) {
+            let mut s_randomness = constraint_randomness.iter().copied();
+            for (s, &poly_randomness) in statements.iter().zip(polynomial_randomness.iter()) {
                 for c in s.constraints.iter() {
                     let r = poly_randomness * s_randomness.next().unwrap();
                     c.weights.accumulate(&mut evals, r);
@@ -197,7 +178,7 @@ where
             round: 0,
             sumcheck_prover,
             folding_randomness,
-            batch_randomness,
+            polynomial_randomness,
             coefficients,
             prev_merkles: witnesses
                 .iter()
@@ -358,10 +339,11 @@ where
             prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
         }
 
-        // Randomness for combination
-        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, stir_challenges.len());
+        // Randomness for combining polynomials and constraints
+        let num_polynomials = 1; // TODO: mixed size batching.
+        let num_constraints = stir_challenges.len();
+        let polynomal_randomness = prover_state.challenge_geometric_vec(num_polynomials)?;
+        let constraint_randomness = prover_state.challenge_geometric_vec(num_constraints)?;
 
         #[allow(clippy::map_unwrap_or)]
         let mut sumcheck_prover = round_state
@@ -371,7 +353,7 @@ where
                 sumcheck_prover.add_new_equality(
                     &stir_challenges,
                     &stir_evaluations,
-                    &combination_randomness,
+                    &constraint_randomness,
                 );
                 sumcheck_prover
             })
@@ -382,7 +364,7 @@ where
                     let weights = Weights::evaluation(point);
                     statement.add_constraint(weights, eval);
                 }
-                let (weights, sum) = statement.combine(combination_randomness[1]);
+                let (weights, sum) = statement.combine(constraint_randomness[1]);
                 SumcheckSingle::new(folded_coefficients.clone(), weights, sum)
             });
 
@@ -409,7 +391,7 @@ where
         round_state.sumcheck_prover = Some(sumcheck_prover);
         round_state.folding_randomness = folding_randomness;
         round_state.coefficients = folded_coefficients;
-        round_state.batch_randomness = vec![F::ONE];
+        round_state.polynomial_randomness = polynomal_randomness;
         round_state.prev_merkles = vec![(merkle_tree, evals)];
 
         Ok(())
@@ -512,11 +494,9 @@ where
     where
         ProverState: UnitToBytes,
     {
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            round_state.domain.size(),
-            self.0.folding_factor.at_round(round_state.round),
+        let stir_challenges_indexes = prover_state.challenge_indices(
+            round_state.domain.size() >> self.0.folding_factor.at_round(round_state.round),
             round_params.num_queries,
-            prover_state,
         )?;
 
         // Compute the generator of the folded domain, in the extension field
@@ -547,7 +527,7 @@ where
     pub(crate) domain: Domain<F>,
     pub(crate) sumcheck_prover: Option<SumcheckSingle<F>>,
     pub(crate) folding_randomness: MultilinearPoint<F>,
-    pub(crate) batch_randomness: Vec<F>,
+    pub(crate) polynomial_randomness: Vec<F>,
     pub(crate) coefficients: CoefficientList<F>,
     pub(crate) prev_merkles: Vec<(MerkleTree<MerkleConfig>, Vec<F>)>,
     pub(crate) merkle_proofs: Vec<Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>>,

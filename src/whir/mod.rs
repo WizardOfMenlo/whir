@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::ark_eq;
 
+pub mod challenges;
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
@@ -215,8 +216,8 @@ mod tests {
         assert!(verifier
             .verify(
                 &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
+                &[&parsed_commitment],
+                &[&statement_verifier],
                 &proof
             )
             .is_ok());

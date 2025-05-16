@@ -430,7 +430,7 @@ mod tests {
         let statement = Statement::new(2);
 
         let (weights, sum) = statement.combine(F::ONE);
-        let mut prover = SumcheckSingle::new(coeffs, weights, sum);
+        let prover = SumcheckSingle::new(coeffs, weights, sum);
 
         // Expected evaluation table after wavelet transform
         let expected_evaluation_of_p = vec![c1, c1 + c2, c1 + c3, c1 + c2 + c3 + c4];

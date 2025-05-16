@@ -4,7 +4,7 @@ use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
-    codecs::arkworks_algebra::{BytesToUnitSerialize, FieldToUnitSerialize, UnitToField},
+    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
 #[cfg(feature = "tracing")]
@@ -16,10 +16,7 @@ use crate::{
     poly_utils::{
         coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
     },
-    whir::{
-        parameters::WhirConfig,
-        utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
-    },
+    whir::{parameters::WhirConfig, utils::DigestToUnitSerialize},
 };
 
 /// Responsible for committing polynomials using a Merkle-based scheme.

@@ -5,21 +5,17 @@ use spongefish::{
     BytesToUnitDeserialize, ProofResult, UnitToBytes,
 };
 
-use crate::whir::{parameters::WhirConfig, utils::DigestToUnitDeserialize};
+use super::Commitment;
+use crate::whir::{
+    challenges::ChallengeField, parameters::WhirConfig, utils::DigestToUnitDeserialize,
+};
 
 ///
 ///  Commitment parsed by the verifier from verifier's FS context.
 ///
 ///
 
-#[derive(Clone)]
-pub struct ParsedCommitment<F, D> {
-    pub root: Vec<D>,
-    pub ood_points: Vec<F>,
-    pub ood_answers: Vec<Vec<F>>,
-    pub batching_randomness: F,
-}
-
+// TODO: It would be nice to have a Reader trait in spongefish instead.
 pub struct CommitmentReader<'a, F, MerkleConfig, PowStrategy>(
     &'a WhirConfig<F, MerkleConfig, PowStrategy>,
 )
@@ -40,7 +36,7 @@ where
     pub fn parse_commitment<VerifierState>(
         &self,
         verifier_state: &mut VerifierState,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    ) -> ProofResult<Commitment<F, MerkleConfig::InnerDigest>>
     where
         VerifierState: UnitToBytes
             + FieldToUnitDeserialize<F>
@@ -48,61 +44,21 @@ where
             + DigestToUnitDeserialize<MerkleConfig>
             + BytesToUnitDeserialize,
     {
-        let mut roots = Vec::<MerkleConfig::InnerDigest>::with_capacity(self.0.batch_size);
+        // Read single root for Merkle tree comitting to multiple polynomials.
+        let root = verifier_state.read_digest()?;
 
-        for _ in 0..self.0.batch_size {
-            let root = verifier_state.read_digest()?;
-            roots.push(root);
-        }
+        // Read single set of Out of Domain Sampling challenge points
+        let ood_points = verifier_state.challenge_vec(self.0.committment_ood_samples)?;
 
-        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
-        let mut ood_answers = Vec::with_capacity(self.0.batch_size);
+        // Read set of OODS evaluations for each polynomial in the batch.
+        let mut ood_answers = vec![F::ZERO; self.0.batch_size * ood_points.len()];
+        verifier_state.fill_next_scalars(&mut ood_answers)?;
 
-        if self.0.committment_ood_samples > 0 {
-            verifier_state.fill_challenge_scalars(&mut ood_points)?;
-            for _ in 0..self.0.batch_size {
-                let mut virt_answers = vec![F::ZERO; self.0.committment_ood_samples];
-                verifier_state.fill_next_scalars(&mut virt_answers)?;
-                ood_answers.push(virt_answers);
-            }
-        }
-
-        let [batching_randomness] = if self.0.batch_size > 1 {
-            verifier_state.challenge_scalars()?
-        } else {
-            [F::zero()]
-        };
-
-        Ok(ParsedCommitment {
-            root: roots,
-            batching_randomness,
+        Ok(Commitment {
+            num_variables: self.0.mv_parameters.num_variables,
+            root,
             ood_points,
             ood_answers,
         })
-    }
-}
-
-impl<F, D> ParsedCommitment<F, D>
-where
-    F: ark_ff::Field,
-{
-    pub(crate) fn ood_data(&self) -> (&[F], Vec<F>) {
-        let mut multiplier = self.batching_randomness;
-
-        let result = self
-            .ood_answers
-            .clone()
-            .into_iter()
-            .reduce(|result, this_round| {
-                let this_multiplier = multiplier;
-                multiplier *= self.batching_randomness;
-                result
-                    .into_iter()
-                    .zip(this_round.into_iter())
-                    .map(|(lhs, v)| lhs + (v * this_multiplier))
-                    .collect()
-            })
-            .unwrap_or_default();
-        (self.ood_points.as_slice(), result)
     }
 }

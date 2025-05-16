@@ -16,16 +16,19 @@ pub(crate) struct ParsedRound<F> {
     pub(crate) folding_randomness: MultilinearPoint<F>,
     /// Out-of-domain query points.
     pub(crate) ood_points: Vec<F>,
-    /// OOD answers at each query point.
-    pub(crate) ood_answers: Vec<F>,
+    /// OOD answers at each query point for each polynomial.
+    pub(crate) ood_answers: Vec<Vec<F>>,
     /// Indexes of STIR constraint polynomials used in this round.
     pub(crate) stir_challenges_indexes: Vec<usize>,
     /// STIR constraint evaluation points.
     pub(crate) stir_challenges_points: Vec<F>,
-    /// Answers to the STIR constraints at each evaluation point.
-    pub(crate) stir_challenges_answers: Vec<Vec<F>>,
-    /// Randomness used to linearly combine constraints.
-    pub(crate) combination_randomness: Vec<F>,
+    /// Answers to the STIR constraints at each evaluation point for each polynomial.
+    /// [polynomial][coset index][index in coset]
+    pub(crate) stir_challenges_answers: Vec<Vec<Vec<F>>>,
+    /// Initial random coefficients used to combine polynomials.
+    pub(crate) polynomial_randomness: Vec<F>,
+    /// Initial random coefficients used to combine constraints.
+    pub(crate) constraint_randomness: Vec<F>,
     /// Sumcheck messages and challenge values for verifying correctness.
     pub(crate) sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
     /// Inverse of the domain generator used in this round.
@@ -38,8 +41,10 @@ pub(crate) struct ParsedRound<F> {
 /// of folded functions under STIR-style constraints.
 #[derive(Default, Clone)]
 pub(crate) struct ParsedProof<F> {
+    /// Initial random coefficients used to combine polynomials before folding.
+    pub(crate) initial_polynomial_randomness: Vec<F>,
     /// Initial random coefficients used to combine constraints before folding.
-    pub(crate) initial_combination_randomness: Vec<F>,
+    pub(crate) initial_constraint_randomness: Vec<F>,
     /// Initial sumcheck messages and challenges for the first constraint.
     pub(crate) initial_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
     /// All folding rounds, each reducing the problem dimension.
@@ -138,7 +143,7 @@ mod tests {
 
         let single_round = ParsedRound {
             folding_randomness,
-            stir_challenges_answers: vec![stir_challenges_answers],
+            stir_challenges_answers: vec![vec![stir_challenges_answers]],
             ..Default::default()
         };
 
@@ -188,7 +193,7 @@ mod tests {
 
         let single_round = ParsedRound {
             folding_randomness,
-            stir_challenges_answers: vec![stir_challenges_answers],
+            stir_challenges_answers: vec![vec![stir_challenges_answers]],
             ..Default::default()
         };
 
@@ -226,7 +231,7 @@ mod tests {
         let proof = ParsedProof {
             rounds: vec![ParsedRound {
                 folding_randomness: MultilinearPoint(vec![Field64::from(4), Field64::from(5)]),
-                stir_challenges_answers: vec![stir_challenges_answers.clone()],
+                stir_challenges_answers: vec![vec![stir_challenges_answers.clone()]],
                 ..Default::default()
             }],
             final_folding_randomness: MultilinearPoint(vec![Field64::from(10), Field64::from(20)]),
