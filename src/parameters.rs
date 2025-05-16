@@ -179,7 +179,7 @@ impl FoldType {
                         folding_factor: &params.folding_factor,
                         folding_randomness: &round.folding_randomness,
                     };
-                    stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
+                    todo!(); // stir_evals_context.evaluate(round.stir_challenges_answers, &mut round_evals);
 
                     // Push the folds to the result
                     result.push(round_evals);

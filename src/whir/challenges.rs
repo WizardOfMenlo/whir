@@ -4,12 +4,13 @@
 use ark_ff::Field;
 use spongefish::{codecs::arkworks_algebra::UnitToField, ProofResult, UnitToBytes};
 
-/// Helper functions for randomness generation on prover/verifier state.
+/// Helper functions for generating challenge field elements.
 pub trait ChallengeField<F: Field> {
     /// Generate a vector of uniform random field elements.
     fn challenge_vec(&mut self, len: usize) -> ProofResult<Vec<F>>;
 
-    /// Generate a geometric sequence of 1, r, r^2, ..., r^(len-1)  where r is uniform a random field element.
+    /// Generate a geometric sequence of 1, r, r^2, ..., r^(len-1)
+    /// where r is uniform a random field element.
     ///
     /// This requires fewer invocations of the sponge function than [`challenge_vec`].
     fn challenge_geometric_sequence(&mut self, out: &mut [F]) -> ProofResult<()>;
@@ -22,6 +23,7 @@ pub trait ChallengeField<F: Field> {
     }
 }
 
+/// Helper functions for generating challenge indices.
 pub trait ChallengeIndices {
     /// Generates a list of sorted unique challenge indices.
     /// Indices are in range 0..`range`.
@@ -48,7 +50,7 @@ impl<F: Field, S: UnitToField<F>> ChallengeField<F> for S {
         out[1] = base;
         let mut acc = base;
         for out in &mut out[2..] {
-            acc *= self.unit_to_field();
+            acc *= base;
             *out = acc;
         }
         Ok(())
@@ -65,12 +67,12 @@ impl<S: UnitToBytes> ChallengeIndices for S {
         self.fill_challenge_bytes(&mut queries)?;
 
         // Convert bytes into indices in **one efficient pass**
-        let indices = queries
+        let mut indices = queries
             .chunks_exact(domain_size_bytes)
             .map(|chunk| chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % range)
-            .sorted_unstable()
-            .dedup()
-            .collect_vec();
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices.dedup();
 
         Ok(indices)
     }

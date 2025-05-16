@@ -90,19 +90,18 @@ impl<F: Field> ParsedProof<F> {
             out
         };
 
-        let mut result: Vec<_> = self
-            .rounds
-            .iter()
-            .map(|round| {
-                evaluate_answers(&round.stir_challenges_answers, &round.folding_randomness)
-            })
-            .collect();
+        todo!()
+        // let mut result: Vec<_> = self
+        //     .rounds
+        //     .iter()
+        //     .map(|round| evaluate_answers(round.stir_challenges_answers, &round.folding_randomness))
+        //     .collect();
 
-        result.push(evaluate_answers(
-            &self.final_randomness_answers,
-            &self.final_folding_randomness,
-        ));
-        result
+        // result.push(evaluate_answers(
+        //     &self.final_randomness_answers,
+        //     &self.final_folding_randomness,
+        // ));
+        // result
     }
 }
 

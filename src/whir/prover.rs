@@ -108,7 +108,7 @@ where
         assert_eq!(initial_statement, self.0.initial_statement);
 
         // Random linear combination of the polynomials
-        let polynomial_randomness = prover_state.challenge_geometric_vec(polynomials.len());
+        let polynomial_randomness = prover_state.challenge_geometric_vec(polynomials.len())?;
         let coefficients = {
             let mut coeffs = vec![F::ZERO; self.0.mv_parameters.num_coefficients()];
             for (poly, &r) in polynomials.iter().zip(polynomial_randomness.iter()) {
@@ -121,7 +121,7 @@ where
 
         // Random linear combination of the constraints
         let num_constraints = statements.iter().map(|s| s.constraints.len()).sum();
-        let constraint_randomness = prover_state.challenge_geometric_vec(num_constraints);
+        let constraint_randomness = prover_state.challenge_geometric_vec(num_constraints)?;
         // Initial combined constraints, if any
         let weighted_sum = if num_constraints > 0 {
             let mut evals =
@@ -292,7 +292,8 @@ where
             let leaf_size = leafs.len() >> (tree.height() - 1);
             debug_assert_eq!(leaf_size % coset_size, 0);
             let num_polys = leaf_size / coset_size;
-            let randomness = &round_state.batch_randomness[poly_offset..poly_offset + num_polys];
+            let randomness =
+                &round_state.polynomial_randomness[poly_offset..poly_offset + num_polys];
             let mut leaves = vec![];
             for (answer, index) in combined_answers
                 .iter_mut()
@@ -415,13 +416,9 @@ where
 
         // Final verifier queries and answers. The indices are over the
         // *folded* domain.
-        let final_challenge_indexes = get_challenge_stir_queries(
-            // The size of the *original* domain before folding
-            round_state.domain.size(),
-            // The folding factor we used to fold the previous polynomial
-            folding_factor,
+        let final_challenge_indexes = prover_state.challenge_indices(
+            round_state.domain.size() >> folding_factor,
             self.0.final_queries,
-            prover_state,
         )?;
 
         assert_eq!(

@@ -13,7 +13,6 @@ use super::SumcheckPolynomial;
 use crate::{
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     utils::eval_eq,
-    whir::statement::Statement,
 };
 
 /// Implements the single-round sumcheck protocol for verifying a multilinear polynomial evaluation.
@@ -332,7 +331,7 @@ mod tests {
             coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
             multilinear::MultilinearPoint,
         },
-        whir::statement::Weights,
+        whir::statement::{Statement, Weights},
     };
 
     #[test]
