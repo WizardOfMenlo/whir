@@ -13,11 +13,10 @@ use tracing::{instrument, span, Level};
 use super::Witness;
 use crate::{
     ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
-    whir::{
-        parameters::WhirConfig,
-        utils::{sample_ood_points, DigestToUnitSerialize},
+    poly_utils::{
+        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
     },
+    whir::{parameters::WhirConfig, utils::DigestToUnitSerialize},
 };
 
 /// Responsible for committing polynomials using a Merkle-based scheme.
@@ -26,7 +25,9 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(
+    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
+)
 where
     F: FftField,
     MerkleConfig: Config;
@@ -47,56 +48,98 @@ where
     /// - Applies folding and restructuring optimizations.
     /// - Converts evaluations to an extension field.
     /// - Constructs a Merkle tree from the evaluations.
-    /// - Computes out-of-domain (OOD) challenge points and their evaluations.
     /// - Returns a `Witness` containing the commitment data.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
     pub fn commit<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomial: CoefficientList<F::BasePrimeField>,
+        polynomial: &CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
     {
-        // Retrieve the base domain, ensuring it is set.
+        self.commit_many(prover_state, &[polynomial])
+    }
+
+    /// Commits multiple polynomials.
+    ///
+    /// This function:
+    /// - Expands polynomial coefficients to evaluations.
+    /// - Applies folding and restructuring optimizations.
+    /// - Converts evaluations to an extension field.
+    /// - Constructs a Merkle tree from the evaluations.
+    /// - Returns a `Witness` containing the commitment data.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(
+        batch_size = self.0.batch_size,
+        poly_size = self.0.mv_parameters.num_variables
+    )))]
+    pub fn commit_many<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        polynomials: &[&CoefficientList<F::BasePrimeField>],
+    ) -> ProofResult<Witness<F, MerkleConfig>>
+    where
+        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
+    {
+        // Get configuration
+        let batch_size = self.0.batch_size;
+        let num_variables = self.0.mv_parameters.num_variables;
+        let num_coeff = 1 << num_variables;
         let base_domain = self.0.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / num_coeff;
+        let coset_size = 1 << self.0.folding_factor.at_round(0);
+        let leaf_size = batch_size * coset_size;
+        let ood_samples = self.0.committment_ood_samples;
 
-        // Compute expansion factor based on the domain size and polynomial length.
-        let expansion = base_domain.size() / polynomial.num_coeffs();
+        // Validate input
+        assert_eq!(polynomials.len(), batch_size);
+        for poly in polynomials {
+            assert_eq!(poly.num_variables(), num_variables);
+        }
 
-        // Expand the polynomial coefficients into evaluations over the extended domain.
-        let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
-        transform_evaluations(
-            &mut evals,
-            self.0.fold_optimisation,
-            base_domain.group_gen(),
-            base_domain.group_gen_inv(),
-            self.0.folding_factor.at_round(0),
-        );
+        // Compute the leaf element values
+        let mut merkle_leaves = vec![F::ZERO; batch_size * num_coeff * expansion];
+        for (i, polynomial) in polynomials.iter().enumerate() {
+            // Expand the polynomial coefficients into evaluations over the extended domain.
+            let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
 
-        // Convert to extension field.
-        // This is not necessary for the commit, but in further rounds
-        // we will need the extension field. For symplicity we do it here too.
-        // TODO: Commit to base field directly.
-        let folded_evals = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
-            evals
-                .into_iter()
-                .map(F::from_base_prime_field)
-                .collect::<Vec<_>>()
-        };
+            // Transform cosets to coefficient form
+            transform_evaluations(
+                &mut evals,
+                self.0.fold_optimisation,
+                base_domain.group_gen(),
+                base_domain.group_gen_inv(),
+                self.0.folding_factor.at_round(0),
+            );
 
-        // Determine leaf size based on folding factor.
-        let fold_size = 1 << self.0.folding_factor.at_round(0);
+            // Convert to extension field.
+            // This is not necessary for the commit, but in further rounds
+            // we will need the extension field. For simplicity we do it here too.
+            // TODO: Commit to base field directly.
+            let folded_evals = {
+                #[cfg(feature = "tracing")]
+                let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
+                evals
+                    .into_iter()
+                    .map(F::from_base_prime_field)
+                    .collect::<Vec<_>>()
+            };
+
+            // Write leaves to the correct locations in the final vector
+            for (src, dst) in folded_evals
+                .chunks_exact(coset_size)
+                .zip(merkle_leaves.chunks_exact_mut(leaf_size))
+            {
+                dst[i * coset_size..(i + 1) * coset_size].copy_from_slice(src);
+            }
+        }
 
         // Chunk evaluations into leaves for Merkle tree construction.
         #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(fold_size);
+        let leafs_iter = merkle_leaves.chunks_exact(leaf_size);
         #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals.par_chunks_exact(fold_size);
+        let leafs_iter = merkle_leaves.par_chunks_exact(leaf_size);
 
-        // Construct the Merkle tree with given hash parameters.
+        // Construct a single Merkle tree with given hash parameters.
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -108,23 +151,39 @@ where
             .unwrap()
         };
 
-        // Retrieve the Merkle tree root and add it to the narg_string.
+        // Retrieve the Merkle tree root and add it to the transcript.
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
         // Handle OOD (Out-Of-Domain) samples
-        let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
-            self.0.committment_ood_samples,
-            self.0.mv_parameters.num_variables,
-            |point| polynomial.evaluate_at_extension(point),
-        )?;
+        let (ood_points, ood_answers) = if ood_samples > 0 {
+            // Create challenge points
+            let mut ood_points = vec![F::zero(); ood_samples];
+            prover_state.fill_challenge_scalars(&mut ood_points)?;
+
+            // Compute OOD answers for each polynomial
+            let mut ood_answers = Vec::with_capacity(ood_samples * batch_size);
+            for ood_point in &ood_points {
+                let extension = MultilinearPoint::expand_from_univariate(*ood_point, num_variables);
+                for polynomial in polynomials {
+                    let answer = polynomial.evaluate_at_extension(&extension);
+                    ood_answers.push(answer);
+                }
+            }
+            prover_state.add_scalars(&ood_answers)?;
+            (ood_points, ood_answers)
+        } else {
+            (vec![], vec![])
+        };
 
         // Return the witness containing the polynomial, Merkle tree, and OOD results.
         Ok(Witness {
-            polynomial: polynomial.to_extension(),
+            polynomials: polynomials
+                .iter()
+                .map(|poly| (*poly).clone().to_extension())
+                .collect(),
             merkle_tree,
-            merkle_leaves: folded_evals,
+            merkle_leaves,
             ood_points,
             ood_answers,
         })
@@ -187,6 +246,7 @@ mod tests {
             fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
+            batch_size: 1,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -204,9 +264,7 @@ mod tests {
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, polynomial.clone())
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -237,7 +295,7 @@ mod tests {
 
         // Ensure polynomial data is correctly stored
         assert_eq!(
-            witness.polynomial.coeffs().len(),
+            witness.polynomials[0].coeffs().len(),
             polynomial.coeffs().len(),
             "Stored polynomial should have the correct number of coefficients"
         );
@@ -276,6 +334,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 
@@ -284,7 +343,7 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -316,6 +375,7 @@ mod tests {
                 fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 
@@ -326,7 +386,7 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),

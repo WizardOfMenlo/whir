@@ -262,6 +262,7 @@ fn run_whir<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
+        batch_size: 1,
     };
 
     let polynomial = CoefficientList::new(
@@ -303,9 +304,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, polynomial.clone())
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         let prover = Prover(params.clone());
 
@@ -313,7 +312,7 @@ fn run_whir<F, MerkleConfig>(
         let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
         let proof = prover
-            .prove(&mut prover_state, statement_new, witness)
+            .prove(&mut prover_state, statement_new, &witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -334,8 +333,8 @@ fn run_whir<F, MerkleConfig>(
             verifier
                 .verify(
                     &mut verifier_state,
-                    &parsed_commitment,
-                    &statement_verifier,
+                    &[&parsed_commitment],
+                    &[&statement_verifier],
                     &proof,
                 )
                 .unwrap();
@@ -395,12 +394,12 @@ fn run_whir<F, MerkleConfig>(
         let whir_prover_time = Instant::now();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         let prover = Prover(params.clone());
 
         let proof = prover
-            .prove(&mut prover_state, statement.clone(), witness)
+            .prove(&mut prover_state, statement.clone(), &witness)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
@@ -421,8 +420,8 @@ fn run_whir<F, MerkleConfig>(
             verifier
                 .verify(
                     &mut verifier_state,
-                    &parsed_commitment,
-                    &statement_verifier,
+                    &[&parsed_commitment],
+                    &[&statement_verifier],
                     &proof,
                 )
                 .unwrap();

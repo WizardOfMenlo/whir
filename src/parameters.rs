@@ -78,6 +78,10 @@ impl<F> MultivariateParameters<F> {
             _field: PhantomData,
         }
     }
+
+    pub const fn num_coefficients(&self) -> usize {
+        1 << self.num_variables
+    }
 }
 
 impl<F> Display for MultivariateParameters<F> {
@@ -175,7 +179,7 @@ impl FoldType {
                         folding_factor: &params.folding_factor,
                         folding_randomness: &round.folding_randomness,
                     };
-                    stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
+                    todo!(); // stir_evals_context.evaluate(round.stir_challenges_answers, &mut round_evals);
 
                     // Push the folds to the result
                     result.push(round_evals);
@@ -387,6 +391,9 @@ where
     /// These define the hashing function used when combining two child nodes into a parent node.
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    /// Number of polynomials committed in the batch.
+    pub batch_size: usize,
 }
 
 impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>

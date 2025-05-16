@@ -265,6 +265,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
+        batch_size: 1,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -292,13 +293,15 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
     let prover = Prover(params.clone());
 
     let statement = Statement::new(num_variables);
     let statement_verifier = StatementVerifier::from_statement(&statement);
-    let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+    let proof = prover
+        .prove(&mut prover_state, statement, &witness)
+        .unwrap();
 
     dbg!(whir_prover_time.elapsed());
 
@@ -324,8 +327,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         verifier
             .verify(
                 &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
+                &[&parsed_commitment],
+                &[&statement_verifier],
                 &proof,
             )
             .unwrap();
@@ -387,6 +390,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
+        batch_size: 1,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -413,9 +417,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer
-        .commit(&mut prover_state, polynomial.clone())
-        .unwrap();
+    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
@@ -445,7 +447,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let proof = prover
-        .prove(&mut prover_state, statement.clone(), witness)
+        .prove(&mut prover_state, statement.clone(), &witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
@@ -469,8 +471,8 @@ fn run_whir_pcs<F, MerkleConfig>(
         verifier
             .verify(
                 &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
+                &[&parsed_commitment],
+                &[&statement_verifier],
                 &proof,
             )
             .unwrap();

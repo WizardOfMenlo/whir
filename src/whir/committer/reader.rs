@@ -2,18 +2,20 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    ProofResult,
+    BytesToUnitDeserialize, ProofResult, UnitToBytes,
 };
 
-use crate::whir::{parameters::WhirConfig, utils::DigestToUnitDeserialize};
+use super::Commitment;
+use crate::whir::{
+    challenges::ChallengeField, parameters::WhirConfig, utils::DigestToUnitDeserialize,
+};
 
-#[derive(Clone)]
-pub struct ParsedCommitment<F, D> {
-    pub root: D,
-    pub ood_points: Vec<F>,
-    pub ood_answers: Vec<F>,
-}
+///
+///  Commitment parsed by the verifier from verifier's FS context.
+///
+///
 
+// TODO: It would be nice to have a Reader trait in spongefish instead.
 pub struct CommitmentReader<'a, F, MerkleConfig, PowStrategy>(
     &'a WhirConfig<F, MerkleConfig, PowStrategy>,
 )
@@ -34,21 +36,26 @@ where
     pub fn parse_commitment<VerifierState>(
         &self,
         verifier_state: &mut VerifierState,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    ) -> ProofResult<Commitment<F, MerkleConfig::InnerDigest>>
     where
-        VerifierState:
-            FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
+        VerifierState: UnitToBytes
+            + FieldToUnitDeserialize<F>
+            + UnitToField<F>
+            + DigestToUnitDeserialize<MerkleConfig>
+            + BytesToUnitDeserialize,
     {
+        // Read single root for Merkle tree comitting to multiple polynomials.
         let root = verifier_state.read_digest()?;
 
-        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
-        let mut ood_answers = vec![F::ZERO; self.0.committment_ood_samples];
-        if self.0.committment_ood_samples > 0 {
-            verifier_state.fill_challenge_scalars(&mut ood_points)?;
-            verifier_state.fill_next_scalars(&mut ood_answers)?;
-        }
+        // Read single set of Out of Domain Sampling challenge points
+        let ood_points = verifier_state.challenge_vec(self.0.committment_ood_samples)?;
 
-        Ok(ParsedCommitment {
+        // Read set of OODS evaluations for each polynomial in the batch.
+        let mut ood_answers = vec![F::ZERO; self.0.batch_size * ood_points.len()];
+        verifier_state.fill_next_scalars(&mut ood_answers)?;
+
+        Ok(Commitment {
+            num_variables: self.0.mv_parameters.num_variables,
             root,
             ood_points,
             ood_answers,
