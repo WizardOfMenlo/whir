@@ -67,7 +67,7 @@ where
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    ) -> ProofResult<WhirProof<F>>
     where
         ProverState: UnitToField<F>
             + FieldToUnitSerialize<F>
@@ -167,8 +167,8 @@ where
                 }
             })
             .collect();
+
         Ok(WhirProof {
-            merkle_paths: round_state.merkle_proofs,
             statement_values_at_random_point,
         })
     }
@@ -260,13 +260,15 @@ where
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
-        prover_state.hint(&merkle_proof)?;
-
         let fold_size = 1 << folding_factor;
         let answers: Vec<_> = stir_challenges_indexes
             .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+
+        prover_state.hint(&answers)?;
+        prover_state.hint(&merkle_proof)?;
+
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
         self.0.fold_optimisation.stir_evaluations_prover(
@@ -358,7 +360,8 @@ where
         folded_coefficients: &CoefficientList<F>,
     ) -> ProofResult<()>
     where
-        ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge,
+        ProverState:
+            UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge + HintSerialize,
     {
         // Directly send coefficients of the polynomial to the verifier.
         prover_state.add_scalars(folded_coefficients.coeffs())?;
@@ -387,6 +390,10 @@ where
             .into_iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+
+        prover_state.hint(&answers)?;
+        prover_state.hint(&merkle_proof)?;
+
         round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW

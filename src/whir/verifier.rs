@@ -48,7 +48,7 @@ where
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement_points_len: usize, // Will be needed later
-        whir_proof: &WhirProof<MerkleConfig, F>,
+        whir_proof: &WhirProof<F>,
     ) -> ProofResult<ParsedProof<F>>
     where
         VerifierState: UnitToBytes
@@ -110,7 +110,6 @@ where
         let mut rounds = vec![];
 
         for r in 0..self.params.n_rounds() {
-            let (merkle_proof, answers) = &whir_proof.merkle_paths[r];
             let round_params = &self.params.round_parameters[r];
 
             let new_root = verifier_state.read_digest()?;
@@ -134,6 +133,7 @@ where
                 .map(|index| exp_domain_gen.pow([*index as u64]))
                 .collect();
 
+            let answers: Vec<Vec<F>> = verifier_state.hint()?;
             let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
 
             if !merkle_proof
@@ -212,8 +212,9 @@ where
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
 
-        let (final_merkle_proof, final_randomness_answers) =
-            &whir_proof.merkle_paths[whir_proof.merkle_paths.len() - 1];
+        let final_randomness_answers: Vec<Vec<F>> = verifier_state.hint()?;
+        let final_merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+
         if !final_merkle_proof
             .verify(
                 &self.params.leaf_hash_params,
@@ -351,7 +352,7 @@ where
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &StatementVerifier<F>,
-        whir_proof: &WhirProof<MerkleConfig, F>,
+        whir_proof: &WhirProof<F>,
     ) -> ProofResult<()>
     where
         VerifierState: UnitToBytes

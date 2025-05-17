@@ -71,6 +71,7 @@ where
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
+                .hint("stir_answers")
                 .hint("merkle_proof")
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
@@ -89,6 +90,8 @@ where
 
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")
             .challenge_bytes(domain_size_bytes * params.final_queries, "final_queries")
+            .hint("stir_answers")
+            .hint("merkle_proof")
             .pow(params.final_pow_bits)
             .add_sumcheck(params.final_sumcheck_rounds, params.final_folding_pow_bits)
     }
