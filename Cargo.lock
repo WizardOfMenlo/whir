@@ -806,12 +806,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "log"
-version = "0.4.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
-
-[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1150,7 +1144,7 @@ dependencies = [
 [[package]]
 name = "spongefish"
 version = "0.2.0"
-source = "git+https://github.com/arkworks-rs/spongefish#55abdae56e036d8f83b0a9eae8243aa6f64ef3aa"
+source = "git+https://github.com/recmo/nimue?branch=remco%2Fhint#ab1855a25ec4f677aa45f25b88750c4b815206aa"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -1158,7 +1152,6 @@ dependencies = [
  "digest",
  "hex",
  "keccak",
- "log",
  "rand",
  "zeroize",
 ]
@@ -1166,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "spongefish-pow"
 version = "0.1.0"
-source = "git+https://github.com/arkworks-rs/spongefish#55abdae56e036d8f83b0a9eae8243aa6f64ef3aa"
+source = "git+https://github.com/recmo/nimue?branch=remco%2Fhint#ab1855a25ec4f677aa45f25b88750c4b815206aa"
 dependencies = [
  "blake3",
  "bytemuck",
