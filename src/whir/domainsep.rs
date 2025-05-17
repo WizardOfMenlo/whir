@@ -71,6 +71,7 @@ where
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
+                .hint("merkle_proof")
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(

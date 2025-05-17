@@ -1,6 +1,6 @@
 use std::iter;
 
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use spongefish::{
@@ -14,6 +14,7 @@ use super::{
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
     statement::{StatementVerifier, VerifierWeights},
+    utils::HintDeserialize,
     WhirProof,
 };
 use crate::{
@@ -54,7 +55,8 @@ where
             + UnitToField<F>
             + FieldToUnitDeserialize<F>
             + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>,
+            + DigestToUnitDeserialize<MerkleConfig>
+            + HintDeserialize,
     {
         let mut sumcheck_rounds = Vec::new();
         let mut folding_randomness;
@@ -131,6 +133,8 @@ where
                 .iter()
                 .map(|index| exp_domain_gen.pow([*index as u64]))
                 .collect();
+
+            let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
 
             if !merkle_proof
                 .verify(
@@ -354,7 +358,8 @@ where
             + UnitToField<F>
             + FieldToUnitDeserialize<F>
             + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>,
+            + DigestToUnitDeserialize<MerkleConfig>
+            + HintDeserialize,
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)

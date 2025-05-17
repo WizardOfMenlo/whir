@@ -178,6 +178,7 @@ mod tests {
         let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
             .add_whir_proof(&params);
+        dbg!(&domainsep);
 
         // Initialize the Merlin transcript from the domain separator
         let mut prover_state = domainsep.to_prover_state();
@@ -213,14 +214,14 @@ mod tests {
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(verifier
+        verifier
             .verify(
                 &mut verifier_state,
                 &parsed_commitment,
                 &statement_verifier,
-                &proof
+                &proof,
             )
-            .is_ok());
+            .unwrap();
     }
 
     #[test]

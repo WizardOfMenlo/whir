@@ -15,6 +15,7 @@ use super::{
     committer::Witness,
     parameters::WhirConfig,
     statement::{Statement, Weights},
+    utils::HintSerialize,
     WhirProof,
 };
 use crate::{
@@ -72,7 +73,8 @@ where
             + FieldToUnitSerialize<F>
             + UnitToBytes
             + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
     {
         assert!(
             self.validate_parameters()
@@ -183,7 +185,8 @@ where
             + UnitToBytes
             + FieldToUnitSerialize<F>
             + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -257,6 +260,8 @@ where
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
+        prover_state.hint(&merkle_proof)?;
+
         let fold_size = 1 << folding_factor;
         let answers: Vec<_> = stir_challenges_indexes
             .iter()
