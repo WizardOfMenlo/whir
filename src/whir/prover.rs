@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -142,7 +142,6 @@ where
             coefficients: witness.polynomial,
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
-            merkle_proofs: vec![],
             randomness_vec,
             statement,
         };
@@ -278,7 +277,6 @@ where
             self.0.folding_factor,
             &mut stir_evaluations,
         );
-        round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW
         if round_params.pow_bits > 0. {
@@ -389,12 +387,10 @@ where
         let answers = final_challenge_indexes
             .into_iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect();
+            .collect::<Vec<_>>();
 
         prover_state.hint(&answers)?;
         prover_state.hint(&merkle_proof)?;
-
-        round_state.merkle_proofs.push((merkle_proof, answers));
 
         // PoW
         if self.0.final_pow_bits > 0. {
@@ -484,7 +480,6 @@ where
     pub(crate) coefficients: CoefficientList<F>,
     pub(crate) prev_merkle: MerkleTree<MerkleConfig>,
     pub(crate) prev_merkle_answers: Vec<F>,
-    pub(crate) merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
     pub(crate) randomness_vec: Vec<F>,
     pub(crate) statement: Statement<F>,
 }

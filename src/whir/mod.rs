@@ -1,4 +1,3 @@
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
