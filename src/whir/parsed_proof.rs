@@ -40,8 +40,6 @@ pub(crate) struct ParsedRound<F> {
 pub(crate) struct ParsedProof<F> {
     /// Initial random coefficients used to combine constraints before folding.
     pub(crate) initial_combination_randomness: Vec<F>,
-    /// Initial sumcheck messages and challenges for the first constraint.
-    pub(crate) initial_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
     /// All folding rounds, each reducing the problem dimension.
     pub(crate) rounds: Vec<ParsedRound<F>>,
     /// Inverse of the domain generator used in the final round.

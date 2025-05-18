@@ -106,20 +106,11 @@ where
         }
 
         // Check the final sumchecks
-        if self.params.final_sumcheck_rounds > 0 {
-            let (sumcheck_poly, new_randomness) = &parsed.final_sumcheck_rounds[0];
+        for (sumcheck_poly, new_randomness) in &parsed.final_sumcheck_rounds {
             if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
                 return Err(ProofError::InvalidProof);
             }
             claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-
-            // Check the rest of the round
-            for (sumcheck_poly, new_randomness) in &parsed.final_sumcheck_rounds[1..] {
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-            }
         }
 
         // Final v · w Check
@@ -156,12 +147,11 @@ where
     {
         // Initial combination and sumcheck rounds
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.sum).collect();
-        let mut initial_sumcheck_rounds = Vec::new();
-        let mut folding_randomness;
-        let initial_combination_randomness;
 
         // Optional initial sumcheck round
         let mut claimed_sum = F::ZERO;
+        let mut folding_randomness;
+        let initial_combination_randomness;
         if self.params.initial_statement {
             // Derive combination randomness and first sumcheck polynomial
             let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
@@ -181,7 +171,7 @@ where
                 .sum();
 
             // Initial sumcheck
-            initial_sumcheck_rounds.reserve_exact(self.params.folding_factor.at_round(0));
+            let mut randomness = Vec::new();
             for _ in 0..self.params.folding_factor.at_round(0) {
                 let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
@@ -191,7 +181,7 @@ where
                 }
 
                 let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-                initial_sumcheck_rounds.push((sumcheck_poly.clone(), folding_randomness_single));
+                randomness.push(folding_randomness_single);
 
                 claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
 
@@ -201,13 +191,8 @@ where
                 }
             }
 
-            folding_randomness = MultilinearPoint(
-                initial_sumcheck_rounds
-                    .iter()
-                    .map(|&(_, r)| r)
-                    .rev()
-                    .collect(),
-            );
+            randomness.reverse();
+            folding_randomness = MultilinearPoint(randomness);
         } else {
             assert_eq!(parsed_commitment.ood_points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -379,7 +364,6 @@ where
             claimed_sum,
             ParsedProof {
                 initial_combination_randomness,
-                initial_sumcheck_rounds,
                 rounds,
                 final_domain_gen_inv: domain_gen_inv,
                 final_folding_randomness: folding_randomness,
