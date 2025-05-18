@@ -33,7 +33,7 @@ use whir::{
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
-        statement::{Statement, StatementVerifier, Weights},
+        statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
@@ -310,10 +310,9 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
-        let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
-        let proof = prover
-            .prove(&mut prover_state, statement_new, witness)
+        prover
+            .prove(&mut prover_state, statement_new.clone(), witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -332,7 +331,7 @@ fn run_whir<F, MerkleConfig>(
                 .parse_commitment(&mut verifier_state)
                 .unwrap();
             verifier
-                .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
+                .verify(&mut verifier_state, &parsed_commitment, &statement_new)
                 .unwrap();
         }
 
@@ -384,8 +383,6 @@ fn run_whir<F, MerkleConfig>(
             statement.add_constraint(weights, eval);
         }
 
-        let statement_verifier = StatementVerifier::from_statement(&statement);
-
         HashCounter::reset();
         let whir_prover_time = Instant::now();
 
@@ -394,7 +391,7 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
-        let proof = prover
+        prover
             .prove(&mut prover_state, statement.clone(), witness)
             .unwrap();
 
@@ -414,7 +411,7 @@ fn run_whir<F, MerkleConfig>(
                 .parse_commitment(&mut verifier_state)
                 .unwrap();
             verifier
-                .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
+                .verify(&mut verifier_state, &parsed_commitment, &statement)
                 .unwrap();
         }
 

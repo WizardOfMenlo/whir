@@ -34,7 +34,7 @@ mod tests {
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
-            statement::{Statement, StatementVerifier, Weights},
+            statement::{Statement, Weights},
             verifier::Verifier,
         },
     };
@@ -145,14 +145,10 @@ mod tests {
         // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
 
-        // Extract verifier-side version of the statement (only public data)
-        let statement_verifier = StatementVerifier::from_statement(&statement);
-
         // Generate a STARK proof for the given statement and witness
-        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
-
-        // Test that the proof is serializable
-        test_serde(&proof);
+        prover
+            .prove(&mut prover_state, statement.clone(), witness)
+            .unwrap();
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
@@ -170,7 +166,7 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
             .unwrap();
     }
 

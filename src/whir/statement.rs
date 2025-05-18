@@ -288,87 +288,6 @@ impl<F: Field> Statement<F> {
     }
 }
 
-/// Represents a verifier's constraint system in a statement.
-///
-/// This structure is used to verify a given statement by storing and processing
-/// a list of constraints. Each constraint consists of:
-/// - `VerifierWeights<F>`: A weight applied to a polynomial.
-/// - `F`: The expected sum (result of applying the constraint).
-///
-/// **Mathematical Formulation:**
-/// Given a set of constraints:
-///
-/// \begin{equation}
-/// \sum_{i} w_i(X) \cdot p_i(X) = s_i
-/// \end{equation}
-///
-/// This struct stores and organizes these constraints for efficient verification.
-// TODO: Deduplicate with Statement
-#[derive(Clone, Debug, Default)]
-pub struct StatementVerifier<F> {
-    /// The number of variables in the statement.
-    num_variables: usize,
-    /// The list of constraints in the form `(weights, sum)`.
-    pub constraints: Vec<(Weights<F>, F)>,
-}
-
-impl<F: Field> StatementVerifier<F> {
-    /// Creates a new statement verifier for a given number of variables.
-    const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            constraints: Vec::new(),
-        }
-    }
-
-    /// Returns the number of variables in the statement.
-    pub const fn num_variables(&self) -> usize {
-        self.num_variables
-    }
-
-    /// Adds a new constraint `(weights, sum)` to the verifier.
-    ///
-    /// Ensures that the constraint has the correct number of variables.
-    pub fn add_constraint(&mut self, weights: Weights<F>, sum: F) {
-        assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.push((weights, sum));
-    }
-
-    /// Inserts a constraint `(weights, sum)` at the front of the constraint list.
-    pub fn add_constraint_in_front(&mut self, weights: Weights<F>, sum: F) {
-        assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.insert(0, (weights, sum));
-    }
-
-    /// Inserts multiple constraints at the front of the constraint list.
-    pub fn add_constraints_in_front(&mut self, constraints: Vec<(Weights<F>, F)>) {
-        for (weights, _) in &constraints {
-            assert_eq!(weights.num_variables(), self.num_variables());
-        }
-        self.constraints.splice(0..0, constraints);
-    }
-
-    /// Converts a `Statement<F>` into a `StatementVerifier<F>`, mapping `Weights<F>` into
-    /// `VerifierWeights<F>`.
-    ///
-    /// This is used during the verification phase to simplify constraint handling.
-    pub fn from_statement(statement: &Statement<F>) -> Self {
-        // TODO: No-op
-        let mut verifier = Self::new(statement.num_variables());
-        for constraint in &statement.constraints {
-            match &constraint.weights {
-                Weights::Linear { weight, .. } => {
-                    verifier.add_constraint(Weights::linear(weight.clone()), constraint.sum);
-                }
-                Weights::Evaluation { point } => {
-                    verifier.add_constraint(Weights::evaluation(point.clone()), constraint.sum);
-                }
-            }
-        }
-        verifier
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ark_ff::AdditiveGroup;
@@ -525,33 +444,6 @@ mod tests {
 
         assert_eq!(combined_evals.evals(), &expected_combined_evals);
         assert_eq!(combined_sum, expected_combined_sum);
-    }
-
-    #[test]
-    fn test_statement_verifier_from_statement() {
-        // Create a new statement with 2 variables
-        let mut statement = Statement::new(2);
-
-        // Define weights
-        let w0 = Field64::from(3);
-        let w1 = Field64::from(4);
-        let w2 = Field64::from(5);
-        let w3 = Field64::from(6);
-        let weight_list = EvaluationsList::new(vec![w0, w1, w2, w3]);
-        let weight = Weights::linear(weight_list);
-
-        // Define sum constraint
-        let sum = Field64::from(10);
-        statement.add_constraint(weight, sum);
-
-        // Convert statement to verifier format
-        let verifier = StatementVerifier::from_statement(&statement);
-
-        // Ensure verifier retains the same number of variables
-        assert_eq!(verifier.num_variables(), statement.num_variables());
-
-        // Ensure the constraint count matches
-        assert_eq!(verifier.constraints.len(), 1);
     }
 
     #[test]

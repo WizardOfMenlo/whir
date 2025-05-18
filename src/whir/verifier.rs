@@ -13,7 +13,7 @@ use super::{
     committer::reader::ParsedCommitment,
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
-    statement::{StatementVerifier, Weights},
+    statement::{Statement, Weights},
     utils::HintDeserialize,
 };
 use crate::{
@@ -267,7 +267,7 @@ where
     fn compute_w_poly(
         &self,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &StatementVerifier<F>,
+        statement: &Statement<F>,
         proof: &ParsedProof<F>,
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
@@ -294,7 +294,12 @@ where
             })
             .collect();
 
-        new_constraints.extend(statement.constraints.iter().cloned());
+        new_constraints.extend(
+            statement
+                .constraints
+                .iter()
+                .map(|c| (c.weights.clone(), c.sum)),
+        );
 
         let mut value: F = new_constraints
             .iter()
@@ -332,7 +337,7 @@ where
         &self,
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &StatementVerifier<F>,
+        statement: &Statement<F>,
     ) -> ProofResult<()>
     where
         VerifierState: UnitToBytes
@@ -344,7 +349,7 @@ where
     {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
-        let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
+        let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.sum).collect();
         let parsed = self.parse_proof(
             verifier_state,
             parsed_commitment,
