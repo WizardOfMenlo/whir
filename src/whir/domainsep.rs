@@ -94,5 +94,6 @@ where
             .hint("merkle_proof")
             .pow(params.final_pow_bits)
             .add_sumcheck(params.final_sumcheck_rounds, params.final_folding_pow_bits)
+            .hint("deferred")
     }
 }

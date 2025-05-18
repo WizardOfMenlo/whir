@@ -208,6 +208,10 @@ pub struct Constraint<F> {
     pub weights: Weights<F>,
     #[serde(with = "crate::ark_serde")]
     pub sum: F,
+
+    /// For a deferred statement the verifier ignores the weights and
+    /// instead outputs a relation on them that should be verified.
+    pub deferred: bool,
 }
 
 impl<F: Field> Statement<F> {
@@ -230,13 +234,24 @@ impl<F: Field> Statement<F> {
     /// The number of variables in `w(X)` must match `self.num_variables`.
     pub fn add_constraint(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.push(Constraint { weights, sum });
+        self.constraints.push(Constraint {
+            weights,
+            sum,
+            deferred: false,
+        });
     }
 
     /// Inserts a constraint `(w(X), s)` at the front of the system.
     pub fn add_constraint_in_front(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
-        self.constraints.insert(0, Constraint { weights, sum });
+        self.constraints.insert(
+            0,
+            Constraint {
+                weights,
+                sum,
+                deferred: false,
+            },
+        );
     }
 
     /// Inserts multiple constraints at the front of the system.
@@ -246,9 +261,11 @@ impl<F: Field> Statement<F> {
         }
         self.constraints.splice(
             0..0,
-            constraints
-                .into_iter()
-                .map(|(weights, sum)| Constraint { weights, sum }),
+            constraints.into_iter().map(|(weights, sum)| Constraint {
+                weights,
+                sum,
+                deferred: false,
+            }),
         );
     }
 

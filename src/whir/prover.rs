@@ -66,7 +66,7 @@ where
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<()>
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
     where
         ProverState: UnitToField<F>
             + FieldToUnitSerialize<F>
@@ -150,7 +150,19 @@ where
             self.round(prover_state, &mut round_state)?;
         }
 
-        Ok(())
+        // Hints for deferred constraints
+        let constraint_eval =
+            MultilinearPoint(round_state.randomness_vec.iter().copied().rev().collect());
+        let deferred = round_state
+            .statement
+            .constraints
+            .iter()
+            .filter(|constraint| constraint.deferred)
+            .map(|constraint| constraint.weights.compute(&constraint_eval))
+            .collect();
+        prover_state.hint(&deferred)?;
+
+        Ok((constraint_eval, deferred))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -409,6 +421,7 @@ where
                 *dst = *src;
             }
         }
+
         Ok(())
     }
 

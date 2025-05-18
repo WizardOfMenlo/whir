@@ -60,6 +60,9 @@ pub(crate) struct ParsedProof<F> {
     pub(crate) final_sumcheck_randomness: MultilinearPoint<F>,
     /// Coefficients of the final small polynomial.
     pub(crate) final_coefficients: CoefficientList<F>,
+
+    /// Deferred constraint evaluations.
+    pub(crate) deferred: Vec<F>,
 }
 
 impl<F: Field> ParsedProof<F> {
