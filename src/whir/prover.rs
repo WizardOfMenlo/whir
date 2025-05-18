@@ -16,7 +16,6 @@ use super::{
     parameters::WhirConfig,
     statement::{Statement, Weights},
     utils::HintSerialize,
-    WhirProof,
 };
 use crate::{
     domain::Domain,
@@ -67,7 +66,7 @@ where
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<F>>
+    ) -> ProofResult<()>
     where
         ProverState: UnitToField<F>
             + FieldToUnitSerialize<F>
@@ -151,25 +150,7 @@ where
             self.round(prover_state, &mut round_state)?;
         }
 
-        // Extract WhirProof
-        let mut randomness_vec_rev = round_state.randomness_vec;
-        randomness_vec_rev.reverse();
-        let statement_values_at_random_point = round_state
-            .statement
-            .constraints
-            .iter()
-            .filter_map(|constraint| {
-                if let Weights::Linear { weight } = &constraint.weights {
-                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(WhirProof {
-            statement_values_at_random_point,
-        })
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]

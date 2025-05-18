@@ -322,12 +322,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof,
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -349,7 +344,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 {
     use whir::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, statement::Statement, verifier::Verifier, whir_proof_size,
+        prover::Prover, statement::Statement, verifier::Verifier,
     };
 
     // Runs as a PCS
@@ -444,14 +439,14 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let proof = prover
+    prover
         .prove(&mut prover_state, statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(prover_state.narg_string(), &proof) as f64 / 1024.0
+        prover_state.narg_string().len() as f64 / 1024.0
     );
 
     let statement_verifier = StatementVerifier::from_statement(&statement);
@@ -467,12 +462,7 @@ fn run_whir_pcs<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof,
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
             .unwrap();
     }
     println!(

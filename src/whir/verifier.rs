@@ -13,9 +13,8 @@ use super::{
     committer::reader::ParsedCommitment,
     parameters::WhirConfig,
     parsed_proof::{ParsedProof, ParsedRound},
-    statement::{StatementVerifier, VerifierWeights},
+    statement::{StatementVerifier, Weights},
     utils::HintDeserialize,
-    WhirProof,
 };
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
@@ -48,7 +47,6 @@ where
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement_points_len: usize, // Will be needed later
-        whir_proof: &WhirProof<F>,
     ) -> ProofResult<ParsedProof<F>>
     where
         VerifierState: UnitToBytes
@@ -263,7 +261,6 @@ where
             final_sumcheck_rounds,
             final_sumcheck_randomness,
             final_coefficients,
-            statement_values_at_random_point: whir_proof.statement_values_at_random_point.clone(),
         })
     }
 
@@ -289,31 +286,15 @@ where
             .iter()
             .zip(&parsed_commitment.ood_answers)
             .map(|(&point, &eval)| {
-                let weights = VerifierWeights::evaluation(
-                    MultilinearPoint::expand_from_univariate(point, num_variables),
-                );
+                let weights = Weights::evaluation(MultilinearPoint::expand_from_univariate(
+                    point,
+                    num_variables,
+                ));
                 (weights, eval)
             })
             .collect();
 
-        let mut proof_values_iter = proof.statement_values_at_random_point.iter();
-        for (weights, expected_result) in &statement.constraints {
-            match weights {
-                VerifierWeights::Evaluation { point } => {
-                    new_constraints
-                        .push((VerifierWeights::evaluation(point.clone()), *expected_result));
-                }
-                VerifierWeights::Linear { .. } => {
-                    let term = proof_values_iter
-                        .next()
-                        .expect("Not enough proof statement values for linear constraints");
-                    new_constraints.push((
-                        VerifierWeights::linear(num_variables, Some(*term)),
-                        *expected_result,
-                    ));
-                }
-            }
-        }
+        new_constraints.extend(statement.constraints.iter().cloned());
 
         let mut value: F = new_constraints
             .iter()
@@ -352,7 +333,6 @@ where
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &StatementVerifier<F>,
-        whir_proof: &WhirProof<F>,
     ) -> ProofResult<()>
     where
         VerifierState: UnitToBytes
@@ -369,7 +349,6 @@ where
             verifier_state,
             parsed_commitment,
             statement.constraints.len(),
-            whir_proof,
         )?;
 
         let computed_folds = self

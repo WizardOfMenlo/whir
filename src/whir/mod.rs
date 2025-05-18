@@ -1,8 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
-
-use crate::utils::ark_eq;
-
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
@@ -12,35 +7,6 @@ pub mod statement;
 pub mod stir_evaluations;
 pub mod utils;
 pub mod verifier;
-
-// Only includes the authentication paths
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-pub struct WhirProof<F>
-where
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    #[serde(with = "crate::ark_serde")]
-    pub statement_values_at_random_point: Vec<F>,
-}
-
-pub fn whir_proof_size<F>(narg_string: &[u8], whir_proof: &WhirProof<F>) -> usize
-where
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
-}
-
-impl<F> PartialEq for WhirProof<F>
-where
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    fn eq(&self, other: &Self) -> bool {
-        ark_eq(
-            &self.statement_values_at_random_point,
-            &other.statement_values_at_random_point,
-        )
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -204,12 +170,7 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof,
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement_verifier)
             .unwrap();
     }
 
