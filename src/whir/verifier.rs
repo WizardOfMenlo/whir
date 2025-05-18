@@ -342,7 +342,8 @@ where
 
     /// Verify a WHIR proof.
     ///
-    /// If there are any deferred constraints, their expected sums are returned.
+    /// Returns the constraint evaluation point and the values of the deferred constraints.
+    /// It is the callers responsibility to verify the deferred constraints.
     #[allow(clippy::too_many_lines)]
     pub fn verify<VerifierState>(
         &self,

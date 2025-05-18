@@ -146,25 +146,6 @@ impl<F: Field> Weights<F> {
     }
 
     /// Computes the weight function evaluation under a given randomness.
-    ///
-    /// - In evaluation mode, it computes the equality polynomial `eq_poly_outside` at the provided
-    ///   `folding_randomness`, enforcing the constraint at a specific point.
-    /// - In linear mode, it returns the precomputed term if available.
-    ///
-    /// **Mathematical Definition:**
-    /// - If `w(X)` is an evaluation weight at `p`, then:
-    ///
-    /// \begin{equation}
-    /// w(X) = eq_p(X)
-    /// \end{equation}
-    ///
-    /// where `eq_p(X)` is the Lagrange interpolation polynomial enforcing `X = p`.
-    ///
-    /// - If `w(X)` is a linear weight, it simply returns the stored `term`.
-    ///
-    /// **Precondition:**
-    /// - If `self` is in linear mode, `term` must be `Some(F)`, otherwise the behavior is
-    ///   undefined.
     pub fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
         match self {
             Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),

@@ -60,6 +60,10 @@ where
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
     }
 
+    /// Proves that the commitment satisfies constraints in `statement`.
+    ///
+    /// When called without any constraints it only perfoms a low-degree test.
+    /// Returns the constraint evaluation point and values of deferred constraints.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<ProverState>(
         &self,
