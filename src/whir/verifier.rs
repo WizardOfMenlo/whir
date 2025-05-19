@@ -429,12 +429,13 @@ where
         let mut value: F = constraints[0]
             .iter()
             .zip(initial_combination_randomness)
-            .map(|(constraint, randomness)| {
-                if constraint.deferred {
+            .map(|(constraint, &randomness)| {
+                let value = if constraint.deferred {
                     deferred.next().unwrap()
                 } else {
-                    *randomness * constraint.weights.compute(&folding_randomness)
-                }
+                    constraint.weights.compute(&folding_randomness)
+                };
+                value * randomness
             })
             .sum();
 
@@ -442,22 +443,18 @@ where
             num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
-            let stir_challenges = round_proof
-                .ood_points
+            value += constraints[round + 1]
                 .iter()
-                .chain(&round_proof.stir_challenges_points)
-                .map(|&univariate| {
-                    MultilinearPoint::expand_from_univariate(univariate, num_variables)
-                    // TODO:
-                    // Maybe refactor outside
-                });
-
-            let sum_of_claims: F = stir_challenges
                 .zip(&round_proof.combination_randomness)
-                .map(|(pt, rand)| pt.eq_poly_outside(&folding_randomness) * rand)
-                .sum();
-
-            value += sum_of_claims;
+                .map(|(constraint, &randomness)| {
+                    let value = if constraint.deferred {
+                        deferred.next().unwrap()
+                    } else {
+                        constraint.weights.compute(&folding_randomness)
+                    };
+                    value * randomness
+                })
+                .sum::<F>();
         }
 
         value
