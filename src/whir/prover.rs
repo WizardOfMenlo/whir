@@ -211,7 +211,6 @@ where
         let mut evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
         transform_evaluations(
             &mut evals,
-            self.0.fold_optimisation,
             new_domain.backing_domain.group_gen(),
             new_domain.backing_domain.group_gen_inv(),
             folding_factor_next,
@@ -267,13 +266,9 @@ where
 
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
-        self.0.fold_optimisation.stir_evaluations_prover(
-            round_state,
-            &stir_challenges_indexes,
-            &answers,
-            self.0.folding_factor,
-            &mut stir_evaluations,
-        );
+        stir_evaluations.extend(answers.iter().map(|answers| {
+            CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
+        }));
 
         // PoW
         if round_params.pow_bits > 0. {

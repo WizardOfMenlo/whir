@@ -3,7 +3,6 @@ pub mod domainsep;
 pub mod parameters;
 pub mod prover;
 pub mod statement;
-pub mod stir_evaluations;
 pub mod utils;
 pub mod verifier;
 
@@ -21,9 +20,7 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -61,7 +58,6 @@ mod tests {
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
-        fold_type: FoldType,
     ) {
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -86,7 +82,6 @@ mod tests {
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
-            fold_optimisation: fold_type,
         };
 
         // Build global configuration from multivariate + protocol parameters
@@ -177,26 +172,22 @@ mod tests {
             SoundnessType::ProvableList,
             SoundnessType::UniqueDecoding,
         ];
-        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let num_points = [0, 1, 2];
         let pow_bits = [0, 5, 10];
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
             for num_variable in num_variables {
-                for fold_type in fold_types {
-                    for num_points in num_points {
-                        for soundness_type in soundness_type {
-                            for pow_bits in pow_bits {
-                                make_whir_things(
-                                    num_variable,
-                                    FoldingFactor::Constant(folding_factor),
-                                    num_points,
-                                    soundness_type,
-                                    pow_bits,
-                                    fold_type,
-                                );
-                            }
+                for num_points in num_points {
+                    for soundness_type in soundness_type {
+                        for pow_bits in pow_bits {
+                            make_whir_things(
+                                num_variable,
+                                FoldingFactor::Constant(folding_factor),
+                                num_points,
+                                soundness_type,
+                                pow_bits,
+                            );
                         }
                     }
                 }
