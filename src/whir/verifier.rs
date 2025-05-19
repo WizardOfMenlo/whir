@@ -119,7 +119,7 @@ where
             self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
         }
 
-        let mut prev_root = parsed_commitment.root.clone();
+        let mut prev_commitment = parsed_commitment.clone();
         let mut num_variables =
             self.params.mv_parameters.num_variables - self.params.folding_factor.at_round(0);
         let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
@@ -132,16 +132,11 @@ where
             let round_params = &self.params.round_parameters[round_index];
             let folding_factor = self.params.folding_factor.at_round(round_index);
 
-            dbg!();
             let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
                 verifier_state,
                 num_variables,
                 round_params.ood_samples,
             )?;
-            let new_root = new_commitment.root;
-            let mut ood_points = new_commitment.ood_points;
-            let mut ood_answers = new_commitment.ood_answers;
-            dbg!();
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
@@ -150,8 +145,11 @@ where
                 verifier_state,
             )?;
 
-            let answers =
-                self.verify_merkle_proof(verifier_state, &prev_root, &stir_challenges_indexes)?;
+            let answers = self.verify_merkle_proof(
+                verifier_state,
+                &prev_commitment.root,
+                &stir_challenges_indexes,
+            )?;
 
             self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
 
@@ -170,7 +168,11 @@ where
                 &folding_randomness,
                 &answers,
             );
-            let values = ood_answers.iter().copied().chain(folds.iter().copied());
+            let values = new_commitment
+                .ood_answers
+                .iter()
+                .copied()
+                .chain(folds.iter().copied());
             claimed_sum += values
                 .zip(&combination_randomness)
                 .map(|(val, rand)| val * rand)
@@ -185,7 +187,7 @@ where
 
             rounds.push(ParsedRound {
                 folding_randomness,
-                ood_points,
+                ood_points: new_commitment.ood_points.clone(),
                 stir_challenges_points: stir_challenges_indexes
                     .iter()
                     .map(|index| exp_domain_gen.pow([*index as u64]))
@@ -195,7 +197,8 @@ where
 
             folding_randomness = new_folding_randomness;
 
-            prev_root = new_root;
+            prev_commitment = new_commitment;
+            num_variables -= folding_factor;
             domain_gen = domain_gen * domain_gen;
             exp_domain_gen =
                 domain_gen.pow([1 << self.params.folding_factor.at_round(round_index + 1)]);
@@ -219,8 +222,11 @@ where
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
 
-        let final_randomness_answers =
-            self.verify_merkle_proof(verifier_state, &prev_root, &final_randomness_indexes)?;
+        let final_randomness_answers = self.verify_merkle_proof(
+            verifier_state,
+            &prev_commitment.root,
+            &final_randomness_indexes,
+        )?;
 
         self.verify_proof_of_work(verifier_state, self.params.final_pow_bits)?;
 
