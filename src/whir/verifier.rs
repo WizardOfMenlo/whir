@@ -117,6 +117,8 @@ where
 
             // PoW
             self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
+
+            constraints_at_round.push(vec![]);
         }
 
         let mut prev_commitment = parsed_commitment.clone();
