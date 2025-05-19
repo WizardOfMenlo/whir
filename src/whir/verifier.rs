@@ -259,28 +259,28 @@ where
                 .map(|(val, rand)| val * rand)
                 .sum::<F>();
 
-            let mut sumcheck_rounds =
-                Vec::with_capacity(self.params.folding_factor.at_round(round_index + 1));
-
+            let mut new_folding_randomness = Vec::new();
             for _ in 0..self.params.folding_factor.at_round(round_index + 1) {
-                // Receive sumcheck polynomial
+                // Receive sumcheck polynomial and verify sum
                 let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
                     return Err(ProofError::InvalidProof);
                 }
 
+                // Receive folding randomness and update claimed_sum
                 let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-                sumcheck_rounds.push((sumcheck_poly.clone(), folding_randomness_single));
                 claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
+                new_folding_randomness.push(folding_randomness_single);
 
+                // Optional PoW
                 if round_params.folding_pow_bits > 0. {
                     verifier_state.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
                 }
             }
 
-            let new_folding_randomness =
-                MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
+            new_folding_randomness.reverse();
+            let new_folding_randomness = MultilinearPoint(new_folding_randomness);
 
             let round = ParsedRound {
                 folding_randomness,
@@ -290,7 +290,7 @@ where
                 stir_challenges_points,
                 stir_challenges_answers: answers,
                 combination_randomness,
-                sumcheck_rounds,
+                sumcheck_rounds: vec![],
                 domain_gen_inv,
             };
             rounds.push(round);
