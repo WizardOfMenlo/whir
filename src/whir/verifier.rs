@@ -69,35 +69,6 @@ where
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
-        // We first do a pass in which we rederive all the FS challenges
-        // Then we will check the algebraic part (so to optimise inversions)
-        let (claimed_sum, parsed) =
-            self.parse_proof(verifier_state, parsed_commitment, statement)?;
-
-        // Final v · w Check
-        let prev_sumcheck_poly_eval = claimed_sum;
-
-        // Check the final sumcheck evaluation
-        let evaluation_of_v_poly =
-            self.compute_w_poly(parsed_commitment, statement, &parsed, &parsed.deferred);
-        let final_value = parsed
-            .final_coefficients
-            .evaluate(&parsed.final_sumcheck_randomness);
-
-        if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
-            return Err(ProofError::InvalidProof);
-        }
-
-        Ok((parsed.final_sumcheck_randomness, parsed.deferred))
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn parse_proof(
-        &self,
-        verifier_state: &mut VerifierState,
-        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &Statement<F>,
-    ) -> ProofResult<(F, ParsedProof<F>)> {
         // Initial combination and sumcheck rounds
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.sum).collect();
 
@@ -272,17 +243,30 @@ where
 
         let deferred: Vec<F> = verifier_state.hint()?;
 
-        Ok((
-            claimed_sum,
-            ParsedProof {
+        // Final v · w Check
+        let prev_sumcheck_poly_eval = claimed_sum;
+
+        // Check the final sumcheck evaluation
+        let evaluation_of_v_poly = self.compute_w_poly(
+            parsed_commitment,
+            statement,
+            &ParsedProof {
                 initial_combination_randomness,
                 rounds,
                 final_folding_randomness: folding_randomness,
-                final_sumcheck_randomness,
-                final_coefficients,
-                deferred,
+                final_sumcheck_randomness: final_sumcheck_randomness.clone(),
+                final_coefficients: final_coefficients.clone(),
+                deferred: deferred.clone(),
             },
-        ))
+            &deferred,
+        );
+        let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
+
+        if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
+            return Err(ProofError::InvalidProof);
+        }
+
+        Ok((final_sumcheck_randomness, deferred))
     }
 
     /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
