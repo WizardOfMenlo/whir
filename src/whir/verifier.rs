@@ -65,13 +65,15 @@ where
         let (mut claimed_sum, parsed) =
             self.parse_proof(verifier_state, parsed_commitment, statement)?;
 
-        let computed_folds = self
-            .params
-            .fold_optimisation
-            .stir_evaluations_verifier(&parsed, self.params);
-
         // Sumcheck rounds
-        for (round, folds) in parsed.rounds.iter().zip(&computed_folds) {
+        for (round_index, round) in parsed.rounds.iter().enumerate() {
+            // Computed folds
+            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
+                round_index,
+                round,
+                self.params,
+            );
+
             let values = round
                 .ood_answers
                 .iter()
@@ -93,7 +95,11 @@ where
         }
 
         // Check the foldings computed from the proof match the evaluations of the polynomial
-        let final_folds = &computed_folds.last().expect("final folds missing");
+        let final_folds = self
+            .params
+            .fold_optimisation
+            .stir_final_evaluations_verifier(&parsed, self.params);
+
         let final_evaluations = parsed
             .final_coefficients
             .evaluate_at_univariate(&parsed.final_randomness_points);
