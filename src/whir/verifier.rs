@@ -82,6 +82,7 @@ where
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
+        // Constraints collected at each round and their combination randomness.
         let mut constraints_at_round = Vec::new();
 
         // Optional initial sumcheck round
@@ -97,7 +98,7 @@ where
                 .collect();
             initial_combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-            constraints_at_round.push(constraints);
+            constraints_at_round.push((initial_combination_randomness, constraints));
 
             // Initial sumcheck
             folding_randomness = self.verify_sumcheck_rounds(
@@ -119,7 +120,7 @@ where
             // PoW
             self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
 
-            constraints_at_round.push(vec![]);
+            constraints_at_round.push((vec![], vec![]));
         }
 
         // Proof agnostic round parameters
@@ -173,7 +174,7 @@ where
                 .collect();
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-            constraints_at_round.push(constraints);
+            constraints_at_round.push((combination_randomness.clone(), constraints));
 
             let new_folding_randomness = self.verify_sumcheck_rounds(
                 verifier_state,
@@ -254,7 +255,6 @@ where
         let evaluation_of_v_poly = self.compute_w_poly(
             &constraints_at_round,
             folding_randomness.clone(),
-            &initial_combination_randomness,
             &rounds,
             &deferred,
         );
@@ -417,35 +417,26 @@ where
 
     fn compute_w_poly(
         &self,
-        constraints: &[Vec<Constraint<F>>],
+        constraints: &[(Vec<F>, Vec<Constraint<F>>)],
         mut folding_randomness: MultilinearPoint<F>,
-        initial_combination_randomness: &[F],
         rounds: &[ParsedRound<F>],
         deferred: &[F],
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
-
         let mut deferred = deferred.iter().copied();
-        let mut value: F = constraints[0]
-            .iter()
-            .zip(initial_combination_randomness)
-            .map(|(constraint, &randomness)| {
-                let value = if constraint.deferred {
-                    deferred.next().unwrap()
-                } else {
-                    constraint.weights.compute(&folding_randomness)
-                };
-                value * randomness
-            })
-            .sum();
+        let mut value = F::ZERO;
 
-        for (round, round_proof) in rounds.iter().enumerate() {
-            num_variables -= self.params.folding_factor.at_round(round);
-            folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+        for (round, (randomness, constraints)) in constraints.iter().enumerate() {
+            if round > 0 {
+                num_variables -= self.params.folding_factor.at_round(round - 1);
+                folding_randomness =
+                    MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+            }
 
-            value += constraints[round + 1]
+            assert_eq!(randomness.len(), constraints.len());
+            value += constraints
                 .iter()
-                .zip(&round_proof.combination_randomness)
+                .zip(randomness)
                 .map(|(constraint, &randomness)| {
                     let value = if constraint.deferred {
                         deferred.next().unwrap()
