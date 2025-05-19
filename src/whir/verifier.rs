@@ -244,25 +244,6 @@ where
 
         self.verify_proof_of_work(verifier_state, self.params.final_pow_bits)?;
 
-        let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
-        for _ in 0..self.params.final_sumcheck_rounds {
-            let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
-            let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-            let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-            final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
-
-            self.verify_proof_of_work(verifier_state, self.params.final_folding_pow_bits)?;
-        }
-        let final_sumcheck_randomness = MultilinearPoint(
-            final_sumcheck_rounds
-                .iter()
-                .map(|&(_, r)| r)
-                .rev()
-                .collect(),
-        );
-
-        let deferred: Vec<F> = verifier_state.hint()?;
-
         // Check the foldings computed from the proof match the evaluations of the polynomial
         let final_folds = self.params.fold_optimisation.stir_evaluations_verifier(
             self.params,
@@ -282,13 +263,14 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        // Check the final sumchecks
-        for (sumcheck_poly, new_randomness) in &final_sumcheck_rounds {
-            if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                return Err(ProofError::InvalidProof);
-            }
-            claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-        }
+        let final_sumcheck_randomness = self.verify_sumcheck_rounds(
+            verifier_state,
+            &mut claimed_sum,
+            self.params.final_sumcheck_rounds,
+            self.params.final_folding_pow_bits,
+        )?;
+
+        let deferred: Vec<F> = verifier_state.hint()?;
 
         Ok((
             claimed_sum,
@@ -300,7 +282,7 @@ where
                 final_randomness_indexes,
                 final_randomness_points,
                 final_randomness_answers,
-                final_sumcheck_rounds,
+                final_sumcheck_rounds: vec![],
                 final_sumcheck_randomness,
                 final_coefficients,
                 deferred,

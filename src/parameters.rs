@@ -168,35 +168,6 @@ impl FoldType {
         eval_context.evaluate(stir_challenges_answers, &mut out);
         out
     }
-
-    /// Computes folded evaluations for final round of the proof,
-    /// based on the configured folding strategy.
-    pub(crate) fn stir_final_evaluations_verifier<F, MerkleConfig, PowStrategy>(
-        self,
-        proof: &ParsedProof<F>,
-        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Vec<F>
-    where
-        F: FftField,
-        MerkleConfig: Config,
-    {
-        let eval_context = match self {
-            Self::Naive => StirEvalContext::Naive {
-                domain_size: params.starting_domain.backing_domain.size() >> proof.rounds.len(),
-                domain_gen_inv: proof.final_domain_gen_inv,
-                round: proof.rounds.len(),
-                stir_challenges_indexes: &proof.final_randomness_indexes,
-                folding_factor: &params.folding_factor,
-                folding_randomness: &proof.final_folding_randomness,
-            },
-            Self::ProverHelps => StirEvalContext::ProverHelps {
-                folding_randomness: &proof.final_folding_randomness,
-            },
-        };
-        let mut out = Vec::with_capacity(proof.final_randomness_indexes.len());
-        eval_context.evaluate(&proof.final_randomness_answers, &mut out);
-        out
-    }
 }
 
 impl FromStr for FoldType {
