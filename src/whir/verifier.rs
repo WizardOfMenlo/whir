@@ -308,6 +308,7 @@ where
         Ok(MultilinearPoint(randomness))
     }
 
+    /// Verify a merkle multi-opening proof for the provided indices.
     pub fn verify_merkle_proof(
         &self,
         verifier_state: &mut VerifierState,
@@ -339,6 +340,8 @@ where
         Ok(answers)
     }
 
+    /// Verify a proof of work challenge.
+    /// Does nothing when `bits == 0.`.
     pub fn verify_proof_of_work(
         &self,
         verifier_state: &mut VerifierState,
