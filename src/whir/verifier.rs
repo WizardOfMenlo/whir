@@ -194,21 +194,8 @@ where
                 verifier_state,
             )?;
 
-            let answers: Vec<Vec<F>> = verifier_state.hint()?;
-            let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
-
-            if !merkle_proof
-                .verify(
-                    &self.params.leaf_hash_params,
-                    &self.params.two_to_one_params,
-                    &prev_root,
-                    answers.iter().map(|a| a.as_ref()),
-                )
-                .unwrap()
-                || merkle_proof.leaf_indexes != stir_challenges_indexes
-            {
-                return Err(ProofError::InvalidProof);
-            }
+            let answers =
+                self.verify_merkle_proof(verifier_state, &prev_root, &stir_challenges_indexes)?;
 
             self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
 
@@ -276,21 +263,8 @@ where
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
 
-        let final_randomness_answers: Vec<Vec<F>> = verifier_state.hint()?;
-        let final_merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
-
-        if !final_merkle_proof
-            .verify(
-                &self.params.leaf_hash_params,
-                &self.params.two_to_one_params,
-                &prev_root,
-                final_randomness_answers.iter().map(|a| a.as_ref()),
-            )
-            .unwrap()
-            || final_merkle_proof.leaf_indexes != final_randomness_indexes
-        {
-            return Err(ProofError::InvalidProof);
-        }
+        let final_randomness_answers =
+            self.verify_merkle_proof(verifier_state, &prev_root, &final_randomness_indexes)?;
 
         self.verify_proof_of_work(verifier_state, self.params.final_pow_bits)?;
 
@@ -310,6 +284,7 @@ where
                 .rev()
                 .collect(),
         );
+
         let deferred: Vec<F> = verifier_state.hint()?;
 
         Ok((
@@ -370,6 +345,45 @@ where
 
         randomness.reverse();
         Ok(MultilinearPoint(randomness))
+    }
+
+    pub fn verify_merkle_proof<VerifierState>(
+        &self,
+        verifier_state: &mut VerifierState,
+        root: &MerkleConfig::InnerDigest,
+        indices: &[usize],
+    ) -> ProofResult<Vec<Vec<F>>>
+    where
+        VerifierState: UnitToBytes
+            + UnitToField<F>
+            + FieldToUnitDeserialize<F>
+            + PoWChallenge
+            + DigestToUnitDeserialize<MerkleConfig>
+            + HintDeserialize,
+    {
+        // Receive claimed leafs
+        let answers: Vec<Vec<F>> = verifier_state.hint()?;
+
+        // Receive merkle proof for leaf indices
+        let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+        if merkle_proof.leaf_indexes != indices {
+            return Err(ProofError::InvalidProof);
+        }
+
+        // Verify merkle proof
+        let correct = merkle_proof
+            .verify(
+                &self.params.leaf_hash_params,
+                &self.params.two_to_one_params,
+                root,
+                answers.iter().map(|a| a.as_ref()),
+            )
+            .map_err(|_e| ProofError::InvalidProof)?;
+        if !correct {
+            return Err(ProofError::InvalidProof);
+        }
+
+        Ok(answers)
     }
 
     pub fn verify_proof_of_work<VerifierState>(
