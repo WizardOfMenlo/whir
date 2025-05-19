@@ -12,7 +12,7 @@ use spongefish_pow::{self, PoWChallenge};
 use super::{
     committer::reader::ParsedCommitment,
     parameters::WhirConfig,
-    parsed_proof::{ParsedProof, ParsedRound},
+    parsed_proof::ParsedRound,
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
@@ -243,6 +243,16 @@ where
 
         let deferred: Vec<F> = verifier_state.hint()?;
 
+        // Compute folding randomness across all rounds.
+        let folding_randomness = MultilinearPoint(
+            iter::once(&final_sumcheck_randomness.0)
+                .chain(iter::once(&folding_randomness.0))
+                .chain(rounds.iter().rev().map(|r| &r.folding_randomness.0))
+                .flatten()
+                .copied()
+                .collect(),
+        );
+
         // Final v · w Check
         let prev_sumcheck_poly_eval = claimed_sum;
 
@@ -250,14 +260,9 @@ where
         let evaluation_of_v_poly = self.compute_w_poly(
             parsed_commitment,
             statement,
-            &ParsedProof {
-                initial_combination_randomness,
-                rounds,
-                final_folding_randomness: folding_randomness,
-                final_sumcheck_randomness: final_sumcheck_randomness.clone(),
-                final_coefficients: final_coefficients.clone(),
-                deferred: deferred.clone(),
-            },
+            folding_randomness.clone(),
+            &initial_combination_randomness,
+            &rounds,
             &deferred,
         );
         let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
@@ -266,7 +271,7 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        Ok((final_sumcheck_randomness, deferred))
+        Ok((folding_randomness, deferred))
     }
 
     /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
@@ -349,19 +354,12 @@ where
         &self,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
-        proof: &ParsedProof<F>,
+        mut folding_randomness: MultilinearPoint<F>,
+        initial_combination_randomness: &[F],
+        rounds: &[ParsedRound<F>],
         deferred: &[F],
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
-
-        let mut folding_randomness = MultilinearPoint(
-            iter::once(&proof.final_sumcheck_randomness.0)
-                .chain(iter::once(&proof.final_folding_randomness.0))
-                .chain(proof.rounds.iter().rev().map(|r| &r.folding_randomness.0))
-                .flatten()
-                .copied()
-                .collect(),
-        );
 
         let constraints: Vec<_> = parsed_commitment
             .ood_points
@@ -384,7 +382,7 @@ where
         let mut deferred = deferred.iter().copied();
         let mut value: F = constraints
             .iter()
-            .zip(&proof.initial_combination_randomness)
+            .zip(initial_combination_randomness)
             .map(|(constraint, randomness)| {
                 if constraint.deferred {
                     deferred.next().unwrap()
@@ -394,7 +392,7 @@ where
             })
             .sum();
 
-        for (round, round_proof) in proof.rounds.iter().enumerate() {
+        for (round, round_proof) in rounds.iter().enumerate() {
             num_variables -= self.params.folding_factor.at_round(round);
             folding_randomness = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
 
