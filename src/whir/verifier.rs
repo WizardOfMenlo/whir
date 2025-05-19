@@ -194,8 +194,8 @@ where
         let mut domain_size = self.params.starting_domain.size();
         let mut rounds = vec![];
 
-        for r in 0..self.params.n_rounds() {
-            let round_params = &self.params.round_parameters[r];
+        for round_index in 0..self.params.n_rounds() {
+            let round_params = &self.params.round_parameters[round_index];
 
             let new_root = verifier_state.read_digest()?;
 
@@ -208,7 +208,7 @@ where
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
-                self.params.folding_factor.at_round(r),
+                self.params.folding_factor.at_round(round_index),
                 round_params.num_queries,
                 verifier_state,
             )?;
@@ -245,8 +245,8 @@ where
             );
 
             let mut sumcheck_rounds =
-                Vec::with_capacity(self.params.folding_factor.at_round(r + 1));
-            for _ in 0..self.params.folding_factor.at_round(r + 1) {
+                Vec::with_capacity(self.params.folding_factor.at_round(round_index + 1));
+            for _ in 0..self.params.folding_factor.at_round(round_index + 1) {
                 let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
                 let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 let [folding_randomness_single] = verifier_state.challenge_scalars()?;
@@ -260,7 +260,9 @@ where
             let new_folding_randomness =
                 MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
 
-            rounds.push(ParsedRound {
+            ////////////////////////////////
+            // Verify
+            let round = ParsedRound {
                 folding_randomness,
                 ood_points,
                 ood_answers,
@@ -270,13 +272,43 @@ where
                 combination_randomness,
                 sumcheck_rounds,
                 domain_gen_inv,
-            });
+            };
+
+            // Computed folds
+            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
+                round_index,
+                &round,
+                self.params,
+            );
+
+            let values = round
+                .ood_answers
+                .iter()
+                .copied()
+                .chain(folds.iter().copied());
+
+            claimed_sum += values
+                .zip(&round.combination_randomness)
+                .map(|(val, rand)| val * rand)
+                .sum::<F>();
+
+            // Check the rest of the round
+            for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds {
+                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
+                    return Err(ProofError::InvalidProof);
+                }
+                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
+            }
+            ////////////////////////////////
+
+            rounds.push(round);
 
             folding_randomness = new_folding_randomness;
 
             prev_root = new_root;
             domain_gen = domain_gen * domain_gen;
-            exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(r + 1)]);
+            exp_domain_gen =
+                domain_gen.pow([1 << self.params.folding_factor.at_round(round_index + 1)]);
             domain_gen_inv = domain_gen_inv * domain_gen_inv;
             domain_size /= 2;
         }
@@ -336,35 +368,6 @@ where
                 .collect(),
         );
         let deferred: Vec<F> = verifier_state.hint()?;
-
-        // Sumcheck rounds
-        for (round_index, round) in rounds.iter().enumerate() {
-            // Computed folds
-            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
-                round_index,
-                round,
-                self.params,
-            );
-
-            let values = round
-                .ood_answers
-                .iter()
-                .copied()
-                .chain(folds.iter().copied());
-
-            claimed_sum += values
-                .zip(&round.combination_randomness)
-                .map(|(val, rand)| val * rand)
-                .sum::<F>();
-
-            // Check the rest of the round
-            for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds {
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-            }
-        }
 
         Ok((
             claimed_sum,
