@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint};
+use crate::poly_utils::{
+    coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+};
 
 /// Represents a weight function used in polynomial evaluations.
 ///
@@ -65,6 +67,23 @@ impl<F: Field> Weights<F> {
         match self {
             Self::Evaluation { point } => point.num_variables(),
             Self::Linear { weight } => weight.num_variables(),
+        }
+    }
+
+    /// Evaluate the weighted sum with a polynomial in coefficient form.
+    pub fn evaluate(&self, poly: &CoefficientList<F>) -> F {
+        assert_eq!(self.num_variables(), poly.num_variables());
+        match self {
+            Self::Evaluation { point } => poly.evaluate(point),
+            Self::Linear { weight } => {
+                let poly: EvaluationsList<F> = poly.clone().into();
+                weight
+                    .evals()
+                    .iter()
+                    .zip(poly.evals())
+                    .map(|(&w, &p)| w * p)
+                    .sum()
+            }
         }
     }
 
@@ -183,6 +202,7 @@ impl<F: Field> Weights<F> {
 pub struct Statement<F> {
     /// Number of variables defining the polynomial space.
     num_variables: usize,
+
     /// Constraints represented as pairs `(w(X), s)`, where
     /// - `w(X)` is a weighted polynomial function
     /// - `s` is the expected sum.
@@ -194,12 +214,20 @@ pub struct Statement<F> {
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct Constraint<F> {
     pub weights: Weights<F>,
+
     #[serde(with = "crate::ark_serde")]
     pub sum: F,
 
     /// For a deferred statement the verifier ignores the weights and
     /// instead outputs a relation on them that should be verified.
     pub deferred: bool,
+}
+
+impl<F: Field> Constraint<F> {
+    /// Verify if a polynomial (in coefficient form) satisfies the constraint.
+    pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
+        self.weights.evaluate(poly) == self.sum
+    }
 }
 
 impl<F: Field> Statement<F> {

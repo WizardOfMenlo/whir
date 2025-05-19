@@ -146,7 +146,7 @@ where
                 exp_domain_gen,
             };
 
-            // Receive commitment to the folded polynomial (likely encoded at higher rate)
+            // Receive commitment to the folded polynomial (likely encoded at higher expansion)
             let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
                 verifier_state,
                 num_variables,
@@ -196,47 +196,35 @@ where
             domain_size /= 2;
         }
 
-        // In the final round we receive the full polynomial.
+        // Final round parameters.
+        let params = StirChallengParams {
+            round_index: self.params.n_rounds(),
+            domain_size,
+            num_variables,
+            num_queries: self.params.final_queries,
+            folding_factor: self.params.folding_factor.at_round(self.params.n_rounds()),
+            pow_bits: self.params.final_pow_bits,
+            domain_gen_inv,
+            exp_domain_gen,
+        };
+
+        // In the final round we receive the full polynomial instead of a commitment.
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_sumcheck_rounds];
         verifier_state.fill_next_scalars(&mut final_coefficients)?;
         let final_coefficients = CoefficientList::new(final_coefficients);
 
-        // Final queries verify
-        let final_randomness_indexes = get_challenge_stir_queries(
-            domain_size,
-            self.params.folding_factor.at_round(self.params.n_rounds()),
-            self.params.final_queries,
+        // Verify in-domain challenges on the previous commitment.
+        let (stir_constraints, _) = self.verify_stir_challenges(
             verifier_state,
-        )?;
-        let final_randomness_points: Vec<F> = final_randomness_indexes
-            .iter()
-            .map(|index| exp_domain_gen.pow([*index as u64]))
-            .collect();
-
-        let final_randomness_answers = self.verify_merkle_proof(
-            verifier_state,
-            &prev_commitment.root,
-            &final_randomness_indexes,
-        )?;
-
-        self.verify_proof_of_work(verifier_state, self.params.final_pow_bits)?;
-
-        // Check the foldings computed from the proof match the evaluations of the polynomial
-        let final_folds = self.params.fold_optimisation.stir_evaluations_verifier(
-            self.params,
-            self.params.n_rounds(),
-            domain_gen_inv,
-            &final_randomness_indexes,
+            &params,
+            &prev_commitment,
             &folding_randomness,
-            &final_randomness_answers,
-        );
+        )?;
 
-        // Check final in domain evaluations directly
-        let final_evaluations = final_coefficients.evaluate_at_univariate(&final_randomness_points);
-        if !final_folds
+        // Verify stir constraints direclty on final polynomial
+        if !stir_constraints
             .iter()
-            .zip(final_evaluations)
-            .all(|(&fold, eval)| fold == eval)
+            .all(|c| c.verify(&final_coefficients))
         {
             return Err(ProofError::InvalidProof);
         }
