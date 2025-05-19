@@ -65,35 +65,6 @@ where
         let (mut claimed_sum, parsed) =
             self.parse_proof(verifier_state, parsed_commitment, statement)?;
 
-        // Sumcheck rounds
-        for (round_index, round) in parsed.rounds.iter().enumerate() {
-            // Computed folds
-            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
-                round_index,
-                round,
-                self.params,
-            );
-
-            let values = round
-                .ood_answers
-                .iter()
-                .copied()
-                .chain(folds.iter().copied());
-
-            claimed_sum += values
-                .zip(&round.combination_randomness)
-                .map(|(val, rand)| val * rand)
-                .sum::<F>();
-
-            // Check the rest of the round
-            for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds {
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-            }
-        }
-
         // Check the foldings computed from the proof match the evaluations of the polynomial
         let final_folds = self
             .params
@@ -365,6 +336,35 @@ where
                 .collect(),
         );
         let deferred: Vec<F> = verifier_state.hint()?;
+
+        // Sumcheck rounds
+        for (round_index, round) in rounds.iter().enumerate() {
+            // Computed folds
+            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
+                round_index,
+                round,
+                self.params,
+            );
+
+            let values = round
+                .ood_answers
+                .iter()
+                .copied()
+                .chain(folds.iter().copied());
+
+            claimed_sum += values
+                .zip(&round.combination_randomness)
+                .map(|(val, rand)| val * rand)
+                .sum::<F>();
+
+            // Check the rest of the round
+            for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds {
+                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
+                    return Err(ProofError::InvalidProof);
+                }
+                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
+            }
+        }
 
         Ok((
             claimed_sum,
