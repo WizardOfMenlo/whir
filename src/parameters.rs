@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    poly_utils::multilinear::MultilinearPoint,
     utils::ark_eq,
     whir::{
         parameters::WhirConfig,
@@ -143,9 +144,12 @@ impl FoldType {
     /// based on the configured folding strategy.
     pub(crate) fn stir_evaluations_verifier<F, MerkleConfig, PowStrategy>(
         self,
-        round_index: usize,
-        round: &ParsedRound<F>,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+        round_index: usize,
+        domain_gen_inv: F,
+        stir_challenges_indexes: &[usize],
+        folding_randomness: &MultilinearPoint<F>,
+        stir_challenges_answers: &[Vec<F>],
     ) -> Vec<F>
     where
         F: FftField,
@@ -154,18 +158,16 @@ impl FoldType {
         let eval_context = match self {
             Self::Naive => StirEvalContext::Naive {
                 domain_size: params.starting_domain.backing_domain.size() >> round_index,
-                domain_gen_inv: round.domain_gen_inv,
+                domain_gen_inv,
                 round: round_index,
-                stir_challenges_indexes: &round.stir_challenges_indexes,
+                stir_challenges_indexes,
                 folding_factor: &params.folding_factor,
-                folding_randomness: &round.folding_randomness,
+                folding_randomness,
             },
-            Self::ProverHelps => StirEvalContext::ProverHelps {
-                folding_randomness: &round.folding_randomness,
-            },
+            Self::ProverHelps => StirEvalContext::ProverHelps { folding_randomness },
         };
-        let mut out = Vec::with_capacity(round.stir_challenges_answers.len());
-        eval_context.evaluate(&round.stir_challenges_answers, &mut out);
+        let mut out = Vec::with_capacity(stir_challenges_answers.len());
+        eval_context.evaluate(stir_challenges_answers, &mut out);
         out
     }
 

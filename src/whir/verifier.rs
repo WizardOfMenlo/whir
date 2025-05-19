@@ -262,6 +262,33 @@ where
 
             ////////////////////////////////
             // Verify
+
+            // Computed folds
+            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
+                self.params,
+                round_index,
+                domain_gen_inv,
+                &stir_challenges_indexes,
+                &folding_randomness,
+                &answers,
+            );
+
+            let values = ood_answers.iter().copied().chain(folds.iter().copied());
+
+            claimed_sum += values
+                .zip(&combination_randomness)
+                .map(|(val, rand)| val * rand)
+                .sum::<F>();
+
+            // Check the rest of the round
+            for (sumcheck_poly, new_randomness) in &sumcheck_rounds {
+                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
+                    return Err(ProofError::InvalidProof);
+                }
+                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
+            }
+            ////////////////////////////////
+
             let round = ParsedRound {
                 folding_randomness,
                 ood_points,
@@ -273,34 +300,6 @@ where
                 sumcheck_rounds,
                 domain_gen_inv,
             };
-
-            // Computed folds
-            let folds = self.params.fold_optimisation.stir_evaluations_verifier(
-                round_index,
-                &round,
-                self.params,
-            );
-
-            let values = round
-                .ood_answers
-                .iter()
-                .copied()
-                .chain(folds.iter().copied());
-
-            claimed_sum += values
-                .zip(&round.combination_randomness)
-                .map(|(val, rand)| val * rand)
-                .sum::<F>();
-
-            // Check the rest of the round
-            for (sumcheck_poly, new_randomness) in &round.sumcheck_rounds {
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-            }
-            ////////////////////////////////
-
             rounds.push(round);
 
             folding_randomness = new_folding_randomness;
