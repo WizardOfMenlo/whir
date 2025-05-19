@@ -155,13 +155,7 @@ where
 
             self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
 
-            let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
-            let combination_randomness = expand_randomness(
-                combination_randomness_gen,
-                stir_challenges_indexes.len() + round_params.ood_samples,
-            );
-
-            // Add OODS and STIR evaluations to claimed sum
+            // Compute STIR Constraints
             let folds = self.params.fold_optimisation.stir_evaluations_verifier(
                 self.params,
                 round_index,
@@ -180,11 +174,17 @@ where
                     deferred: false,
                 });
 
+            // Add OODS and STIR constraints to claimed_sum
             let constraints: Vec<Constraint<F>> = new_commitment
                 .oods_constraints()
                 .into_iter()
                 .chain(stir_constraints)
                 .collect();
+            let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
+            let combination_randomness = expand_randomness(
+                combination_randomness_gen,
+                stir_challenges_indexes.len() + round_params.ood_samples,
+            );
             claimed_sum += constraints
                 .iter()
                 .zip(&combination_randomness)
