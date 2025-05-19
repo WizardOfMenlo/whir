@@ -11,8 +11,7 @@ use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,
-    parameters::{RoundConfig, WhirConfig},
-    parsed_proof::ParsedRound,
+    parameters::WhirConfig,
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
@@ -84,10 +83,10 @@ where
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
         // Constraints collected at each round and their combination randomness.
         let mut constraints_at_round = Vec::new();
+        let mut round_folding_randomness = Vec::new();
 
         // Optional initial sumcheck round
         let mut claimed_sum = F::ZERO;
-        let mut folding_randomness;
         let initial_combination_randomness;
         if self.params.initial_statement {
             // Combine OODS and statement constraints to claimed_sum
@@ -101,12 +100,13 @@ where
             constraints_at_round.push((initial_combination_randomness, constraints));
 
             // Initial sumcheck
-            folding_randomness = self.verify_sumcheck_rounds(
+            let folding_randomness = self.verify_sumcheck_rounds(
                 verifier_state,
                 &mut claimed_sum,
                 self.params.folding_factor.at_round(0),
                 self.params.starting_folding_pow_bits,
             )?;
+            round_folding_randomness.push(folding_randomness);
         } else {
             assert_eq!(parsed_commitment.ood_points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -115,12 +115,13 @@ where
 
             let mut folding_randomness_vec = vec![F::ZERO; self.params.folding_factor.at_round(0)];
             verifier_state.fill_challenge_scalars(&mut folding_randomness_vec)?;
-            folding_randomness = MultilinearPoint(folding_randomness_vec);
+            let folding_randomness = MultilinearPoint(folding_randomness_vec);
 
             // PoW
             self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
 
             constraints_at_round.push((vec![], vec![]));
+            round_folding_randomness.push(folding_randomness);
         }
 
         // Proof agnostic round parameters
@@ -142,7 +143,6 @@ where
         };
 
         let mut prev_commitment = parsed_commitment.clone();
-        let mut rounds = vec![];
         for round_index in 0..self.params.n_rounds() {
             // Fetch round parameters from config
             let round_params = &self.params.round_parameters[round_index];
@@ -163,7 +163,7 @@ where
                 verifier_state,
                 &params,
                 &prev_commitment,
-                &folding_randomness,
+                &round_folding_randomness.last().unwrap(),
             )?;
 
             // Add out-of-domain and in-domain constraints to claimed_sum
@@ -176,21 +176,13 @@ where
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             constraints_at_round.push((combination_randomness.clone(), constraints));
 
-            let new_folding_randomness = self.verify_sumcheck_rounds(
+            let folding_randomness = self.verify_sumcheck_rounds(
                 verifier_state,
                 &mut claimed_sum,
                 self.params.folding_factor.at_round(round_index + 1),
                 round_params.folding_pow_bits,
             )?;
-
-            rounds.push(ParsedRound {
-                folding_randomness,
-                ood_points: new_commitment.ood_points.clone(),
-                stir_challenges_points,
-                combination_randomness,
-            });
-
-            folding_randomness = new_folding_randomness;
+            round_folding_randomness.push(folding_randomness);
 
             prev_commitment = new_commitment;
             params.num_variables -= params.folding_factor;
@@ -218,7 +210,7 @@ where
             verifier_state,
             &params,
             &prev_commitment,
-            &folding_randomness,
+            &round_folding_randomness.last().unwrap(),
         )?;
 
         // Verify stir constraints direclty on final polynomial
@@ -235,14 +227,14 @@ where
             self.params.final_sumcheck_rounds,
             self.params.final_folding_pow_bits,
         )?;
+        round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds.
         let folding_randomness = MultilinearPoint(
-            iter::once(&final_sumcheck_randomness.0)
-                .chain(iter::once(&folding_randomness.0))
-                .chain(rounds.iter().rev().map(|r| &r.folding_randomness.0))
-                .flatten()
-                .copied()
+            round_folding_randomness
+                .into_iter()
+                .rev()
+                .flat_map(|poly| poly.0.into_iter())
                 .collect(),
         );
 
@@ -252,12 +244,8 @@ where
         // Check the final sumcheck evaluation
         let deferred: Vec<F> = verifier_state.hint()?;
 
-        let evaluation_of_v_poly = self.compute_w_poly(
-            &constraints_at_round,
-            folding_randomness.clone(),
-            &rounds,
-            &deferred,
-        );
+        let evaluation_of_v_poly =
+            self.compute_w_poly(&constraints_at_round, folding_randomness.clone(), &deferred);
         let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
 
         if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
@@ -419,7 +407,6 @@ where
         &self,
         constraints: &[(Vec<F>, Vec<Constraint<F>>)],
         mut folding_randomness: MultilinearPoint<F>,
-        rounds: &[ParsedRound<F>],
         deferred: &[F],
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
