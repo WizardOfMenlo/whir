@@ -148,28 +148,12 @@ where
                 .sum();
 
             // Initial sumcheck
-            let mut randomness = Vec::new();
-            for _ in 0..self.params.folding_factor.at_round(0) {
-                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
-                let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-                randomness.push(folding_randomness_single);
-
-                claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
-
-                if self.params.starting_folding_pow_bits > 0. {
-                    verifier_state
-                        .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
-                }
-            }
-
-            randomness.reverse();
-            folding_randomness = MultilinearPoint(randomness);
+            folding_randomness = self.verify_sumcheck_rounds(
+                verifier_state,
+                &mut claimed_sum,
+                self.params.folding_factor.at_round(0),
+                self.params.starting_folding_pow_bits,
+            )?;
         } else {
             assert_eq!(parsed_commitment.ood_points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -254,28 +238,12 @@ where
                 .map(|(val, rand)| val * rand)
                 .sum::<F>();
 
-            let mut new_folding_randomness = Vec::new();
-            for _ in 0..self.params.folding_factor.at_round(round_index + 1) {
-                // Receive sumcheck polynomial and verify sum
-                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
-                let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-                if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                // Receive folding randomness and update claimed_sum
-                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-                claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
-                new_folding_randomness.push(folding_randomness_single);
-
-                // Optional PoW
-                if round_params.folding_pow_bits > 0. {
-                    verifier_state.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
-                }
-            }
-
-            new_folding_randomness.reverse();
-            let new_folding_randomness = MultilinearPoint(new_folding_randomness);
+            let new_folding_randomness = self.verify_sumcheck_rounds(
+                verifier_state,
+                &mut claimed_sum,
+                self.params.folding_factor.at_round(round_index + 1),
+                round_params.folding_pow_bits,
+            )?;
 
             rounds.push(ParsedRound {
                 folding_randomness,
@@ -369,6 +337,51 @@ where
                 deferred,
             },
         ))
+    }
+
+    /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
+    pub fn verify_sumcheck_rounds<VerifierState>(
+        &self,
+        verifier_state: &mut VerifierState,
+        claimed_sum: &mut F,
+        rounds: usize,
+        proof_of_work: f64,
+    ) -> ProofResult<MultilinearPoint<F>>
+    where
+        VerifierState: UnitToBytes
+            + UnitToField<F>
+            + FieldToUnitDeserialize<F>
+            + PoWChallenge
+            + DigestToUnitDeserialize<MerkleConfig>
+            + HintDeserialize,
+    {
+        let mut randomness = Vec::with_capacity(rounds);
+        for _ in 0..rounds {
+            // Receive this round's sumcheck polynomial
+            let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
+            let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
+
+            // Verify claimed sum is consistent with polynomial
+            if sumcheck_poly.sum_over_boolean_hypercube() != *claimed_sum {
+                return Err(ProofError::InvalidProof);
+            }
+
+            // Receive folding randomness
+            let [folding_randomness_single] = verifier_state.challenge_scalars()?;
+            randomness.push(folding_randomness_single);
+
+            // Update claimed sum using folding randomness
+            *claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
+
+            // Optional proof of work per round
+            if proof_of_work > 0. {
+                verifier_state
+                    .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+            }
+        }
+
+        randomness.reverse();
+        Ok(MultilinearPoint(randomness))
     }
 
     fn compute_w_poly(
