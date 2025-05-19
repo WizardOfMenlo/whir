@@ -14,9 +14,7 @@ use crate::{
     poly_utils::multilinear::MultilinearPoint,
     utils::ark_eq,
     whir::{
-        parameters::WhirConfig,
-        parsed_proof::{ParsedProof, ParsedRound},
-        prover::RoundState,
+        parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
         stir_evaluations::StirEvalContext,
     },
 };

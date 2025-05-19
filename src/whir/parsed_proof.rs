@@ -13,20 +13,10 @@ pub(crate) struct ParsedRound<F> {
     pub(crate) folding_randomness: MultilinearPoint<F>,
     /// Out-of-domain query points.
     pub(crate) ood_points: Vec<F>,
-    /// OOD answers at each query point.
-    pub(crate) ood_answers: Vec<F>,
-    /// Indexes of STIR constraint polynomials used in this round.
-    pub(crate) stir_challenges_indexes: Vec<usize>,
     /// STIR constraint evaluation points.
     pub(crate) stir_challenges_points: Vec<F>,
-    /// Answers to the STIR constraints at each evaluation point.
-    pub(crate) stir_challenges_answers: Vec<Vec<F>>,
     /// Randomness used to linearly combine constraints.
     pub(crate) combination_randomness: Vec<F>,
-    /// Sumcheck messages and challenge values for verifying correctness.
-    pub(crate) sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
-    /// Inverse of the domain generator used in this round.
-    pub(crate) domain_gen_inv: F,
 }
 
 /// Represents a fully parsed and structured WHIR proof.

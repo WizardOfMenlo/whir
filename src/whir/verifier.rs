@@ -213,11 +213,6 @@ where
                 verifier_state,
             )?;
 
-            let stir_challenges_points = stir_challenges_indexes
-                .iter()
-                .map(|index| exp_domain_gen.pow([*index as u64]))
-                .collect();
-
             let answers: Vec<Vec<F>> = verifier_state.hint()?;
             let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
 
@@ -282,18 +277,15 @@ where
             new_folding_randomness.reverse();
             let new_folding_randomness = MultilinearPoint(new_folding_randomness);
 
-            let round = ParsedRound {
+            rounds.push(ParsedRound {
                 folding_randomness,
                 ood_points,
-                ood_answers,
-                stir_challenges_indexes,
-                stir_challenges_points,
-                stir_challenges_answers: answers,
+                stir_challenges_points: stir_challenges_indexes
+                    .iter()
+                    .map(|index| exp_domain_gen.pow([*index as u64]))
+                    .collect(),
                 combination_randomness,
-                sumcheck_rounds: vec![],
-                domain_gen_inv,
-            };
-            rounds.push(round);
+            });
 
             folding_randomness = new_folding_randomness;
 
