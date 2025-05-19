@@ -1,7 +1,4 @@
-use crate::{
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckPolynomial,
-};
+use crate::poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint};
 
 /// Represents a single folding round in the WHIR protocol.
 ///
@@ -30,17 +27,8 @@ pub(crate) struct ParsedProof<F> {
     /// All folding rounds, each reducing the problem dimension.
     pub(crate) rounds: Vec<ParsedRound<F>>,
     /// Inverse of the domain generator used in the final round.
-    pub(crate) final_domain_gen_inv: F,
-    /// Indexes of the final constraint polynomials.
-    pub(crate) final_randomness_indexes: Vec<usize>,
-    /// Evaluation points for the final constraint polynomials.
-    pub(crate) final_randomness_points: Vec<F>,
-    /// Evaluation results of the final constraints.
-    pub(crate) final_randomness_answers: Vec<Vec<F>>,
     /// Folding randomness used in the final recursive step.
     pub(crate) final_folding_randomness: MultilinearPoint<F>,
-    /// Final sumcheck proof for verifying the last constraint.
-    pub(crate) final_sumcheck_rounds: Vec<(SumcheckPolynomial<F>, F)>,
     /// Challenge vector used to evaluate the last polynomial.
     pub(crate) final_sumcheck_randomness: MultilinearPoint<F>,
     /// Coefficients of the final small polynomial.

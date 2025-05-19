@@ -71,7 +71,7 @@ where
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
-        let (mut claimed_sum, parsed) =
+        let (claimed_sum, parsed) =
             self.parse_proof(verifier_state, parsed_commitment, statement)?;
 
         // Final v · w Check
@@ -277,12 +277,7 @@ where
             ParsedProof {
                 initial_combination_randomness,
                 rounds,
-                final_domain_gen_inv: domain_gen_inv,
                 final_folding_randomness: folding_randomness,
-                final_randomness_indexes,
-                final_randomness_points,
-                final_randomness_answers,
-                final_sumcheck_rounds: vec![],
                 final_sumcheck_randomness,
                 final_coefficients,
                 deferred,

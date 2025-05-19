@@ -329,6 +329,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use core::slice;
+
     use ark_ff::AdditiveGroup;
     use spongefish::{
         codecs::arkworks_algebra::FieldDomainSeparator, DefaultHash, DomainSeparator,
@@ -765,7 +767,7 @@ mod tests {
         //        = c1 + c2*(1) + c3*(0) + c4*(1)*(0)
         let eval = c1 + c2 * F::ONE + c3 * F::ZERO + c4 * F::ONE * F::ZERO;
 
-        prover.add_new_equality(&[point.clone()], &[eval], &[weight]);
+        prover.add_new_equality(slice::from_ref(&point), &[eval], &[weight]);
 
         // Compute expected sum explicitly:
         //

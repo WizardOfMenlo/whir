@@ -13,10 +13,7 @@ use thiserror::Error;
 use crate::{
     poly_utils::multilinear::MultilinearPoint,
     utils::ark_eq,
-    whir::{
-        parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
-        stir_evaluations::StirEvalContext,
-    },
+    whir::{parameters::WhirConfig, prover::RoundState, stir_evaluations::StirEvalContext},
 };
 
 /// Computes the default maximum proof-of-work (PoW) bits.
