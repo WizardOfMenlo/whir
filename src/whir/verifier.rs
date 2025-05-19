@@ -165,10 +165,7 @@ where
             folding_randomness = MultilinearPoint(folding_randomness_vec);
 
             // PoW
-            if self.params.starting_folding_pow_bits > 0. {
-                verifier_state
-                    .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
-            }
+            self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
         }
 
         let mut prev_root = parsed_commitment.root.clone();
@@ -213,9 +210,7 @@ where
                 return Err(ProofError::InvalidProof);
             }
 
-            if round_params.pow_bits > 0. {
-                verifier_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-            }
+            self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
 
             let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
             let combination_randomness = expand_randomness(
@@ -297,9 +292,7 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        if self.params.final_pow_bits > 0. {
-            verifier_state.challenge_pow::<PowStrategy>(self.params.final_pow_bits)?;
-        }
+        self.verify_proof_of_work(verifier_state, self.params.final_pow_bits)?;
 
         let mut final_sumcheck_rounds = Vec::with_capacity(self.params.final_sumcheck_rounds);
         for _ in 0..self.params.final_sumcheck_rounds {
@@ -308,9 +301,7 @@ where
             let [folding_randomness_single] = verifier_state.challenge_scalars()?;
             final_sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
 
-            if self.params.final_folding_pow_bits > 0. {
-                verifier_state.challenge_pow::<PowStrategy>(self.params.final_folding_pow_bits)?;
-            }
+            self.verify_proof_of_work(verifier_state, self.params.final_folding_pow_bits)?;
         }
         let final_sumcheck_randomness = MultilinearPoint(
             final_sumcheck_rounds
@@ -373,15 +364,31 @@ where
             // Update claimed sum using folding randomness
             *claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
 
-            // Optional proof of work per round
-            if proof_of_work > 0. {
-                verifier_state
-                    .challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
-            }
+            // Proof of work per round
+            self.verify_proof_of_work(verifier_state, proof_of_work)?;
         }
 
         randomness.reverse();
         Ok(MultilinearPoint(randomness))
+    }
+
+    pub fn verify_proof_of_work<VerifierState>(
+        &self,
+        verifier_state: &mut VerifierState,
+        bits: f64,
+    ) -> ProofResult<()>
+    where
+        VerifierState: UnitToBytes
+            + UnitToField<F>
+            + FieldToUnitDeserialize<F>
+            + PoWChallenge
+            + DigestToUnitDeserialize<MerkleConfig>
+            + HintDeserialize,
+    {
+        if bits > 0. {
+            verifier_state.challenge_pow::<PowStrategy>(bits)?;
+        }
+        Ok(())
     }
 
     fn compute_w_poly(
