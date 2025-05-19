@@ -120,6 +120,8 @@ where
         }
 
         let mut prev_root = parsed_commitment.root.clone();
+        let mut num_variables =
+            self.params.mv_parameters.num_variables - self.params.folding_factor.at_round(0);
         let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
         let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(0)]);
         let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
@@ -128,19 +130,22 @@ where
 
         for round_index in 0..self.params.n_rounds() {
             let round_params = &self.params.round_parameters[round_index];
+            let folding_factor = self.params.folding_factor.at_round(round_index);
 
-            let new_root = verifier_state.read_digest()?;
-
-            let mut ood_points = vec![F::ZERO; round_params.ood_samples];
-            let mut ood_answers = vec![F::ZERO; round_params.ood_samples];
-            if round_params.ood_samples > 0 {
-                verifier_state.fill_challenge_scalars(&mut ood_points)?;
-                verifier_state.fill_next_scalars(&mut ood_answers)?;
-            }
+            dbg!();
+            let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
+                verifier_state,
+                num_variables,
+                round_params.ood_samples,
+            )?;
+            let new_root = new_commitment.root;
+            let mut ood_points = new_commitment.ood_points;
+            let mut ood_answers = new_commitment.ood_answers;
+            dbg!();
 
             let stir_challenges_indexes = get_challenge_stir_queries(
                 domain_size,
-                self.params.folding_factor.at_round(round_index),
+                folding_factor,
                 round_params.num_queries,
                 verifier_state,
             )?;
