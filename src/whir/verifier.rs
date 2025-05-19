@@ -46,6 +46,7 @@ pub struct StirChallengParams<F> {
     folding_factor: usize,
     num_queries: usize,
     pow_bits: f64,
+    domain_gen: F,
     domain_gen_inv: F,
     exp_domain_gen: F,
 }
@@ -121,35 +122,38 @@ where
             constraints_at_round.push(vec![]);
         }
 
-        let mut prev_commitment = parsed_commitment.clone();
-        let mut num_variables =
-            self.params.mv_parameters.num_variables - self.params.folding_factor.at_round(0);
-        let mut domain_gen = self.params.starting_domain.backing_domain.group_gen();
-        let mut exp_domain_gen = domain_gen.pow([1 << self.params.folding_factor.at_round(0)]);
-        let mut domain_gen_inv = self.params.starting_domain.backing_domain.group_gen_inv();
-        let mut domain_size = self.params.starting_domain.size();
-        let mut rounds = vec![];
+        // Proof agnostic round parameters
+        // TODO: Move to RoundConfig
+        let mut params = {
+            let domain_gen = self.params.starting_domain.backing_domain.group_gen();
+            StirChallengParams {
+                round_index: 0,
+                domain_size: self.params.starting_domain.size(),
+                num_variables: self.params.mv_parameters.num_variables
+                    - self.params.folding_factor.at_round(0),
+                num_queries: 0,
+                folding_factor: 0,
+                pow_bits: 0.,
+                domain_gen,
+                domain_gen_inv: self.params.starting_domain.backing_domain.group_gen_inv(),
+                exp_domain_gen: domain_gen.pow([1 << self.params.folding_factor.at_round(0)]),
+            }
+        };
 
+        let mut prev_commitment = parsed_commitment.clone();
+        let mut rounds = vec![];
         for round_index in 0..self.params.n_rounds() {
-            // Comput round parameters
-            // TODO: Move to RoundConfig
+            // Fetch round parameters from config
             let round_params = &self.params.round_parameters[round_index];
-            let folding_factor = self.params.folding_factor.at_round(round_index);
-            let params = StirChallengParams {
-                round_index,
-                domain_size,
-                num_variables,
-                num_queries: round_params.num_queries,
-                folding_factor,
-                pow_bits: round_params.pow_bits,
-                domain_gen_inv,
-                exp_domain_gen,
-            };
+            params.round_index = round_index;
+            params.folding_factor = self.params.folding_factor.at_round(round_index);
+            params.num_queries = round_params.num_queries;
+            params.pow_bits = round_params.pow_bits;
 
             // Receive commitment to the folded polynomial (likely encoded at higher expansion)
             let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
                 verifier_state,
-                num_variables,
+                params.num_variables,
                 round_params.ood_samples,
             )?;
 
@@ -188,25 +192,20 @@ where
             folding_randomness = new_folding_randomness;
 
             prev_commitment = new_commitment;
-            num_variables -= folding_factor;
-            domain_gen = domain_gen * domain_gen;
-            exp_domain_gen =
-                domain_gen.pow([1 << self.params.folding_factor.at_round(round_index + 1)]);
-            domain_gen_inv = domain_gen_inv * domain_gen_inv;
-            domain_size /= 2;
+            params.num_variables -= params.folding_factor;
+            params.domain_gen = params.domain_gen.square();
+            params.exp_domain_gen = params
+                .domain_gen
+                .pow([1 << self.params.folding_factor.at_round(round_index + 1)]);
+            params.domain_gen_inv = params.domain_gen_inv.square();
+            params.domain_size /= 2;
         }
 
         // Final round parameters.
-        let params = StirChallengParams {
-            round_index: self.params.n_rounds(),
-            domain_size,
-            num_variables,
-            num_queries: self.params.final_queries,
-            folding_factor: self.params.folding_factor.at_round(self.params.n_rounds()),
-            pow_bits: self.params.final_pow_bits,
-            domain_gen_inv,
-            exp_domain_gen,
-        };
+        params.round_index = self.params.n_rounds();
+        params.num_queries = self.params.final_queries;
+        params.folding_factor = self.params.folding_factor.at_round(self.params.n_rounds());
+        params.pow_bits = self.params.final_pow_bits;
 
         // In the final round we receive the full polynomial instead of a commitment.
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_sumcheck_rounds];
