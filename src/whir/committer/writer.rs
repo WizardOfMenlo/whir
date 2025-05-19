@@ -68,7 +68,6 @@ where
         let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
         transform_evaluations(
             &mut evals,
-            base_domain.group_gen(),
             base_domain.group_gen_inv(),
             self.0.folding_factor.at_round(0),
         );

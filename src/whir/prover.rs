@@ -211,7 +211,6 @@ where
         let mut evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
         transform_evaluations(
             &mut evals,
-            new_domain.backing_domain.group_gen(),
             new_domain.backing_domain.group_gen_inv(),
             folding_factor_next,
         );

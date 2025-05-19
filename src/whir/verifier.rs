@@ -326,8 +326,8 @@ where
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers
-            .iter()
-            .map(|answers| CoefficientList::new(answers.clone()).evaluate(&folding_randomness))
+            .into_iter()
+            .map(|answers| CoefficientList::new(answers).evaluate(folding_randomness))
             .collect();
 
         let stir_constraints = stir_challenges_indexes

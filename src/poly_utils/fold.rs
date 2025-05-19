@@ -97,7 +97,6 @@ pub fn compute_fold<F: Field>(
 #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = evals.len(), folding_factor)))]
 pub fn transform_evaluations<F: FftField>(
     evals: &mut [F],
-    _domain_gen: F,
     domain_gen_inv: F,
     folding_factor: usize,
 ) {
@@ -266,12 +265,7 @@ mod tests {
         );
 
         // Transform the evaluations into the "ProverHelps" format
-        transform_evaluations(
-            &mut domain_evaluations,
-            root_of_unity,
-            root_of_unity_inv,
-            folding_factor,
-        );
+        transform_evaluations(&mut domain_evaluations, root_of_unity_inv, folding_factor);
 
         // Number of cosets = domain_size / folding_factor_exp
         let num = domain_size / folding_factor_exp;
@@ -527,7 +521,7 @@ mod tests {
         ];
 
         // Run transform
-        transform_evaluations(&mut evals, domain_gen, domain_gen_inv, folding_factor);
+        transform_evaluations(&mut evals, domain_gen_inv, folding_factor);
 
         // Validate output
         assert_eq!(evals, expected);
@@ -537,6 +531,6 @@ mod tests {
     #[should_panic]
     fn test_transform_evaluations_invalid_length() {
         let mut evals = vec![F::from(1); 6]; // Not a power of 2
-        transform_evaluations(&mut evals, F::ONE, F::ONE, 2);
+        transform_evaluations(&mut evals, F::ONE, 2);
     }
 }
