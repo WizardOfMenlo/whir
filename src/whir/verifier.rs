@@ -1,4 +1,4 @@
-use std::iter;
+use std::{iter, marker::PhantomData};
 
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
@@ -23,22 +23,39 @@ use crate::{
     whir::utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
 };
 
-pub struct Verifier<'a, F, MerkleConfig, PowStrategy>
+pub struct Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
 where
     F: FftField,
     MerkleConfig: Config,
+    VerifierState: UnitToBytes
+        + UnitToField<F>
+        + FieldToUnitDeserialize<F>
+        + PoWChallenge
+        + DigestToUnitDeserialize<MerkleConfig>
+        + HintDeserialize,
 {
     params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
+    _state: PhantomData<VerifierState>,
 }
 
-impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig, PowStrategy, VerifierState>
+    Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
+    VerifierState: UnitToBytes
+        + UnitToField<F>
+        + FieldToUnitDeserialize<F>
+        + PoWChallenge
+        + DigestToUnitDeserialize<MerkleConfig>
+        + HintDeserialize,
 {
     pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Self { params }
+        Self {
+            params,
+            _state: PhantomData,
+        }
     }
 
     /// Verify a WHIR proof.
@@ -46,20 +63,12 @@ where
     /// Returns the constraint evaluation point and the values of the deferred constraints.
     /// It is the callers responsibility to verify the deferred constraints.
     #[allow(clippy::too_many_lines)]
-    pub fn verify<VerifierState>(
+    pub fn verify(
         &self,
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
-    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>
-            + HintDeserialize,
-    {
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
         // We first do a pass in which we rederive all the FS challenges
         // Then we will check the algebraic part (so to optimise inversions)
         let (mut claimed_sum, parsed) =
@@ -108,20 +117,12 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    fn parse_proof<VerifierState>(
+    fn parse_proof(
         &self,
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
-    ) -> ProofResult<(F, ParsedProof<F>)>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>
-            + HintDeserialize,
-    {
+    ) -> ProofResult<(F, ParsedProof<F>)> {
         // Initial combination and sumcheck rounds
         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.sum).collect();
 
@@ -306,21 +307,13 @@ where
     }
 
     /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
-    pub fn verify_sumcheck_rounds<VerifierState>(
+    pub fn verify_sumcheck_rounds(
         &self,
         verifier_state: &mut VerifierState,
         claimed_sum: &mut F,
         rounds: usize,
         proof_of_work: f64,
-    ) -> ProofResult<MultilinearPoint<F>>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>
-            + HintDeserialize,
-    {
+    ) -> ProofResult<MultilinearPoint<F>> {
         let mut randomness = Vec::with_capacity(rounds);
         for _ in 0..rounds {
             // Receive this round's sumcheck polynomial
@@ -347,20 +340,12 @@ where
         Ok(MultilinearPoint(randomness))
     }
 
-    pub fn verify_merkle_proof<VerifierState>(
+    pub fn verify_merkle_proof(
         &self,
         verifier_state: &mut VerifierState,
         root: &MerkleConfig::InnerDigest,
         indices: &[usize],
-    ) -> ProofResult<Vec<Vec<F>>>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>
-            + HintDeserialize,
-    {
+    ) -> ProofResult<Vec<Vec<F>>> {
         // Receive claimed leafs
         let answers: Vec<Vec<F>> = verifier_state.hint()?;
 
@@ -386,19 +371,11 @@ where
         Ok(answers)
     }
 
-    pub fn verify_proof_of_work<VerifierState>(
+    pub fn verify_proof_of_work(
         &self,
         verifier_state: &mut VerifierState,
         bits: f64,
-    ) -> ProofResult<()>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>
-            + HintDeserialize,
-    {
+    ) -> ProofResult<()> {
         if bits > 0. {
             verifier_state.challenge_pow::<PowStrategy>(bits)?;
         }
