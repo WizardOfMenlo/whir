@@ -235,8 +235,6 @@ where
             self.params.final_folding_pow_bits,
         )?;
 
-        let deferred: Vec<F> = verifier_state.hint()?;
-
         // Compute folding randomness across all rounds.
         let folding_randomness = MultilinearPoint(
             iter::once(&final_sumcheck_randomness.0)
@@ -251,9 +249,10 @@ where
         let prev_sumcheck_poly_eval = claimed_sum;
 
         // Check the final sumcheck evaluation
+        let deferred: Vec<F> = verifier_state.hint()?;
+
         let evaluation_of_v_poly = self.compute_w_poly(
-            parsed_commitment,
-            statement,
+            &constraints_at_round,
             folding_randomness.clone(),
             &initial_combination_randomness,
             &rounds,
@@ -418,8 +417,7 @@ where
 
     fn compute_w_poly(
         &self,
-        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &Statement<F>,
+        constraints: &[Vec<Constraint<F>>],
         mut folding_randomness: MultilinearPoint<F>,
         initial_combination_randomness: &[F],
         rounds: &[ParsedRound<F>],
@@ -427,14 +425,8 @@ where
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
 
-        let constraints: Vec<_> = parsed_commitment
-            .oods_constraints()
-            .into_iter()
-            .chain(statement.constraints.iter().cloned())
-            .collect();
-
         let mut deferred = deferred.iter().copied();
-        let mut value: F = constraints
+        let mut value: F = constraints[0]
             .iter()
             .zip(initial_combination_randomness)
             .map(|(constraint, randomness)| {
