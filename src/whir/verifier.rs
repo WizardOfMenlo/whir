@@ -170,14 +170,25 @@ where
                 &folding_randomness,
                 &answers,
             );
-            let values = new_commitment
-                .ood_answers
+            let stir_constraints = stir_challenges_indexes
                 .iter()
-                .copied()
-                .chain(folds.iter().copied());
-            claimed_sum += values
+                .map(|&index| exp_domain_gen.pow([index as u64]))
+                .zip(&folds)
+                .map(|(point, &value)| Constraint {
+                    weights: Weights::univariate(point, num_variables),
+                    sum: value,
+                    deferred: false,
+                });
+
+            let constraints: Vec<Constraint<F>> = new_commitment
+                .oods_constraints()
+                .into_iter()
+                .chain(stir_constraints)
+                .collect();
+            claimed_sum += constraints
+                .iter()
                 .zip(&combination_randomness)
-                .map(|(val, rand)| val * rand)
+                .map(|(c, rand)| c.sum * rand)
                 .sum::<F>();
 
             let new_folding_randomness = self.verify_sumcheck_rounds(
@@ -196,6 +207,7 @@ where
                     .collect(),
                 combination_randomness,
             });
+            constraints_at_round.push(constraints);
 
             folding_randomness = new_folding_randomness;
 
