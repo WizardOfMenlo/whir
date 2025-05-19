@@ -40,6 +40,13 @@ impl<F: Field> Weights<F> {
         Self::Evaluation { point }
     }
 
+    /// Construct weights for a univariate evaluation
+    pub fn univariate(point: F, size: usize) -> Self {
+        Self::Evaluation {
+            point: MultilinearPoint::expand_from_univariate(point, size),
+        }
+    }
+
     /// Constructs a weight in linear mode, applying a set of precomputed weights.
     ///
     /// This mode allows applying a function `w(X)` stored in `EvaluationsList<F>`:

@@ -11,7 +11,7 @@ use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,
-    parameters::WhirConfig,
+    parameters::{RoundConfig, WhirConfig},
     parsed_proof::ParsedRound,
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
@@ -69,29 +69,30 @@ where
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
-        // Initial combination and sumcheck rounds
-        let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.sum).collect();
+        let mut constraints_at_round = Vec::new();
 
         // Optional initial sumcheck round
         let mut claimed_sum = F::ZERO;
         let mut folding_randomness;
         let initial_combination_randomness;
         if self.params.initial_statement {
+            // Collect initial constraints
+            let constraints: Vec<_> = parsed_commitment
+                .oods_constraints()
+                .into_iter()
+                .chain(statement.constraints.iter().cloned())
+                .collect();
+
             // Derive combination randomness and first sumcheck polynomial
             let [combination_randomness_gen] = verifier_state.challenge_scalars()?;
-            initial_combination_randomness = expand_randomness(
-                combination_randomness_gen,
-                parsed_commitment.ood_points.len() + statement.constraints.len(),
-            );
+            initial_combination_randomness =
+                expand_randomness(combination_randomness_gen, constraints.len());
 
             // Compute initial sum
-            claimed_sum = parsed_commitment
-                .ood_answers
+            claimed_sum = constraints
                 .iter()
-                .copied()
-                .chain(evaluations)
                 .zip(&initial_combination_randomness)
-                .map(|(ans, rand)| ans * rand)
+                .map(|(c, rand)| c.sum * rand)
                 .sum();
 
             // Initial sumcheck
@@ -101,6 +102,9 @@ where
                 self.params.folding_factor.at_round(0),
                 self.params.starting_folding_pow_bits,
             )?;
+
+            // Store constraints for final evaluation
+            constraints_at_round.push(constraints);
         } else {
             assert_eq!(parsed_commitment.ood_points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -365,20 +369,8 @@ where
         let mut num_variables = self.params.mv_parameters.num_variables;
 
         let constraints: Vec<_> = parsed_commitment
-            .ood_points
-            .iter()
-            .zip(&parsed_commitment.ood_answers)
-            .map(|(&point, &eval)| {
-                let weights = Weights::evaluation(MultilinearPoint::expand_from_univariate(
-                    point,
-                    num_variables,
-                ));
-                Constraint {
-                    weights,
-                    sum: eval,
-                    deferred: false,
-                }
-            })
+            .oods_constraints()
+            .into_iter()
             .chain(statement.constraints.iter().cloned())
             .collect();
 
