@@ -74,31 +74,6 @@ where
         let (mut claimed_sum, parsed) =
             self.parse_proof(verifier_state, parsed_commitment, statement)?;
 
-        // Check the foldings computed from the proof match the evaluations of the polynomial
-        let final_folds = self
-            .params
-            .fold_optimisation
-            .stir_final_evaluations_verifier(&parsed, self.params);
-
-        let final_evaluations = parsed
-            .final_coefficients
-            .evaluate_at_univariate(&parsed.final_randomness_points);
-        if !final_folds
-            .iter()
-            .zip(final_evaluations)
-            .all(|(&fold, eval)| fold == eval)
-        {
-            return Err(ProofError::InvalidProof);
-        }
-
-        // Check the final sumchecks
-        for (sumcheck_poly, new_randomness) in &parsed.final_sumcheck_rounds {
-            if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-                return Err(ProofError::InvalidProof);
-            }
-            claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
-        }
-
         // Final v · w Check
         let prev_sumcheck_poly_eval = claimed_sum;
 
@@ -259,7 +234,7 @@ where
             self.params.final_queries,
             verifier_state,
         )?;
-        let final_randomness_points = final_randomness_indexes
+        let final_randomness_points: Vec<F> = final_randomness_indexes
             .iter()
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
@@ -287,6 +262,33 @@ where
         );
 
         let deferred: Vec<F> = verifier_state.hint()?;
+
+        // Check the foldings computed from the proof match the evaluations of the polynomial
+        let final_folds = self.params.fold_optimisation.stir_evaluations_verifier(
+            self.params,
+            self.params.n_rounds(),
+            domain_gen_inv,
+            &final_randomness_indexes,
+            &folding_randomness,
+            &final_randomness_answers,
+        );
+
+        let final_evaluations = final_coefficients.evaluate_at_univariate(&final_randomness_points);
+        if !final_folds
+            .iter()
+            .zip(final_evaluations)
+            .all(|(&fold, eval)| fold == eval)
+        {
+            return Err(ProofError::InvalidProof);
+        }
+
+        // Check the final sumchecks
+        for (sumcheck_poly, new_randomness) in &final_sumcheck_rounds {
+            if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
+                return Err(ProofError::InvalidProof);
+            }
+            claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
+        }
 
         Ok((
             claimed_sum,
