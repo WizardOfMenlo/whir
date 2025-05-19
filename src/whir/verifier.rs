@@ -244,26 +244,7 @@ where
                 stir_challenges_indexes.len() + round_params.ood_samples,
             );
 
-            let mut sumcheck_rounds =
-                Vec::with_capacity(self.params.folding_factor.at_round(round_index + 1));
-            for _ in 0..self.params.folding_factor.at_round(round_index + 1) {
-                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
-                let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
-                sumcheck_rounds.push((sumcheck_poly, folding_randomness_single));
-
-                if round_params.folding_pow_bits > 0. {
-                    verifier_state.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
-                }
-            }
-
-            let new_folding_randomness =
-                MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
-
-            ////////////////////////////////
-            // Verify
-
-            // Computed folds
+            // Add OODS and STIR evaluations to claimed sum
             let folds = self.params.fold_optimisation.stir_evaluations_verifier(
                 self.params,
                 round_index,
@@ -272,22 +253,34 @@ where
                 &folding_randomness,
                 &answers,
             );
-
             let values = ood_answers.iter().copied().chain(folds.iter().copied());
-
             claimed_sum += values
                 .zip(&combination_randomness)
                 .map(|(val, rand)| val * rand)
                 .sum::<F>();
 
-            // Check the rest of the round
-            for (sumcheck_poly, new_randomness) in &sumcheck_rounds {
+            let mut sumcheck_rounds =
+                Vec::with_capacity(self.params.folding_factor.at_round(round_index + 1));
+
+            for _ in 0..self.params.folding_factor.at_round(round_index + 1) {
+                // Receive sumcheck polynomial
+                let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
+                let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
                 if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
                     return Err(ProofError::InvalidProof);
                 }
-                claimed_sum = sumcheck_poly.evaluate_at_point(&(*new_randomness).into());
+
+                let [folding_randomness_single] = verifier_state.challenge_scalars()?;
+                sumcheck_rounds.push((sumcheck_poly.clone(), folding_randomness_single));
+                claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
+
+                if round_params.folding_pow_bits > 0. {
+                    verifier_state.challenge_pow::<PowStrategy>(round_params.folding_pow_bits)?;
+                }
             }
-            ////////////////////////////////
+
+            let new_folding_randomness =
+                MultilinearPoint(sumcheck_rounds.iter().map(|&(_, r)| r).rev().collect());
 
             let round = ParsedRound {
                 folding_randomness,
