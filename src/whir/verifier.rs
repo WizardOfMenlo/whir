@@ -1,4 +1,4 @@
-use std::{iter, marker::PhantomData};
+use std::marker::PhantomData;
 
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
@@ -81,49 +81,6 @@ where
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
-        // Constraints collected at each round and their combination randomness.
-        let mut constraints_at_round = Vec::new();
-        let mut round_folding_randomness = Vec::new();
-
-        // Optional initial sumcheck round
-        let mut claimed_sum = F::ZERO;
-        let initial_combination_randomness;
-        if self.params.initial_statement {
-            // Combine OODS and statement constraints to claimed_sum
-            let constraints: Vec<_> = parsed_commitment
-                .oods_constraints()
-                .into_iter()
-                .chain(statement.constraints.iter().cloned())
-                .collect();
-            initial_combination_randomness =
-                self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-            constraints_at_round.push((initial_combination_randomness, constraints));
-
-            // Initial sumcheck
-            let folding_randomness = self.verify_sumcheck_rounds(
-                verifier_state,
-                &mut claimed_sum,
-                self.params.folding_factor.at_round(0),
-                self.params.starting_folding_pow_bits,
-            )?;
-            round_folding_randomness.push(folding_randomness);
-        } else {
-            assert_eq!(parsed_commitment.ood_points.len(), 0);
-            assert!(statement.constraints.is_empty());
-
-            initial_combination_randomness = vec![F::ONE];
-
-            let mut folding_randomness_vec = vec![F::ZERO; self.params.folding_factor.at_round(0)];
-            verifier_state.fill_challenge_scalars(&mut folding_randomness_vec)?;
-            let folding_randomness = MultilinearPoint(folding_randomness_vec);
-
-            // PoW
-            self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
-
-            constraints_at_round.push((vec![], vec![]));
-            round_folding_randomness.push(folding_randomness);
-        }
-
         // Proof agnostic round parameters
         // TODO: Move to RoundConfig
         let mut params = {
@@ -142,7 +99,46 @@ where
             }
         };
 
+        // During the rounds we collect constraints, combination randomness, folding randomness
+        // and we update the claimed sum of constraint evaluation.
+        let mut round_constraints = Vec::new();
+        let mut round_folding_randomness = Vec::new();
+        let mut claimed_sum = F::ZERO;
         let mut prev_commitment = parsed_commitment.clone();
+
+        // Optional initial sumcheck round
+        if self.params.initial_statement {
+            // Combine OODS and statement constraints to claimed_sum
+            let constraints: Vec<_> = prev_commitment
+                .oods_constraints()
+                .into_iter()
+                .chain(statement.constraints.iter().cloned())
+                .collect();
+            let combination_randomness =
+                self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
+            round_constraints.push((combination_randomness, constraints));
+
+            // Initial sumcheck
+            let folding_randomness = self.verify_sumcheck_rounds(
+                verifier_state,
+                &mut claimed_sum,
+                self.params.folding_factor.at_round(0),
+                self.params.starting_folding_pow_bits,
+            )?;
+            round_folding_randomness.push(folding_randomness);
+        } else {
+            assert_eq!(prev_commitment.ood_points.len(), 0);
+            assert!(statement.constraints.is_empty());
+            round_constraints.push((vec![], vec![]));
+
+            let mut folding_randomness = vec![F::ZERO; self.params.folding_factor.at_round(0)];
+            verifier_state.fill_challenge_scalars(&mut folding_randomness)?;
+            round_folding_randomness.push(MultilinearPoint(folding_randomness));
+
+            // PoW
+            self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
+        }
+
         for round_index in 0..self.params.n_rounds() {
             // Fetch round parameters from config
             let round_params = &self.params.round_parameters[round_index];
@@ -159,11 +155,11 @@ where
             )?;
 
             // Verify in-domain challenges on the previous commitment.
-            let (stir_constraints, stir_challenges_points) = self.verify_stir_challenges(
+            let stir_constraints = self.verify_stir_challenges(
                 verifier_state,
                 &params,
                 &prev_commitment,
-                &round_folding_randomness.last().unwrap(),
+                round_folding_randomness.last().unwrap(),
             )?;
 
             // Add out-of-domain and in-domain constraints to claimed_sum
@@ -174,7 +170,7 @@ where
                 .collect();
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-            constraints_at_round.push((combination_randomness.clone(), constraints));
+            round_constraints.push((combination_randomness.clone(), constraints));
 
             let folding_randomness = self.verify_sumcheck_rounds(
                 verifier_state,
@@ -184,6 +180,7 @@ where
             )?;
             round_folding_randomness.push(folding_randomness);
 
+            // Update round parameters
             prev_commitment = new_commitment;
             params.num_variables -= params.folding_factor;
             params.domain_gen = params.domain_gen.square();
@@ -206,11 +203,11 @@ where
         let final_coefficients = CoefficientList::new(final_coefficients);
 
         // Verify in-domain challenges on the previous commitment.
-        let (stir_constraints, _) = self.verify_stir_challenges(
+        let stir_constraints = self.verify_stir_challenges(
             verifier_state,
             &params,
             &prev_commitment,
-            &round_folding_randomness.last().unwrap(),
+            round_folding_randomness.last().unwrap(),
         )?;
 
         // Verify stir constraints direclty on final polynomial
@@ -238,17 +235,16 @@ where
                 .collect(),
         );
 
-        // Final v · w Check
-        let prev_sumcheck_poly_eval = claimed_sum;
+        // Compute evaluation of weights in folding randomness
+        // Some weight computations can be deferred and will be returned for the caller
+        // to verify.
+        let deferred: Vec<F> = verifier_state.hint()?;
+        let evaluation_of_weights =
+            self.eval_constraints_poly(&round_constraints, &deferred, folding_randomness.clone());
 
         // Check the final sumcheck evaluation
-        let deferred: Vec<F> = verifier_state.hint()?;
-
-        let evaluation_of_v_poly =
-            self.compute_w_poly(&constraints_at_round, folding_randomness.clone(), &deferred);
         let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
-
-        if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
+        if claimed_sum != evaluation_of_weights * final_value {
             return Err(ProofError::InvalidProof);
         }
 
@@ -315,7 +311,7 @@ where
         params: &StirChallengParams<F>,
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         folding_randomness: &MultilinearPoint<F>,
-    ) -> ProofResult<(Vec<Constraint<F>>, Vec<F>)> {
+    ) -> ProofResult<Vec<Constraint<F>>> {
         let stir_challenges_indexes = get_challenge_stir_queries(
             params.domain_size,
             params.folding_factor,
@@ -348,14 +344,7 @@ where
             })
             .collect();
 
-        // Compute stir points
-        // TODO: This is redundant with constraints
-        let stir_challenges_points = stir_challenges_indexes
-            .iter()
-            .map(|index| params.exp_domain_gen.pow([*index as u64]))
-            .collect();
-
-        Ok((stir_constraints, stir_challenges_points))
+        Ok(stir_constraints)
     }
 
     /// Verify a merkle multi-opening proof for the provided indices.
@@ -403,24 +392,23 @@ where
         Ok(())
     }
 
-    fn compute_w_poly(
+    /// Evaluate the random linear combination of constraints in `point`.
+    fn eval_constraints_poly(
         &self,
         constraints: &[(Vec<F>, Vec<Constraint<F>>)],
-        mut folding_randomness: MultilinearPoint<F>,
         deferred: &[F],
+        mut point: MultilinearPoint<F>,
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
         let mut deferred = deferred.iter().copied();
         let mut value = F::ZERO;
 
         for (round, (randomness, constraints)) in constraints.iter().enumerate() {
+            assert_eq!(randomness.len(), constraints.len());
             if round > 0 {
                 num_variables -= self.params.folding_factor.at_round(round - 1);
-                folding_randomness =
-                    MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+                point = MultilinearPoint(point.0[..num_variables].to_vec());
             }
-
-            assert_eq!(randomness.len(), constraints.len());
             value += constraints
                 .iter()
                 .zip(randomness)
@@ -428,13 +416,12 @@ where
                     let value = if constraint.deferred {
                         deferred.next().unwrap()
                     } else {
-                        constraint.weights.compute(&folding_randomness)
+                        constraint.weights.compute(&point)
                     };
                     value * randomness
                 })
                 .sum::<F>();
         }
-
         value
     }
 }
