@@ -131,8 +131,8 @@ where
                 .map(|index| exp_domain_gen.pow([*index as u64]))
                 .collect();
 
-            let answers: Vec<Vec<F>> = verifier_state.hint()?;
-            let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+            let answers = verifier_state.hint::<Vec<Vec<F>>>()?;
+            let merkle_proof = verifier_state.hint::<MultiPath<MerkleConfig>>()?;
 
             if !merkle_proof
                 .verify(
@@ -210,8 +210,8 @@ where
             .map(|index| exp_domain_gen.pow([*index as u64]))
             .collect();
 
-        let final_randomness_answers: Vec<Vec<F>> = verifier_state.hint()?;
-        let final_merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+        let final_randomness_answers = verifier_state.hint::<Vec<Vec<F>>>()?;
+        let final_merkle_proof = verifier_state.hint::<MultiPath<MerkleConfig>>()?;
 
         if !final_merkle_proof
             .verify(
@@ -248,7 +248,7 @@ where
                 .rev()
                 .collect(),
         );
-        let deferred: Vec<F> = verifier_state.hint()?;
+        let deferred_weight_evaluations = verifier_state.hint::<Vec<F>>()?;
 
         Ok(ParsedProof {
             initial_combination_randomness,
@@ -262,7 +262,7 @@ where
             final_sumcheck_rounds,
             final_sumcheck_randomness,
             final_coefficients,
-            deferred,
+            deferred_weight_evaluations,
         })
     }
 
@@ -488,8 +488,12 @@ where
             prev_sumcheck.map_or(F::ZERO, |(poly, rand)| poly.evaluate_at_point(&rand.into()));
 
         // Check the final sumcheck evaluation
-        let evaluation_of_v_poly =
-            self.compute_w_poly(parsed_commitment, statement, &parsed, &parsed.deferred);
+        let evaluation_of_v_poly = self.compute_w_poly(
+            parsed_commitment,
+            statement,
+            &parsed,
+            &parsed.deferred_weight_evaluations,
+        );
         let final_value = parsed
             .final_coefficients
             .evaluate(&parsed.final_sumcheck_randomness);
@@ -498,6 +502,9 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-        Ok((parsed.final_sumcheck_randomness, parsed.deferred))
+        Ok((
+            parsed.final_sumcheck_randomness,
+            parsed.deferred_weight_evaluations,
+        ))
     }
 }
