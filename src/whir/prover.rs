@@ -161,7 +161,7 @@ where
             .statement
             .constraints
             .iter()
-            .filter(|constraint| constraint.deferred)
+            .filter(|constraint| constraint.defer_evaluation)
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
         prover_state.hint::<Vec<F>>(&deferred)?;

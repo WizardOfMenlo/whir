@@ -296,7 +296,7 @@ where
                 Constraint {
                     weights,
                     sum: eval,
-                    deferred: false,
+                    defer_evaluation: false,
                 }
             })
             .chain(statement.constraints.iter().cloned())
