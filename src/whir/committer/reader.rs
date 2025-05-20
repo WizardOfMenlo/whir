@@ -55,7 +55,7 @@ impl<F: Field, D> ParsedCommitment<F, D> {
             .map(|(&point, &eval)| Constraint {
                 weights: Weights::univariate(point, self.num_variables),
                 sum: eval,
-                deferred: false,
+                defer_evaluation: false,
             })
             .collect()
     }

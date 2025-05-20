@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -161,10 +161,10 @@ where
             .statement
             .constraints
             .iter()
-            .filter(|constraint| constraint.deferred)
+            .filter(|constraint| constraint.defer_evaluation)
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
-        prover_state.hint(&deferred)?;
+        prover_state.hint::<Vec<F>>(&deferred)?;
 
         Ok((constraint_eval, deferred))
     }
@@ -260,8 +260,8 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
 
-        prover_state.hint(&answers)?;
-        prover_state.hint(&merkle_proof)?;
+        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
@@ -380,8 +380,8 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect::<Vec<_>>();
 
-        prover_state.hint(&answers)?;
-        prover_state.hint(&merkle_proof)?;
+        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
         // PoW
         if self.0.final_pow_bits > 0. {

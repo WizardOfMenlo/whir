@@ -218,9 +218,11 @@ pub struct Constraint<F> {
     #[serde(with = "crate::ark_serde")]
     pub sum: F,
 
-    /// For a deferred statement the verifier ignores the weights and
-    /// instead outputs a relation on them that should be verified.
-    pub deferred: bool,
+    /// When set, the weight evaluation will not be checked by the WHIR verifier,
+    /// but instead deferred to the caller.
+    ///
+    /// The whir verification will be done using a prover provided hint of the evaluation.
+    pub defer_evaluation: bool,
 }
 
 impl<F: Field> Constraint<F> {
@@ -253,7 +255,7 @@ impl<F: Field> Statement<F> {
         self.constraints.push(Constraint {
             weights,
             sum,
-            deferred: false,
+            defer_evaluation: false,
         });
     }
 
@@ -265,7 +267,7 @@ impl<F: Field> Statement<F> {
             Constraint {
                 weights,
                 sum,
-                deferred: false,
+                defer_evaluation: false,
             },
         );
     }
@@ -280,7 +282,7 @@ impl<F: Field> Statement<F> {
             constraints.into_iter().map(|(weights, sum)| Constraint {
                 weights,
                 sum,
-                deferred: false,
+                defer_evaluation: false,
             }),
         );
     }
