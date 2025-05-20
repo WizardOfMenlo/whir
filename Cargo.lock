@@ -1144,7 +1144,7 @@ dependencies = [
 [[package]]
 name = "spongefish"
 version = "0.2.0"
-source = "git+https://github.com/recmo/nimue?branch=remco%2Fhint#ab1855a25ec4f677aa45f25b88750c4b815206aa"
+source = "git+https://github.com/arkworks-rs/spongefish#cbdd66620cb4660f0a9cc0fc943eff6d5fc14927"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -1159,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "spongefish-pow"
 version = "0.1.0"
-source = "git+https://github.com/recmo/nimue?branch=remco%2Fhint#ab1855a25ec4f677aa45f25b88750c4b815206aa"
+source = "git+https://github.com/arkworks-rs/spongefish#cbdd66620cb4660f0a9cc0fc943eff6d5fc14927"
 dependencies = [
  "blake3",
  "bytemuck",

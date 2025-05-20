@@ -340,7 +340,7 @@ where
             .map(|(point, &value)| Constraint {
                 weights: Weights::univariate(point, params.num_variables),
                 sum: value,
-                deferred: false,
+                defer_evaluation: false,
             })
             .collect();
 
@@ -413,7 +413,7 @@ where
                 .iter()
                 .zip(randomness)
                 .map(|(constraint, &randomness)| {
-                    let value = if constraint.deferred {
+                    let value = if constraint.defer_evaluation {
                         deferred.next().unwrap()
                     } else {
                         constraint.weights.compute(&point)
