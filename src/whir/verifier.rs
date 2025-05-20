@@ -267,6 +267,7 @@ where
             .zip(&combination_randomness)
             .map(|(c, rand)| c.sum * rand)
             .sum::<F>();
+      
         Ok(combination_randomness)
     }
 
