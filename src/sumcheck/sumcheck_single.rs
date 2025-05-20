@@ -765,7 +765,7 @@ mod tests {
         //        = c1 + c2*(1) + c3*(0) + c4*(1)*(0)
         let eval = c1 + c2 * F::ONE + c3 * F::ZERO + c4 * F::ONE * F::ZERO;
 
-        prover.add_new_equality(&[point.clone()], &[eval], &[weight]);
+        prover.add_new_equality(std::slice::from_ref(&point), &[eval], &[weight]);
 
         // Compute expected sum explicitly:
         //
