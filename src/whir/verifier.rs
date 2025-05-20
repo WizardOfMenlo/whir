@@ -307,7 +307,7 @@ where
             .iter()
             .zip(&proof.initial_combination_randomness)
             .map(|(constraint, randomness)| {
-                if constraint.deferred {
+                if constraint.defer_evaluation {
                     deferred.next().unwrap()
                 } else {
                     *randomness * constraint.weights.compute(&folding_randomness)
