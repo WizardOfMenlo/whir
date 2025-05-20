@@ -1,9 +1,3 @@
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
-
-use crate::utils::ark_eq;
-
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
@@ -13,44 +7,6 @@ pub mod statement;
 pub mod stir_evaluations;
 pub mod utils;
 pub mod verifier;
-
-// Only includes the authentication paths
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-pub struct WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    #[serde(with = "crate::ark_serde")]
-    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-    #[serde(with = "crate::ark_serde")]
-    pub statement_values_at_random_point: Vec<F>,
-}
-
-pub fn whir_proof_size<MerkleConfig, F>(
-    narg_string: &[u8],
-    whir_proof: &WhirProof<MerkleConfig, F>,
-) -> usize
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
-}
-
-impl<MerkleConfig, F> PartialEq for WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    fn eq(&self, other: &Self) -> bool {
-        ark_eq(&self.merkle_paths, &other.merkle_paths)
-            && ark_eq(
-                &self.statement_values_at_random_point,
-                &other.statement_values_at_random_point,
-            )
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -78,7 +34,7 @@ mod tests {
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
-            statement::{Statement, StatementVerifier, Weights},
+            statement::{Statement, Weights},
             verifier::Verifier,
         },
     };
@@ -189,14 +145,10 @@ mod tests {
         // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
 
-        // Extract verifier-side version of the statement (only public data)
-        let statement_verifier = StatementVerifier::from_statement(&statement);
-
         // Generate a STARK proof for the given statement and witness
-        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
-
-        // Test that the proof is serializable
-        test_serde(&proof);
+        prover
+            .prove(&mut prover_state, statement.clone(), witness)
+            .unwrap();
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
@@ -213,14 +165,9 @@ mod tests {
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof
-            )
-            .is_ok());
+        verifier
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .unwrap();
     }
 
     #[test]

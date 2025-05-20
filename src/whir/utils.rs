@@ -1,5 +1,6 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
@@ -89,6 +90,14 @@ pub trait DigestToUnitSerialize<MerkleConfig: Config> {
 
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}
+
+pub trait HintSerialize {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+}
+
+pub trait HintDeserialize {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
 }
 
 #[cfg(test)]

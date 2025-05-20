@@ -17,7 +17,7 @@ use spongefish::{
 use super::{digest::GenericDigest, IdentityDigestConverter};
 use crate::whir::{
     domainsep::DigestDomainSeparator,
-    utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
+    utils::{DigestToUnitDeserialize, DigestToUnitSerialize, HintDeserialize, HintSerialize},
 };
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
@@ -84,6 +84,15 @@ where
     }
 }
 
+impl HintSerialize for ProverState {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()> {
+        let mut bytes = Vec::new();
+        hint.serialize_compressed(&mut bytes)?;
+        self.hint_bytes(&bytes)?;
+        Ok(())
+    }
+}
+
 impl<F: Field, LeafH, CompressH, const N: usize>
     DigestToUnitDeserialize<MerkleTreeParams<F, LeafH, CompressH, GenericDigest<N>>>
     for VerifierState<'_>
@@ -95,6 +104,13 @@ where
         let mut digest = [0u8; N];
         self.fill_next_bytes(&mut digest)?;
         Ok(digest.into())
+    }
+}
+
+impl HintDeserialize for VerifierState<'_> {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T> {
+        let mut bytes = self.hint_bytes()?;
+        Ok(T::deserialize_compressed(&mut bytes)?)
     }
 }
 

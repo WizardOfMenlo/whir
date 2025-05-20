@@ -28,7 +28,7 @@ use whir::{
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
-        statement::{Statement, StatementVerifier, Weights},
+        statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
@@ -297,17 +297,15 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let prover = Prover(params.clone());
 
     let statement = Statement::new(num_variables);
-    let statement_verifier = StatementVerifier::from_statement(&statement);
-    let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
+    prover
+        .prove(&mut prover_state, statement.clone(), witness)
+        .unwrap();
 
     dbg!(whir_prover_time.elapsed());
 
     // Serialize proof
     let narg_string = prover_state.narg_string().to_vec();
-    let mut proof_bytes = vec![];
-    proof.serialize_compressed(&mut proof_bytes).unwrap();
-
-    let proof_size = narg_string.len() + proof_bytes.len();
+    let proof_size = narg_string.len();
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
@@ -322,12 +320,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof,
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -349,7 +342,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 {
     use whir::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, statement::Statement, verifier::Verifier, whir_proof_size,
+        prover::Prover, statement::Statement, verifier::Verifier,
     };
 
     // Runs as a PCS
@@ -444,17 +437,16 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let prover = Prover(params.clone());
 
-    let proof = prover
+    prover
         .prove(&mut prover_state, statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        whir_proof_size(prover_state.narg_string(), &proof) as f64 / 1024.0
+        prover_state.narg_string().len() as f64 / 1024.0
     );
 
-    let statement_verifier = StatementVerifier::from_statement(&statement);
     // Just not to count that initial inversion (which could be precomputed)
     let commitment_reader = CommitmentReader::new(&params);
     let verifier = Verifier::new(&params);
@@ -467,12 +459,7 @@ fn run_whir_pcs<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof,
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
             .unwrap();
     }
     println!(
