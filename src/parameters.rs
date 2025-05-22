@@ -8,9 +8,7 @@ use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-
 use crate::utils::ark_eq;
-
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
@@ -79,7 +77,6 @@ impl<F> Display for MultivariateParameters<F> {
         write!(f, "Number of variables: {}", self.num_variables)
     }
 }
-
 
 /// Errors that can occur when validating a folding factor.
 #[derive(Debug, Error, PartialEq, Eq)]

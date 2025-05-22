@@ -305,7 +305,6 @@ where
         Ok(MultilinearPoint(randomness))
     }
 
-
     /// Verify a STIR challenges against a commitment and return the constraints.
     pub fn verify_stir_challenges(
         &self,
@@ -345,7 +344,6 @@ where
 
         Ok(stir_constraints)
     }
-
 
     /// Verify a merkle multi-opening proof for the provided indices.
     pub fn verify_merkle_proof(
