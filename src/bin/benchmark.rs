@@ -26,8 +26,7 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
-        SoundnessType,
+        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
@@ -67,9 +66,6 @@ struct Args {
 
     #[arg(long = "sec", default_value = "ConjectureList")]
     soundness_type: SoundnessType,
-
-    #[arg(long = "fold_type", default_value = "ProverHelps")]
-    fold_optimisation: FoldType,
 
     #[arg(short = 'f', long = "field", default_value = "Goldilocks2")]
     field: AvailableFields,
@@ -240,7 +236,6 @@ fn run_whir<F, MerkleConfig>(
     let folding_factor = args.folding_factor;
     let first_round_folding_factor = args.first_round_folding_factor;
     let soundness_type = args.soundness_type;
-    let fold_optimisation = args.fold_optimisation;
 
     std::fs::create_dir_all("outputs").unwrap();
 
@@ -259,7 +254,6 @@ fn run_whir<F, MerkleConfig>(
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
-        fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
     };

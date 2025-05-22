@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{
-        FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -47,7 +45,6 @@ where
 
     pub folding_factor: FoldingFactor,
     pub round_parameters: Vec<RoundConfig>,
-    pub fold_optimisation: FoldType,
 
     pub final_queries: usize,
     pub final_pow_bits: f64,
@@ -231,7 +228,6 @@ where
             final_sumcheck_rounds,
             final_folding_pow_bits,
             pow_strategy: PhantomData,
-            fold_optimisation: whir_parameters.fold_optimisation,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
@@ -507,7 +503,6 @@ where
             .field("starting_log_inv_rate", &self.starting_log_inv_rate)
             .field("starting_folding_pow_bits", &self.starting_folding_pow_bits)
             .field("round_parameters", &self.round_parameters)
-            .field("fold_optimisation", &self.fold_optimisation)
             .field("final_queries", &self.final_queries)
             .field("final_pow_bits", &self.final_pow_bits)
             .field("final_log_inv_rate", &self.final_log_inv_rate)
@@ -741,7 +736,6 @@ mod tests {
             leaf_hash_params,
             two_to_one_params,
             soundness_type: SoundnessType::ConjectureList,
-            fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
         }

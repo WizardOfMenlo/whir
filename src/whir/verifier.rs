@@ -326,14 +326,11 @@ where
         self.verify_proof_of_work(verifier_state, params.pow_bits)?;
 
         // Compute STIR Constraints
-        let folds = self.params.fold_optimisation.stir_evaluations_verifier(
-            self.params,
-            params.round_index,
-            params.domain_gen_inv,
-            &stir_challenges_indexes,
-            folding_randomness,
-            &answers,
-        );
+        let folds: Vec<F> = answers
+            .into_iter()
+            .map(|answers| CoefficientList::new(answers).evaluate(folding_randomness))
+            .collect();
+
         let stir_constraints = stir_challenges_indexes
             .iter()
             .map(|&index| params.exp_domain_gen.pow([index as u64]))
