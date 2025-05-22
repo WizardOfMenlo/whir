@@ -267,6 +267,7 @@ where
             .zip(&combination_randomness)
             .map(|(c, rand)| c.sum * rand)
             .sum::<F>();
+
         Ok(combination_randomness)
     }
 
@@ -303,6 +304,7 @@ where
         randomness.reverse();
         Ok(MultilinearPoint(randomness))
     }
+
 
     /// Verify a STIR challenges against a commitment and return the constraints.
     pub fn verify_stir_challenges(
@@ -343,6 +345,7 @@ where
 
         Ok(stir_constraints)
     }
+
 
     /// Verify a merkle multi-opening proof for the provided indices.
     pub fn verify_merkle_proof(

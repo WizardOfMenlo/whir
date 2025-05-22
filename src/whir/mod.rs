@@ -14,7 +14,7 @@ mod tests {
 
     use crate::{
         crypto::{
-            fields::Field64,
+            fields::{Field64, Field64_2},
             merkle_tree::{
                 blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
                 parameters::default_config,
@@ -44,6 +44,9 @@ mod tests {
     /// Field type used in the tests.
     type F = Field64;
 
+    /// Extension field type used in the tests.
+    type EF = Field64_2;
+
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
     ///
     /// This function:
@@ -66,7 +69,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
         // Generate Merkle parameters: hash function and compression function
         let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
 
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);
@@ -104,13 +107,17 @@ mod tests {
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            let eval = polynomial.evaluate(point);
+            let eval = polynomial.evaluate_at_extension(point);
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
         }
 
         // Construct a coefficient vector for linear sumcheck constraint
-        let input = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
+        let input = CoefficientList::new(
+            (0..1 << num_variables)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
 
         // Define weights for linear combination
         let linear_claim_weight = Weights::linear(input.into());
