@@ -11,11 +11,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    poly_utils::multilinear::MultilinearPoint,
     utils::ark_eq,
-    whir::{
-        parameters::WhirConfig, parsed_proof::ParsedProof, prover::RoundState,
-        stir_evaluations::StirEvalContext,
-    },
+    whir::{parameters::WhirConfig, prover::RoundState, stir_evaluations::StirEvalContext},
 };
 
 /// Computes the default maximum proof-of-work (PoW) bits.
@@ -137,72 +135,35 @@ impl FoldType {
         ctx.evaluate(answers, stir_evaluations);
     }
 
-    /// Computes folded evaluations across all rounds of the proof,
+    /// Computes folded evaluations for a round of the proof,
     /// based on the configured folding strategy.
-    ///
-    /// This function is used during proof verification by the verifier.
-    ///
-    /// # Returns
-    /// - A list of folded evaluations for each round, including the final round.
-    ///
-    /// # Strategy Behavior
-    ///
-    /// - If `Naive`, performs coset-based folding round by round.
-    /// - If `ProverHelps`, reuses the precomputed coefficient evaluations.
     pub(crate) fn stir_evaluations_verifier<F, MerkleConfig, PowStrategy>(
         self,
-        parsed: &ParsedProof<F>,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Vec<Vec<F>>
+        round_index: usize,
+        domain_gen_inv: F,
+        stir_challenges_indexes: &[usize],
+        folding_randomness: &MultilinearPoint<F>,
+        stir_challenges_answers: &[Vec<F>],
+    ) -> Vec<F>
     where
         F: FftField,
         MerkleConfig: Config,
     {
-        match self {
-            Self::Naive => {
-                // Start with the domain size and the fold vector
-                let mut domain_size = params.starting_domain.backing_domain.size();
-                let mut result = Vec::with_capacity(parsed.rounds.len() + 1);
-
-                for (round_index, round) in parsed.rounds.iter().enumerate() {
-                    // Compute the folds for this round
-                    let mut round_evals = Vec::with_capacity(round.stir_challenges_indexes.len());
-                    let stir_evals_context = StirEvalContext::Naive {
-                        domain_size,
-                        domain_gen_inv: round.domain_gen_inv,
-                        round: round_index,
-                        stir_challenges_indexes: &round.stir_challenges_indexes,
-                        folding_factor: &params.folding_factor,
-                        folding_randomness: &round.folding_randomness,
-                    };
-                    stir_evals_context.evaluate(&round.stir_challenges_answers, &mut round_evals);
-
-                    // Push the folds to the result
-                    result.push(round_evals);
-                    // Update the domain size
-                    domain_size /= 2;
-                }
-
-                // Final round
-                let final_round_index = parsed.rounds.len();
-                let mut final_evals = Vec::with_capacity(parsed.final_randomness_indexes.len());
-
-                let stir_evals_context = StirEvalContext::Naive {
-                    domain_size,
-                    domain_gen_inv: parsed.final_domain_gen_inv,
-                    round: final_round_index,
-                    stir_challenges_indexes: &parsed.final_randomness_indexes,
-                    folding_factor: &params.folding_factor,
-                    folding_randomness: &parsed.final_folding_randomness,
-                };
-
-                stir_evals_context.evaluate(&parsed.final_randomness_answers, &mut final_evals);
-
-                result.push(final_evals);
-                result
-            }
-            Self::ProverHelps => parsed.compute_folds_helped(),
-        }
+        let eval_context = match self {
+            Self::Naive => StirEvalContext::Naive {
+                domain_size: params.starting_domain.backing_domain.size() >> round_index,
+                domain_gen_inv,
+                round: round_index,
+                stir_challenges_indexes,
+                folding_factor: &params.folding_factor,
+                folding_randomness,
+            },
+            Self::ProverHelps => StirEvalContext::ProverHelps { folding_randomness },
+        };
+        let mut out = Vec::with_capacity(stir_challenges_answers.len());
+        eval_context.evaluate(stir_challenges_answers, &mut out);
+        out
     }
 }
 

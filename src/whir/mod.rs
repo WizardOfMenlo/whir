@@ -1,7 +1,6 @@
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
-pub mod parsed_proof;
 pub mod prover;
 pub mod statement;
 pub mod stir_evaluations;
