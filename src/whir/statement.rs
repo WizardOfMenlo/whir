@@ -77,12 +77,25 @@ impl<F: Field> Weights<F> {
             Self::Evaluation { point } => poly.evaluate(point),
             Self::Linear { weight } => {
                 let poly: EvaluationsList<F> = poly.clone().into();
-                weight
-                    .evals()
-                    .iter()
-                    .zip(poly.evals())
-                    .map(|(&w, &p)| w * p)
-                    .sum()
+                #[cfg(not(feature = "parallel"))]
+                {
+                    weight
+                        .evals()
+                        .iter()
+                        .zip(poly.evals())
+                        .map(|(&w, &p)| w * p)
+                        .sum()
+                }
+
+                #[cfg(feature = "parallel")]
+                {
+                    weight
+                        .evals()
+                        .par_iter()
+                        .zip(poly.evals())
+                        .map(|(&w, &p)| w * p)
+                        .sum()
+                }
             }
         }
     }
