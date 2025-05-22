@@ -26,14 +26,13 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters,
-        SoundnessType,
+        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
-        statement::{Statement, StatementVerifier, Weights},
+        statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
@@ -67,9 +66,6 @@ struct Args {
 
     #[arg(long = "sec", default_value = "ConjectureList")]
     soundness_type: SoundnessType,
-
-    #[arg(long = "fold_type", default_value = "ProverHelps")]
-    fold_optimisation: FoldType,
 
     #[arg(short = 'f', long = "field", default_value = "Goldilocks2")]
     field: AvailableFields,
@@ -240,7 +236,6 @@ fn run_whir<F, MerkleConfig>(
     let folding_factor = args.folding_factor;
     let first_round_folding_factor = args.first_round_folding_factor;
     let soundness_type = args.soundness_type;
-    let fold_optimisation = args.fold_optimisation;
 
     std::fs::create_dir_all("outputs").unwrap();
 
@@ -259,7 +254,6 @@ fn run_whir<F, MerkleConfig>(
         leaf_hash_params,
         two_to_one_params,
         soundness_type,
-        fold_optimisation,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
     };
@@ -280,7 +274,7 @@ fn run_whir<F, MerkleConfig>(
         // Run LDT
         use whir::whir::{
             committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-            prover::Prover, verifier::Verifier, whir_proof_size,
+            prover::Prover, verifier::Verifier,
         };
 
         let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
@@ -310,14 +304,13 @@ fn run_whir<F, MerkleConfig>(
         let prover = Prover(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
-        let statement_verifier = StatementVerifier::from_statement(&statement_new);
 
-        let proof = prover
-            .prove(&mut prover_state, statement_new, witness)
+        prover
+            .prove(&mut prover_state, statement_new.clone(), witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
-        let whir_ldt_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
+        let whir_ldt_argument_size = prover_state.narg_string().len();
         let whir_ldt_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -332,12 +325,7 @@ fn run_whir<F, MerkleConfig>(
                 .parse_commitment(&mut verifier_state)
                 .unwrap();
             verifier
-                .verify(
-                    &mut verifier_state,
-                    &parsed_commitment,
-                    &statement_verifier,
-                    &proof,
-                )
+                .verify(&mut verifier_state, &parsed_commitment, &statement_new)
                 .unwrap();
         }
 
@@ -363,7 +351,7 @@ fn run_whir<F, MerkleConfig>(
         // Run PCS
         use whir::whir::{
             committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-            prover::Prover, verifier::Verifier, whir_proof_size,
+            prover::Prover, verifier::Verifier,
         };
 
         let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -389,8 +377,6 @@ fn run_whir<F, MerkleConfig>(
             statement.add_constraint(weights, eval);
         }
 
-        let statement_verifier = StatementVerifier::from_statement(&statement);
-
         HashCounter::reset();
         let whir_prover_time = Instant::now();
 
@@ -399,12 +385,12 @@ fn run_whir<F, MerkleConfig>(
 
         let prover = Prover(params.clone());
 
-        let proof = prover
+        prover
             .prove(&mut prover_state, statement.clone(), witness)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();
-        let whir_argument_size = whir_proof_size(prover_state.narg_string(), &proof);
+        let whir_argument_size = prover_state.narg_string().len();
         let whir_prover_hashes = HashCounter::get();
 
         // Just not to count that initial inversion (which could be precomputed)
@@ -419,12 +405,7 @@ fn run_whir<F, MerkleConfig>(
                 .parse_commitment(&mut verifier_state)
                 .unwrap();
             verifier
-                .verify(
-                    &mut verifier_state,
-                    &parsed_commitment,
-                    &statement_verifier,
-                    &proof,
-                )
+                .verify(&mut verifier_state, &parsed_commitment, &statement)
                 .unwrap();
         }
 
