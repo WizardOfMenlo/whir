@@ -188,7 +188,6 @@ mod tests {
                 for num_points in num_points {
                     for soundness_type in soundness_type {
                         for pow_bits in pow_bits {
-                            println!("--------------------");
                             make_whir_things(
                                 num_variable,
                                 FoldingFactor::Constant(folding_factor),
