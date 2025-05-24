@@ -428,7 +428,7 @@ where
         prover_state: &mut ProverState,
         round_state: &RoundState<F, MerkleConfig>,
         num_variables: usize,
-        round_params: &RoundConfig,
+        round_params: &RoundConfig<F>,
         ood_points: Vec<F>,
     ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
     where

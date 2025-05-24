@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
-use ark_poly::EvaluationDomain;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
     ProofError, ProofResult, UnitToBytes,
@@ -11,7 +10,7 @@ use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,
-    parameters::WhirConfig,
+    parameters::{RoundConfig, WhirConfig},
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
@@ -35,19 +34,6 @@ where
 {
     params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
     _state: PhantomData<VerifierState>,
-}
-
-// TODO: Merge these into RoundConfig
-pub struct StirChallengParams<F> {
-    round_index: usize,
-    domain_size: usize,
-    num_variables: usize,
-    folding_factor: usize,
-    num_queries: usize,
-    pow_bits: f64,
-    domain_gen: F,
-    domain_gen_inv: F,
-    exp_domain_gen: F,
 }
 
 impl<'a, F, MerkleConfig, PowStrategy, VerifierState>
@@ -81,24 +67,6 @@ where
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
-        // Proof agnostic round parameters
-        // TODO: Move to RoundConfig
-        let mut params = {
-            let domain_gen = self.params.starting_domain.backing_domain.group_gen();
-            StirChallengParams {
-                round_index: 0,
-                domain_size: self.params.starting_domain.size(),
-                num_variables: self.params.mv_parameters.num_variables
-                    - self.params.folding_factor.at_round(0),
-                num_queries: 0,
-                folding_factor: 0,
-                pow_bits: 0.,
-                domain_gen,
-                domain_gen_inv: self.params.starting_domain.backing_domain.group_gen_inv(),
-                exp_domain_gen: domain_gen.pow([1 << self.params.folding_factor.at_round(0)]),
-            }
-        };
-
         // During the rounds we collect constraints, combination randomness, folding randomness
         // and we update the claimed sum of constraint evaluation.
         let mut round_constraints = Vec::new();
@@ -142,22 +110,18 @@ where
         for round_index in 0..self.params.n_rounds() {
             // Fetch round parameters from config
             let round_params = &self.params.round_parameters[round_index];
-            params.round_index = round_index;
-            params.folding_factor = self.params.folding_factor.at_round(round_index);
-            params.num_queries = round_params.num_queries;
-            params.pow_bits = round_params.pow_bits;
 
             // Receive commitment to the folded polynomial (likely encoded at higher expansion)
             let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
                 verifier_state,
-                params.num_variables,
+                round_params.num_variables,
                 round_params.ood_samples,
             )?;
 
             // Verify in-domain challenges on the previous commitment.
             let stir_constraints = self.verify_stir_challenges(
                 verifier_state,
-                &params,
+                round_params,
                 &prev_commitment,
                 round_folding_randomness.last().unwrap(),
             )?;
@@ -182,20 +146,7 @@ where
 
             // Update round parameters
             prev_commitment = new_commitment;
-            params.num_variables -= params.folding_factor;
-            params.domain_gen = params.domain_gen.square();
-            params.exp_domain_gen = params
-                .domain_gen
-                .pow([1 << self.params.folding_factor.at_round(round_index + 1)]);
-            params.domain_gen_inv = params.domain_gen_inv.square();
-            params.domain_size /= 2;
         }
-
-        // Final round parameters.
-        params.round_index = self.params.n_rounds();
-        params.num_queries = self.params.final_queries;
-        params.folding_factor = self.params.folding_factor.at_round(self.params.n_rounds());
-        params.pow_bits = self.params.final_pow_bits;
 
         // In the final round we receive the full polynomial instead of a commitment.
         let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_sumcheck_rounds];
@@ -205,7 +156,7 @@ where
         // Verify in-domain challenges on the previous commitment.
         let stir_constraints = self.verify_stir_challenges(
             verifier_state,
-            &params,
+            &self.params.final_round_config(),
             &prev_commitment,
             round_folding_randomness.last().unwrap(),
         )?;
@@ -309,7 +260,7 @@ where
     pub fn verify_stir_challenges(
         &self,
         verifier_state: &mut VerifierState,
-        params: &StirChallengParams<F>,
+        params: &RoundConfig<F>,
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         folding_randomness: &MultilinearPoint<F>,
     ) -> ProofResult<Vec<Constraint<F>>> {
