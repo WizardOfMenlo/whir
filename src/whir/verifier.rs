@@ -161,7 +161,7 @@ where
             round_folding_randomness.last().unwrap(),
         )?;
 
-        // Verify stir constraints direclty on final polynomial
+        // Verify stir constraints directly on final polynomial
         if !stir_constraints
             .iter()
             .all(|c| c.verify(&final_coefficients))
