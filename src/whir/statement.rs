@@ -77,25 +77,15 @@ impl<F: Field> Weights<F> {
             Self::Evaluation { point } => poly.evaluate(point),
             Self::Linear { weight } => {
                 let poly: EvaluationsList<F> = poly.clone().into();
-                #[cfg(not(feature = "parallel"))]
-                {
-                    weight
-                        .evals()
-                        .iter()
-                        .zip(poly.evals())
-                        .map(|(&w, &p)| w * p)
-                        .sum()
-                }
 
-                #[cfg(feature = "parallel")]
-                {
-                    weight
-                        .evals()
-                        .par_iter()
-                        .zip(poly.evals())
-                        .map(|(&w, &p)| w * p)
-                        .sum()
-                }
+                // We intentionally avoid parallel iterators here because this function is only called by the verifier,
+                // which is assumed to run on a lightweight device.
+                weight
+                    .evals()
+                    .iter()
+                    .zip(poly.evals())
+                    .map(|(&w, &p)| w * p)
+                    .sum()
             }
         }
     }
