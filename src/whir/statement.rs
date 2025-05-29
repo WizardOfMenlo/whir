@@ -77,6 +77,9 @@ impl<F: Field> Weights<F> {
             Self::Evaluation { point } => poly.evaluate(point),
             Self::Linear { weight } => {
                 let poly: EvaluationsList<F> = poly.clone().into();
+
+                // We intentionally avoid parallel iterators here because this function is only called by the verifier,
+                // which is assumed to run on a lightweight device.
                 weight
                     .evals()
                     .iter()
