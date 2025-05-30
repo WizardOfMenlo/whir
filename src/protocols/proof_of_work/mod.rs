@@ -1,13 +1,39 @@
+mod digest;
+mod utils;
+
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    sync::Arc,
+};
+
 use spongefish::{
     codecs::{ZeroCopyPattern, ZeroCopyProver, ZeroCopyVerifier},
     transcript::Label,
     Unit,
 };
 use thiserror::Error;
+use zerocopy::transmute;
 
+pub use self::digest::DigestEngine;
+use crate::utils::f64_to_u256;
+
+pub trait Engine: Sync + Send + Debug + Display {
+    fn solve(&self, challenge: [u8; 32], difficulty: f64) -> u64 {
+        for nonce in 0.. {
+            if self.verify(challenge, difficulty, nonce) {
+                return nonce;
+            }
+        }
+        panic!("No valid nonce found for the given challenge and difficulty.");
+    }
+
+    fn verify(&self, challenge: [u8; 32], difficulty: f64, nonce: u64) -> bool;
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
-    solver: Box<dyn Fn([u8; 32], f64) -> u64>,
-    verifier: Box<dyn Fn([u8; 32], f64, u64) -> bool>,
+    engine: Arc<dyn Engine>,
     difficulty: f64,
 }
 
@@ -52,6 +78,58 @@ where
     ) -> Result<(), VerifierError<Self::Error>>;
 }
 
+impl Config {
+    pub fn new(engine: Arc<dyn Engine>, difficulty: f64) -> Self {
+        Self { engine, difficulty }
+    }
+}
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        self.engine.to_string() == other.engine.to_string() && self.difficulty == other.difficulty
+    }
+}
+
+impl Eq for Config {}
+
+impl PartialOrd for Config {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self
+            .engine
+            .to_string()
+            .partial_cmp(&other.engine.to_string())
+        {
+            Some(std::cmp::Ordering::Equal) => self.difficulty.partial_cmp(&other.difficulty),
+            other => other,
+        }
+    }
+}
+
+impl Ord for Config {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.engine.to_string().cmp(&other.engine.to_string()) {
+            std::cmp::Ordering::Equal => self.difficulty.partial_cmp(&other.difficulty).unwrap(),
+            other => other,
+        }
+    }
+}
+
+impl Hash for Config {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.engine.to_string().hash(state);
+        self.difficulty.to_bits().hash(state);
+    }
+}
+
+impl Display for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Proof of work {} bits of {}",
+            self.difficulty, self.engine
+        )
+    }
+}
+
 impl<U, P> ProofOfWorkPattern<U> for P
 where
     U: Unit,
@@ -83,7 +161,7 @@ where
         let label = label.into();
         self.begin_protocol::<Config>(label.clone())?;
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
-        let nonce = (config.solver)(challenge, config.difficulty);
+        let nonce = config.engine.solve(challenge, config.difficulty);
         self.message_zerocopy::<u64>("nonce", &nonce)?;
         self.end_protocol::<Config>(label)
     }
@@ -103,7 +181,7 @@ where
         self.begin_protocol::<Config>(label.clone())?;
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
         let nonce = self.message_zerocopy::<u64>("nonce")?;
-        if !(config.verifier)(challenge, config.difficulty, nonce) {
+        if !config.engine.verify(challenge, config.difficulty, nonce) {
             return Err(VerifierError::ProofOfWorkFailed);
         }
         self.end_protocol::<Config>(label)?;
@@ -114,15 +192,16 @@ where
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use sha3::Keccak256;
     use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
 
     use super::*;
+    use crate::protocols::proof_of_work::digest::DigestEngine;
 
     #[test]
     fn test_all_ops() -> Result<()> {
         let config = Config {
-            solver: Box::new(|challenge, diffifculy| 42_u64),
-            verifier: Box::new(|challenge, diffifculy, nonce| nonce == 42_u64),
+            engine: Arc::new(DigestEngine::<Keccak256>::new()),
             difficulty: 5.0,
         };
 
@@ -134,7 +213,7 @@ mod tests {
         let mut prover: ProverState = ProverState::from(&pattern);
         prover.proof_of_work("pow", &config)?;
         let proof = prover.finalize()?;
-        assert_eq!(hex::encode(&proof), "2a00000000000000");
+        assert_eq!(hex::encode(&proof), "1b00000000000000");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         verifier.proof_of_work("pow", &config)?;

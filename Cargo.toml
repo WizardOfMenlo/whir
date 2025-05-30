@@ -61,6 +61,8 @@ thiserror = "2.0"
 itertools = "0.14"
 tracing = { version = "0.1.41", optional = true }
 hex = "0.4.3"
+zerocopy = { version = "0.8.25", features = ["std"] }
+digest = "0.10.7"
 
 [dev-dependencies]
 proptest = "1.0"
