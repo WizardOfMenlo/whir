@@ -1,22 +1,11 @@
 //! Generate field element challenges as a Geometric sequence: 1, r, r^2, r^3, ...
 
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-    sync::Arc,
-};
-
 use ark_ff::Field;
 use spongefish::{
-    codecs::{
-        arkworks::{ArkFieldCommon, ArkFieldPattern},
-        ZeroCopyPattern, ZeroCopyProver, ZeroCopyVerifier,
-    },
+    codecs::arkworks::{ArkFieldCommon, ArkFieldPattern},
     transcript::{Label, Length},
     Unit, UnitCommon, UnitPattern,
 };
-use thiserror::Error;
-use zerocopy::transmute;
 
 pub trait ChallengeGeometricPattern<U>: UnitPattern<U>
 where
