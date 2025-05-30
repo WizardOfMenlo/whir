@@ -2,4 +2,5 @@
 
 pub mod challenge_geometric;
 pub mod challenge_indices;
+pub mod merkle_tree;
 pub mod proof_of_work;
