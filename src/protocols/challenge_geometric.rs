@@ -1,0 +1,191 @@
+//! Generate field element challenges as a Geometric sequence: 1, r, r^2, r^3, ...
+
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    sync::Arc,
+};
+
+use ark_ff::Field;
+use spongefish::{
+    codecs::{
+        arkworks::{ArkFieldCommon, ArkFieldPattern},
+        ZeroCopyPattern, ZeroCopyProver, ZeroCopyVerifier,
+    },
+    transcript::{Label, Length},
+    Unit, UnitCommon, UnitPattern,
+};
+use thiserror::Error;
+use zerocopy::transmute;
+
+pub trait ChallengeGeometricPattern<U>: UnitPattern<U>
+where
+    U: Unit,
+{
+    fn challenge_ark_geometric<F>(
+        &mut self,
+        label: impl Into<Label>,
+        size: usize,
+    ) -> Result<(), Self::Error>
+    where
+        F: Field;
+}
+
+pub trait ChallengeGeometricCommon<U>: UnitCommon<U>
+where
+    U: Unit,
+{
+    fn challenge_ark_geometric_out<F>(
+        &mut self,
+        label: impl Into<Label>,
+        out: &mut [F],
+    ) -> Result<(), Self::Error>
+    where
+        F: Field;
+
+    fn challenge_ark_geometric_array<F, const N: usize>(
+        &mut self,
+        label: impl Into<Label>,
+    ) -> Result<[F; N], Self::Error>
+    where
+        F: Field,
+    {
+        let mut out = [F::default(); N];
+        self.challenge_ark_geometric_out(label, &mut out)?;
+        Ok(out)
+    }
+
+    fn challenge_ark_geometric_vec<F>(
+        &mut self,
+        label: impl Into<Label>,
+        size: usize,
+    ) -> Result<Vec<F>, Self::Error>
+    where
+        F: Field,
+    {
+        let mut out = vec![F::default(); size];
+        self.challenge_ark_geometric_out(label, &mut out)?;
+        Ok(out)
+    }
+}
+
+impl<U, P> ChallengeGeometricPattern<U> for P
+where
+    U: Unit,
+    P: ArkFieldPattern<U>,
+{
+    fn challenge_ark_geometric<F>(
+        &mut self,
+        label: impl Into<Label>,
+        size: usize,
+    ) -> Result<(), Self::Error>
+    where
+        F: Field,
+    {
+        let label = label.into();
+        self.begin_challenge::<[F]>(label.clone(), Length::Fixed(size))?;
+        if size > 1 {
+            self.challenge_ark_fel::<F>("base")?;
+        }
+        self.end_challenge::<[F]>(label, Length::Fixed(size))
+    }
+}
+
+impl<U, P> ChallengeGeometricCommon<U> for P
+where
+    U: Unit,
+    P: ArkFieldCommon<U>,
+{
+    fn challenge_ark_geometric_out<F>(
+        &mut self,
+        label: impl Into<Label>,
+        out: &mut [F],
+    ) -> Result<(), Self::Error>
+    where
+        F: Field,
+    {
+        let label = label.into();
+        self.begin_challenge::<[F]>(label.clone(), Length::Fixed(out.len()))?;
+        if !out.is_empty() {
+            out[0] = F::ONE;
+            if out.len() > 1 {
+                let base = self.challenge_ark_fel("base")?;
+                let mut power = base;
+                out[1] = base;
+                for out in &mut out[2..] {
+                    power *= base;
+                    *out = power;
+                }
+            }
+        }
+        self.end_challenge::<[F]>(label, Length::Fixed(out.len()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use ark_ff::{Fp, MontBackend, MontConfig};
+    use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
+
+    use super::*;
+
+    /// Configuration for the BabyBear field (modulus = 2^31 - 2^27 + 1, generator = 21).
+    #[derive(MontConfig)]
+    #[modulus = "2013265921"]
+    #[generator = "21"]
+    pub struct BabybearMontConfig;
+    pub type BabybearConfig = MontBackend<BabybearMontConfig, 1>;
+    pub type BabyBear = Fp<BabybearConfig, 1>;
+
+    #[test]
+    fn test_all_ops() -> Result<()> {
+        let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
+        pattern.challenge_ark_geometric::<BabyBear>("1", 0)?;
+        pattern.challenge_ark_geometric::<BabyBear>("2", 1)?;
+        pattern.challenge_ark_geometric::<BabyBear>("3", 3)?;
+        let pattern = pattern.finalize()?;
+        eprintln!("{pattern}");
+
+        let mut prover: ProverState = ProverState::from(&pattern);
+        assert_eq!(
+            prover.challenge_ark_geometric_array::<BabyBear, 0>("1")?,
+            []
+        );
+        assert_eq!(
+            prover.challenge_ark_geometric_array::<BabyBear, 1>("2")?,
+            [BabyBear::ONE]
+        );
+        assert_eq!(
+            prover.challenge_ark_geometric_array::<BabyBear, 3>("3")?,
+            [
+                BabyBear::ONE,
+                BabyBear::from(745681271),
+                BabyBear::from(1326741669)
+            ]
+        );
+        let proof = prover.finalize()?;
+        assert_eq!(hex::encode(&proof), "");
+
+        let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
+        assert_eq!(
+            verifier.challenge_ark_geometric_array::<BabyBear, 0>("1")?,
+            []
+        );
+        assert_eq!(
+            verifier.challenge_ark_geometric_array::<BabyBear, 1>("2")?,
+            [BabyBear::ONE]
+        );
+        assert_eq!(
+            verifier.challenge_ark_geometric_array::<BabyBear, 3>("3")?,
+            [
+                BabyBear::ONE,
+                BabyBear::from(745681271),
+                BabyBear::from(1326741669)
+            ]
+        );
+        verifier.finalize()?;
+
+        Ok(())
+    }
+}

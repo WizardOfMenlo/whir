@@ -16,7 +16,7 @@ use thiserror::Error;
 use zerocopy::transmute;
 
 pub use self::digest::DigestEngine;
-use crate::utils::f64_to_u256;
+use self::utils::f64_to_u256;
 
 pub trait Engine: Sync + Send + Debug + Display {
     fn solve(&self, challenge: [u8; 32], difficulty: f64) -> u64 {
