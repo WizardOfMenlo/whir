@@ -1,5 +1,6 @@
 #[cfg(test)]
 use std::fmt::Debug;
+use std::ops::Deref;
 
 use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
