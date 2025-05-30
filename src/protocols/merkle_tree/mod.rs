@@ -86,6 +86,13 @@ where
         config: &Config,
         num_open: usize,
     ) -> Result<(), Self::Error>;
+
+    fn merkle_tree_open_with_leaves(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        num_open: usize,
+    ) -> Result<(), Self::Error>;
 }
 
 pub trait MerkleTreeProver<U>: ZeroCopyProver<U>
@@ -99,10 +106,21 @@ where
         leaves: &[u8],
     ) -> Result<Witness, Self::Error>;
 
+    /// Open without hinting leaves
+    /// Useful to save proof size when verifier has them by other means.
     fn merkle_tree_open(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
+        witness: &Witness,
+        indices: &[usize],
+    ) -> Result<(), Self::Error>;
+
+    fn merkle_tree_open_with_leaves(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        leaves: &[u8],
         witness: &Witness,
         indices: &[usize],
     ) -> Result<(), Self::Error>;
@@ -126,6 +144,27 @@ where
         indices: &[usize],
         leaves: &[u8],
     ) -> Result<(), VerifierError<Self::Error>>;
+
+    fn merkle_tree_open_with_leaves_out(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        commitment: &Commitment,
+        indices: &[usize],
+        out: &mut [u8],
+    ) -> Result<(), VerifierError<Self::Error>>;
+
+    fn merkle_tree_open_with_leaves_vec(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        commitment: &Commitment,
+        indices: &[usize],
+    ) -> Result<Vec<u8>, VerifierError<Self::Error>> {
+        let mut result = vec![0; indices.len() * config.leaf_size];
+        self.merkle_tree_open_with_leaves_out(label, config, commitment, indices, &mut result)?;
+        Ok(result)
+    }
 }
 
 impl Config {
@@ -209,6 +248,19 @@ where
         let label = label.into();
         self.begin_hint::<Config>(label.clone(), Length::Fixed(num_open))?;
         self.hint_zerocopies_dynamic::<Hash>("merkle-proof")?;
+        self.end_hint::<Config>(label.clone(), Length::Fixed(num_open))
+    }
+
+    fn merkle_tree_open_with_leaves(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        num_open: usize,
+    ) -> Result<(), Self::Error> {
+        let label = label.into();
+        self.begin_hint::<Config>(label.clone(), Length::Fixed(num_open))?;
+        self.hint_bytes("opened-leaves", config.leaf_size * num_open)?;
+        self.merkle_tree_open("merkle-proof", config, num_open)?;
         self.end_hint::<Config>(label.clone(), Length::Fixed(num_open))
     }
 }
@@ -301,6 +353,28 @@ where
 
         self.hint_zerocopy_dynamic::<Hash>("merkle-proof", &proof)?;
         self.end_hint::<Config>(label.clone(), Length::Fixed(size))
+    }
+
+    fn merkle_tree_open_with_leaves(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        leaves: &[u8],
+        witness: &Witness,
+        indices: &[usize],
+    ) -> Result<(), Self::Error> {
+        let label = label.into();
+        self.begin_hint::<Config>(label.clone(), Length::Fixed(indices.len()))?;
+
+        let mut opened_leaves = Vec::with_capacity(indices.len() * config.leaf_size);
+        for index in indices {
+            let leaf = &leaves[index * config.leaf_size..(index + 1) * config.leaf_size];
+            opened_leaves.extend_from_slice(leaf);
+        }
+        self.hint_bytes("opened-leaves", &opened_leaves)?;
+
+        self.merkle_tree_open("merkle-proof", config, witness, indices)?;
+        self.end_hint::<Config>(label.clone(), Length::Fixed(indices.len()))
     }
 }
 
@@ -419,6 +493,24 @@ where
         self.end_hint::<Config>(label.clone(), Length::Fixed(size))?;
         Ok(())
     }
+
+    fn merkle_tree_open_with_leaves_out(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config,
+        commitment: &Commitment,
+        indices: &[usize],
+        out: &mut [u8],
+    ) -> Result<(), VerifierError<Self::Error>> {
+        let label = label.into();
+        self.begin_hint::<Config>(label.clone(), Length::Fixed(indices.len()))?;
+        assert_eq!(out.len(), indices.len() * config.leaf_size);
+        let bytes = self.hint_bytes("opened-leaves", out.len())?;
+        out.copy_from_slice(bytes);
+        self.merkle_tree_open("merkle-proof", config, commitment, indices, out)?;
+        self.end_hint::<Config>(label.clone(), Length::Fixed(indices.len()))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -455,21 +547,22 @@ mod tests {
 
         let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
         pattern.merkle_tree_commit("commit", &config)?;
-        pattern.merkle_tree_open("open", &config, 5)?;
+        pattern.merkle_tree_open_with_leaves("open", &config, 5)?;
         let pattern = pattern.finalize()?;
         eprintln!("{pattern}");
 
         let mut prover: ProverState = ProverState::from(&pattern);
         let witness = prover.merkle_tree_commit("commit", &config, &leaves)?;
-        prover.merkle_tree_open("open", &config, &witness, &indices)?;
+        prover.merkle_tree_open_with_leaves("open", &config, &leaves, &witness, &indices)?;
         let proof = prover.finalize()?;
-        assert_eq!(hex::encode(&proof), "bc6fe41a519a46afbac1e0b61c03ed41b46ba45abba7c3e1b5503534ef46c2b0c0000000db13df11c88c146de5d0fc8e57b83142e8ad32c6e6495c034a7e0cb1b5b6ac7be7519b8a28eebd70a39cf1ff0dd7a2c3c4d2125a61a98301a4b46d88eec1ffe3a28b94ad26dbb5acac572480b4b07461ad6fccdb82598e71f949b14be96c5050df8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbdf8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbaf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708d");
+        assert_eq!(hex::encode(&proof), "bc6fe41a519a46afbac1e0b61c03ed41b46ba45abba7c3e1b5503534ef46c2b0404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fc0000000db13df11c88c146de5d0fc8e57b83142e8ad32c6e6495c034a7e0cb1b5b6ac7be7519b8a28eebd70a39cf1ff0dd7a2c3c4d2125a61a98301a4b46d88eec1ffe3a28b94ad26dbb5acac572480b4b07461ad6fccdb82598e71f949b14be96c5050df8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbdf8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbaf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708d");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         let commitment = verifier.merkle_tree_commit("commit", &config)?;
         assert_eq!(commitment.root, witness.commitment.root);
-        dbg!(&commitment);
-        verifier.merkle_tree_open("open", &config, &commitment, &indices, &opening)?;
+        let leaves =
+            verifier.merkle_tree_open_with_leaves_vec("open", &config, &commitment, &indices)?;
+        assert_eq!(leaves, opening);
         verifier.finalize()?;
 
         Ok(())
