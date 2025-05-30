@@ -42,9 +42,8 @@ pub fn rs_encode_coset_poly<F: FftField>(
     fold_factor: usize,
 ) -> Vec<F> {
     let fold_factor = u32::try_from(fold_factor).unwrap();
+    debug_assert!(expansion > 0);
     debug_assert!(poly.len().is_power_of_two());
-    debug_assert!(fold_factor < F::TWO_ADICITY);
-    debug_assert!(fold_factor < usize::BITS);
 
     let fold_factor_exp = 2usize.pow(fold_factor);
     let expanded_size = poly.len() * expansion;
@@ -59,13 +58,13 @@ pub fn rs_encode_coset_poly<F: FftField>(
     let columns = fold_factor_exp;
 
     // 2. Create fold-factor-exp number of h(X^k) polynomial. (This is
-    //    equivalent to striding the collecting the coefficients of
-    //    `poly` in multiples of k-th degree). This is essentially
+    //    equivalent to collecting the coefficients of `poly` in
+    //    multiples of `k = fold_factor_exp`). This is essentially
     //    equivalent to transposing the matrix.
     transpose(&mut result, rows, columns);
 
     // 3. Compute NTT for each hₜ(X), which will naturally be evaluated
-    // at ω = ζ^k roots of unity.
+    //    at ω = ζ^k roots of unity.
     ntt_batch(&mut result, rows);
 
     // 4. Arrange cosets consecutively.
