@@ -164,9 +164,13 @@ impl Config {
 }
 
 impl Witness {
+    fn num_leaves(&self) -> usize {
+        (self.nodes.len() + 1) / 2
+    }
+
     fn layers(&self) -> impl Iterator<Item = &[Hash]> {
         let mut offset = 0;
-        let mut size = self.nodes.len() / 2;
+        let mut size = self.num_leaves();
         std::iter::from_fn(move || {
             if size == 0 {
                 None
@@ -238,7 +242,7 @@ where
 
         // Compute merkle tree nodes.
         let mut nodes = leaf_hashes;
-        nodes.resize(2 * config.num_leaves, Hash::default());
+        nodes.resize(2 * config.num_leaves - 1, Hash::default());
         let (mut leaves, mut tail) = nodes.split_at_mut(config.num_leaves);
         while leaves.len() > 1 {
             let (next_leaves, next_tail) = tail.split_at_mut(leaves.len() / 2);
@@ -276,12 +280,23 @@ where
         indices.dedup();
         for layer in witness.layers().take_while(|l| l.len() > 1) {
             let mut next_indices = Vec::with_capacity(indices.len());
-            for &index in indices.iter() {
-                // TODO: Path merging if two indices are left/right neighbor.
-                proof.push(layer[index ^ 1]);
-                next_indices.push(index >> 1);
+            let mut iter = indices.iter().copied().peekable();
+            loop {
+                match (iter.next(), iter.peek()) {
+                    (Some(a), Some(&b)) if b == a ^ 1 => {
+                        // Neighboring indices, merging branches.
+                        next_indices.push(a >> 1);
+                        iter.next(); // Skip the next index.
+                    }
+                    (Some(a), _) => {
+                        // Single index, pushing the neighbor hash.
+                        proof.push(layer[a ^ 1]);
+                        next_indices.push(a >> 1);
+                    }
+                    (None, _) => break,
+                }
             }
-            swap(&mut next_indices, &mut indices);
+            indices = next_indices;
         }
 
         self.hint_zerocopy_dynamic::<Hash>("merkle-proof", &proof)?;
@@ -315,7 +330,8 @@ where
         leaves: &[u8],
     ) -> Result<(), VerifierError<Self::Error>> {
         let label = label.into();
-        self.begin_hint::<Config>(label.clone(), Length::Fixed(indices.len()))?;
+        let size = indices.len();
+        self.begin_hint::<Config>(label.clone(), Length::Fixed(size))?;
         if !indices.iter().all(|&i| i < config.num_leaves) {
             return Err(VerifierError::OutOfBounds);
         }
@@ -333,20 +349,74 @@ where
         assert_eq!(leaf_hashes.len(), indices.len());
 
         // Sort indices and leaf hashes.
-        let mut layer = leaves
-            .into_iter()
+        let mut layer = indices
+            .iter()
+            .copied()
             .zip(leaf_hashes.into_iter())
-            .collect::<Vec<_>>();
+            .collect::<Vec<(usize, Hash)>>();
         layer.sort_unstable_by_key(|(i, _)| *i);
-        // TODO: Check leaf hash consistency.
+        // Check duplicate leaf hash consistency.
+        for i in 1..layer.len() {
+            if layer[i - 1].0 == layer[i].0 {
+                if layer[i - 1].1 != layer[i].1 {
+                    return Err(VerifierError::DuplicateLeafMismatch);
+                }
+            }
+        }
         layer.dedup_by_key(|(i, _)| *i);
+        let mut indices = layer.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+        let mut hashes = layer.iter().map(|(_, h)| *h).collect::<Vec<_>>();
 
-        let hashes = self.hint_zerocopy_dynamic_vec::<Hash>("merkle-proof")?;
-        dbg!(hashes);
+        let proof = self.hint_zerocopy_dynamic_vec::<Hash>("merkle-proof")?;
+        let mut proof = proof.iter().copied();
 
-        todo!();
+        for _ in 0..config.num_layers() {
+            debug_assert_eq!(hashes.len(), indices.len());
+            // OPT: Re-use buffers more
+            let mut next_indices = Vec::with_capacity(layer.len());
+            let mut input_hashes = Vec::new();
+            let mut indices_iter = indices.iter().copied().peekable();
+            let mut hashes_iter = hashes.iter().copied();
+            loop {
+                match (indices_iter.next(), indices_iter.peek()) {
+                    (Some(a), Some(&b)) if b == a ^ 1 => {
+                        // Neighboring indices, merging branches.
+                        input_hashes.push(hashes_iter.next().unwrap());
+                        input_hashes.push(hashes_iter.next().unwrap());
+                        next_indices.push(a >> 1);
+                        indices_iter.next(); // Skip the next index.
+                    }
+                    (Some(a), _) => {
+                        // Single index, pushing the neighbor hash.
+                        if a & 1 == 0 {
+                            input_hashes.push(hashes_iter.next().unwrap());
+                            input_hashes.push(proof.next().unwrap());
+                        } else {
+                            input_hashes.push(proof.next().unwrap());
+                            input_hashes.push(hashes_iter.next().unwrap());
+                        }
+                        next_indices.push(a >> 1);
+                    }
+                    (None, _) => break,
+                }
+            }
+            hashes.truncate(input_hashes.len() / 2);
+            // Compute next layer hashes in a single batch for efficiency.
+            config.engine.hash_many(&input_hashes, &mut hashes);
+            indices = next_indices;
+        }
+        // TODO: Some of these should probably be errors.
+        assert_eq!(proof.next(), None);
+        assert_eq!(indices.len(), 1);
+        assert_eq!(indices[0], 0);
+        assert_eq!(hashes.len(), 1);
 
-        self.end_hint::<Config>(label.clone(), Length::Fixed(indices.len()))?;
+        if hashes[0] != commitment.root {
+            self.abort(); // TODO: Better devex so you can't forget this.
+            return Err(VerifierError::RootMismatch);
+        }
+
+        self.end_hint::<Config>(label.clone(), Length::Fixed(size))?;
         Ok(())
     }
 }
@@ -393,11 +463,12 @@ mod tests {
         let witness = prover.merkle_tree_commit("commit", &config, &leaves)?;
         prover.merkle_tree_open("open", &config, &witness, &indices)?;
         let proof = prover.finalize()?;
-        assert_eq!(hex::encode(&proof), "000000000000000000000000000000000000000000000000000000000000000000020000db13df11c88c146de5d0fc8e57b83142e8ad32c6e6495c034a7e0cb1b5b6ac7be7519b8a28eebd70a39cf1ff0dd7a2c3c4d2125a61a98301a4b46d88eec1ffe3002030bde3d4cf89919649775cd71875c4d0ab1708a380e03fefc3a28aa24831e7519b8a28eebd70a39cf1ff0dd7a2c3c4d2125a61a98301a4b46d88eec1ffe3a28b94ad26dbb5acac572480b4b07461ad6fccdb82598e71f949b14be96c5050df8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbdf8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbdf8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbaf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708daf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708daf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708daf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708d89f5209bb7e7aa435923b6ee82dc4d2b03a6e3fc22b5c78c480c650e9e4cb62e89f5209bb7e7aa435923b6ee82dc4d2b03a6e3fc22b5c78c480c650e9e4cb62e89f5209bb7e7aa435923b6ee82dc4d2b03a6e3fc22b5c78c480c650e9e4cb62e89f5209bb7e7aa435923b6ee82dc4d2b03a6e3fc22b5c78c480c650e9e4cb62e");
+        assert_eq!(hex::encode(&proof), "bc6fe41a519a46afbac1e0b61c03ed41b46ba45abba7c3e1b5503534ef46c2b0c0000000db13df11c88c146de5d0fc8e57b83142e8ad32c6e6495c034a7e0cb1b5b6ac7be7519b8a28eebd70a39cf1ff0dd7a2c3c4d2125a61a98301a4b46d88eec1ffe3a28b94ad26dbb5acac572480b4b07461ad6fccdb82598e71f949b14be96c5050df8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbdf8d05daec2710dcd518728eb1750b2c5609bc915fc29a2430e5590c24a4a5bbaf7761c7e694cf080ed33423d7799c01e81bae30c1d61233417751dea61a708d");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         let commitment = verifier.merkle_tree_commit("commit", &config)?;
         assert_eq!(commitment.root, witness.commitment.root);
+        dbg!(&commitment);
         verifier.merkle_tree_open("open", &config, &commitment, &indices, &opening)?;
         verifier.finalize()?;
 
