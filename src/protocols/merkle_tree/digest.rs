@@ -7,7 +7,7 @@ use std::{
 };
 
 use digest::{Digest, FixedOutputReset};
-use zerocopy::transmute;
+use zerocopy::{Immutable, IntoBytes};
 
 use super::{Engine, Hash};
 
@@ -34,16 +34,26 @@ where
     }
 }
 
-impl<D> Engine for DigestEngine<D>
+impl<T, D> Engine<T> for DigestEngine<D>
 where
+    T: Immutable + IntoBytes,
     D: Digest + FixedOutputReset + Sync + Send,
 {
-    fn hash_many(&self, input: &[Hash], out: &mut [Hash]) {
-        assert_eq!(out.len() * 2, input.len());
+    fn leaf_hash(&self, input: &[T], leaf_size: usize, out: &mut [Hash]) {
+        assert_eq!(out.len() * leaf_size, input.len());
+        let mut digest = D::new();
+        for (chunk, out) in input.chunks_exact(leaf_size).zip(out.iter_mut()) {
+            Digest::update(&mut digest, chunk.as_bytes());
+            let hash = digest.finalize_reset();
+            out.copy_from_slice(&hash[..32]);
+        }
+    }
+
+    fn node_hash(&self, input: &[Hash], out: &mut [Hash]) {
+        assert_eq!(2 * out.len(), input.len());
         let mut digest = D::new();
         for (chunk, out) in input.chunks_exact(2).zip(out.iter_mut()) {
-            Digest::update(&mut digest, chunk[0]);
-            Digest::update(&mut digest, chunk[1]);
+            Digest::update(&mut digest, chunk.as_bytes());
             let hash = digest.finalize_reset();
             out.copy_from_slice(&hash[..32]);
         }
@@ -78,10 +88,10 @@ mod tests {
 
     #[test]
     fn hash_keccak() {
-        let engine = DigestEngine::<Keccak256>::new();
+        let engine: Box<dyn Engine<u8>> = Box::new(DigestEngine::<Keccak256>::new());
         let input = [Hash::default(); 2];
         let mut out = [Hash::default(); 1];
-        engine.hash_many(&input, &mut out);
+        engine.node_hash(&input, &mut out);
         assert_eq!(
             hex::encode(out[0]),
             "ad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5"
