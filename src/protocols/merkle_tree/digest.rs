@@ -1,102 +1,125 @@
-//! Implementation of the proof of work engine for any RustCrypto digest.
+//! Implementation of the merkle tree engine for any RustCrypto digest.
 
-use std::{
-    any::type_name,
-    fmt::{Debug, Display},
-    marker::PhantomData,
-};
+use std::{any::type_name, fmt::Debug, marker::PhantomData};
 
+use ark_ff::{Fp, FpConfig};
 use ark_serialize::CanonicalSerialize;
 use digest::{Digest, FixedOutputReset};
 use zerocopy::{Immutable, IntoBytes};
 
 use super::{Engine, Hash};
 
+pub trait DigestUpdater {
+    type Item;
+
+    fn new() -> Self;
+    fn update(&mut self, digest: &mut impl Digest, input: &[Self::Item]);
+}
+
+/// Implementation of the digest engine for any RustCrypto digest.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct DigestEngine<D>
+pub struct DigestEngine<D, U>
 where
     D: Digest + FixedOutputReset + Sync + Send,
+    U: DigestUpdater + Sync + Send,
 {
     _digest: PhantomData<D>,
+    _updater: PhantomData<U>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct ArkDigestEngine<D>
+pub struct ZeroCopyUpdater<T>(PhantomData<T>)
 where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    _digest: PhantomData<D>,
-}
+    T: Immutable + IntoBytes;
 
-impl<D> DigestEngine<D>
+pub struct ArkUpdater<T>(Vec<u8>, PhantomData<T>)
 where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    pub fn new() -> Self {
-        assert!(
-            <D as Digest>::output_size() >= 32,
-            "Digest must produce at least 32-byte output"
-        );
-        Self {
-            _digest: PhantomData,
-        }
-    }
-}
+    T: CanonicalSerialize;
 
-impl<D> ArkDigestEngine<D>
+pub struct ArkFieldUpdater<C, const N: usize>(PhantomData<C>)
 where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    pub fn new() -> Self {
-        assert!(
-            <D as Digest>::output_size() >= 32,
-            "Digest must produce at least 32-byte output"
-        );
-        Self {
-            _digest: PhantomData,
-        }
-    }
-}
+    C: FpConfig<N>;
 
-impl<T, D> Engine<T> for DigestEngine<D>
+impl<T> DigestUpdater for ZeroCopyUpdater<T>
 where
     T: Immutable + IntoBytes,
-    D: Digest + FixedOutputReset + Sync + Send,
 {
-    fn leaf_hash(&self, input: &[T], leaf_size: usize, out: &mut [Hash]) {
-        assert_eq!(out.len() * leaf_size, input.len());
-        let mut digest = D::new();
-        for (chunk, out) in input.chunks_exact(leaf_size).zip(out.iter_mut()) {
-            Digest::update(&mut digest, chunk.as_bytes());
-            let hash = digest.finalize_reset();
-            out.copy_from_slice(&hash[..32]);
-        }
+    type Item = T;
+
+    fn new() -> Self {
+        Self(PhantomData)
     }
 
-    fn node_hash(&self, input: &[Hash], out: &mut [Hash]) {
-        assert_eq!(2 * out.len(), input.len());
-        let mut digest = D::new();
-        for (chunk, out) in input.chunks_exact(2).zip(out.iter_mut()) {
-            Digest::update(&mut digest, chunk.as_bytes());
-            let hash = digest.finalize_reset();
-            out.copy_from_slice(&hash[..32]);
-        }
+    fn update(&mut self, digest: &mut impl Digest, input: &[T]) {
+        Digest::update(digest, input.as_bytes());
     }
 }
 
-impl<T, D> Engine<T> for ArkDigestEngine<D>
+impl<T> DigestUpdater for ArkUpdater<T>
 where
     T: CanonicalSerialize,
+{
+    type Item = T;
+
+    fn new() -> Self {
+        Self(Vec::new(), PhantomData)
+    }
+
+    fn update(&mut self, digest: &mut impl Digest, input: &[T]) {
+        for item in input {
+            self.0.clear();
+            item.serialize_compressed(&mut self.0);
+            Digest::update(digest, &self.0);
+        }
+    }
+}
+
+impl<C, const N: usize> DigestUpdater for ArkFieldUpdater<C, N>
+where
+    C: FpConfig<N>,
+{
+    type Item = Fp<C, N>;
+
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    fn update(&mut self, digest: &mut impl Digest, input: &[Fp<C, N>]) {
+        for item in input {
+            // Note these are in Montgomery form!
+            let limbs = item.0 .0;
+            Digest::update(digest, limbs.as_bytes());
+        }
+    }
+}
+
+impl<D, U> DigestEngine<D, U>
+where
     D: Digest + FixedOutputReset + Sync + Send,
+    U: DigestUpdater + Sync + Send,
+{
+    pub fn new() -> Self {
+        assert!(
+            <D as Digest>::output_size() >= 32,
+            "Digest must produce at least 32-byte output"
+        );
+        Self {
+            _digest: PhantomData,
+            _updater: PhantomData,
+        }
+    }
+}
+
+impl<T, D, U> Engine<T> for DigestEngine<D, U>
+where
+    D: Digest + FixedOutputReset + Sync + Send,
+    U: DigestUpdater<Item = T> + Sync + Send,
 {
     fn leaf_hash(&self, input: &[T], leaf_size: usize, out: &mut [Hash]) {
         assert_eq!(out.len() * leaf_size, input.len());
         let mut digest = D::new();
-        let mut buffer = Vec::new();
+        let mut updater = U::new();
         for (chunk, out) in input.chunks_exact(leaf_size).zip(out.iter_mut()) {
-            buffer.clear();
-            chunk.serialize_compressed(&mut buffer);
-            Digest::update(&mut digest, &buffer);
+            updater.update(&mut digest, chunk);
             let hash = digest.finalize_reset();
             out.copy_from_slice(&hash[..32]);
         }
@@ -113,43 +136,16 @@ where
     }
 }
 
-impl<D> Debug for DigestEngine<D>
+impl<D, U> Debug for DigestEngine<D, U>
 where
     D: Digest + FixedOutputReset + Sync + Send,
+    U: DigestUpdater + Sync + Send,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestEngine")
             .field("digest_type", &type_name::<D>())
+            .field("updater_type", &type_name::<U>())
             .finish()
-    }
-}
-
-impl<D> Debug for ArkDigestEngine<D>
-where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArkDigestEngine")
-            .field("digest_type", &type_name::<D>())
-            .finish()
-    }
-}
-
-impl<D> Display for DigestEngine<D>
-where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DigestEngine<{:?}>", type_name::<D>())
-    }
-}
-
-impl<D> Display for ArkDigestEngine<D>
-where
-    D: Digest + FixedOutputReset + Sync + Send,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ArkDigestEngine<{:?}>", type_name::<D>())
     }
 }
 
@@ -161,7 +157,8 @@ mod tests {
 
     #[test]
     fn hash_keccak() {
-        let engine: Box<dyn Engine<u8>> = Box::new(DigestEngine::<Keccak256>::new());
+        type MyEngine = DigestEngine<Keccak256, ZeroCopyUpdater<u8>>;
+        let engine: Box<dyn Engine<u8>> = Box::new(MyEngine::new());
         let input = [Hash::default(); 2];
         let mut out = [Hash::default(); 1];
         engine.node_hash(&input, &mut out);

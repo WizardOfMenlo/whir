@@ -1,6 +1,6 @@
 //! Merkle Tree implementation.
 
-mod digest;
+pub mod digest;
 
 use std::{
     fmt::{Debug, Display},
@@ -20,11 +20,9 @@ use spongefish::{
 use thiserror::Error;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-pub use self::digest::{ArkDigestEngine, DigestEngine};
-
 pub type Hash = [u8; 32];
 
-pub trait Engine<T>: Sync + Send + Debug + Display {
+pub trait Engine<T>: Sync + Send + Debug {
     /// Hash many `leaf_size` values of type `T` to a 256-bit outputs.
     ///
     /// # Input contract
@@ -630,16 +628,18 @@ where
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use ark_ff::MontBackend;
     use sha3::Keccak256;
     use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::crypto::fields::{FConfig64, Field64};
 
     #[test]
     fn test_all_ops() -> Result<()> {
+        type MyEngine = digest::DigestEngine<Keccak256, digest::ZeroCopyUpdater<u16>>;
         let config = Config {
-            engine: Arc::new(DigestEngine::<Keccak256>::default()),
+            engine: Arc::new(MyEngine::new()),
             leaf_size: 3,
             num_leaves: 64,
         };
@@ -685,8 +685,10 @@ mod tests {
 
     #[test]
     fn test_all_ops_ark() -> Result<()> {
+        type MyEngine =
+            digest::DigestEngine<Keccak256, digest::ArkFieldUpdater<MontBackend<FConfig64, 1>, 1>>;
         let config = Config {
-            engine: Arc::new(ArkDigestEngine::<Keccak256>::default()),
+            engine: Arc::new(MyEngine::new()),
             leaf_size: 3,
             num_leaves: 64,
         };
@@ -717,7 +719,7 @@ mod tests {
         let witness = prover.merkle_tree_commit("commit", &config, &leaves)?;
         prover.merkle_tree_open_with_leaves_ark("open", &config, &leaves, &witness, &indices)?;
         let proof = prover.finalize()?;
-        assert_eq!(hex::encode(&proof), "ce517044d968426f8b1605e8edde29c0aba02f55e8595367307b56acf235f06d800000000f000000000000000f00000000000000100000000000000011000000000000000600000000000000070000000000000008000000000000000c000000000000000d000000000000000e00000000000000180000000000000019000000000000001a00000000000000180000000000000019000000000000001a000000000000000001000024e201b1f6e80fd3df6596ac3d1a479429d71a593b68894eee55dec7c7dfc7106a59cd3c8c11c1ef150546d3721909f1ea278b75f78c4c303d08af355327561d385af81684516f59d756b2377b3c87d519cc2308502b3f9d7af214e41a5e134a8a25d7576aaeb3a302e4589b1f9bff25bbe4870e3403655e66e4f4a17c00f756c750c0330585823c57f2631548e1683b0ca665bdd16b172c119caf463f3ac43cafd86797c4b20ff8bd8975ccdc480a5ad5125cac7af8203ebf4206ac4930bdf3ededc7442672ce099d0ba4197bfbc6a6614324ffc5d2d0de6b77485c732c968bce7be01bb41403fe2531c286580c5d727d2ba8d204558c588dcd82d55c8a2f45");
+        assert_eq!(hex::encode(&proof), "180d49920f56cc078bf96d49cd767068f67febadf0fc378ab68f566d552098f1800000000f000000000000000f00000000000000100000000000000011000000000000000600000000000000070000000000000008000000000000000c000000000000000d000000000000000e00000000000000180000000000000019000000000000001a00000000000000180000000000000019000000000000001a00000000000000000100000a255214c61464afcbb34c9fbe4a5a5805be528fb53a4d46b6d74d55e1c1f8dd1dd79478f68011c190c58ffb44071f717a5e63d0e7e092e8153c9cd39c14ed7c77f4c3bbc8da4371538d49e8690762508aad2eb991015299259591efab91eabb388dd19e3e34952cc7589d95fe7a5c02311437b4feeb4905d2f9e539a0e1ccee7fcb229f72e8cd3b9537b353a2e9676794843f85c29cd903ea9c0676951053103cd3926ea63807b9390eebfeb5416a5b4e045e7c44158059ed9e412b98ef62a4eb5054eb1a66dc2a80082937663e0c671a630e0b9f17cf94017655be49d567fff9b2cb1b67ca2b345142b17cac4a451caa1e2658e0a3889e19c4f538acd4bee3");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         let commitment = verifier.merkle_tree_commit("commit", &config)?;

@@ -216,11 +216,20 @@ mod tests {
     use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
 
     use super::*;
-    use crate::{crypto::fields::Field256 as F, protocols::merkle_tree::DigestEngine};
+    use crate::{
+        crypto::fields::Field256 as F,
+        protocols::merkle_tree::digest::{ArkFieldUpdater, DigestEngine},
+    };
 
     #[test]
     fn test_all_ops() -> Result<()> {
-        let config = Config::<F>::new(Arc::new(DigestEngine::<Keccak256>::default()), 64, 4, 2, 10);
+        let config = Config::<F>::new(
+            Arc::new(ArkDigestEngine::<Keccak256>::default()),
+            64,
+            4,
+            2,
+            10,
+        );
 
         let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
         pattern.reed_solomon_commit("1", &config);
