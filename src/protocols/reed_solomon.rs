@@ -1,11 +1,7 @@
 //! Commit to a vector of field elements by encoding as a Reed-Solomon codeword.
 //! Opening results in a sequence of [`Constraint`]s.
 
-use std::{
-    fmt::{Debug, Display},
-    mem::swap,
-    sync::Arc,
-};
+use std::{fmt::Debug, sync::Arc};
 
 use ark_ff::FftField;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
@@ -16,8 +12,7 @@ use spongefish::{
     transcript::{Label, Length},
     Unit,
 };
-use thiserror::Error;
-use zerocopy::{transmute_ref, FromBytes, Immutable, IntoBytes, KnownLayout};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     ntt::expand_from_coeff,
@@ -212,27 +207,24 @@ where
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use ark_ff::MontBackend;
     use sha3::Keccak256;
     use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
 
     use super::*;
     use crate::{
-        crypto::fields::Field256 as F,
-        protocols::merkle_tree::digest::{ArkFieldUpdater, DigestEngine},
+        crypto::fields::{FConfig64, Field64},
+        protocols::merkle_tree::digest,
     };
 
     #[test]
     fn test_all_ops() -> Result<()> {
-        let config = Config::<F>::new(
-            Arc::new(ArkDigestEngine::<Keccak256>::default()),
-            64,
-            4,
-            2,
-            10,
-        );
+        type MyEngine =
+            digest::DigestEngine<Keccak256, digest::ArkFieldUpdater<MontBackend<FConfig64, 1>, 1>>;
+        let config = Config::new(Arc::new(MyEngine::new()), 64, 4, 2, 10);
 
         let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
-        pattern.reed_solomon_commit("1", &config);
+        pattern.reed_solomon_commit("1", &config)?;
         let pattern = pattern.finalize()?;
         eprintln!("{pattern}");
 

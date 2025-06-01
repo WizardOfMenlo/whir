@@ -68,7 +68,8 @@ where
     fn update(&mut self, digest: &mut impl Digest, input: &[T]) {
         for item in input {
             self.0.clear();
-            item.serialize_compressed(&mut self.0);
+            item.serialize_compressed(&mut self.0)
+                .expect("Writing to vec is infallible");
             Digest::update(digest, &self.0);
         }
     }
