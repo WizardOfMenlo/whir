@@ -5,6 +5,7 @@ use std::{any::type_name, fmt::Debug, marker::PhantomData};
 use ark_ff::{Fp, FpConfig};
 use ark_serialize::CanonicalSerialize;
 use digest::{Digest, FixedOutputReset};
+use maybe_rayon::prelude::*;
 use zerocopy::{Immutable, IntoBytes};
 
 use super::{Engine, Hash};
@@ -111,28 +112,38 @@ where
 
 impl<T, D, U> Engine<T> for DigestEngine<D, U>
 where
+    T: Sync,
     D: Digest + FixedOutputReset + Sync + Send,
     U: DigestUpdater<Item = T> + Sync + Send,
 {
     fn leaf_hash(&self, input: &[T], leaf_size: usize, out: &mut [Hash]) {
         assert_eq!(out.len() * leaf_size, input.len());
-        let mut digest = D::new();
-        let mut updater = U::new();
-        for (chunk, out) in input.chunks_exact(leaf_size).zip(out.iter_mut()) {
-            updater.update(&mut digest, chunk);
-            let hash = digest.finalize_reset();
-            out.copy_from_slice(&hash[..32]);
-        }
+        input
+            .par_chunks_exact(leaf_size)
+            .zip(out.par_iter_mut())
+            .for_each_init(
+                || (D::new(), U::new()),
+                |(digest, updater), (chunk, out)| {
+                    updater.update(digest, chunk);
+                    let hash = digest.finalize_reset();
+                    out.copy_from_slice(&hash[..32]);
+                },
+            );
     }
 
     fn node_hash(&self, input: &[Hash], out: &mut [Hash]) {
         assert_eq!(2 * out.len(), input.len());
-        let mut digest = D::new();
-        for (chunk, out) in input.chunks_exact(2).zip(out.iter_mut()) {
-            Digest::update(&mut digest, chunk.as_bytes());
-            let hash = digest.finalize_reset();
-            out.copy_from_slice(&hash[..32]);
-        }
+        input
+            .par_chunks_exact(2)
+            .zip(out.par_iter_mut())
+            .for_each_init(
+                || D::new(),
+                |digest, (chunk, out)| {
+                    Digest::update(digest, chunk.as_bytes());
+                    let hash = digest.finalize_reset();
+                    out.copy_from_slice(&hash[..32]);
+                },
+            );
     }
 }
 

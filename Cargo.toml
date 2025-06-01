@@ -63,6 +63,7 @@ tracing = { version = "0.1.41", optional = true }
 hex = "0.4.3"
 zerocopy = { version = "0.8.25", features = ["std"] }
 digest = "0.10.7"
+maybe-rayon = { package = "p3-maybe-rayon", version = "0.2.0" }
 
 [dev-dependencies]
 proptest = "1.0"
@@ -78,6 +79,7 @@ debug = true
 default = ["parallel"]
 parallel = [
     "dep:rayon",
+    "maybe-rayon/parallel",
     "ark-poly/parallel",
     "ark-ff/parallel",
     "ark-crypto-primitives/parallel",

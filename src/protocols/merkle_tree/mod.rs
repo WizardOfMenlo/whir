@@ -2,10 +2,7 @@
 
 pub mod digest;
 
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::{fmt::Debug, sync::Arc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::{
