@@ -12,7 +12,7 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
-    ntt::rs_encode_coset_poly,
+    ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
@@ -65,7 +65,7 @@ where
         let expansion = base_domain.size() / polynomial.num_coeffs();
 
         // Expand the polynomial coefficients into evaluations over the extended domain.
-        let evals = rs_encode_coset_poly(
+        let evals = interleaved_rs_encode(
             polynomial.coeffs(),
             expansion,
             self.0.folding_factor.at_round(0),
