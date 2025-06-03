@@ -68,7 +68,7 @@ pub(super) fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> 
 ///
 /// # Panics
 /// Panics if the input size is not divisible by `2^folding_factor`.
-pub(crate) fn transform_evaluations<F: FftField>(
+pub fn transform_evaluations<F: FftField>(
     evals: &mut [F],
     domain_gen_inv: F,
     folding_factor: usize,

@@ -258,7 +258,7 @@ mod tests {
 
         let eval_domain = GeneralEvaluationDomain::<Field64>::new(count * expansion).unwrap();
 
-        let poly = Vec::from_iter((0..count).into_iter().map(|_| Field64::rand(&mut rng)));
+        let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
 
         // Compute things the old way
         let mut expected = test_utils::expand_from_coeff(&poly, expansion);
