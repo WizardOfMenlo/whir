@@ -8,9 +8,8 @@ use std::{
 };
 
 use spongefish::{
-    codecs::{ZeroCopyPattern, ZeroCopyProver, ZeroCopyVerifier},
-    transcript::Label,
-    Unit,
+    codecs::zerocopy,
+    transcript::{self, InteractionError, Label, TranscriptError},
 };
 use thiserror::Error;
 
@@ -36,44 +35,37 @@ pub struct Config {
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Error)]
-pub enum VerifierError<E> {
+pub enum VerifierError {
     #[error(transparent)]
-    Inner(#[from] E),
+    Interaction(#[from] InteractionError),
+    #[error(transparent)]
+    Verifier(#[from] spongefish::VerifierError),
     #[error("Proof of work does not meet the difficulty requirement.")]
     ProofOfWorkFailed,
 }
 
-pub trait ProofOfWorkPattern<U>: ZeroCopyPattern<U>
-where
-    U: Unit,
-{
+pub trait Pattern {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), TranscriptError>;
 }
 
-pub trait ProofOfWorkProver<U>: ZeroCopyProver<U>
-where
-    U: Unit,
-{
+pub trait Prover {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), InteractionError>;
 }
 
-pub trait ProofOfWorkVerifier<'a, U>: ZeroCopyVerifier<'a, U>
-where
-    U: Unit,
-{
+pub trait Verifier {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
-    ) -> Result<(), VerifierError<Self::Error>>;
+    ) -> Result<(), VerifierError>;
 }
 
 impl Config {
@@ -81,6 +73,7 @@ impl Config {
         Self { engine, difficulty }
     }
 }
+
 impl PartialEq for Config {
     fn eq(&self, other: &Self) -> bool {
         self.engine.to_string() == other.engine.to_string() && self.difficulty == other.difficulty
@@ -128,16 +121,15 @@ impl Display for Config {
     }
 }
 
-impl<U, P> ProofOfWorkPattern<U> for P
+impl<P> Pattern for P
 where
-    U: Unit,
-    P: ZeroCopyPattern<U>,
+    P: transcript::Pattern + zerocopy::Pattern,
 {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         _config: &Config,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), TranscriptError> {
         let label = label.into();
         self.begin_protocol::<Config>(label.clone())?;
         self.challenge_zerocopy::<[u8; 32]>("challenge")?;
@@ -146,16 +138,15 @@ where
     }
 }
 
-impl<U, P> ProofOfWorkProver<U> for P
+impl<P> Prover for P
 where
-    U: Unit,
-    P: ZeroCopyProver<U>,
+    P: transcript::Prover + zerocopy::Prover,
 {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), InteractionError> {
         let label = label.into();
         self.begin_protocol::<Config>(label.clone())?;
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
@@ -165,16 +156,15 @@ where
     }
 }
 
-impl<'a, U, P> ProofOfWorkVerifier<'a, U> for P
+impl<'a, P> Verifier for P
 where
-    U: Unit,
-    P: ZeroCopyVerifier<'a, U>,
+    P: transcript::Verifier + zerocopy::Verifier<'a>,
 {
     fn proof_of_work(
         &mut self,
         label: impl Into<Label>,
         config: &Config,
-    ) -> Result<(), VerifierError<Self::Error>> {
+    ) -> Result<(), VerifierError> {
         let label = label.into();
         self.begin_protocol::<Config>(label.clone())?;
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
@@ -211,7 +201,7 @@ mod tests {
         let mut prover: ProverState = ProverState::from(&pattern);
         prover.proof_of_work("pow", &config)?;
         let proof = prover.finalize()?;
-        assert_eq!(hex::encode(&proof), "1b00000000000000");
+        assert_eq!(hex::encode(&proof), "3100000000000000");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         verifier.proof_of_work("pow", &config)?;

@@ -2,40 +2,33 @@
 
 use ark_ff::Field;
 use spongefish::{
-    codecs::arkworks::{ArkFieldCommon, ArkFieldPattern},
-    transcript::{Label, Length},
-    Unit, UnitCommon, UnitPattern,
+    codecs::arkworks::field,
+    transcript::{self, InteractionError, Label, Length, TranscriptError},
 };
 
-pub trait ChallengeGeometricPattern<U>: UnitPattern<U>
-where
-    U: Unit,
-{
+pub trait Pattern {
     fn challenge_ark_geometric<F>(
         &mut self,
         label: impl Into<Label>,
         size: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         F: Field;
 }
 
-pub trait ChallengeGeometricCommon<U>: UnitCommon<U>
-where
-    U: Unit,
-{
+pub trait Common {
     fn challenge_ark_geometric_out<F>(
         &mut self,
         label: impl Into<Label>,
         out: &mut [F],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), InteractionError>
     where
         F: Field;
 
     fn challenge_ark_geometric_array<F, const N: usize>(
         &mut self,
         label: impl Into<Label>,
-    ) -> Result<[F; N], Self::Error>
+    ) -> Result<[F; N], InteractionError>
     where
         F: Field,
     {
@@ -48,7 +41,7 @@ where
         &mut self,
         label: impl Into<Label>,
         size: usize,
-    ) -> Result<Vec<F>, Self::Error>
+    ) -> Result<Vec<F>, InteractionError>
     where
         F: Field,
     {
@@ -58,16 +51,15 @@ where
     }
 }
 
-impl<U, P> ChallengeGeometricPattern<U> for P
+impl<P> Pattern for P
 where
-    U: Unit,
-    P: ArkFieldPattern<U>,
+    P: transcript::Pattern + field::Pattern,
 {
     fn challenge_ark_geometric<F>(
         &mut self,
         label: impl Into<Label>,
         size: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         F: Field,
     {
@@ -80,16 +72,15 @@ where
     }
 }
 
-impl<U, P> ChallengeGeometricCommon<U> for P
+impl<P> Common for P
 where
-    U: Unit,
-    P: ArkFieldCommon<U>,
+    P: transcript::Common + field::Common,
 {
     fn challenge_ark_geometric_out<F>(
         &mut self,
         label: impl Into<Label>,
         out: &mut [F],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), InteractionError>
     where
         F: Field,
     {
@@ -149,8 +140,8 @@ mod tests {
             prover.challenge_ark_geometric_array::<BabyBear, 3>("3")?,
             [
                 BabyBear::ONE,
-                BabyBear::from(745681271),
-                BabyBear::from(1326741669)
+                BabyBear::from(42748529),
+                BabyBear::from(1294969904)
             ]
         );
         let proof = prover.finalize()?;
@@ -169,8 +160,8 @@ mod tests {
             verifier.challenge_ark_geometric_array::<BabyBear, 3>("3")?,
             [
                 BabyBear::ONE,
-                BabyBear::from(745681271),
-                BabyBear::from(1326741669)
+                BabyBear::from(42748529),
+                BabyBear::from(1294969904)
             ]
         );
         verifier.finalize()?;

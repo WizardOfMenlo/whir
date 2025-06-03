@@ -4,18 +4,13 @@ pub mod digest;
 
 use std::{fmt::Debug, sync::Arc};
 
+use ::zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::{
-    codecs::{
-        arkworks::{ArkworksHintPattern, ArkworksHintProver, ArkworksHintVerifier},
-        ZeroCopyHintProver, ZeroCopyHintVerifier, ZeroCopyPattern, ZeroCopyProver,
-        ZeroCopyVerifier,
-    },
-    transcript::{Label, Length},
-    Unit,
+    codecs::{arkworks::serialize, zerocopy},
+    transcript::{self, InteractionError, Label, Length, TranscriptError},
 };
 use thiserror::Error;
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 pub type Hash = [u8; 32];
 
@@ -44,7 +39,10 @@ pub struct Config<T> {
     leaf_size: usize,
     num_leaves: usize,
     // TODO: blinding: bool,
+
     // TODO: merkle_cap: usize,
+    // We already do path merging, so this has no advantage for proof size or native performance,
+    // however a Merkle cap can still be beneficial for a recursive verifier.
 }
 
 pub struct Witness {
@@ -73,9 +71,11 @@ pub struct Commitment {
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Error)]
-pub enum VerifierError<E> {
+pub enum VerifierError {
     #[error(transparent)]
-    Inner(#[from] E),
+    Verifier(#[from] spongefish::VerifierError),
+    #[error("Witness did not have the expected number of nodes.")]
+    WitnessIncorrectNodes,
     #[error("Leaf index was out of bounds.")]
     OutOfBounds,
     #[error("Merkle tree root did not match.")]
@@ -83,30 +83,32 @@ pub enum VerifierError<E> {
     #[error("A duplicated leaf was inconsistent.")]
     DuplicateLeafMismatch,
 }
+impl From<InteractionError> for VerifierError {
+    fn from(err: InteractionError) -> Self {
+        VerifierError::Verifier(err.into())
+    }
+}
 
-pub trait MerkleTreePattern<U>: ZeroCopyPattern<U> + ArkworksHintPattern<U>
-where
-    U: Unit,
-{
+pub trait Pattern {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), TranscriptError>;
 
     fn merkle_tree_open<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), TranscriptError>;
 
     fn merkle_tree_open_with_leaves<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes;
 
@@ -115,21 +117,18 @@ where
         label: impl Into<Label>,
         config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize;
 }
 
-pub trait MerkleTreeProver<U>: ZeroCopyProver<U> + ArkworksHintProver<U>
-where
-    U: Unit,
-{
+pub trait Prover {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
         values: &[T],
-    ) -> Result<Witness, Self::Error>;
+    ) -> Result<Witness, InteractionError>;
 
     /// Open without hinting leaves
     /// Useful to save proof size when verifier has them by other means.
@@ -139,7 +138,7 @@ where
         config: &Config<T>,
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), InteractionError>;
 
     fn merkle_tree_open_with_leaves<T>(
         &mut self,
@@ -148,7 +147,7 @@ where
         values: &[T],
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error>
+    ) -> Result<Vec<T>, InteractionError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes;
 
@@ -159,20 +158,17 @@ where
         values: &[T],
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error>
+    ) -> Result<Vec<T>, InteractionError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize;
 }
 
-pub trait MerkleTreeVerifier<'a, U>: ZeroCopyVerifier<'a, U> + ArkworksHintVerifier<'a, U>
-where
-    U: Unit,
-{
+pub trait Verifier<'a> {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
-    ) -> Result<Commitment, Self::Error>;
+    ) -> Result<Commitment, VerifierError>;
 
     fn merkle_tree_open<T>(
         &mut self,
@@ -181,7 +177,17 @@ where
         commitment: &Commitment,
         indices: &[usize],
         leaves: &[T],
-    ) -> Result<(), VerifierError<Self::Error>>;
+    ) -> Result<(), VerifierError>;
+
+    fn merkle_tree_open_with_leaves_ref<T>(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config<T>,
+        commitment: &Commitment,
+        indices: &[usize],
+    ) -> Result<&'a [T], VerifierError>
+    where
+        T: Unaligned + Immutable + KnownLayout + IntoBytes + FromBytes;
 
     fn merkle_tree_open_with_leaves_out<T>(
         &mut self,
@@ -190,7 +196,7 @@ where
         commitment: &Commitment,
         indices: &[usize],
         out: &mut [T],
-    ) -> Result<(), VerifierError<Self::Error>>
+    ) -> Result<(), VerifierError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes;
 
@@ -200,7 +206,7 @@ where
         config: &Config<T>,
         commitment: &Commitment,
         indices: &[usize],
-    ) -> Result<Vec<T>, VerifierError<Self::Error>>
+    ) -> Result<Vec<T>, VerifierError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes,
     {
@@ -216,7 +222,7 @@ where
         config: &Config<T>,
         commitment: &Commitment,
         indices: &[usize],
-    ) -> Result<Vec<T>, VerifierError<Self::Error>>
+    ) -> Result<Vec<T>, VerifierError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize;
 }
@@ -254,6 +260,11 @@ impl<T> Config<T> {
         // The number of nodes is num_leaves - 1.
         2 * self.num_leaves - 1
     }
+
+    pub fn verify_witness(&self, witness: &Witness) {
+        assert_eq!(witness.nodes.len(), self.num_nodes());
+        assert_eq!(witness.num_leaves(), self.num_leaves);
+    }
 }
 
 impl Witness {
@@ -277,16 +288,15 @@ impl Witness {
     }
 }
 
-impl<U, P> MerkleTreePattern<U> for P
+impl<P> Pattern for P
 where
-    U: Unit,
-    P: ZeroCopyPattern<U> + ArkworksHintPattern<U>,
+    P: transcript::Pattern + zerocopy::Pattern + serialize::HintPattern,
 {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), TranscriptError> {
         let label = label.into();
         self.begin_message::<Config<T>>(label.clone(), Length::Fixed(config.num_leaves))?;
         self.message_zerocopy::<Commitment>("root")?;
@@ -298,7 +308,7 @@ where
         label: impl Into<Label>,
         _config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), TranscriptError> {
         let label = label.into();
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(num_open))?;
         self.hint_zerocopies_dynamic::<Hash>("merkle-proof")?;
@@ -310,7 +320,7 @@ where
         label: impl Into<Label>,
         config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes,
     {
@@ -326,7 +336,7 @@ where
         label: impl Into<Label>,
         config: &Config<T>,
         num_open: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), TranscriptError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize,
     {
@@ -338,17 +348,16 @@ where
     }
 }
 
-impl<U, P> MerkleTreeProver<U> for P
+impl<P> Prover for P
 where
-    U: Unit,
-    P: ZeroCopyProver<U> + ZeroCopyHintProver<U> + ArkworksHintProver<U>,
+    P: transcript::Prover + zerocopy::Prover + serialize::HintProver,
 {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
         leaves: &[T],
-    ) -> Result<Witness, Self::Error> {
+    ) -> Result<Witness, InteractionError> {
         assert_eq!(leaves.len(), config.leaf_size * config.num_leaves);
         let label = label.into();
         self.begin_message::<Config<T>>(label.clone(), Length::Fixed(config.num_leaves))?;
@@ -386,7 +395,7 @@ where
         config: &Config<T>,
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), InteractionError> {
         let label = label.into();
         let size = indices.len();
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(size))?;
@@ -429,7 +438,7 @@ where
         values: &[T],
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error>
+    ) -> Result<Vec<T>, InteractionError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes,
     {
@@ -442,7 +451,8 @@ where
         }
         self.hint_zerocopy_slice("opened-leaves", &opened_leaves)?;
         self.merkle_tree_open("merkle-proof", config, witness, indices)?;
-        self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))
+        self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
+        Ok(opened_leaves)
     }
 
     fn merkle_tree_open_with_leaves_ark<T>(
@@ -452,7 +462,7 @@ where
         values: &[T],
         witness: &Witness,
         indices: &[usize],
-    ) -> Result<(), Self::Error>
+    ) -> Result<Vec<T>, InteractionError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize,
     {
@@ -466,20 +476,20 @@ where
         self.hint_arkworks::<Vec<T>>("opened-leaves", &opened_leaves)
             .expect("TODO"); // TODO
         self.merkle_tree_open("merkle-proof", config, witness, indices)?;
-        self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))
+        self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
+        Ok(opened_leaves)
     }
 }
 
-impl<'a, U, P> MerkleTreeVerifier<'a, U> for P
+impl<'a, P> Verifier<'a> for P
 where
-    U: Unit,
-    P: ZeroCopyVerifier<'a, U> + ZeroCopyHintVerifier<'a, U> + ArkworksHintVerifier<'a, U>,
+    P: transcript::Verifier + zerocopy::Verifier<'a> + serialize::HintVerifier,
 {
     fn merkle_tree_commit<T>(
         &mut self,
         label: impl Into<Label>,
         config: &Config<T>,
-    ) -> Result<Commitment, Self::Error> {
+    ) -> Result<Commitment, VerifierError> {
         let label = label.into();
         self.begin_message::<Config<T>>(label.clone(), Length::Fixed(config.num_leaves))?;
         let commitment = self.message_zerocopy::<Commitment>("root")?;
@@ -494,7 +504,7 @@ where
         commitment: &Commitment,
         indices: &[usize],
         leaves: &[T],
-    ) -> Result<(), VerifierError<Self::Error>> {
+    ) -> Result<(), VerifierError> {
         let label = label.into();
         let size = indices.len();
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(size))?;
@@ -528,7 +538,7 @@ where
         let mut indices = layer.iter().map(|(i, _)| *i).collect::<Vec<_>>();
         let mut hashes = layer.iter().map(|(_, h)| *h).collect::<Vec<_>>();
 
-        let proof = self.hint_zerocopy_dynamic_vec::<Hash>("merkle-proof")?;
+        let proof = self.hint_zerocopy_dynamic_slice_ref::<Hash>("merkle-proof")?;
         let mut proof = proof.iter().copied();
 
         for _ in 0..config.num_layers() {
@@ -581,6 +591,26 @@ where
         Ok(())
     }
 
+    fn merkle_tree_open_with_leaves_ref<T>(
+        &mut self,
+        label: impl Into<Label>,
+        config: &Config<T>,
+        commitment: &Commitment,
+        indices: &[usize],
+    ) -> Result<&'a [T], VerifierError>
+    where
+        T: Unaligned + Immutable + KnownLayout + IntoBytes + FromBytes,
+    {
+        let label = label.into();
+        self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
+        let leaves =
+            self.hint_zerocopy_slice_ref::<T>("opened-leaves", indices.len() * config.leaf_size)?;
+        dbg!();
+        self.merkle_tree_open("merkle-proof", config, commitment, indices, leaves)?;
+        self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
+        Ok(leaves)
+    }
+
     fn merkle_tree_open_with_leaves_out<T>(
         &mut self,
         label: impl Into<Label>,
@@ -588,7 +618,7 @@ where
         commitment: &Commitment,
         indices: &[usize],
         out: &mut [T],
-    ) -> Result<(), VerifierError<Self::Error>>
+    ) -> Result<(), VerifierError>
     where
         T: Clone + Immutable + KnownLayout + IntoBytes + FromBytes,
     {
@@ -596,7 +626,6 @@ where
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
         assert_eq!(out.len(), indices.len() * config.leaf_size);
         self.hint_zerocopy_slice_out::<T>("opened-leaves", out)?;
-        dbg!();
         self.merkle_tree_open("merkle-proof", config, commitment, indices, out)?;
         self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()))?;
         Ok(())
@@ -608,7 +637,7 @@ where
         config: &Config<T>,
         commitment: &Commitment,
         indices: &[usize],
-    ) -> Result<Vec<T>, VerifierError<Self::Error>>
+    ) -> Result<Vec<T>, VerifierError>
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize,
     {
