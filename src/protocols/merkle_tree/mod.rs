@@ -261,7 +261,7 @@ impl<T> Config<T> {
         2 * self.num_leaves - 1
     }
 
-    pub fn verify_witness(&self, witness: &Witness) {
+    pub fn assert_valid_witness(&self, witness: &Witness) {
         assert_eq!(witness.nodes.len(), self.num_nodes());
         assert_eq!(witness.num_leaves(), self.num_leaves);
     }

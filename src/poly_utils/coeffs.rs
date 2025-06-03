@@ -1,14 +1,15 @@
 use ark_ff::Field;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
-#[cfg(feature = "parallel")]
-use {
-    rayon::{join, prelude::*},
-    std::mem::size_of,
-};
 
 use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
-use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
+use crate::{
+    ntt::wavelet_transform,
+    poly_utils::multilinear::MultilinearPoint,
+    utils::{maybe_join, workload_size},
+};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -157,7 +158,7 @@ impl<F> CoefficientList<F> {
 }
 
 /// Multivariate evaluation in coefficient form.
-fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
+pub fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     debug_assert_eq!(coeffs.len(), 1 << point.len());
     match point {
         [] => coeffs[0],
@@ -195,20 +196,67 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
         }
         [x, tail @ ..] => {
             let (b0t, b1t) = coeffs.split_at(coeffs.len() / 2);
-            #[cfg(not(feature = "parallel"))]
-            let (b0t, b1t) = (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail));
-            #[cfg(feature = "parallel")]
-            let (b0t, b1t) = {
-                let work_size: usize = (1 << 15) / size_of::<F>();
-                if coeffs.len() > work_size {
-                    join(
-                        || eval_multivariate(b0t, tail),
-                        || eval_multivariate(b1t, tail),
-                    )
-                } else {
-                    (eval_multivariate(b0t, tail), eval_multivariate(b1t, tail))
-                }
-            };
+            let (b0t, b1t) = maybe_join(
+                coeffs.len() > workload_size::<F>(),
+                || eval_multivariate(b0t, tail),
+                || eval_multivariate(b1t, tail),
+            );
+            b0t + b1t * x
+        }
+    }
+}
+
+/// Multivariate evaluation in coefficient form using folds from a field extension.
+pub fn eval_multivariate_extend<F, G>(coeffs: &[F], point: &[G]) -> G
+where
+    F: Field,
+    G: Field<BasePrimeField = F>,
+{
+    debug_assert_eq!(coeffs.len(), 1 << point.len());
+    match point {
+        [] => G::from_base_prime_field(coeffs[0]),
+        [x] => G::from_base_prime_field(coeffs[0]) + x.mul_by_base_prime_field(&coeffs[1]),
+        [x0, x1] => {
+            let b0 = G::from_base_prime_field(coeffs[0]) + x1.mul_by_base_prime_field(&coeffs[1]);
+            let b1 = G::from_base_prime_field(coeffs[2]) + x1.mul_by_base_prime_field(&coeffs[3]);
+            b0 + b1 * x0
+        }
+        [x0, x1, x2] => {
+            let b00 = G::from_base_prime_field(coeffs[0]) + x2.mul_by_base_prime_field(&coeffs[1]);
+            let b01 = G::from_base_prime_field(coeffs[2]) + x2.mul_by_base_prime_field(&coeffs[3]);
+            let b10 = G::from_base_prime_field(coeffs[4]) + x2.mul_by_base_prime_field(&coeffs[5]);
+            let b11 = G::from_base_prime_field(coeffs[6]) + x2.mul_by_base_prime_field(&coeffs[7]);
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x0, x1, x2, x3] => {
+            let b000 = G::from_base_prime_field(coeffs[0]) + x3.mul_by_base_prime_field(&coeffs[1]);
+            let b001 = G::from_base_prime_field(coeffs[2]) + x3.mul_by_base_prime_field(&coeffs[3]);
+            let b010 = G::from_base_prime_field(coeffs[4]) + x3.mul_by_base_prime_field(&coeffs[5]);
+            let b011 = G::from_base_prime_field(coeffs[6]) + x3.mul_by_base_prime_field(&coeffs[7]);
+            let b100 = G::from_base_prime_field(coeffs[8]) + x3.mul_by_base_prime_field(&coeffs[9]);
+            let b101 =
+                G::from_base_prime_field(coeffs[10]) + x3.mul_by_base_prime_field(&coeffs[11]);
+            let b110 =
+                G::from_base_prime_field(coeffs[12]) + x3.mul_by_base_prime_field(&coeffs[13]);
+            let b111 =
+                G::from_base_prime_field(coeffs[14]) + x3.mul_by_base_prime_field(&coeffs[15]);
+            let b00 = b000 + b001 * x2;
+            let b01 = b010 + b011 * x2;
+            let b10 = b100 + b101 * x2;
+            let b11 = b110 + b111 * x2;
+            let b0 = b00 + b01 * x1;
+            let b1 = b10 + b11 * x1;
+            b0 + b1 * x0
+        }
+        [x, tail @ ..] => {
+            let (b0t, b1t) = coeffs.split_at(coeffs.len() / 2);
+            let (b0t, b1t) = maybe_join(
+                coeffs.len() > workload_size::<F>(),
+                || eval_multivariate_extend(b0t, tail),
+                || eval_multivariate_extend(b1t, tail),
+            );
             b0t + b1t * x
         }
     }

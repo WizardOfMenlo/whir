@@ -1,11 +1,3 @@
-/// Target single-thread workload size for `T`.
-/// Should ideally be a multiple of a cache line (64 bytes)
-/// and close to the L1 cache size (32 KB).
-pub const fn workload_size<T: Sized>() -> usize {
-    const CACHE_SIZE: usize = 1 << 15;
-    CACHE_SIZE / size_of::<T>()
-}
-
 /// Compute the largest factor of `n` that is ≤ sqrt(n).
 /// Assumes `n` is of the form `2^k * {1,3,9}`.
 pub fn sqrt_factor(n: usize) -> usize {

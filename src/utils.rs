@@ -6,6 +6,32 @@ use ark_serialize::CanonicalSerialize;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+/// Target single-thread workload size for `T`.
+/// Should ideally be a multiple of a cache line (64 bytes)
+/// and close to the L1 cache size (32 KB).
+pub const fn workload_size<T: Sized>() -> usize {
+    const CACHE_SIZE: usize = 1 << 15;
+    CACHE_SIZE / size_of::<T>()
+}
+
+#[inline(always)]
+pub fn maybe_join<A, B, RA, RB>(parallel: bool, a: RA, b: RB) -> (A, B)
+where
+    A: Send,
+    B: Send,
+    RA: FnOnce() -> A + Send,
+    RB: FnOnce() -> B + Send,
+{
+    #[cfg(not(feature = "parallel"))]
+    return (a(), b());
+    #[cfg(feature = "parallel")]
+    if parallel {
+        rayon::join(a, b)
+    } else {
+        (a(), b())
+    }
+}
+
 /// Workaround for Ark types that are missing comparisons
 pub fn ark_eq<T: CanonicalSerialize>(a: &T, b: &T) -> bool {
     let mut buf_a = Vec::new();

@@ -44,6 +44,9 @@ pub trait Common {
     }
 }
 
+pub use Common as Prover;
+pub use Common as Verifier;
+
 impl<P> Pattern for P
 where
     P: transcript::Pattern + bytes::Pattern,
