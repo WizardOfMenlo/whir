@@ -12,8 +12,8 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
-    ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
+    ntt::interleaved_rs_encode,
+    poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
         utils::{sample_ood_points, DigestToUnitSerialize},
@@ -65,10 +65,9 @@ where
         let expansion = base_domain.size() / polynomial.num_coeffs();
 
         // Expand the polynomial coefficients into evaluations over the extended domain.
-        let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
-        transform_evaluations(
-            &mut evals,
-            base_domain.group_gen_inv(),
+        let evals = interleaved_rs_encode(
+            polynomial.coeffs(),
+            expansion,
             self.0.folding_factor.at_round(0),
         );
 

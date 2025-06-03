@@ -2,13 +2,15 @@
 
 mod cooley_tukey;
 mod matrix;
+
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 mod transpose;
 mod utils;
 mod wavelet;
 
 use ark_ff::FftField;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -19,46 +21,49 @@ pub use self::{
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
 
-/// RS encode at a rate 1/`expansion`.
-#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
-pub fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> {
-    let engine = cooley_tukey::NttEngine::<F>::new_from_cache();
-    let expanded_size = coeffs.len() * expansion;
-    let mut result = Vec::with_capacity(expanded_size);
-    // Note: We can also zero-extend the coefficients and do a larger NTT.
-    // But this is more efficient.
+///
+/// RS encode interleaved data `interleaved_coeffs` at the rate
+/// 1/`expansion`, where 2^`fold_factor` elements are interleaved
+/// together.
+///
+/// This function computes the RS-code for each interleaved message and
+/// outputs the interleaved alphabets in the same order as the input.
+///
+#[cfg_attr(feature = "tracing", instrument(skip(poly), fields(size = poly.len())))]
+pub fn interleaved_rs_encode<F: FftField>(
+    interleaved_coeffs: &[F],
+    expansion: usize,
+    fold_factor: usize,
+) -> Vec<F> {
+    let fold_factor = u32::try_from(fold_factor).unwrap();
+    debug_assert!(expansion > 0);
+    debug_assert!(interleaved_coeffs.len().is_power_of_two());
 
-    // Do coset NTT.
-    let root = engine.root(expanded_size);
-    result.extend_from_slice(coeffs);
-    #[cfg(not(feature = "parallel"))]
-    for i in 1..expansion {
-        let root = root.pow([i as u64]);
-        let mut offset = F::ONE;
-        result.extend(coeffs.iter().map(|x| {
-            let val = *x * offset;
-            offset *= root;
-            val
-        }));
-    }
-    #[cfg(feature = "parallel")]
-    result.par_extend((1..expansion).into_par_iter().flat_map(|i| {
-        let root_i = root.pow([i as u64]);
-        coeffs
-            .par_iter()
-            .enumerate()
-            .map_with(F::ZERO, move |root_j, (j, coeff)| {
-                if root_j.is_zero() {
-                    *root_j = root_i.pow([j as u64]);
-                } else {
-                    *root_j *= root_i;
-                }
-                *coeff * *root_j
-            })
-    }));
+    let fold_factor_exp = 2usize.pow(fold_factor);
+    let expanded_size = interleaved_coeffs.len() * expansion;
 
-    ntt_batch(&mut result, coeffs.len());
-    transpose(&mut result, expansion, coeffs.len());
+    debug_assert_eq!(expanded_size % fold_factor_exp, 0);
+
+    // 1. Create zero-padded message of appropriate size
+    let mut result = vec![F::zero(); expanded_size];
+    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+
+    let rows = expanded_size / fold_factor_exp;
+    let columns = fold_factor_exp;
+
+    //
+    // 2. Convert from column-major (interleaved form) to row-major
+    //    representation.
+    //
+
+    // TODO: Might be useful to keep the transposed data for future use.
+    transpose(&mut result, rows, columns);
+
+    // 3. Compute NTT on row-major representation
+    ntt_batch(&mut result, rows);
+
+    // 4. Convert back to column-major (interleaved) representation
+    transpose(&mut result, columns, rows);
     result
 }
 
@@ -121,7 +126,7 @@ mod tests {
         // The expected NTT result should be in transposed order:
         let expected_values_transposed = vec![expected_f0, expected_f2, expected_f1, expected_f3];
 
-        let computed_values = expand_from_coeff(&coeffs, expansion);
+        let computed_values = test_utils::expand_from_coeff(&coeffs, expansion);
         assert_eq!(computed_values, expected_values_transposed);
     }
 
@@ -237,7 +242,34 @@ mod tests {
             expected_f15,
         ];
 
-        let computed_values = expand_from_coeff(&coeffs, expansion);
+        let computed_values = test_utils::expand_from_coeff(&coeffs, expansion);
         assert_eq!(computed_values, expected_values_transposed);
+    }
+
+    #[test]
+    fn test_interleaved_rs_encode() {
+        use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+        use ark_std::UniformRand;
+
+        let mut rng = ark_std::test_rng();
+        let count = 1 << 20;
+        let expansion = 4;
+        let folding_factor = 6;
+
+        let eval_domain = GeneralEvaluationDomain::<Field64>::new(count * expansion).unwrap();
+
+        let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
+
+        // Compute things the old way
+        let mut expected = test_utils::expand_from_coeff(&poly, expansion);
+        test_utils::transform_evaluations(
+            &mut expected,
+            eval_domain.group_gen_inv(),
+            folding_factor,
+        );
+
+        // Compute things the new way
+        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        assert_eq!(expected, interleaved_ntt);
     }
 }

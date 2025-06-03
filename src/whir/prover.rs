@@ -19,10 +19,8 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
+    ntt::interleaved_rs_encode,
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
@@ -208,12 +206,8 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let mut evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
-        transform_evaluations(
-            &mut evals,
-            new_domain.backing_domain.group_gen_inv(),
-            folding_factor_next,
-        );
+        let evals =
+            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
