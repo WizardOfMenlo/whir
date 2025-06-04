@@ -8,7 +8,7 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::{
     codecs::arkworks::serialize,
-    transcript::{self, InteractionError, Label, Length, TranscriptError},
+    transcript::{self, Label, Length},
 };
 
 use crate::{
@@ -53,21 +53,13 @@ where
 pub type Commitment = merkle_tree::Commitment;
 
 pub trait Pattern {
-    fn reed_solomon_commit<F>(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config<F>,
-    ) -> Result<(), TranscriptError>
+    fn reed_solomon_commit<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
     where
         F: FftField;
 
     /// Opens the RS commitment by random sampling from the evaluation domain.
     /// Returns the evaluation points and values.
-    fn reed_solomon_open<F>(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config<F>,
-    ) -> Result<(), TranscriptError>
+    fn reed_solomon_open<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize;
 }
@@ -78,7 +70,7 @@ pub trait Prover {
         label: impl Into<Label>,
         config: &Config<F>,
         polynomial: &CoefficientList<F>,
-    ) -> Result<Witness<F>, InteractionError>
+    ) -> Witness<F>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize;
 
@@ -89,7 +81,7 @@ pub trait Prover {
         label: impl Into<Label>,
         config: &Config<F>,
         witness: &Witness<F>,
-    ) -> Result<(Vec<F>, Vec<F>), InteractionError>
+    ) -> (Vec<F>, Vec<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize;
 
@@ -99,18 +91,18 @@ pub trait Prover {
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[F],
-    ) -> Result<Vec<(F, F)>, InteractionError>
+    ) -> Vec<(F, F)>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         assert_eq!(folds.len(), config.num_folds);
-        let (points, evaluations) = self.reed_solomon_open(label, config, witness)?;
+        let (points, evaluations) = self.reed_solomon_open(label, config, witness);
         let result = points
             .into_iter()
             .zip(evaluations.chunks_exact(config.coset_size()))
             .map(|(point, coeffs)| (point, eval_multivariate(coeffs, folds)))
             .collect::<Vec<_>>();
-        Ok(result)
+        result
     }
 
     /// Opens using folds in an extension of F, otherwise identical to [`reed_solomon_open`].
@@ -120,19 +112,19 @@ pub trait Prover {
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[G],
-    ) -> Result<Vec<(F, G)>, InteractionError>
+    ) -> Vec<(F, G)>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
         G: Field<BasePrimeField = F>,
     {
         assert_eq!(folds.len(), config.num_folds);
-        let (points, evaluations) = self.reed_solomon_open(label, config, witness)?;
+        let (points, evaluations) = self.reed_solomon_open(label, config, witness);
         let result = points
             .into_iter()
             .zip(evaluations.chunks_exact(config.coset_size()))
             .map(|(point, coeffs)| (point, eval_multivariate_extend(coeffs, folds)))
             .collect::<Vec<_>>();
-        Ok(result)
+        result
     }
 }
 
@@ -197,42 +189,34 @@ where
         + challenge_indices::Pattern
         + merkle_tree::Pattern,
 {
-    fn reed_solomon_commit<F>(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config<F>,
-    ) -> Result<(), TranscriptError>
+    fn reed_solomon_commit<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         let label = label.into();
-        self.begin_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
-        self.merkle_tree_commit("merkle-tree", &config.merkle_tree)?;
+        self.begin_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
+        self.merkle_tree_commit("merkle-tree", &config.merkle_tree);
         self.end_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))
     }
 
-    fn reed_solomon_open<F>(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config<F>,
-    ) -> Result<(), TranscriptError>
+    fn reed_solomon_open<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         let label = label.into();
-        self.begin_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
+        self.begin_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
         self.challenge_indices(
             "evaluation-point-indices",
             config.evaluation_domain.size(),
             config.num_in_domain_samples,
-        )?;
-        self.hint_arkworks::<Vec<F>>("evaluations")?;
+        );
+        self.hint_arkworks::<Vec<F>>("evaluations");
         self.merkle_tree_open(
             "merkle-tree",
             &config.merkle_tree,
             config.num_in_domain_samples,
-        )?;
-        self.end_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))
+        );
+        self.end_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
     }
 }
 
@@ -245,25 +229,24 @@ where
         label: impl Into<Label>,
         config: &Config<F>,
         polynomial: &CoefficientList<F>,
-    ) -> Result<Witness<F>, InteractionError>
+    ) -> Witness<F>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         let label = label.into();
-        self.begin_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
+        self.begin_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
         let mut evaluations = expand_from_coeff(polynomial.coeffs(), config.expansion());
         transform_evaluations(
             &mut evaluations,
             config.evaluation_domain.group_gen_inv(),
             config.coset_size(),
         );
-        let merkle_tree =
-            self.merkle_tree_commit("merkle-tree", &config.merkle_tree, &evaluations)?;
-        self.end_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
-        Ok(Witness {
+        let merkle_tree = self.merkle_tree_commit("merkle-tree", &config.merkle_tree, &evaluations);
+        self.end_message::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
+        Witness {
             merkle_tree,
             evaluations,
-        })
+        }
     }
 
     fn reed_solomon_open<F>(
@@ -271,20 +254,20 @@ where
         label: impl Into<Label>,
         config: &Config<F>,
         witness: &Witness<F>,
-    ) -> Result<(Vec<F>, Vec<F>), InteractionError>
+    ) -> (Vec<F>, Vec<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         config.assert_valid_witness(witness);
         let label = label.into();
-        self.begin_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
+        self.begin_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
 
         // Compute in-domain challenge points.
         let indices = self.challenge_indices_vec(
             "evaluation-point-indices",
             config.evaluation_domain.size(),
             config.num_in_domain_samples,
-        )?;
+        );
         let points = indices
             .iter()
             .map(|&i| config.evaluation_domain.element(i))
@@ -297,9 +280,9 @@ where
             &witness.evaluations,
             &witness.merkle_tree,
             &indices,
-        )?;
-        self.end_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients))?;
-        Ok((points, evaluations))
+        );
+        self.end_hint::<Config<F>>(label.clone(), Length::Fixed(config.num_coefficients));
+        (points, evaluations)
     }
 }
 
@@ -316,7 +299,7 @@ mod tests {
     use anyhow::Result;
     use ark_ff::MontBackend;
     use sha3::Keccak256;
-    use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
+    use spongefish::{transcript::PatternState, ProverState, VerifierState};
 
     use super::*;
     use crate::{
@@ -330,17 +313,17 @@ mod tests {
             digest::DigestEngine<Keccak256, digest::ArkFieldUpdater<MontBackend<FConfig64, 1>, 1>>;
         let config = Config::new(Arc::new(MyEngine::new()), 64, 4, 2, 10);
 
-        let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
-        pattern.reed_solomon_commit("1", &config)?;
-        let pattern = pattern.finalize()?;
+        let mut pattern: PatternState = PatternState::new();
+        pattern.reed_solomon_commit("1", &config);
+        let pattern = pattern.finalize();
         eprintln!("{pattern}");
 
         let mut prover: ProverState = ProverState::from(&pattern);
-        let proof = prover.finalize()?;
+        let proof = prover.finalize();
         assert_eq!(hex::encode(&proof), "");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
-        verifier.finalize()?;
+        verifier.finalize();
 
         Ok(())
     }

@@ -9,7 +9,7 @@ use std::{
 
 use spongefish::{
     codecs::zerocopy,
-    transcript::{self, InteractionError, Label, TranscriptError},
+    transcript::{self, Label},
 };
 use thiserror::Error;
 
@@ -37,27 +37,17 @@ pub struct Config {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Error)]
 pub enum VerifierError {
     #[error(transparent)]
-    Interaction(#[from] InteractionError),
-    #[error(transparent)]
     Verifier(#[from] spongefish::VerifierError),
     #[error("Proof of work does not meet the difficulty requirement.")]
     ProofOfWorkFailed,
 }
 
 pub trait Pattern {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config,
-    ) -> Result<(), TranscriptError>;
+    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config);
 }
 
 pub trait Prover {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config,
-    ) -> Result<(), InteractionError>;
+    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config);
 }
 
 pub trait Verifier {
@@ -125,15 +115,11 @@ impl<P> Pattern for P
 where
     P: transcript::Pattern + zerocopy::Pattern,
 {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        _config: &Config,
-    ) -> Result<(), TranscriptError> {
+    fn proof_of_work(&mut self, label: impl Into<Label>, _config: &Config) {
         let label = label.into();
-        self.begin_protocol::<Config>(label.clone())?;
-        self.challenge_zerocopy::<[u8; 32]>("challenge")?;
-        self.message_zerocopy::<u64>("nonce")?;
+        self.begin_protocol::<Config>(label.clone());
+        self.challenge_zerocopy::<[u8; 32]>("challenge");
+        self.message_zerocopy::<u64>("nonce");
         self.end_protocol::<Config>(label)
     }
 }
@@ -142,17 +128,13 @@ impl<P> Prover for P
 where
     P: transcript::Prover + zerocopy::Prover,
 {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config,
-    ) -> Result<(), InteractionError> {
+    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config) {
         let label = label.into();
-        self.begin_protocol::<Config>(label.clone())?;
-        let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
+        self.begin_protocol::<Config>(label.clone());
+        let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge");
         let nonce = config.engine.solve(challenge, config.difficulty);
-        self.message_zerocopy::<u64>("nonce", &nonce)?;
-        self.end_protocol::<Config>(label)
+        self.message_zerocopy::<u64>("nonce", &nonce);
+        self.end_protocol::<Config>(label);
     }
 }
 
@@ -166,13 +148,13 @@ where
         config: &Config,
     ) -> Result<(), VerifierError> {
         let label = label.into();
-        self.begin_protocol::<Config>(label.clone())?;
-        let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge")?;
+        self.begin_protocol::<Config>(label.clone());
+        let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge");
         let nonce = self.message_zerocopy::<u64>("nonce")?;
         if !config.engine.verify(challenge, config.difficulty, nonce) {
             return Err(VerifierError::ProofOfWorkFailed);
         }
-        self.end_protocol::<Config>(label)?;
+        self.end_protocol::<Config>(label);
         Ok(())
     }
 }
@@ -181,7 +163,7 @@ where
 mod tests {
     use anyhow::Result;
     use sha3::Keccak256;
-    use spongefish::{transcript::TranscriptRecorder, ProverState, VerifierState};
+    use spongefish::{transcript::PatternState, ProverState, VerifierState};
 
     use super::*;
     use crate::protocols::proof_of_work::digest::DigestEngine;
@@ -193,19 +175,19 @@ mod tests {
             difficulty: 5.0,
         };
 
-        let mut pattern: TranscriptRecorder = TranscriptRecorder::new();
-        pattern.proof_of_work("pow", &config)?;
-        let pattern = pattern.finalize()?;
+        let mut pattern: PatternState = PatternState::new();
+        pattern.proof_of_work("pow", &config);
+        let pattern = pattern.finalize();
         eprintln!("{pattern}");
 
         let mut prover: ProverState = ProverState::from(&pattern);
-        prover.proof_of_work("pow", &config)?;
-        let proof = prover.finalize()?;
+        prover.proof_of_work("pow", &config);
+        let proof = prover.finalize();
         assert_eq!(hex::encode(&proof), "3100000000000000");
 
         let mut verifier: VerifierState = VerifierState::new(pattern.into(), &proof);
         verifier.proof_of_work("pow", &config)?;
-        verifier.finalize()?;
+        verifier.finalize();
 
         Ok(())
     }
