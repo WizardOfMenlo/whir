@@ -48,13 +48,12 @@ serde_json = "1.0"
 #     "arkworks-algebra",
 # ] }
 # spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
-# spongefish = { git = "https://github.com/recmo/nimue",  branch = "remco/stricter", features = [
+spongefish = { git = "https://github.com/recmo/nimue",  branch = "remco/stricter", features = [
+   "arkworks-algebra",
+ ] }
+# spongefish = { path = "../../arkworks-rs/spongefish/spongefish", features = [
 #     "arkworks-algebra",
 # ] }
-# spongefish-pow = { git = "https://github.com/recmo/nimue",  branch = "remco/stricter" }
-spongefish = { path = "../../arkworks-rs/spongefish/spongefish", features = [
-    "arkworks-algebra",
-] }
 # spongefish-pow = { path = "../../arkworks-rs/spongefish/spongefish-pow" }
 rayon = { version = "1.10.0", optional = true }
 thiserror = "2.0"

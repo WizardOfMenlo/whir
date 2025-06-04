@@ -1285,6 +1285,7 @@ dependencies = [
 [[package]]
 name = "spongefish"
 version = "0.2.0"
+source = "git+https://github.com/recmo/nimue?branch=remco%2Fstricter#70b80373ae96eca4fbb289a56c26b5fbfde94638"
 dependencies = [
  "ark-ec",
  "ark-ff",
