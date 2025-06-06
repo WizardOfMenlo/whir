@@ -213,16 +213,7 @@ pub trait Verifier<'a> {
 
 impl<T> Config<T> {
     pub fn new(engine: Arc<dyn Engine<T>>, leaf_size: usize, num_leaves: usize) -> Self {
-        // TODO: Solve restrictions by padding and by carrying final left element directly to next layer.
-        // leaf size must be a power-of-two multiple of 32 bytes.
-        assert!(
-            leaf_size.is_power_of_two(),
-            "Leaf size must be a power of two"
-        );
-        assert!(
-            leaf_size.trailing_zeros() >= 6,
-            "Leaf size must be a multiple of 64 bytes"
-        );
+        // TODO: Solve restrictions by carrying final left element directly to next layer.
         // num_leaves must be a power of two.
         assert!(
             num_leaves.is_power_of_two(),
@@ -422,12 +413,16 @@ where
     {
         let label = label.into();
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()));
+
+        // Read leaves as a hint.
+        // OPT: We can deduplicate indices here. (See longer comment in reed_solomon).
         let mut opened_leaves = Vec::with_capacity(indices.len() * config.leaf_size);
         for index in indices {
             let leaf = &values[index * config.leaf_size..(index + 1) * config.leaf_size];
             opened_leaves.extend_from_slice(leaf);
         }
         self.hint_zerocopy_slice("opened-leaves", &opened_leaves);
+
         self.merkle_tree_open("merkle-proof", config, witness, indices);
         self.end_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()));
         opened_leaves
@@ -444,6 +439,13 @@ where
     where
         T: Clone + CanonicalSerialize + CanonicalDeserialize,
     {
+        for &index in indices {
+            assert!(
+                index < config.num_leaves,
+                "Index {index} out of range for Merkle tree with {} leaves",
+                config.num_leaves
+            );
+        }
         let label = label.into();
         self.begin_hint::<Config<T>>(label.clone(), Length::Fixed(indices.len()));
         let mut opened_leaves = Vec::with_capacity(indices.len() * config.leaf_size);

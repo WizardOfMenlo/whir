@@ -1,7 +1,7 @@
 #[cfg(test)]
 use std::fmt::Debug;
 
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,16 @@ where
     } else {
         (a(), b())
     }
+}
+
+/// Returns p^n as a `f64`.
+pub fn field_size<F: Field>() -> f64 {
+    let base: f64 = 2.0_f64.powi(64);
+    let mut size = 0_f64;
+    for (i, &limb) in F::BasePrimeField::MODULUS.as_ref().iter().enumerate() {
+        size += (limb as f64) * base.powi(i as i32);
+    }
+    size.powi(F::extension_degree() as i32)
 }
 
 /// Workaround for Ark types that are missing comparisons
