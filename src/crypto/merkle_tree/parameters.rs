@@ -7,11 +7,10 @@ use ark_crypto_primitives::{
 };
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
+use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{
-    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, ProofError,
-    ProofResult, ProverState, VerifierState,
+    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, DuplexSpongeInterface, ProofError, ProofResult, ProverState, Unit, VerifierState
 };
 
 use super::{digest::GenericDigest, IdentityDigestConverter};
