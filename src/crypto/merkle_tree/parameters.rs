@@ -84,7 +84,12 @@ where
     }
 }
 
-impl HintSerialize for ProverState {
+impl<H, U, R> HintSerialize for ProverState<H, U, R>
+where
+    U: Unit,
+    H: DuplexSpongeInterface<U>,
+    R: RngCore + CryptoRng,
+{
     fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()> {
         let mut bytes = Vec::new();
         hint.serialize_compressed(&mut bytes)?;
@@ -107,7 +112,11 @@ where
     }
 }
 
-impl HintDeserialize for VerifierState<'_> {
+impl<H, U> HintDeserialize for VerifierState<'_, H, U>
+where
+    U: Unit,
+    H: DuplexSpongeInterface<U>,
+{
     fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T> {
         let mut bytes = self.hint_bytes()?;
         Ok(T::deserialize_compressed(&mut bytes)?)
