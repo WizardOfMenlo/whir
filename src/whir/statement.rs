@@ -255,22 +255,30 @@ impl<F: Field> Statement<F> {
     /// The number of variables in `w(X)` must match `self.num_variables`.
     pub fn add_constraint(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
+        let defer_evaluation = match &weights {
+            Weights::Evaluation { .. } => false,
+            Weights::Linear { .. } => true,
+        };
         self.constraints.push(Constraint {
             weights,
             sum,
-            defer_evaluation: false,
+            defer_evaluation,
         });
     }
 
     /// Inserts a constraint `(w(X), s)` at the front of the system.
     pub fn add_constraint_in_front(&mut self, weights: Weights<F>, sum: F) {
         assert_eq!(weights.num_variables(), self.num_variables());
+        let defer_evaluation = match &weights {
+            Weights::Evaluation { .. } => false,
+            Weights::Linear { .. } => true,
+        };
         self.constraints.insert(
             0,
             Constraint {
                 weights,
                 sum,
-                defer_evaluation: false,
+                defer_evaluation,
             },
         );
     }
@@ -282,10 +290,16 @@ impl<F: Field> Statement<F> {
         }
         self.constraints.splice(
             0..0,
-            constraints.into_iter().map(|(weights, sum)| Constraint {
-                weights,
-                sum,
-                defer_evaluation: false,
+            constraints.into_iter().map(|(weights, sum)| {
+                let defer_evaluation = match &weights {
+                    Weights::Evaluation { .. } => false,
+                    Weights::Linear { .. } => true,
+                };
+                Constraint {
+                    weights,
+                    sum,
+                    defer_evaluation,
+                }
             }),
         );
     }
