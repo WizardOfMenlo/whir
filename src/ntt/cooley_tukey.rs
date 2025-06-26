@@ -178,7 +178,7 @@ impl<F: Field> NttEngine<F> {
     }
 
     /// Returns a cached table of roots of unity of the given order.
-    fn roots_table(&self, order: usize) -> RwLockReadGuard<Vec<F>> {
+    fn roots_table(&self, order: usize) -> RwLockReadGuard<'_, Vec<F>> {
         // Precompute more roots of unity if requested.
         let roots = self.roots.read().unwrap();
         if roots.is_empty() || roots.len() % order != 0 {
