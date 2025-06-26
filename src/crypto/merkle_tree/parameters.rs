@@ -10,7 +10,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{
-    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator, DuplexSpongeInterface, ProofError, ProofResult, ProverState, Unit, VerifierState
+    ByteDomainSeparator, BytesToUnitDeserialize, BytesToUnitSerialize, DomainSeparator,
+    DuplexSpongeInterface, ProofError, ProofResult, ProverState, Unit, VerifierState,
 };
 
 use super::{digest::GenericDigest, IdentityDigestConverter};
