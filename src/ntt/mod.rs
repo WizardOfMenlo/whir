@@ -29,7 +29,7 @@ pub use self::{
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
-#[cfg_attr(feature = "tracing", instrument(skip(poly), fields(size = poly.len())))]
+#[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
     interleaved_coeffs: &[F],
     expansion: usize,
