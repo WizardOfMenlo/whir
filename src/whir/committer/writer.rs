@@ -127,7 +127,7 @@ where
         })
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit_batch<ProverFSState>(
         &self,
         prover_state: &mut ProverFSState,
