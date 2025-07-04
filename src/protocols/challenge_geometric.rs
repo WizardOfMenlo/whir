@@ -7,20 +7,17 @@ use spongefish::{
 };
 
 pub trait Pattern {
-    fn challenge_ark_geometric<F>(&mut self, label: impl Into<Label>, size: usize)
+    fn challenge_ark_geometric<F>(&mut self, label: Label, size: usize)
     where
         F: Field;
 }
 
 pub trait Common {
-    fn challenge_ark_geometric_out<F>(&mut self, label: impl Into<Label>, out: &mut [F])
+    fn challenge_ark_geometric_out<F>(&mut self, label: Label, out: &mut [F])
     where
         F: Field;
 
-    fn challenge_ark_geometric_array<F, const N: usize>(
-        &mut self,
-        label: impl Into<Label>,
-    ) -> [F; N]
+    fn challenge_ark_geometric_array<F, const N: usize>(&mut self, label: Label) -> [F; N]
     where
         F: Field,
     {
@@ -29,7 +26,7 @@ pub trait Common {
         out
     }
 
-    fn challenge_ark_geometric_vec<F>(&mut self, label: impl Into<Label>, size: usize) -> Vec<F>
+    fn challenge_ark_geometric_vec<F>(&mut self, label: Label, size: usize) -> Vec<F>
     where
         F: Field,
     {
@@ -43,12 +40,11 @@ impl<P> Pattern for P
 where
     P: transcript::Pattern + field::Pattern,
 {
-    fn challenge_ark_geometric<F>(&mut self, label: impl Into<Label>, size: usize)
+    fn challenge_ark_geometric<F>(&mut self, label: Label, size: usize)
     where
         F: Field,
     {
-        let label = label.into();
-        self.begin_challenge::<[F]>(label.clone(), Length::Fixed(size));
+        self.begin_challenge::<[F]>(label, Length::Fixed(size));
         if size > 1 {
             self.challenge_ark_fel::<F>("base");
         }
@@ -60,12 +56,11 @@ impl<P> Common for P
 where
     P: transcript::Common + field::Common,
 {
-    fn challenge_ark_geometric_out<F>(&mut self, label: impl Into<Label>, out: &mut [F])
+    fn challenge_ark_geometric_out<F>(&mut self, label: Label, out: &mut [F])
     where
         F: Field,
     {
-        let label = label.into();
-        self.begin_challenge::<[F]>(label.clone(), Length::Fixed(out.len()));
+        self.begin_challenge::<[F]>(label, Length::Fixed(out.len()));
         if !out.is_empty() {
             out[0] = F::ONE;
             if out.len() > 1 {

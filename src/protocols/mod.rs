@@ -5,3 +5,4 @@ pub mod challenge_indices;
 pub mod merkle_tree;
 pub mod proof_of_work;
 pub mod reed_solomon;
+pub mod sumcheck;

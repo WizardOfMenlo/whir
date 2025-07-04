@@ -6,15 +6,15 @@ use spongefish::{
 };
 
 pub trait Pattern {
-    fn challenge_indices(&mut self, label: impl Into<Label>, limit: usize, size: usize);
+    fn challenge_indices(&mut self, label: Label, limit: usize, size: usize);
 }
 
 pub trait Common {
-    fn challenge_indices_out(&mut self, label: impl Into<Label>, limit: usize, out: &mut [usize]);
+    fn challenge_indices_out(&mut self, label: Label, limit: usize, out: &mut [usize]);
 
     fn challenge_indices_array<const N: usize>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         limit: usize,
     ) -> [usize; N] {
         let mut out = [0; N];
@@ -22,12 +22,7 @@ pub trait Common {
         out
     }
 
-    fn challenge_indices_vec(
-        &mut self,
-        label: impl Into<Label>,
-        limit: usize,
-        size: usize,
-    ) -> Vec<usize> {
+    fn challenge_indices_vec(&mut self, label: Label, limit: usize, size: usize) -> Vec<usize> {
         let mut out = vec![0; size];
         self.challenge_indices_out(label, limit, &mut out);
         out
@@ -41,10 +36,10 @@ impl<P> Pattern for P
 where
     P: transcript::Pattern + bytes::Pattern,
 {
-    fn challenge_indices(&mut self, label: impl Into<Label>, limit: usize, size: usize) {
+    fn challenge_indices(&mut self, label: Label, limit: usize, size: usize) {
         assert!(limit.is_power_of_two(), "Limit must be a power of two");
-        let label = label.into();
-        self.begin_challenge::<[usize]>(label.clone(), Length::Fixed(size));
+
+        self.begin_challenge::<[usize]>(label, Length::Fixed(size));
         let bytes_per_index = limit.trailing_zeros().div_ceil(8) as usize;
         self.challenge_bytes("indices-bytes", size * bytes_per_index);
         self.end_challenge::<[usize]>(label, Length::Fixed(size))
@@ -55,10 +50,10 @@ impl<P> Common for P
 where
     P: transcript::Common + bytes::Common,
 {
-    fn challenge_indices_out(&mut self, label: impl Into<Label>, limit: usize, out: &mut [usize]) {
+    fn challenge_indices_out(&mut self, label: Label, limit: usize, out: &mut [usize]) {
         assert!(limit.is_power_of_two(), "Limit must be a power of two");
-        let label = label.into();
-        self.begin_challenge::<[usize]>(label.clone(), Length::Fixed(out.len()));
+
+        self.begin_challenge::<[usize]>(label, Length::Fixed(out.len()));
         assert!(limit.is_power_of_two(), "Limit must be a power of two");
         let bytes_per_index = limit.trailing_zeros().div_ceil(8) as usize;
         let bytes = self.challenge_bytes_vec("indices-bytes", out.len() * bytes_per_index);

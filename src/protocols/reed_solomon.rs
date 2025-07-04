@@ -1,7 +1,8 @@
-//! Folding Reed-Solomon vector commitments.
+//! Interleaved Reed-Solomon vector commitments.
 //! Opening takes 0..n folding parameters, where n is the number of coefficients in the polynomial.
 
 use std::{
+    f64::consts::LOG2_10,
     fmt::{Debug, Display},
     ops::Range,
     str::FromStr,
@@ -55,12 +56,15 @@ where
     /// The domain over which the polynomial is evaluated as RS encoding.
     evaluation_domain: GeneralEvaluationDomain<F>,
 
+    /// In both JB and CB theorems such as list-size only hold for proximity parameters slighly below the bound.
+    /// E.g. in JB proximity gaps holds for every δ ∈ (0, 1 - √ρ).
+    /// η is the distance between the chosen proximity parameter and the bound.
+    /// I.e. in JB δ = 1 - √ρ - η and in CB δ = 1 - ρ - η.
+    log2_eta: f64,
+
     /// The number of folds to apply on opening.
     /// Can be zero to disable folding.
     num_folds: usize,
-
-    /// Assumptions for computing distance bounds.
-    soundness_type: SoundnessType,
 
     /// The number of samples from the evaluation_domain used for opening.
     num_in_domain_samples: usize,
@@ -90,13 +94,13 @@ where
 }
 
 pub trait Pattern {
-    fn reed_solomon_commit<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
+    fn reed_solomon_commit<F>(&mut self, label: Label, config: &Config<F>)
     where
         F: FftField;
 
     /// Opens the RS commitment by random sampling from the evaluation domain.
     /// Returns the evaluation points and values.
-    fn reed_solomon_open<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
+    fn reed_solomon_open<F>(&mut self, label: Label, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize;
 }
@@ -104,7 +108,7 @@ pub trait Pattern {
 pub trait Prover {
     fn reed_solomon_commit<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         values: &[F],
     ) -> Witness<F>
@@ -115,7 +119,7 @@ pub trait Prover {
     /// Returns the evaluation points and the coset polynomials.
     fn reed_solomon_open<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
     ) -> (Vec<F>, Vec<F>)
@@ -126,7 +130,7 @@ pub trait Prover {
     /// Returns the evaluation points and the folded evaluations.
     fn reed_solomon_open_fold<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[F],
@@ -147,7 +151,7 @@ pub trait Prover {
     /// Opens using folds in an extension of F, otherwise identical to [`reed_solomon_open`].
     fn reed_solomon_open_fold_extended<F, G>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[G],
@@ -170,7 +174,7 @@ pub trait Prover {
 pub trait Verifier {
     fn reed_solomon_commit<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
     ) -> Result<Commitment<F>, VerifierError>
     where
@@ -180,7 +184,7 @@ pub trait Verifier {
     /// Returns the evaluation points and the coset polynomials.
     fn reed_solomon_open<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
     ) -> Result<(Vec<F>, Vec<F>), VerifierError>
@@ -191,7 +195,7 @@ pub trait Verifier {
     /// Returns the evaluation points and the folded evaluations.
     fn reed_solomon_open_fold<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[F],
@@ -212,7 +216,7 @@ pub trait Verifier {
     /// Opens using folds in an extension of F, otherwise identical to [`reed_solomon_open`].
     fn reed_solomon_open_fold_extended<F, G>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
         folds: &[G],
@@ -322,11 +326,12 @@ where
         -self.rate().log2()
     }
 
+    // TODO: Make part of config object.
     pub fn log2_eta(&self) -> f64 {
         // Original author left the following explanation:
         // > Ask me how I did this? At the time, only God and I knew. Now only God knows
         match self.soundness_type {
-            SoundnessType::ProvableList => -(0.5 * self.log2_inv_rate() + 10.0_f64.log2() + 1.),
+            SoundnessType::ProvableList => -(0.5 * self.log2_inv_rate() + LOG2_10 + 1.),
             SoundnessType::UniqueDecoding => 0.,
             SoundnessType::ConjectureList => -(self.log2_inv_rate() + 1.),
         }
@@ -395,7 +400,7 @@ where
                 (self.log2_size() + self.log2_inv_rate()) - self.log2_eta()
             }
             SoundnessType::ProvableList => {
-                10.0_f64.log2() + 3.5 * self.log2_inv_rate() + 2. * self.log2_size()
+                LOG2_10 + 3.5 * self.log2_inv_rate() + 2. * self.log2_size()
             }
             SoundnessType::UniqueDecoding => self.log2_size() + self.log2_inv_rate(),
         };
@@ -465,25 +470,23 @@ where
         + challenge_indices::Pattern
         + merkle_tree::Pattern,
 {
-    fn reed_solomon_commit<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
+    fn reed_solomon_commit<F>(&mut self, label: Label, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
-        let label = label.into();
-        self.begin_protocol::<Config<F>>(label.clone());
+        self.begin_protocol::<Config<F>>(label);
         self.merkle_tree_commit("evaluations", &config.merkle_tree);
         self.challenge_ark_fels::<F>("out-challenges", config.num_out_domain_samples);
         // TODO: Dedicated message for field values.
         self.message_arkworks::<Vec<F>>("out-answers");
-        self.end_protocol::<Config<F>>(label.clone());
+        self.end_protocol::<Config<F>>(label);
     }
 
-    fn reed_solomon_open<F>(&mut self, label: impl Into<Label>, config: &Config<F>)
+    fn reed_solomon_open<F>(&mut self, label: Label, config: &Config<F>)
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
-        let label = label.into();
-        self.begin_protocol::<Config<F>>(label.clone());
+        self.begin_protocol::<Config<F>>(label);
         self.challenge_indices(
             "in-challenges",
             config.num_cosets(),
@@ -494,7 +497,7 @@ where
             &config.merkle_tree,
             config.num_in_domain_samples,
         );
-        self.end_protocol::<Config<F>>(label.clone());
+        self.end_protocol::<Config<F>>(label);
     }
 }
 
@@ -508,15 +511,14 @@ where
 {
     fn reed_solomon_commit<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         values: &[F],
     ) -> Witness<F>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
-        let label = label.into();
-        self.begin_protocol::<Config<F>>(label.clone());
+        self.begin_protocol::<Config<F>>(label);
 
         // Evaluate over evaluation_domain and commit to coset polynomials
         let mut evaluations = expand_from_coeff(values, config.expansion());
@@ -543,7 +545,7 @@ where
         self.message_arkworks("out-answers", &answers);
         let ood_samples = challenges.into_iter().zip(answers.into_iter()).collect();
 
-        self.end_protocol::<Config<F>>(label.clone());
+        self.end_protocol::<Config<F>>(label);
         Witness {
             merkle_tree,
             evaluations,
@@ -553,7 +555,7 @@ where
 
     fn reed_solomon_open<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
     ) -> (Vec<F>, Vec<F>)
@@ -561,8 +563,8 @@ where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
         config.assert_valid_witness(witness);
-        let label = label.into();
-        self.begin_protocol::<Config<F>>(label.clone());
+
+        self.begin_protocol::<Config<F>>(label);
 
         // Compute in-domain challenge points.
         let indices = self.challenge_indices_vec(
@@ -591,7 +593,7 @@ where
             &witness.merkle_tree,
             &indices,
         );
-        self.end_protocol::<Config<F>>(label.clone());
+        self.end_protocol::<Config<F>>(label);
         (points, evaluations)
     }
 }
@@ -606,14 +608,13 @@ where
 {
     fn reed_solomon_commit<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
     ) -> Result<Commitment<F>, VerifierError>
     where
         F: FftField + CanonicalSerialize + CanonicalDeserialize,
     {
-        let label = label.into();
-        self.begin_protocol::<Config<F>>(label.clone());
+        self.begin_protocol::<Config<F>>(label);
         let merkle_tree = self.merkle_tree_commit("evaluations", &config.merkle_tree)?;
         let challenges =
             self.challenge_ark_fels_vec::<F>("out-challenges", config.num_out_domain_samples);
@@ -621,7 +622,7 @@ where
         let answers = self.message_arkworks::<Vec<F>>("out-answers").unwrap(); // TODO
         assert_eq!(answers.len(), config.num_out_domain_samples);
         let ood_samples = challenges.into_iter().zip(answers.into_iter()).collect();
-        self.end_protocol::<Config<F>>(label.clone());
+        self.end_protocol::<Config<F>>(label);
         Ok(Commitment {
             merkle_tree,
             ood_samples,
@@ -630,7 +631,7 @@ where
 
     fn reed_solomon_open<F>(
         &mut self,
-        label: impl Into<Label>,
+        label: Label,
         config: &Config<F>,
         witness: &Witness<F>,
     ) -> Result<(Vec<F>, Vec<F>), VerifierError>

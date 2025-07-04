@@ -43,19 +43,15 @@ pub enum VerifierError {
 }
 
 pub trait Pattern {
-    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config);
+    fn proof_of_work(&mut self, label: Label, config: &Config);
 }
 
 pub trait Prover {
-    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config);
+    fn proof_of_work(&mut self, label: Label, config: &Config);
 }
 
 pub trait Verifier {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config,
-    ) -> Result<(), VerifierError>;
+    fn proof_of_work(&mut self, label: Label, config: &Config) -> Result<(), VerifierError>;
 }
 
 impl Config {
@@ -115,9 +111,8 @@ impl<P> Pattern for P
 where
     P: transcript::Pattern + zerocopy::Pattern,
 {
-    fn proof_of_work(&mut self, label: impl Into<Label>, _config: &Config) {
-        let label = label.into();
-        self.begin_protocol::<Config>(label.clone());
+    fn proof_of_work(&mut self, label: Label, _config: &Config) {
+        self.begin_protocol::<Config>(label);
         self.challenge_zerocopy::<[u8; 32]>("challenge");
         self.message_zerocopy::<u64>("nonce");
         self.end_protocol::<Config>(label)
@@ -128,9 +123,8 @@ impl<P> Prover for P
 where
     P: transcript::Prover + zerocopy::Prover,
 {
-    fn proof_of_work(&mut self, label: impl Into<Label>, config: &Config) {
-        let label = label.into();
-        self.begin_protocol::<Config>(label.clone());
+    fn proof_of_work(&mut self, label: Label, config: &Config) {
+        self.begin_protocol::<Config>(label);
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge");
         let nonce = config.engine.solve(challenge, config.difficulty);
         self.message_zerocopy::<u64>("nonce", &nonce);
@@ -142,13 +136,8 @@ impl<'a, P> Verifier for P
 where
     P: transcript::Verifier + zerocopy::Verifier<'a>,
 {
-    fn proof_of_work(
-        &mut self,
-        label: impl Into<Label>,
-        config: &Config,
-    ) -> Result<(), VerifierError> {
-        let label = label.into();
-        self.begin_protocol::<Config>(label.clone());
+    fn proof_of_work(&mut self, label: Label, config: &Config) -> Result<(), VerifierError> {
+        self.begin_protocol::<Config>(label);
         let challenge = self.challenge_zerocopy::<[u8; 32]>("challenge");
         let nonce = self.message_zerocopy::<u64>("nonce")?;
         if !config.engine.verify(challenge, config.difficulty, nonce) {
