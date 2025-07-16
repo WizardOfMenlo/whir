@@ -55,7 +55,7 @@ where
     pub(crate) batching_data: Vec<BatchingData<F, MerkleConfig>>,
 
     /// The batching randomness. If there's no batching, this value is zero.
-    pub(crate) batching_randomness: F,
+    pub batching_randomness: F,
 }
 
 impl<F, MerkleConfig> From<Witness<F, MerkleConfig>> for BatchingData<F, MerkleConfig>
