@@ -63,13 +63,13 @@ where
     E: Fn(&MultilinearPoint<F>) -> F,
 {
     let mut ood_points = vec![F::ZERO; num_samples];
-    let mut ood_answers = vec![F::ZERO; num_samples];
-
-    if num_samples > 0 {
+    let ood_answers = if num_samples > 0 {
         // Generate OOD points from ProverState randomness
         prover_state.fill_challenge_scalars(&mut ood_points)?;
-        ood_answers = compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)?;
-    }
+        compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)?
+    } else {
+        vec![]
+    };
 
     Ok((ood_points, ood_answers))
 }
@@ -165,8 +165,7 @@ where
         multiplier *= batching_randomness;
     }
 
-    let result = expected_stir_value == computed_stir;
-    result
+    expected_stir_value == computed_stir
 }
 pub trait HintSerialize {
     fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;

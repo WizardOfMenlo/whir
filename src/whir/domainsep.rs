@@ -62,7 +62,7 @@ where
         }
 
         if params.batch_size > 1 {
-            this = this.challenge_scalars(1, "batching_randomness")
+            this = this.challenge_scalars(1, "batching_randomness");
         }
 
         this
@@ -90,12 +90,19 @@ where
         for (round, r) in params.round_parameters.iter().enumerate() {
             let folded_domain_size = domain_size >> params.folding_factor.at_round(round);
             let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
+
             self = self
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
-                .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
-                .hint("stir_answers")
-                .hint("merkle_proof")
+                .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries");
+
+            if round == 0 && params.batch_size > 1 {
+                self = self.hint("stir_answers").hint("first_round_merkle_proof");
+            } else {
+                self = self.hint("stir_answers").hint("merkle_proof");
+            }
+
+            self = self
                 .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(

@@ -18,7 +18,10 @@ use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
-    whir::utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
+    whir::{
+        prover::RootPath,
+        utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
+    },
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
@@ -82,6 +85,7 @@ where
                 .into_iter()
                 .chain(statement.constraints.iter().cloned())
                 .collect();
+
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness, constraints));
@@ -95,7 +99,6 @@ where
             )?;
             round_folding_randomness.push(folding_randomness);
         } else {
-
             assert_eq!(prev_commitment.ood_points.len(), 0);
             assert!(statement.constraints.is_empty());
             round_constraints.push((vec![], vec![]));
@@ -121,6 +124,7 @@ where
 
             // Verify in-domain challenges on the previous commitment.
             let stir_constraints = self.verify_stir_challenges(
+                round_index,
                 verifier_state,
                 round_params,
                 &prev_commitment,
@@ -136,35 +140,6 @@ where
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
-
-            let (merkle_proof, answers) =
-                whir_proof.round_data(r, parsed_commitment.batching_randomness);
-
-            // if r > 0 {
-            //     if !merkle_proof
-            //         .verify(
-            //             &self.params.leaf_hash_params,
-            //             &self.params.two_to_one_params,
-            //             &prev_root,
-            //             answers.iter().map(|a| a.as_ref()),
-            //         )
-            //         .unwrap()
-            //         || merkle_proof.leaf_indexes != stir_challenges_indexes
-            //     {
-            //         return Err(ProofError::InvalidProof);
-            //     }
-            // } else if !whir_proof.validate_first_round(
-            //     parsed_commitment,
-            //     &stir_challenges_indexes,
-            //     &self.params.leaf_hash_params,
-            //     &self.params.two_to_one_params,
-            // ) {
-            //     return Err(ProofError::InvalidProof);
-            // }
-
-            // if round_params.pow_bits > 0. {
-            //     verifier_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-            // }
 
             let folding_randomness = self.verify_sumcheck_rounds(
                 verifier_state,
@@ -185,43 +160,14 @@ where
 
         // Verify in-domain challenges on the previous commitment.
         let stir_constraints = self.verify_stir_challenges(
+            self.params.n_rounds(),
             verifier_state,
             &self.params.final_round_config(),
             &prev_commitment,
             round_folding_randomness.last().unwrap(),
         )?;
 
-        let (final_merkle_proof, final_randomness_answers) = whir_proof.round_data(
-            self.params.n_rounds(),
-            parsed_commitment.batching_randomness,
-        );
-
-        // if self.params.n_rounds() == 0 {
-        //     // There's only a single round, so we need to validate against the
-        //     // root batched node
-        //     if !whir_proof.validate_first_round(
-        //         parsed_commitment,
-        //         &final_randomness_indexes,
-        //         &self.params.leaf_hash_params,
-        //         &self.params.two_to_one_params,
-        //     ) {
-        //         return Err(ProofError::InvalidProof);
-        //     }
-        // } else {
-        //     if !final_merkle_proof
-        //         .verify(
-        //             &self.params.leaf_hash_params,
-        //             &self.params.two_to_one_params,
-        //             &prev_root,
-        //             final_randomness_answers.iter().map(|a| a.as_ref()),
-        //         )
-        //         .unwrap()
-        //         || final_merkle_proof.leaf_indexes != final_randomness_indexes
-        //     {
-        //         return Err(ProofError::InvalidProof);
-        //     }
-        // }
-            // Verify stir constraints directly on final polynomial
+        // Verify stir constraints directly on final polynomial
         if !stir_constraints
             .iter()
             .all(|c| c.verify(&final_coefficients))
@@ -282,18 +228,6 @@ where
         Ok(combination_randomness)
     }
 
-// <<<<<<< HEAD
-//         let mut new_constraints: Vec<_> = ood_points
-//             .iter()
-//             .zip(ood_response.iter())
-//             .map(|(&point, &eval)| {
-//                 let weights = VerifierWeights::evaluation(
-//                     MultilinearPoint::expand_from_univariate(point, num_variables),
-//                 );
-//                 (weights, eval)
-//             })
-//             .collect();
-// =======
     /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
     pub fn verify_sumcheck_rounds(
         &self,
@@ -328,71 +262,10 @@ where
         Ok(MultilinearPoint(randomness))
     }
 
-// <<<<<<< HEAD
-//     #[allow(clippy::too_many_lines)]
-//     pub(crate) fn verify_parsed(
-//         &self,
-//         statement: &StatementVerifier<F>,
-//         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-//         parsed_proof: &ParsedProof<F>,
-//     ) -> ProofResult<()> {
-//         let evaluations: Vec<_> = statement.constraints.iter().map(|c| c.1).collect();
-
-//         let computed_folds = self
-//             .params
-//             .fold_optimisation
-//             .stir_evaluations_verifier(&parsed_proof, &self.params);
-
-//         let mut prev_sumcheck = None;
-
-//         let (ood_points, ood_answers) = parsed_commitment.ood_data();
-//         // Initial sumcheck verification
-//         if let Some((poly, randomness)) = parsed_proof.initial_sumcheck_rounds.first().cloned() {
-//             if poly.sum_over_boolean_hypercube()
-//                 != ood_answers
-//                     .iter()
-//                     .copied()
-//                     .chain(evaluations)
-//                     .zip(&parsed_proof.initial_combination_randomness)
-//                     .map(|(ans, rand)| ans * rand)
-//                     .sum()
-//             {
-//                 println!("Initial sumcheck failed");
-//                 return Err(ProofError::InvalidProof);
-//             }
-
-//             let mut current = (poly, randomness);
-
-//             // Check the rest of the rounds
-//             for (next_poly, next_rand) in &parsed_proof.initial_sumcheck_rounds[1..] {
-//                 if next_poly.sum_over_boolean_hypercube()
-//                     != current.0.evaluate_at_point(&current.1.into())
-//                 {
-//                     return Err(ProofError::InvalidProof);
-//                 }
-//                 current = (next_poly.clone(), *next_rand);
-//             }
-
-//             prev_sumcheck = Some(current);
-//         }
-
-//         // Sumcheck rounds
-//         for (round, folds) in parsed_proof.rounds.iter().zip(&computed_folds) {
-//             let (sumcheck_poly, new_randomness) = &round.sumcheck_rounds[0];
-
-//             let values = round
-//                 .ood_answers
-//                 .iter()
-//                 .copied()
-//                 .chain(folds.iter().copied());
-
-//             let prev_eval = prev_sumcheck
-//                 .as_ref()
-//                 .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
-// =======
     /// Verify a STIR challenges against a commitment and return the constraints.
     pub fn verify_stir_challenges(
         &self,
+        round_index: usize,
         verifier_state: &mut VerifierState,
         params: &RoundConfig<F>,
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
@@ -405,8 +278,15 @@ where
             verifier_state,
         )?;
 
-        let answers =
-            self.verify_merkle_proof(verifier_state, &commitment.root, &stir_challenges_indexes)?;
+        let answers = if round_index == 0 && self.params.batch_size > 1 {
+            self.verify_first_round(verifier_state, &commitment.root, &stir_challenges_indexes)?
+        } else {
+            self.verify_merkle_proof(
+                verifier_state,
+                &commitment.root[0],
+                &stir_challenges_indexes,
+            )?
+        };
 
         self.verify_proof_of_work(verifier_state, params.pow_bits)?;
 
@@ -430,6 +310,42 @@ where
         Ok(stir_constraints)
     }
 
+    pub fn verify_first_round(
+        &self,
+        verifier_state: &mut VerifierState,
+        root: &[MerkleConfig::InnerDigest],
+        indices: &[usize],
+    ) -> ProofResult<Vec<Vec<F>>> {
+        let answers: Vec<Vec<F>> = verifier_state.hint()?;
+
+        let first_round_merkle_proof: Vec<RootPath<F, MerkleConfig>> = verifier_state.hint()?;
+
+        if root.len() != first_round_merkle_proof.len() {
+            return Err(ProofError::InvalidProof);
+        }
+
+        let correct =
+            first_round_merkle_proof
+                .iter()
+                .zip(root.iter())
+                .all(|((path, answers), root_hash)| {
+                    path.verify(
+                        &self.params.leaf_hash_params,
+                        &self.params.two_to_one_params,
+                        root_hash,
+                        answers.iter().map(|a| a.as_ref()),
+                    )
+                    .unwrap()
+                        && path.leaf_indexes == *indices
+                });
+
+        if !correct {
+            return Err(ProofError::InvalidProof);
+        }
+
+        Ok(answers)
+    }
+
     /// Verify a merkle multi-opening proof for the provided indices.
     pub fn verify_merkle_proof(
         &self,
@@ -446,46 +362,6 @@ where
             return Err(ProofError::InvalidProof);
         }
 
-// <<<<<<< HEAD
-//         // Check the foldings computed from the proof match the evaluations of
-//         // the polynomial
-//         let final_folds = &computed_folds.last().expect("final folds missing");
-//         let final_evaluations = parsed_proof
-//             .final_coefficients
-//             .evaluate_at_univariate(&parsed_proof.final_randomness_points);
-//         if !final_folds
-//             .iter()
-//             .zip(final_evaluations)
-//             .all(|(&fold, eval)| fold == eval)
-//         {
-//             return Err(ProofError::InvalidProof);
-//         }
-
-//         // Check the final sumchecks
-//         if self.params.final_sumcheck_rounds > 0 {
-//             let claimed_sum = prev_sumcheck
-//                 .as_ref()
-//                 .map_or(F::ZERO, |(p, r)| p.evaluate_at_point(&(*r).into()));
-
-//             let (sumcheck_poly, new_randomness) = &parsed_proof.final_sumcheck_rounds[0];
-
-//             if sumcheck_poly.sum_over_boolean_hypercube() != claimed_sum {
-//                 return Err(ProofError::InvalidProof);
-//             }
-
-//             prev_sumcheck = Some((sumcheck_poly.clone(), *new_randomness));
-
-//             // Check the rest of the round
-//             for (sumcheck_poly, new_randomness) in &parsed_proof.final_sumcheck_rounds[1..] {
-//                 let (prev_poly, randomness) = prev_sumcheck.unwrap();
-//                 if sumcheck_poly.sum_over_boolean_hypercube()
-//                     != prev_poly.evaluate_at_point(&randomness.into())
-//                 {
-//                     return Err(ProofError::InvalidProof);
-//                 }
-//                 prev_sumcheck = Some((sumcheck_poly.clone(), *new_randomness));
-//             }
-// =======
         // Verify merkle proof
         let correct = merkle_proof
             .verify(
@@ -515,21 +391,6 @@ where
         Ok(())
     }
 
-// <<<<<<< HEAD
-//         // Final v · w Check
-//         let prev_sumcheck_poly_eval =
-//             prev_sumcheck.map_or(F::ZERO, |(poly, rand)| poly.evaluate_at_point(&rand.into()));
-
-//         // Check the final sumcheck evaluation
-//         let evaluation_of_v_poly =
-//             self.compute_w_poly(ood_points, &ood_answers, statement, parsed_proof);
-//         let final_value = parsed_proof
-//             .final_coefficients
-//             .evaluate(&parsed_proof.final_sumcheck_randomness);
-
-//         if prev_sumcheck_poly_eval != evaluation_of_v_poly * final_value {
-//             return Err(ProofError::InvalidProof);
-// =======
     /// Evaluate the random linear combination of constraints in `point`.
     fn eval_constraints_poly(
         &self,
@@ -563,27 +424,27 @@ where
         value
     }
 
-    pub fn verify<VerifierState>(
-        &self,
-        verifier_state: &mut VerifierState,
-        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &StatementVerifier<F>,
-        whir_proof: &WhirProof<MerkleConfig, F>,
-    ) -> ProofResult<()>
-    where
-        VerifierState: UnitToBytes
-            + UnitToField<F>
-            + FieldToUnitDeserialize<F>
-            + PoWChallenge
-            + DigestToUnitDeserialize<MerkleConfig>,
-    {
-        let parsed_proof = self.parse_proof(
-            verifier_state,
-            parsed_commitment,
-            whir_proof,
-            statement.constraints.len(),
-        )?;
+    // pub fn verify<VerifierState>(
+    //     &self,
+    //     verifier_state: &mut VerifierState,
+    //     parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
+    //     statement: &StatementVerifier<F>,
+    //     whir_proof: &WhirProof<MerkleConfig, F>,
+    // ) -> ProofResult<()>
+    // where
+    //     VerifierState: UnitToBytes
+    //         + UnitToField<F>
+    //         + FieldToUnitDeserialize<F>
+    //         + PoWChallenge
+    //         + DigestToUnitDeserialize<MerkleConfig>,
+    // {
+    //     let parsed_proof = self.parse_proof(
+    //         verifier_state,
+    //         parsed_commitment,
+    //         whir_proof,
+    //         statement.constraints.len(),
+    //     )?;
 
-        self.verify_parsed(statement, parsed_commitment, &parsed_proof)
-    }
+    //     self.verify_parsed(statement, parsed_commitment, &parsed_proof)
+    // }
 }

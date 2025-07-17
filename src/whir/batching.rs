@@ -23,7 +23,6 @@
 ///
 /// - After the first round, rest of the protocol proceeds as usual.
 ///
-
 #[cfg(test)]
 mod batching_tests {
     use ark_std::UniformRand;
@@ -38,9 +37,7 @@ mod batching_tests {
                 parameters::default_config,
             },
         },
-        parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -49,7 +46,7 @@ mod batching_tests {
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
-            statement::{Statement, StatementVerifier, Weights},
+            statement::{Statement, Weights},
             verifier::Verifier,
         },
     };
@@ -64,9 +61,7 @@ mod batching_tests {
     fn random_poly(num_coefficients: usize) -> CoefficientList<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
         let mut rng = ark_std::rand::thread_rng();
-        (0..num_coefficients)
-            .into_iter()
-            .for_each(|_| store.push(F::rand(&mut rng)));
+        (0..num_coefficients).for_each(|_| store.push(F::rand(&mut rng)));
 
         CoefficientList::new(store)
     }
@@ -86,17 +81,14 @@ mod batching_tests {
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
-        fold_type: FoldType,
     ) {
         println!("Test parameters: ");
-        println!("  num_polynomials: {}", batch_size);
-        println!("  num_variables  : {}", num_variables);
+        println!("  num_polynomials: {batch_size}");
+        println!("  num_variables  : {num_variables}");
         println!("  folding_factor : {:?}", &folding_factor);
-        println!("  num_points     : {:?}", num_points);
-        println!("  soundness_type : {:?}", soundness_type);
-        println!("  pow_bits       : {}", pow_bits);
-        println!("  fold_type      : {}", fold_type);
-        println!("");
+        println!("  num_points     : {num_points:?}");
+        println!("  soundness_type : {soundness_type:?}");
+        println!("  pow_bits       : {pow_bits}");
 
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -121,7 +113,6 @@ mod batching_tests {
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
-            fold_optimisation: fold_type,
             batch_size,
         };
 
@@ -130,9 +121,7 @@ mod batching_tests {
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 
-        (0..batch_size)
-            .into_iter()
-            .for_each(|_| poly_list.push(random_poly(num_coeffs)));
+        (0..batch_size).for_each(|_| poly_list.push(random_poly(num_coeffs)));
 
         // Construct a coefficient vector for linear sumcheck constraint
         let weight_poly = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
@@ -186,11 +175,10 @@ mod batching_tests {
         let prover = Prover(params.clone());
 
         // Extract verifier-side version of the statement (only public data)
-        let statement_verifier = StatementVerifier::from_statement(&statement);
 
         // Generate a STARK proof for the given statement and witness
-        let proof = prover
-            .prove(&mut prover_state, statement, batched_witness)
+        prover
+            .prove(&mut prover_state, statement.clone(), batched_witness)
             .unwrap();
 
         // Create a verifier with matching parameters
@@ -208,12 +196,7 @@ mod batching_tests {
 
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof
-            )
+            .verify(&mut verifier_state, &parsed_commitment, &statement,)
             .is_ok());
     }
 
@@ -242,7 +225,7 @@ mod batching_tests {
                                     num_points,
                                     soundness_type,
                                     pow_bits,
-                                    FoldType::Naive,
+                                    // FoldType::Naive,
                                 );
                             }
                         }

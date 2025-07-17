@@ -149,7 +149,7 @@ where
 
         // 1. Create the Merkle tree and add _all_ the Merkle roots to transcript
         let mut witness_list = polynomials
-            .into_iter()
+            .iter()
             .map(|poly| self.commit_single(prover_state, poly))
             .collect::<ProofResult<Vec<_>>>()?;
 
@@ -232,7 +232,7 @@ where
 {
     // Takes a list of witnesses and computes the top level batching witness.
     fn new_batched<PowStrategy>(
-        witness_list: Vec<Witness<F, MerkleConfig>>,
+        witness_list: Vec<Self>,
         ood_points: Vec<F>,
         batching_randomness: F,
         config: &WhirConfig<F, MerkleConfig, PowStrategy>,
@@ -248,7 +248,7 @@ where
             assert!(wit.polynomial.coeffs().len().is_power_of_two());
             assert!(wit.merkle_leaves.len().is_power_of_two());
             assert_eq!(wit.polynomial.num_variables(), num_vars);
-            assert_eq!(wit.merkle_leaves.len(), witness_list[0].merkle_leaves.len())
+            assert_eq!(wit.merkle_leaves.len(), witness_list[0].merkle_leaves.len());
         }
 
         let poly_dim = witness_list.first().unwrap().polynomial.coeffs().len();
@@ -289,8 +289,7 @@ where
         {
             for (ood_point, ood_resp) in ood_points.iter().zip(batched_ood_resp.iter()) {
                 let expected = polynomial.evaluate(&MultilinearPoint::expand_from_univariate(
-                    ood_point.clone(),
-                    num_vars,
+                    *ood_point, num_vars,
                 ));
                 assert_eq!(expected, ood_resp.clone());
             }
@@ -326,7 +325,7 @@ where
     }
 
     /// Returns the batched polynomial
-    pub fn batched_poly(&self) -> &CoefficientList<F> {
+    pub const fn batched_poly(&self) -> &CoefficientList<F> {
         &self.polynomial
     }
 }

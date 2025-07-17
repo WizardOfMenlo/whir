@@ -37,7 +37,7 @@ where
             self = self.challenge_scalars(num_samples, "ood_query");
 
             for i in 0..batch_size {
-                self = self.add_scalars(num_samples, &format!("ood_ans_{}", i))
+                self = self.add_scalars(num_samples, &format!("ood_ans_{i}"));
             }
         }
         self

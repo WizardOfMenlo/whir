@@ -1,5 +1,5 @@
 use ark_crypto_primitives::merkle_tree::Config;
-use ark_ff::{FftField, Field};
+use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
     BytesToUnitDeserialize, ProofResult, UnitToBytes,
@@ -23,48 +23,6 @@ pub struct ParsedCommitment<F, D> {
     pub ood_points: Vec<F>,
     pub ood_answers: Vec<Vec<F>>,
     pub batching_randomness: F,
-}
-
-impl<F: Field, D> ParsedCommitment<F, D> {
-    pub fn parse<VerifierState, MerkleConfig>(
-        verifier_state: &mut VerifierState,
-        num_variables: usize,
-        ood_samples: usize,
-    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
-    where
-        MerkleConfig: Config<Leaf = [F]>,
-        VerifierState:
-            FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
-    {
-        let root = verifier_state.read_digest()?;
-
-        let mut ood_points = vec![F::ZERO; ood_samples];
-        let mut ood_answers = vec![F::ZERO; ood_samples];
-        if ood_samples > 0 {
-            verifier_state.fill_challenge_scalars(&mut ood_points)?;
-            verifier_state.fill_next_scalars(&mut ood_answers)?;
-        }
-
-        Ok(ParsedCommitment {
-            num_variables,
-            root,
-            ood_points,
-            ood_answers,
-        })
-    }
-
-    /// Return constraints for OODS
-    pub fn oods_constraints(&self) -> Vec<Constraint<F>> {
-        self.ood_points
-            .iter()
-            .zip(&self.ood_answers)
-            .map(|(&point, &eval)| Constraint {
-                weights: Weights::univariate(point, self.num_variables),
-                sum: eval,
-                defer_evaluation: false,
-            })
-            .collect()
-    }
 }
 
 pub struct CommitmentReader<'a, F, MerkleConfig, PowStrategy>(
@@ -134,7 +92,36 @@ impl<F, D> ParsedCommitment<F, D>
 where
     F: ark_ff::Field,
 {
-    pub(crate) fn ood_data(&self) -> (&[F], Vec<F>) {
+    pub fn parse<VerifierState, MerkleConfig>(
+        verifier_state: &mut VerifierState,
+        num_variables: usize,
+        ood_samples: usize,
+    ) -> ProofResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    where
+        MerkleConfig: Config<Leaf = [F]>,
+        VerifierState:
+            FieldToUnitDeserialize<F> + UnitToField<F> + DigestToUnitDeserialize<MerkleConfig>,
+    {
+        let root = verifier_state.read_digest()?;
+
+        let mut ood_points = vec![F::ZERO; ood_samples];
+        let mut ood_answers = vec![F::ZERO; ood_samples];
+        if ood_samples > 0 {
+            verifier_state.fill_challenge_scalars(&mut ood_points)?;
+            verifier_state.fill_next_scalars(&mut ood_answers)?;
+        }
+
+        Ok(ParsedCommitment {
+            num_variables,
+            root: vec![root],
+            ood_points,
+            ood_answers: vec![ood_answers],
+            batching_randomness: F::ZERO,
+        })
+    }
+
+    /// Return constraints for OODS
+    pub fn oods_constraints(&self) -> Vec<Constraint<F>> {
         let mut multiplier = self.batching_randomness;
 
         let result = self
@@ -146,11 +133,20 @@ where
                 multiplier *= self.batching_randomness;
                 result
                     .into_iter()
-                    .zip(this_round.into_iter())
+                    .zip(this_round)
                     .map(|(lhs, v)| lhs + (v * this_multiplier))
                     .collect()
             })
             .unwrap_or_default();
-        (self.ood_points.as_slice(), result)
+
+        self.ood_points
+            .iter()
+            .zip(result.iter())
+            .map(|(&point, &eval)| Constraint {
+                weights: Weights::univariate(point, self.num_variables),
+                sum: eval,
+                defer_evaluation: false,
+            })
+            .collect()
     }
 }

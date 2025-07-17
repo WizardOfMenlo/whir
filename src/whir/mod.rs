@@ -1,9 +1,3 @@
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
-
-use crate::utils::ark_eq;
-
 pub mod batching;
 pub mod committer;
 pub mod domainsep;
@@ -12,54 +6,6 @@ pub mod prover;
 pub mod statement;
 pub mod utils;
 pub mod verifier;
-
-// // Only includes the authentication paths
-// #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-// pub struct WhirProof<MerkleConfig, F>
-// where
-//     MerkleConfig: Config<Leaf = [F]>,
-//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-// {
-//     ///
-//     /// List of Merkle paths leading to the committed roots. If more than one
-//     /// polynomial is being committed then there will be more than on entry in
-//     /// this list.
-//     ///
-//     #[serde(with = "crate::ark_serde")]
-//     pub round0_merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-
-//     /// Merkle Paths after first round.
-//     #[serde(with = "crate::ark_serde")]
-//     pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
-
-//     #[serde(with = "crate::ark_serde")]
-//     pub statement_values_at_random_point: Vec<F>,
-// }
-
-// pub fn whir_proof_size<MerkleConfig, F>(
-//     narg_string: &[u8],
-//     whir_proof: &WhirProof<MerkleConfig, F>,
-// ) -> usize
-// where
-//     MerkleConfig: Config<Leaf = [F]>,
-//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-// {
-//     narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
-// }
-
-// impl<MerkleConfig, F> PartialEq for WhirProof<MerkleConfig, F>
-// where
-//     MerkleConfig: Config<Leaf = [F]>,
-//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-// {
-//     fn eq(&self, other: &Self) -> bool {
-//         ark_eq(&self.merkle_paths, &other.merkle_paths)
-//             && ark_eq(
-//                 &self.statement_values_at_random_point,
-//                 &other.statement_values_at_random_point,
-//             )
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

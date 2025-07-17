@@ -1,7 +1,6 @@
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MerkleTree, MultiPath, TwoToOneParam};
-use ark_ff::{FftField, Field};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
@@ -25,14 +24,14 @@ use crate::{
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
-        committer::reader::ParsedCommitment,
         parameters::RoundConfig,
         utils::{
-            fma_stir_queries, get_challenge_stir_queries, sample_ood_points, validate_stir_queries,
+            get_challenge_stir_queries, sample_ood_points, validate_stir_queries,
             DigestToUnitSerialize,
         },
     },
 };
+pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
@@ -67,31 +66,21 @@ where
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     fn create_root_paths(
         &self,
-        mut all_round_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+        batched_mt: MultiPath<MerkleConfig>,
+        batched_stir: &[Vec<F>],
         batching_data: &[BatchingData<F, MerkleConfig>],
-        _batching_randomness: &F, // Only used in debug builds
-    ) -> ProofResult<(
-        Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>, // first round paths
-        Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>, // rest of the paths
-    )> {
-        assert!(
-            all_round_paths.len() > 0,
-            "There must be at least one round of merkle path"
-        );
-
+        batching_randomness: &F, // Only used in debug builds
+    ) -> ProofResult<Vec<RootPath<F, MerkleConfig>>> {
         let fold_sz = 1 << self.0.folding_factor.at_round(0);
-        let rest = all_round_paths.split_off(1); // Splits vector into two parts efficiently
 
         if batching_data.is_empty() {
-            return Ok((all_round_paths, rest));
+            return Ok(vec![]);
         }
-
-        let (batched_mt, batched_stir) = all_round_paths.into_iter().next().unwrap();
 
         let mut first_round_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)> =
             Vec::with_capacity(batching_data.len());
 
-        let stir_indexes = batched_mt.leaf_indexes.clone();
+        let stir_indexes = batched_mt.leaf_indexes;
 
         for BatchingData {
             merkle_tree,
@@ -112,11 +101,11 @@ where
         }
 
         debug_assert!(
-            validate_stir_queries(_batching_randomness, &batched_stir, &first_round_paths,),
+            validate_stir_queries(batching_randomness, batched_stir, &first_round_paths,),
             "The computed value of STIR queries must match the value in the leaf nodes"
         );
 
-        Ok((first_round_paths, rest))
+        Ok(first_round_paths)
     }
 
     /// Proves that the commitment satisfies constraints in `statement`.
@@ -204,6 +193,8 @@ where
             prev_merkle_answers: witness.merkle_leaves,
             randomness_vec,
             statement,
+            batching_data: witness.batching_data,
+            batching_randomness: witness.batching_randomness,
         };
 
         // Run WHIR rounds
@@ -222,19 +213,8 @@ where
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
 
-        let (round0_merkle_paths, rest_paths) = self.create_root_paths(
-            round_state.merkle_proofs,
-            &witness.batching_data,
-            &witness.batching_randomness,
-        )?;
-
         prover_state.hint::<Vec<F>>(&deferred)?;
 
-        // Ok(WhirProof {
-        //     round0_merkle_paths,
-        //     merkle_paths: rest_paths,
-        //     statement_values_at_random_point,
-        // })
         Ok((constraint_eval, deferred))
     }
 
@@ -326,8 +306,25 @@ where
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
-        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
+        if round_state.round == 0 && !round_state.batching_data.is_empty() {
+            let first_round_merkle_paths = self.create_root_paths(
+                merkle_proof.clone(),
+                answers.clone().as_slice(),
+                &round_state.batching_data,
+                &round_state.batching_randomness,
+            )?;
+
+            if first_round_merkle_paths.is_empty() {
+                prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+            } else {
+                prover_state.hint::<Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>>(
+                    &first_round_merkle_paths,
+                )?;
+            }
+        } else {
+            prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+        }
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
         stir_evaluations.extend(answers.iter().map(|answers| {
@@ -525,67 +522,67 @@ where
     }
 }
 
-impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize + Field,
-{
-    pub(crate) fn round_data(
-        &self,
-        whir_round: usize,
-        batching_randomness: F,
-    ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>) {
-        assert!(whir_round <= self.merkle_paths.len());
-        assert!(
-            self.round0_merkle_paths.len() > 0,
-            "There must be at least on round of data"
-        );
+// impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
+// where
+//     MerkleConfig: Config<Leaf = [F]>,
+//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize + Field,
+// {
+//     pub(crate) fn round_data(
+//         &self,
+//         whir_round: usize,
+//         batching_randomness: F,
+//     ) -> (MultiPath<MerkleConfig>, Vec<Vec<F>>) {
+//         assert!(whir_round <= self.merkle_paths.len());
+//         assert!(
+//             self.round0_merkle_paths.len() > 0,
+//             "There must be at least on round of data"
+//         );
 
-        if whir_round == 0 {
-            let mut multiplier = batching_randomness;
-            let (merkle_paths, mut result) = self.round0_merkle_paths.first().unwrap().clone();
+//         if whir_round == 0 {
+//             let mut multiplier = batching_randomness;
+//             let (merkle_paths, mut result) = self.round0_merkle_paths.first().unwrap().clone();
 
-            for (_, leaf) in &self.round0_merkle_paths[1..] {
-                fma_stir_queries(multiplier, leaf.as_slice(), result.as_mut_slice());
-                multiplier *= batching_randomness;
-            }
+//             for (_, leaf) in &self.round0_merkle_paths[1..] {
+//                 fma_stir_queries(multiplier, leaf.as_slice(), result.as_mut_slice());
+//                 multiplier *= batching_randomness;
+//             }
 
-            (merkle_paths, result)
-        } else {
-            self.merkle_paths[whir_round - 1].clone()
-        }
-    }
-}
+//             (merkle_paths, result)
+//         } else {
+//             self.merkle_paths[whir_round - 1].clone()
+//         }
+//     }
+// }
 
-impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-{
-    pub(crate) fn validate_first_round(
-        &self,
-        commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        stir_challenges_indexes: &[usize],
-        leaf_hash: &LeafParam<MerkleConfig>,
-        inner_node_hash: &TwoToOneParam<MerkleConfig>,
-    ) -> bool {
-        commitment.root.len() == self.round0_merkle_paths.len()
-            && self
-                .round0_merkle_paths
-                .iter()
-                .zip(commitment.root.iter())
-                .all(|((path, answers), root_hash)| {
-                    path.verify(
-                        leaf_hash,
-                        inner_node_hash,
-                        root_hash,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .unwrap()
-                        && path.leaf_indexes == *stir_challenges_indexes
-                })
-    }
-}
+// impl<F, MerkleConfig> WhirProof<MerkleConfig, F>
+// where
+//     MerkleConfig: Config<Leaf = [F]>,
+//     F: Sized + Clone + ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
+// {
+//     pub(crate) fn validate_first_round(
+//         &self,
+//         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
+//         stir_challenges_indexes: &[usize],
+//         leaf_hash: &LeafParam<MerkleConfig>,
+//         inner_node_hash: &TwoToOneParam<MerkleConfig>,
+//     ) -> bool {
+//         commitment.root.len() == self.round0_merkle_paths.len()
+//             && self
+//                 .round0_merkle_paths
+//                 .iter()
+//                 .zip(commitment.root.iter())
+//                 .all(|((path, answers), root_hash)| {
+//                     path.verify(
+//                         leaf_hash,
+//                         inner_node_hash,
+//                         root_hash,
+//                         answers.iter().map(|a| a.as_ref()),
+//                     )
+//                     .unwrap()
+//                         && path.leaf_indexes == *stir_challenges_indexes
+//                 })
+//     }
+// }
 
 /// Represents the prover state during a single round of the WHIR protocol.
 ///
@@ -642,4 +639,7 @@ where
     ///
     /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
+
+    pub(crate) batching_data: Vec<BatchingData<F, MerkleConfig>>,
+    pub(crate) batching_randomness: F,
 }
