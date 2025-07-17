@@ -423,28 +423,4 @@ where
         }
         value
     }
-
-    // pub fn verify<VerifierState>(
-    //     &self,
-    //     verifier_state: &mut VerifierState,
-    //     parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-    //     statement: &StatementVerifier<F>,
-    //     whir_proof: &WhirProof<MerkleConfig, F>,
-    // ) -> ProofResult<()>
-    // where
-    //     VerifierState: UnitToBytes
-    //         + UnitToField<F>
-    //         + FieldToUnitDeserialize<F>
-    //         + PoWChallenge
-    //         + DigestToUnitDeserialize<MerkleConfig>,
-    // {
-    //     let parsed_proof = self.parse_proof(
-    //         verifier_state,
-    //         parsed_commitment,
-    //         whir_proof,
-    //         statement.constraints.len(),
-    //     )?;
-
-    //     self.verify_parsed(statement, parsed_commitment, &parsed_proof)
-    // }
 }
