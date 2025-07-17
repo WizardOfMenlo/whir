@@ -1,5 +1,6 @@
 use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
@@ -166,6 +167,13 @@ where
 
     let result = expected_stir_value == computed_stir;
     result
+}
+pub trait HintSerialize {
+    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
+}
+
+pub trait HintDeserialize {
+    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
 }
 
 #[cfg(test)]

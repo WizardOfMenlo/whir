@@ -1,13 +1,6 @@
-use ark_ff::{FftField, Field};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use ark_ff::Field;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
-
-use crate::{
-    ntt::{intt_batch, transpose},
-    parameters::FoldType,
-};
 
 /// Computes the folded value of a function evaluated on a coset.
 ///
@@ -74,106 +67,14 @@ pub fn compute_fold<F: Field>(
     answers[0]
 }
 
-/// Applies a folding transformation to evaluation vectors in-place.
-///
-/// This is used to prepare a set of evaluations for a sumcheck-style polynomial folding,
-/// supporting two modes:
-///
-/// - `FoldType::Naive`: applies only the reshaping step (transposition).
-/// - `FoldType::ProverHelps`: performs reshaping, inverse NTTs, and applies coset + scaling correction.
-///
-/// The evaluations are grouped into `2^folding_factor` blocks of size `N / 2^folding_factor`.
-/// For each group, the function performs the following (if `ProverHelps`):
-///
-/// 1. Transpose: reshape layout to enable independent processing of each sub-coset.
-/// 2. Inverse NTT: convert each sub-coset from evaluation to coefficient form (no 1/N scaling).
-/// 3. Scale correction:
-///    Each output is multiplied by:
-///
-///    ```ignore
-///    size_inv * (domain_gen_inv^i)^j
-///    ```
-///
-///    where:
-///      - `size_inv = 1 / 2^folding_factor`
-///      - `i` is the subdomain index
-///      - `j` is the index within the block
-///
-/// # Panics
-/// Panics if the input size is not divisible by `2^folding_factor`.
-#[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = evals.len(), folding_factor)))]
-pub fn transform_evaluations<F: FftField>(
-    evals: &mut [F],
-    fold_type: FoldType,
-    _domain_gen: F,
-    domain_gen_inv: F,
-    folding_factor: usize,
-) {
-    // Compute the number of sub-cosets = 2^folding_factor
-    let folding_factor_exp = 1 << folding_factor;
-
-    // Ensure input is divisible by folding factor
-    assert!(evals.len() % folding_factor_exp == 0);
-
-    // Number of rows (one per subdomain)
-    let size_of_new_domain = evals.len() / folding_factor_exp;
-
-    match fold_type {
-        FoldType::Naive => {
-            // Simply transpose into column-major form: shape = [folding_factor_exp × size_of_new_domain]
-            transpose(evals, folding_factor_exp, size_of_new_domain);
-        }
-        FoldType::ProverHelps => {
-            // Step 1: Reshape via transposition
-            transpose(evals, folding_factor_exp, size_of_new_domain);
-
-            // Step 2: Apply inverse NTTs
-            intt_batch(evals, folding_factor_exp);
-
-            // Step 3: Apply scaling to match the desired domain layout
-            // Each value is scaled by: size_inv * offset^j
-            let size_inv = F::from(folding_factor_exp as u64).inverse().unwrap();
-            #[cfg(not(feature = "parallel"))]
-            {
-                let mut coset_offset_inv = F::ONE;
-                for answers in evals.chunks_exact_mut(folding_factor_exp) {
-                    let mut scale = size_inv;
-                    for v in answers.iter_mut() {
-                        *v *= scale;
-                        scale *= coset_offset_inv;
-                    }
-                    coset_offset_inv *= domain_gen_inv;
-                }
-            }
-            #[cfg(feature = "parallel")]
-            evals
-                .par_chunks_exact_mut(folding_factor_exp)
-                .enumerate()
-                .for_each_with(F::ZERO, |offset, (i, answers)| {
-                    if *offset == F::ZERO {
-                        *offset = domain_gen_inv.pow([i as u64]);
-                    } else {
-                        *offset *= domain_gen_inv;
-                    }
-                    let mut scale = size_inv;
-                    for v in answers.iter_mut() {
-                        *v *= scale;
-                        scale *= &*offset;
-                    }
-                });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ark_ff::{AdditiveGroup, FftField, Field};
 
-    use super::{compute_fold, transform_evaluations};
+    use super::compute_fold;
     use crate::{
         crypto::fields::Field64,
-        ntt::transpose,
-        parameters::FoldType,
+        ntt::{test_utils::transform_evaluations, transpose},
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
 
@@ -283,13 +184,7 @@ mod tests {
         );
 
         // Transform the evaluations into the "ProverHelps" format
-        transform_evaluations(
-            &mut domain_evaluations,
-            crate::parameters::FoldType::ProverHelps,
-            root_of_unity,
-            root_of_unity_inv,
-            folding_factor,
-        );
+        transform_evaluations(&mut domain_evaluations, root_of_unity_inv, folding_factor);
 
         // Number of cosets = domain_size / folding_factor_exp
         let num = domain_size / folding_factor_exp;
@@ -487,34 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_evaluations_naive_manual() {
-        // Input: 2×2 matrix (folding_factor = 1 → folding_factor_exp = 2)
-        // Stored row-major as: [a00, a01, a10, a11]
-        // We expect it to transpose to: [a00, a10, a01, a11]
-
-        let folding_factor = 1;
-        let mut evals = vec![
-            F::from(1), // a00
-            F::from(2), // a01
-            F::from(3), // a10
-            F::from(4), // a11
-        ];
-
-        // Expected transpose: column-major layout
-        let expected = vec![
-            F::from(1), // a00
-            F::from(3), // a10
-            F::from(2), // a01
-            F::from(4), // a11
-        ];
-
-        // Naive transpose — only reshuffling the data
-        transform_evaluations(&mut evals, FoldType::Naive, F::ONE, F::ONE, folding_factor);
-
-        assert_eq!(evals, expected);
-    }
-
-    #[test]
     #[allow(clippy::cast_sign_loss)]
     fn test_transform_evaluations_prover_helps() {
         // Setup:
@@ -573,13 +440,7 @@ mod tests {
         ];
 
         // Run transform
-        transform_evaluations(
-            &mut evals,
-            FoldType::ProverHelps,
-            domain_gen,
-            domain_gen_inv,
-            folding_factor,
-        );
+        transform_evaluations(&mut evals, domain_gen_inv, folding_factor);
 
         // Validate output
         assert_eq!(evals, expected);
@@ -589,6 +450,6 @@ mod tests {
     #[should_panic]
     fn test_transform_evaluations_invalid_length() {
         let mut evals = vec![F::from(1); 6]; // Not a power of 2
-        transform_evaluations(&mut evals, FoldType::Naive, F::ONE, F::ONE, 2);
+        transform_evaluations(&mut evals, F::ONE, 2);
     }
 }

@@ -7,15 +7,14 @@ use std::{
 
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
+use ark_poly::EvaluationDomain;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{
-        FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,8 +45,7 @@ where
     pub starting_folding_pow_bits: f64,
 
     pub folding_factor: FoldingFactor,
-    pub round_parameters: Vec<RoundConfig>,
-    pub fold_optimisation: FoldType,
+    pub round_parameters: Vec<RoundConfig<F>>,
 
     pub final_queries: usize,
     pub final_pow_bits: f64,
@@ -70,12 +68,25 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoundConfig {
+#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+pub struct RoundConfig<F>
+where
+    F: FftField,
+{
     pub pow_bits: f64,
     pub folding_pow_bits: f64,
     pub num_queries: usize,
     pub ood_samples: usize,
     pub log_inv_rate: usize,
+    pub num_variables: usize,
+    pub folding_factor: usize,
+    pub domain_size: usize,
+    #[serde(with = "crate::ark_serde")]
+    pub domain_gen: F,
+    #[serde(with = "crate::ark_serde")]
+    pub domain_gen_inv: F,
+    #[serde(with = "crate::ark_serde")]
+    pub exp_domain_gen: F,
 }
 
 impl<F, MerkleConfig, PowStrategy> WhirConfig<F, MerkleConfig, PowStrategy>
@@ -102,6 +113,11 @@ where
 
         let starting_domain = Domain::new(1 << mv_parameters.num_variables, log_inv_rate)
             .expect("Should have found an appropriate domain - check Field 2 adicity?");
+
+        let mut domain_size = starting_domain.size();
+        let mut domain_gen: F = starting_domain.backing_domain.group_gen();
+        let mut domain_gen_inv = starting_domain.backing_domain.group_gen_inv();
+        let mut exp_domain_gen = domain_gen.pow([1 << whir_parameters.folding_factor.at_round(0)]);
 
         let (num_rounds, final_sumcheck_rounds) = whir_parameters
             .folding_factor
@@ -199,10 +215,21 @@ where
                 num_queries,
                 ood_samples,
                 log_inv_rate,
+                num_variables,
+                folding_factor: whir_parameters.folding_factor.at_round(round),
+                domain_size,
+                domain_gen,
+                domain_gen_inv,
+                exp_domain_gen,
             });
 
             num_variables -= whir_parameters.folding_factor.at_round(round + 1);
             log_inv_rate = next_rate;
+            domain_size /= 2;
+            domain_gen = domain_gen.square();
+            domain_gen_inv = domain_gen_inv.square();
+            exp_domain_gen =
+                domain_gen.pow([1 << whir_parameters.folding_factor.at_round(round + 1)]);
         }
 
         let final_queries = Self::queries(
@@ -236,7 +263,6 @@ where
             final_sumcheck_rounds,
             final_folding_pow_bits,
             pow_strategy: PhantomData,
-            fold_optimisation: whir_parameters.fold_optimisation,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
@@ -447,6 +473,57 @@ where
 
         field_size_bits as f64 - (log_combination + list_size + 1.)
     }
+
+    /// Compute the synthetic or derived `RoundConfig` for the final phase.
+    ///
+    /// - If no folding rounds were configured, constructs a fallback config
+    ///   based on the starting domain and folding factor.
+    /// - If rounds were configured, derives the final config by adapting
+    ///   the last round’s values for the final folding phase.
+    ///
+    /// This is used by the verifier when verifying the final polynomial,
+    /// ensuring consistent challenge selection and STIR constraint handling.
+    pub fn final_round_config(&self) -> RoundConfig<F> {
+        if self.round_parameters.is_empty() {
+            // Fallback: no folding rounds, use initial domain setup
+            RoundConfig {
+                num_variables: self.mv_parameters.num_variables - self.folding_factor.at_round(0),
+                folding_factor: self.folding_factor.at_round(self.n_rounds()),
+                num_queries: self.final_queries,
+                pow_bits: self.final_pow_bits,
+                domain_size: self.starting_domain.size(),
+                domain_gen: self.starting_domain.backing_domain.group_gen(),
+                domain_gen_inv: self.starting_domain.backing_domain.group_gen_inv(),
+                exp_domain_gen: self
+                    .starting_domain
+                    .backing_domain
+                    .group_gen()
+                    .pow([1 << self.folding_factor.at_round(0)]),
+                ood_samples: 0, // no OOD in synthetic final phase
+                folding_pow_bits: self.final_folding_pow_bits,
+                log_inv_rate: self.starting_log_inv_rate,
+            }
+        } else {
+            // Derive final round config from last round, adjusted for next fold
+            let last = self.round_parameters.last().unwrap();
+            RoundConfig {
+                num_variables: last.num_variables - self.folding_factor.at_round(self.n_rounds()),
+                folding_factor: self.folding_factor.at_round(self.n_rounds()),
+                num_queries: self.final_queries,
+                pow_bits: self.final_pow_bits,
+                domain_size: last.domain_size / 2,
+                domain_gen: last.domain_gen.square(),
+                domain_gen_inv: last.domain_gen_inv.square(),
+                exp_domain_gen: last
+                    .domain_gen
+                    .square()
+                    .pow([1 << self.folding_factor.at_round(self.n_rounds())]),
+                ood_samples: last.ood_samples,
+                folding_pow_bits: self.final_folding_pow_bits,
+                log_inv_rate: last.log_inv_rate,
+            }
+        }
+    }
 }
 
 /// Manual implementation to allow error in `f64` and handle ark types missing `PartialEq`.
@@ -482,7 +559,10 @@ where
     }
 }
 
-impl PartialEq for RoundConfig {
+impl<F> PartialEq for RoundConfig<F>
+where
+    F: FftField,
+{
     fn eq(&self, other: &Self) -> bool {
         f64_eq_abs(self.pow_bits, other.pow_bits, 0.001)
             && f64_eq_abs(self.folding_pow_bits, other.folding_pow_bits, 0.001)
@@ -513,7 +593,6 @@ where
             .field("starting_log_inv_rate", &self.starting_log_inv_rate)
             .field("starting_folding_pow_bits", &self.starting_folding_pow_bits)
             .field("round_parameters", &self.round_parameters)
-            .field("fold_optimisation", &self.fold_optimisation)
             .field("final_queries", &self.final_queries)
             .field("final_pow_bits", &self.final_pow_bits)
             .field("final_log_inv_rate", &self.final_log_inv_rate)
@@ -703,7 +782,10 @@ where
     }
 }
 
-impl Display for RoundConfig {
+impl<F> Display for RoundConfig<F>
+where
+    F: FftField,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
@@ -747,7 +829,6 @@ mod tests {
             leaf_hash_params,
             two_to_one_params,
             soundness_type: SoundnessType::ConjectureList,
-            fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
@@ -922,6 +1003,12 @@ mod tests {
                 num_queries: 5,
                 ood_samples: 2,
                 log_inv_rate: 3,
+                num_variables: 10,
+                folding_factor: 2,
+                domain_size: 10,
+                domain_gen: Field64::from(2),
+                domain_gen_inv: Field64::from(2),
+                exp_domain_gen: Field64::from(2),
             },
             RoundConfig {
                 pow_bits: 18.0,
@@ -929,6 +1016,12 @@ mod tests {
                 num_queries: 6,
                 ood_samples: 2,
                 log_inv_rate: 4,
+                num_variables: 10,
+                folding_factor: 2,
+                domain_size: 10,
+                domain_gen: Field64::from(2),
+                domain_gen_inv: Field64::from(2),
+                exp_domain_gen: Field64::from(2),
             },
         ];
 
@@ -996,6 +1089,12 @@ mod tests {
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
+            num_variables: 10,
+            folding_factor: 2,
+            domain_size: 10,
+            domain_gen: Field64::from(2),
+            domain_gen_inv: Field64::from(2),
+            exp_domain_gen: Field64::from(2),
         }];
 
         assert!(
@@ -1024,6 +1123,12 @@ mod tests {
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
+            num_variables: 10,
+            folding_factor: 2,
+            domain_size: 10,
+            domain_gen: Field64::from(2),
+            domain_gen_inv: Field64::from(2),
+            exp_domain_gen: Field64::from(2),
         }];
 
         assert!(
@@ -1051,6 +1156,12 @@ mod tests {
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
+            num_variables: 10,
+            folding_factor: 2,
+            domain_size: 10,
+            domain_gen: Field64::from(2),
+            domain_gen_inv: Field64::from(2),
+            exp_domain_gen: Field64::from(2),
         }];
 
         assert!(
@@ -1078,6 +1189,12 @@ mod tests {
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
+            num_variables: 10,
+            folding_factor: 2,
+            domain_size: 10,
+            domain_gen: Field64::from(2),
+            domain_gen_inv: Field64::from(2),
+            exp_domain_gen: Field64::from(2),
         }];
 
         assert!(

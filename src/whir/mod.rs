@@ -8,60 +8,58 @@ pub mod batching;
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
-pub mod parsed_proof;
 pub mod prover;
 pub mod statement;
-pub mod stir_evaluations;
 pub mod utils;
 pub mod verifier;
 
-// Only includes the authentication paths
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-pub struct WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    ///
-    /// List of Merkle paths leading to the committed roots. If more than one
-    /// polynomial is being committed then there will be more than on entry in
-    /// this list.
-    ///
-    #[serde(with = "crate::ark_serde")]
-    pub round0_merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+// // Only includes the authentication paths
+// #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
+// pub struct WhirProof<MerkleConfig, F>
+// where
+//     MerkleConfig: Config<Leaf = [F]>,
+//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+// {
+//     ///
+//     /// List of Merkle paths leading to the committed roots. If more than one
+//     /// polynomial is being committed then there will be more than on entry in
+//     /// this list.
+//     ///
+//     #[serde(with = "crate::ark_serde")]
+//     pub round0_merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 
-    /// Merkle Paths after first round.
-    #[serde(with = "crate::ark_serde")]
-    pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+//     /// Merkle Paths after first round.
+//     #[serde(with = "crate::ark_serde")]
+//     pub merkle_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
 
-    #[serde(with = "crate::ark_serde")]
-    pub statement_values_at_random_point: Vec<F>,
-}
+//     #[serde(with = "crate::ark_serde")]
+//     pub statement_values_at_random_point: Vec<F>,
+// }
 
-pub fn whir_proof_size<MerkleConfig, F>(
-    narg_string: &[u8],
-    whir_proof: &WhirProof<MerkleConfig, F>,
-) -> usize
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
-}
+// pub fn whir_proof_size<MerkleConfig, F>(
+//     narg_string: &[u8],
+//     whir_proof: &WhirProof<MerkleConfig, F>,
+// ) -> usize
+// where
+//     MerkleConfig: Config<Leaf = [F]>,
+//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+// {
+//     narg_string.len() + whir_proof.serialized_size(ark_serialize::Compress::Yes)
+// }
 
-impl<MerkleConfig, F> PartialEq for WhirProof<MerkleConfig, F>
-where
-    MerkleConfig: Config<Leaf = [F]>,
-    F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
-{
-    fn eq(&self, other: &Self) -> bool {
-        ark_eq(&self.merkle_paths, &other.merkle_paths)
-            && ark_eq(
-                &self.statement_values_at_random_point,
-                &other.statement_values_at_random_point,
-            )
-    }
-}
+// impl<MerkleConfig, F> PartialEq for WhirProof<MerkleConfig, F>
+// where
+//     MerkleConfig: Config<Leaf = [F]>,
+//     F: Sized + Clone + CanonicalSerialize + CanonicalDeserialize,
+// {
+//     fn eq(&self, other: &Self) -> bool {
+//         ark_eq(&self.merkle_paths, &other.merkle_paths)
+//             && ark_eq(
+//                 &self.statement_values_at_random_point,
+//                 &other.statement_values_at_random_point,
+//             )
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -71,15 +69,13 @@ mod tests {
 
     use crate::{
         crypto::{
-            fields::Field64,
+            fields::{Field64, Field64_2},
             merkle_tree::{
                 blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
                 parameters::default_config,
             },
         },
-        parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -89,7 +85,7 @@ mod tests {
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
-            statement::{Statement, StatementVerifier, Weights},
+            statement::{Statement, Weights},
             verifier::Verifier,
         },
     };
@@ -102,6 +98,9 @@ mod tests {
 
     /// Field type used in the tests.
     type F = Field64;
+
+    /// Extension field type used in the tests.
+    type EF = Field64_2;
 
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
     ///
@@ -117,7 +116,6 @@ mod tests {
         num_points: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
-        fold_type: FoldType,
     ) {
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -126,7 +124,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
         // Generate Merkle parameters: hash function and compression function
         let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
 
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);
@@ -142,7 +140,6 @@ mod tests {
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
-            fold_optimisation: fold_type,
             batch_size: 1,
         };
 
@@ -166,13 +163,17 @@ mod tests {
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            let eval = polynomial.evaluate(point);
+            let eval = polynomial.evaluate_at_extension(point);
             let weights = Weights::evaluation(point.clone());
             statement.add_constraint(weights, eval);
         }
 
         // Construct a coefficient vector for linear sumcheck constraint
-        let input = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
+        let input = CoefficientList::new(
+            (0..1 << num_variables)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
 
         // Define weights for linear combination
         let linear_claim_weight = Weights::linear(input.into());
@@ -201,14 +202,10 @@ mod tests {
         // Instantiate the prover with the given parameters
         let prover = Prover(params.clone());
 
-        // Extract verifier-side version of the statement (only public data)
-        let statement_verifier = StatementVerifier::from_statement(&statement);
-
         // Generate a STARK proof for the given statement and witness
-        let proof = prover.prove(&mut prover_state, statement, witness).unwrap();
-
-        // Test that the proof is serializable
-        test_serde(&proof);
+        prover
+            .prove(&mut prover_state, statement.clone(), witness)
+            .unwrap();
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
@@ -225,14 +222,9 @@ mod tests {
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(verifier
-            .verify(
-                &mut verifier_state,
-                &parsed_commitment,
-                &statement_verifier,
-                &proof
-            )
-            .is_ok());
+        verifier
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .unwrap();
     }
 
     #[test]
@@ -243,26 +235,22 @@ mod tests {
             SoundnessType::ProvableList,
             SoundnessType::UniqueDecoding,
         ];
-        let fold_types = [FoldType::Naive, FoldType::ProverHelps];
         let num_points = [0, 1, 2];
         let pow_bits = [0, 5, 10];
 
         for folding_factor in folding_factors {
             let num_variables = folding_factor..=3 * folding_factor;
             for num_variable in num_variables {
-                for fold_type in fold_types {
-                    for num_points in num_points {
-                        for soundness_type in soundness_type {
-                            for pow_bits in pow_bits {
-                                make_whir_things(
-                                    num_variable,
-                                    FoldingFactor::Constant(folding_factor),
-                                    num_points,
-                                    soundness_type,
-                                    pow_bits,
-                                    fold_type,
-                                );
-                            }
+                for num_points in num_points {
+                    for soundness_type in soundness_type {
+                        for pow_bits in pow_bits {
+                            make_whir_things(
+                                num_variable,
+                                FoldingFactor::Constant(folding_factor),
+                                num_points,
+                                soundness_type,
+                                pow_bits,
+                            );
                         }
                     }
                 }

@@ -17,7 +17,7 @@ pub fn ark_eq<T: CanonicalSerialize>(a: &T, b: &T) -> bool {
 
 /// Fuzzy comparison of f64 using absolute error.
 pub fn f64_eq_abs(a: f64, b: f64, abs_err: f64) -> bool {
-    dbg!((a - b).abs() <= abs_err)
+    (a - b).abs() <= abs_err
 }
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.

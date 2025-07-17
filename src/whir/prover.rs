@@ -16,14 +16,12 @@ use super::{
     committer::{BatchingData, Witness},
     parameters::WhirConfig,
     statement::{Statement, Weights},
-    WhirProof,
+    utils::HintSerialize,
 };
 use crate::{
     domain::Domain,
-    ntt::expand_from_coeff,
-    poly_utils::{
-        coeffs::CoefficientList, fold::transform_evaluations, multilinear::MultilinearPoint,
-    },
+    ntt::interleaved_rs_encode,
+    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
@@ -121,19 +119,24 @@ where
         Ok((first_round_paths, rest))
     }
 
+    /// Proves that the commitment satisfies constraints in `statement`.
+    ///
+    /// When called without any constraints it only perfoms a low-degree test.
+    /// Returns the constraint evaluation point and values of deferred constraints.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<ProverState>(
         &self,
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<WhirProof<MerkleConfig, F>>
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
     where
         ProverState: UnitToField<F>
             + FieldToUnitSerialize<F>
             + UnitToBytes
             + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -199,7 +202,6 @@ where
             coefficients: witness.polynomial,
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
-            merkle_proofs: vec![],
             randomness_vec,
             statement,
         };
@@ -209,20 +211,15 @@ where
             self.round(prover_state, &mut round_state)?;
         }
 
-        // Extract WhirProof
-        let mut randomness_vec_rev = round_state.randomness_vec;
-        randomness_vec_rev.reverse();
-        let statement_values_at_random_point = round_state
+        // Hints for deferred constraints
+        let constraint_eval =
+            MultilinearPoint(round_state.randomness_vec.iter().copied().rev().collect());
+        let deferred = round_state
             .statement
             .constraints
             .iter()
-            .filter_map(|constraint| {
-                if let Weights::Linear { weight } = &constraint.weights {
-                    Some(weight.eval_extension(&MultilinearPoint(randomness_vec_rev.clone())))
-                } else {
-                    None
-                }
-            })
+            .filter(|constraint| constraint.defer_evaluation)
+            .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
 
         let (round0_merkle_paths, rest_paths) = self.create_root_paths(
@@ -231,11 +228,14 @@ where
             &witness.batching_randomness,
         )?;
 
-        Ok(WhirProof {
-            round0_merkle_paths,
-            merkle_paths: rest_paths,
-            statement_values_at_random_point,
-        })
+        prover_state.hint::<Vec<F>>(&deferred)?;
+
+        // Ok(WhirProof {
+        //     round0_merkle_paths,
+        //     merkle_paths: rest_paths,
+        //     statement_values_at_random_point,
+        // })
+        Ok((constraint_eval, deferred))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -250,7 +250,8 @@ where
             + UnitToBytes
             + FieldToUnitSerialize<F>
             + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>,
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -276,14 +277,8 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let mut evals = expand_from_coeff(folded_coefficients.coeffs(), expansion);
-        transform_evaluations(
-            &mut evals,
-            self.0.fold_optimisation,
-            new_domain.backing_domain.group_gen(),
-            new_domain.backing_domain.group_gen_inv(),
-            folding_factor_next,
-        );
+        let evals =
+            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
@@ -329,16 +324,15 @@ where
             .iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect();
+
+        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+
         // Evaluate answers in the folding randomness.
         let mut stir_evaluations = ood_answers;
-        self.0.fold_optimisation.stir_evaluations_prover(
-            round_state,
-            &stir_challenges_indexes,
-            &answers,
-            self.0.folding_factor,
-            &mut stir_evaluations,
-        );
-        round_state.merkle_proofs.push((merkle_proof, answers));
+        stir_evaluations.extend(answers.iter().map(|answers| {
+            CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
+        }));
 
         // PoW
         if round_params.pow_bits > 0. {
@@ -420,7 +414,8 @@ where
         folded_coefficients: &CoefficientList<F>,
     ) -> ProofResult<()>
     where
-        ProverState: UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge,
+        ProverState:
+            UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge + HintSerialize,
     {
         // Directly send coefficients of the polynomial to the verifier.
         prover_state.add_scalars(folded_coefficients.coeffs())?;
@@ -448,8 +443,10 @@ where
         let answers = final_challenge_indexes
             .into_iter()
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect();
-        round_state.merkle_proofs.push((merkle_proof, answers));
+            .collect::<Vec<_>>();
+
+        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
         // PoW
         if self.0.final_pow_bits > 0. {
@@ -487,6 +484,7 @@ where
                 *dst = *src;
             }
         }
+
         Ok(())
     }
 
@@ -495,7 +493,7 @@ where
         prover_state: &mut ProverState,
         round_state: &RoundState<F, MerkleConfig>,
         num_variables: usize,
-        round_params: &RoundConfig,
+        round_params: &RoundConfig<F>,
         ood_points: Vec<F>,
     ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
     where
@@ -589,19 +587,59 @@ where
     }
 }
 
+/// Represents the prover state during a single round of the WHIR protocol.
+///
+/// Each WHIR round folds the polynomial, commits to the new evaluations,
+/// responds to verifier queries, and updates internal randomness for the next step.
+/// This struct tracks all data needed to perform that round, and passes it forward
+/// across recursive iterations.
 pub(crate) struct RoundState<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
+    /// Index of the current WHIR round (0-based).
+    ///
+    /// Increases after each folding iteration.
     pub(crate) round: usize,
+
+    /// Domain over which the current polynomial is evaluated.
+    ///
+    /// Grows with each round due to NTT expansion.
     pub(crate) domain: Domain<F>,
+
+    /// Optional sumcheck prover used to enforce constraints.
+    ///
+    /// Present in rounds with non-empty constraint systems.
     pub(crate) sumcheck_prover: Option<SumcheckSingle<F>>,
+
+    /// Folding randomness sampled by the verifier.
+    ///
+    /// Used to reduce the number of variables in the polynomial.
     pub(crate) folding_randomness: MultilinearPoint<F>,
+
+    /// Current polynomial in coefficient form.
+    ///
+    /// Folded and evaluated to produce new commitments and Merkle trees.
     pub(crate) coefficients: CoefficientList<F>,
+
+    /// Merkle tree commitment to the polynomial evaluations from the previous round.
+    ///
+    /// Used to prove query openings from the folded function.
     pub(crate) prev_merkle: MerkleTree<MerkleConfig>,
+
+    /// Flat list of evaluations corresponding to `prev_merkle` leaves.
+    ///
+    /// Each folded function is evaluated on a domain and split into leaves.
     pub(crate) prev_merkle_answers: Vec<F>,
-    pub(crate) merkle_proofs: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>,
+
+    /// Accumulator for all folding randomness across rounds.
+    ///
+    /// Ordered with the most recent round’s randomness at the front.
     pub(crate) randomness_vec: Vec<F>,
+
+    /// Constraint system being enforced in this round.
+    ///
+    /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
 }

@@ -14,8 +14,8 @@ use super::{BatchingData, Witness};
 #[cfg(debug_assertions)]
 use crate::poly_utils::multilinear::MultilinearPoint;
 use crate::{
-    ntt::expand_from_coeff,
-    poly_utils::{coeffs::CoefficientList, fold::transform_evaluations},
+    ntt::interleaved_rs_encode,
+    poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
         utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
@@ -68,12 +68,9 @@ where
         let expansion = base_domain.size() / polynomial.num_coeffs();
 
         // Expand the polynomial coefficients into evaluations over the extended domain.
-        let mut evals = expand_from_coeff(polynomial.coeffs(), expansion);
-        transform_evaluations(
-            &mut evals,
-            self.0.fold_optimisation,
-            base_domain.group_gen(),
-            base_domain.group_gen_inv(),
+        let evals = interleaved_rs_encode(
+            polynomial.coeffs(),
+            expansion,
             self.0.folding_factor.at_round(0),
         );
 
@@ -349,9 +346,7 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{
-            FoldType, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::multilinear::MultilinearPoint,
         whir::domainsep::WhirDomainSeparator,
     };
@@ -387,7 +382,6 @@ mod tests {
             leaf_hash_params,
             two_to_one_params,
             soundness_type: SoundnessType::ConjectureList,
-            fold_optimisation: FoldType::ProverHelps,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
             batch_size: 1,
@@ -477,7 +471,6 @@ mod tests {
                 leaf_hash_params,
                 two_to_one_params,
                 soundness_type: SoundnessType::ConjectureList,
-                fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
@@ -518,7 +511,6 @@ mod tests {
                 leaf_hash_params,
                 two_to_one_params,
                 soundness_type: SoundnessType::ConjectureList,
-                fold_optimisation: FoldType::ProverHelps,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
