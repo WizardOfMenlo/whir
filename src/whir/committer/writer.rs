@@ -56,7 +56,7 @@ where
     fn commit_single<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomial: &CoefficientList<F::BasePrimeField>,
+        polynomial: CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
@@ -114,7 +114,7 @@ where
 
         // Return the witness containing the polynomial, Merkle tree, and OOD results.
         Ok(Witness {
-            polynomial: polynomial.clone().to_extension(),
+            polynomial: polynomial.to_extension(),
             merkle_tree,
             merkle_leaves: folded_evals,
             ood_points: Vec::new(),
@@ -128,7 +128,7 @@ where
     pub fn commit_batch<ProverFSState>(
         &self,
         prover_state: &mut ProverFSState,
-        polynomials: &[CoefficientList<F::BasePrimeField>],
+        polynomials: Vec<CoefficientList<F::BasePrimeField>>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverFSState: FieldToUnitSerialize<F>
@@ -142,14 +142,14 @@ where
         let num_vars = polynomials.first().unwrap().num_variables();
         let num_coeffs = polynomials.first().unwrap().num_coeffs();
 
-        for poly in polynomials {
+        for poly in &polynomials {
             assert_eq!(poly.num_variables(), num_vars);
             assert_eq!(poly.num_coeffs(), num_coeffs);
         }
 
         // 1. Create the Merkle tree and add _all_ the Merkle roots to transcript
         let mut witness_list = polynomials
-            .iter()
+            .into_iter()
             .map(|poly| self.commit_single(prover_state, poly))
             .collect::<ProofResult<Vec<_>>>()?;
 
@@ -221,7 +221,7 @@ where
             + DigestToUnitSerialize<MerkleConfig>
             + BytesToUnitSerialize,
     {
-        self.commit_batch(prover_state, &[polynomial])
+        self.commit_batch(prover_state, vec![polynomial])
     }
 }
 
