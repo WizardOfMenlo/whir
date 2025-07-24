@@ -1,8 +1,9 @@
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
-use {super::utils::workload_size, rayon::prelude::*};
+use rayon::prelude::*;
 
 use super::transpose;
+use crate::utils::workload_size;
 
 /// Fast Wavelet Transform.
 ///
