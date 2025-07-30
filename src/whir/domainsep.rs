@@ -94,6 +94,7 @@ where
             self = self
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
+                .pow(r.pow_bits)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries");
 
             if round == 0 && params.batch_size > 1 {
@@ -103,7 +104,6 @@ where
             }
 
             self = self
-                .pow(r.pow_bits)
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(
                     params.folding_factor.at_round(round + 1),
@@ -119,10 +119,10 @@ where
         let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
         self.add_scalars(1 << params.final_sumcheck_rounds, "final_coeffs")
+            .pow(params.final_pow_bits)
             .challenge_bytes(domain_size_bytes * params.final_queries, "final_queries")
             .hint("stir_answers")
             .hint("merkle_proof")
-            .pow(params.final_pow_bits)
             .add_sumcheck(params.final_sumcheck_rounds, params.final_folding_pow_bits)
             .hint("deferred_weight_evaluations")
     }

@@ -286,6 +286,18 @@ where
             |point| folded_coefficients.evaluate(point),
         )?;
 
+        // PoW
+        if round_params.pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = round_params.pow_bits
+            )
+            .entered();
+            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+        }
+
         // STIR Queries
         let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
             prover_state,
@@ -330,18 +342,6 @@ where
         stir_evaluations.extend(answers.iter().map(|answers| {
             CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
         }));
-
-        // PoW
-        if round_params.pow_bits > 0. {
-            #[cfg(feature = "tracing")]
-            let _span = span!(
-                Level::INFO,
-                "challenge_pow",
-                pow_bits = round_params.pow_bits
-            )
-            .entered();
-            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-        }
 
         // Randomness for combination
         let [combination_randomness_gen] = prover_state.challenge_scalars()?;
@@ -420,6 +420,18 @@ where
         // Precompute the folding factors for later use
         let folding_factor = self.0.folding_factor.at_round(round_state.round);
 
+        // PoW
+        if self.0.final_pow_bits > 0. {
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "challenge_pow",
+                pow_bits = self.0.final_pow_bits
+            )
+            .entered();
+            prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
+        }
+
         // Final verifier queries and answers. The indices are over the
         // *folded* domain.
         let final_challenge_indexes = get_challenge_stir_queries(
@@ -444,18 +456,6 @@ where
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
-
-        // PoW
-        if self.0.final_pow_bits > 0. {
-            #[cfg(feature = "tracing")]
-            let _span = span!(
-                Level::INFO,
-                "challenge_pow",
-                pow_bits = self.0.final_pow_bits
-            )
-            .entered();
-            prover_state.challenge_pow::<PowStrategy>(self.0.final_pow_bits)?;
-        }
 
         // Final sumcheck
         if self.0.final_sumcheck_rounds > 0 {

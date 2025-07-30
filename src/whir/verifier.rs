@@ -271,6 +271,8 @@ where
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         folding_randomness: &MultilinearPoint<F>,
     ) -> ProofResult<Vec<Constraint<F>>> {
+        self.verify_proof_of_work(verifier_state, params.pow_bits)?;
+
         let stir_challenges_indexes = get_challenge_stir_queries(
             params.domain_size,
             params.folding_factor,
@@ -287,8 +289,6 @@ where
                 &stir_challenges_indexes,
             )?
         };
-
-        self.verify_proof_of_work(verifier_state, params.pow_bits)?;
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers

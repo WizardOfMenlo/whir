@@ -26,6 +26,7 @@ where
 /// This structure holds all necessary components to verify a commitment,
 /// including the polynomial itself, the Merkle tree used for commitment,
 /// and out-of-domain (OOD) evaluations.
+#[derive(Clone)]
 pub struct Witness<F, MerkleConfig>
 where
     MerkleConfig: Config,
