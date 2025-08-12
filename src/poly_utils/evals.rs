@@ -114,6 +114,11 @@ where
         crate::ntt::inverse_wavelet_transform(&mut coeffs);
         crate::poly_utils::coeffs::CoefficientList::new(coeffs)
     }
+
+    pub fn into_coeffs(mut self) -> crate::poly_utils::coeffs::CoefficientList<F> {
+        crate::ntt::inverse_wavelet_transform(&mut self.evals);
+        crate::poly_utils::coeffs::CoefficientList::new(self.evals)
+    }
 }
 
 impl<F> Index<usize> for EvaluationsList<F> {
