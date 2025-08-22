@@ -87,7 +87,7 @@ where
                 evals
                 .into_iter()
                 .map(F::from_base_prime_field)
-                .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
             };
             evals_ext.push(folded_evals);
         }
