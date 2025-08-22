@@ -11,7 +11,6 @@ use spongefish::{
 use tracing::{instrument, span, Level};
 
 use super::Witness;
-#[cfg(debug_assertions)]
 use crate::{
     ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
@@ -82,10 +81,14 @@ where
                 expansion,
                 self.0.folding_factor.at_round(0),
             );
-            let folded_evals = evals
+            let folded_evals = {
+                #[cfg(feature = "tracing")]
+                let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
+                evals
                 .into_iter()
                 .map(F::from_base_prime_field)
                 .collect::<Vec<_>>();
+            };
             evals_ext.push(folded_evals);
         }
 
