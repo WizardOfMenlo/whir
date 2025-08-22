@@ -280,15 +280,23 @@ where
             verifier_state,
         )?;
 
-        let answers = if round_index == 0 && self.params.batch_size > 1 {
-            self.verify_first_round(verifier_state, &commitment.root, &stir_challenges_indexes)?
-        } else {
-            self.verify_merkle_proof(
-                verifier_state,
-                &commitment.root[0],
-                &stir_challenges_indexes,
-            )?
-        };
+        // Always open against the single batched commitment
+        let mut answers = self.verify_merkle_proof(
+            verifier_state,
+            &commitment.root,
+            &stir_challenges_indexes,
+        )?;
+
+        // If this is the first round and batching > 1, RLC per leaf to fold_size
+        if round_index == 0 && self.params.batch_size > 1 {
+            let fold_size = 1 << params.folding_factor;
+            answers = crate::whir::utils::rlc_batched_leaves(
+                answers,
+                fold_size,
+                self.params.batch_size,
+                commitment.batching_randomness,
+            );
+        }
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers

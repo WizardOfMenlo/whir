@@ -10,9 +10,8 @@ use spongefish::{
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
-use super::{BatchingData, Witness};
+use super::Witness;
 #[cfg(debug_assertions)]
-use crate::poly_utils::multilinear::MultilinearPoint;
 use crate::{
     ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
@@ -44,86 +43,6 @@ where
         Self(config)
     }
 
-    /// Commits a polynomial using a Merkle-based commitment scheme.
-    ///
-    /// This function:
-    /// - Expands polynomial coefficients to evaluations.
-    /// - Applies folding and restructuring optimizations.
-    /// - Converts evaluations to an extension field.
-    /// - Constructs a Merkle tree from the evaluations.
-    /// - Returns a `Witness` containing the commitment data.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    fn commit_single<ProverState>(
-        &self,
-        prover_state: &mut ProverState,
-        polynomial: &CoefficientList<F::BasePrimeField>,
-    ) -> ProofResult<Witness<F, MerkleConfig>>
-    where
-        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
-    {
-        // Retrieve the base domain, ensuring it is set.
-        let base_domain = self.0.starting_domain.base_domain.unwrap();
-
-        // Compute expansion factor based on the domain size and polynomial length.
-        let expansion = base_domain.size() / polynomial.num_coeffs();
-
-        // Expand the polynomial coefficients into evaluations over the extended domain.
-        let evals = interleaved_rs_encode(
-            polynomial.coeffs(),
-            expansion,
-            self.0.folding_factor.at_round(0),
-        );
-
-        // Convert to extension field.
-        // This is not necessary for the commit, but in further rounds
-        // we will need the extension field. For symplicity we do it here too.
-        // TODO: Commit to base field directly.
-        let folded_evals = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
-            evals
-                .into_iter()
-                .map(F::from_base_prime_field)
-                .collect::<Vec<_>>()
-        };
-
-        // Determine leaf size based on folding factor.
-        let fold_size = 1 << self.0.folding_factor.at_round(0);
-
-        // Chunk evaluations into leaves for Merkle tree construction.
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(fold_size);
-        #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals.par_chunks_exact(fold_size);
-
-        // Construct the Merkle tree with given hash parameters.
-        let merkle_tree = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
-            MerkleTree::<MerkleConfig>::new(
-                &self.0.leaf_hash_params,
-                &self.0.two_to_one_params,
-                leafs_iter,
-            )
-            .unwrap()
-        };
-
-        // Retrieve the Merkle tree root and add it to the narg_string.
-        let root = merkle_tree.root();
-        prover_state.add_digest(root)?;
-
-        // Return the witness containing the polynomial, Merkle tree, and OOD results.
-        Ok(Witness {
-            polynomial: polynomial.clone().to_extension(),
-            merkle_tree,
-            merkle_leaves: folded_evals,
-            ood_points: Vec::new(),
-            ood_answers: Vec::new(),
-            batching_data: Vec::new(),
-            batching_randomness: F::zero(),
-        })
-    }
-
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit_batch<ProverFSState>(
         &self,
@@ -147,66 +66,119 @@ where
             assert_eq!(poly.num_coeffs(), num_coeffs);
         }
 
-        // 1. Create the Merkle tree and add _all_ the Merkle roots to transcript
-        let mut witness_list = polynomials
-            .iter()
-            .map(|poly| self.commit_single(prover_state, poly))
-            .collect::<ProofResult<Vec<_>>>()?;
+        let base_domain = self.0.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / num_coeffs;
+        let fold_size = 1 << self.0.folding_factor.at_round(0);
 
-        // 2. Randomly sample the OOD challenge and compute the OOD Response
-        //    after _all_ merkle roots have been committed. Returns the
-        //    challenge OOD point that was used for computing the responses.
-        let ood_points = witness_list
-            .iter_mut()
-            .try_fold(
-                None as Option<Vec<F>>, /* OOD challenge point */
-                |ood_points, witness| {
-                    if let Some(ood_points) = ood_points {
-                        // OOD challenge points were previously computed
-                        compute_ood_response(
-                            prover_state,
-                            &ood_points,
-                            self.0.mv_parameters.num_variables,
-                            |point| witness.polynomial.evaluate(point),
-                        )
-                        .map(|ood_response| {
-                            witness.ood_answers = ood_response;
-                            Some(ood_points)
-                        })
-                    } else {
-                        // Compute the challenge OOD points and OOD response
-                        sample_ood_points(
-                            prover_state,
-                            self.0.committment_ood_samples,
-                            self.0.mv_parameters.num_variables,
-                            |point| witness.polynomial.evaluate(point),
-                        )
-                        .map(|(ood_point, ood_response)| {
-                            witness.ood_answers = ood_response;
-                            Some(ood_point)
-                        })
-                    }
-                },
-            )?
-            .unwrap_or_default();
+        let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
+        let mut evals_ext: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
 
-        if witness_list.len() == 1 {
-            // Without batching no extra step is needed
+        for poly in polynomials {
+            let poly_e = poly.clone().to_extension();
+            poly_ext.push(poly_e);
+
+            let evals = interleaved_rs_encode(
+                poly.coeffs(),
+                expansion,
+                self.0.folding_factor.at_round(0),
+            );
+            let folded_evals = evals
+                .into_iter()
+                .map(F::from_base_prime_field)
+                .collect::<Vec<_>>();
+            evals_ext.push(folded_evals);
+        }
+
+        let num_leaves = evals_ext[0].len() / fold_size;
+        let stacked_leaf_size = fold_size * polynomials.len();
+        let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
+        for i in 0..num_leaves {
+            for p in 0..polynomials.len() {
+                let start = i * fold_size;
+                let end = start + fold_size;
+                stacked_leaves.extend_from_slice(&evals_ext[p][start..end]);
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
+        let merkle_tree = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+            MerkleTree::<MerkleConfig>::new(
+                &self.0.leaf_hash_params,
+                &self.0.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap()
+        };
+        let root = merkle_tree.root();
+        prover_state.add_digest(root)?;
+
+        let (ood_points, first_answers) = sample_ood_points(
+            prover_state,
+            self.0.committment_ood_samples,
+            self.0.mv_parameters.num_variables,
+            |point| poly_ext[0].evaluate(point),
+        )?;
+        let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
+        per_poly_ood_answers.push(first_answers);
+        for poly_e in poly_ext.iter().skip(1) {
+            let answers = compute_ood_response(
+                prover_state,
+                &ood_points,
+                self.0.mv_parameters.num_variables,
+                |point| poly_e.evaluate(point),
+            )?;
+            per_poly_ood_answers.push(answers);
+        }
+
+        let [batching_randomness] = if polynomials.len() > 1 {
+            prover_state.challenge_scalars()?
+        } else {
+            [F::zero()]
+        };
+
+        if polynomials.len() == 1 {
             return Ok(Witness {
+                polynomial: poly_ext.remove(0),
+                merkle_tree,
+                merkle_leaves: stacked_leaves,
                 ood_points,
-                ..witness_list.into_iter().next().unwrap()
+                ood_answers: per_poly_ood_answers.remove(0),
+                batching_randomness,
             });
         }
 
-        // Sample batching_randomness
-        let [batching_randomness] = prover_state.challenge_scalars()?;
+        let mut batched_poly = poly_ext[0].coeffs().to_vec();
+        let mut multiplier = batching_randomness;
+        for poly_e in poly_ext.iter().skip(1) {
+            for (dst, src) in batched_poly.iter_mut().zip(poly_e.coeffs()) {
+                *dst += multiplier * src;
+            }
+            multiplier *= batching_randomness;
+        }
+        let polynomial = CoefficientList::new(batched_poly);
 
-        Ok(Witness::new_batched(
-            witness_list,
+        let mut batched_ood_resp = per_poly_ood_answers[0].clone();
+        let mut multiplier = batching_randomness;
+        for answers in per_poly_ood_answers.iter().skip(1) {
+            for (dst, src) in batched_ood_resp.iter_mut().zip(answers) {
+                *dst += multiplier * src;
+            }
+            multiplier *= batching_randomness;
+        }
+
+        Ok(Witness {
+            polynomial,
+            merkle_tree,
+            merkle_leaves: stacked_leaves,
             ood_points,
+            ood_answers: batched_ood_resp,
             batching_randomness,
-            &self.0,
-        ))
+        })
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
@@ -230,100 +202,6 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
 {
-    // Takes a list of witnesses and computes the top level batching witness.
-    fn new_batched<PowStrategy>(
-        witness_list: Vec<Self>,
-        ood_points: Vec<F>,
-        batching_randomness: F,
-        config: &WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self {
-        assert!(
-            witness_list.len() > 1,
-            "Witnesses of size 1 should be handled elsewhere"
-        );
-
-        let num_vars = witness_list.first().unwrap().polynomial.num_variables();
-
-        for wit in &witness_list {
-            assert!(wit.polynomial.coeffs().len().is_power_of_two());
-            assert!(wit.merkle_leaves.len().is_power_of_two());
-            assert_eq!(wit.polynomial.num_variables(), num_vars);
-            assert_eq!(wit.merkle_leaves.len(), witness_list[0].merkle_leaves.len());
-        }
-
-        let poly_dim = witness_list.first().unwrap().polynomial.coeffs().len();
-        let oracle_len = witness_list.first().unwrap().merkle_leaves.len();
-
-        assert_eq!(oracle_len % poly_dim, 0);
-
-        let rate_factor = oracle_len / poly_dim;
-
-        let (first_witness, rest_witnesses) = witness_list.split_first().unwrap();
-
-        let mut batched_poly: Vec<F> = first_witness.polynomial.coeffs().to_vec();
-        let mut batched_oracle: Vec<F> = first_witness.merkle_leaves.clone();
-        let mut batched_ood_resp: Vec<F> = first_witness.ood_answers.clone();
-        let mut multiplier = batching_randomness;
-
-        for wit in rest_witnesses {
-            // TODO: Get rid of index based updates.
-            for (i, coefficient) in wit.polynomial.coeffs().iter().enumerate() {
-                batched_poly[i] += multiplier * coefficient;
-                for j in 0..rate_factor {
-                    let ndx = i + j * poly_dim;
-                    batched_oracle[ndx] += multiplier * wit.merkle_leaves[ndx];
-                }
-            }
-
-            batched_ood_resp
-                .iter_mut()
-                .zip(wit.ood_answers.iter())
-                .for_each(|(ood_resp, val)| *ood_resp += *val * multiplier);
-
-            multiplier *= batching_randomness;
-        }
-
-        let polynomial = CoefficientList::new(batched_poly);
-
-        #[cfg(debug_assertions)]
-        {
-            for (ood_point, ood_resp) in ood_points.iter().zip(batched_ood_resp.iter()) {
-                let expected = polynomial.evaluate(&MultilinearPoint::expand_from_univariate(
-                    *ood_point, num_vars,
-                ));
-                assert_eq!(expected, ood_resp.clone());
-            }
-        }
-
-        let batched_tree = MerkleTree::<MerkleConfig>::blank(
-            &config.leaf_hash_params,
-            &config.two_to_one_params,
-            (ark_std::log2(batched_oracle.len()) as usize) + 1,
-        )
-        .unwrap();
-
-        Self {
-            polynomial,
-            merkle_leaves: batched_oracle,
-            merkle_tree: batched_tree,
-            ood_points,
-            ood_answers: batched_ood_resp,
-            batching_randomness,
-            batching_data: witness_list.into_iter().map(BatchingData::from).collect(),
-        }
-    }
-
-    pub fn roots(&self) -> Vec<MerkleConfig::InnerDigest> {
-        if self.batching_data.is_empty() {
-            vec![self.merkle_tree.root()]
-        } else {
-            self.batching_data
-                .iter()
-                .map(|w| w.merkle_tree.root())
-                .collect()
-        }
-    }
-
     /// Returns the batched polynomial
     pub const fn batched_poly(&self) -> &CoefficientList<F> {
         &self.polynomial

@@ -8,19 +8,6 @@ pub mod writer;
 pub use reader::CommitmentReader;
 pub use writer::CommitmentWriter;
 
-///
-/// Represents the individual leaves  and merkle tree associated
-/// with the polynomial.
-///
-#[derive(Clone)]
-pub(crate) struct BatchingData<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
-    pub(crate) merkle_leaves: Vec<F>,
-}
-
 /// Represents the commitment and evaluation data for a polynomial.
 ///
 /// This structure holds all necessary components to verify a commitment,
@@ -52,21 +39,6 @@ where
     /// The corresponding polynomial evaluations at the OOD challenge points.
     pub(crate) ood_answers: Vec<F>,
 
-    /// The individual commitments of each batching polynomial
-    pub(crate) batching_data: Vec<BatchingData<F, MerkleConfig>>,
-
     /// The batching randomness. If there's no batching, this value is zero.
     pub batching_randomness: F,
-}
-
-impl<F, MerkleConfig> From<Witness<F, MerkleConfig>> for BatchingData<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    fn from(value: Witness<F, MerkleConfig>) -> Self {
-        Self {
-            merkle_tree: value.merkle_tree,
-            merkle_leaves: value.merkle_leaves,
-        }
-    }
 }
