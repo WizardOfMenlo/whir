@@ -411,9 +411,18 @@ where
             log_eta,
         );
 
-        let error = prox_gaps_error.min(sumcheck_error);
+        let error = if prox_gaps_error < sumcheck_error {
+            prox_gaps_error
+        } else {
+            sumcheck_error
+        };
 
-        0_f64.max(security_level as f64 - error)
+        let candidate = security_level as f64 - error;
+        if candidate > 0_f64 {
+            candidate
+        } else {
+            0_f64
+        }
     }
 
     // Used to select the number of queries

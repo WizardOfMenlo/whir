@@ -10,18 +10,15 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use ark_ff::FftField;
-#[cfg(feature = "tracing")]
-use tracing::instrument;
-
-use crate::poly_utils::coeffs::CoefficientList;
-
 use self::matrix::MatrixMut;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
+use ark_ff::FftField;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
@@ -33,11 +30,11 @@ pub use self::{
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[CoefficientList<F>],
+    interleaved_coeffs: &[Vec<F>],
     expansion: usize,
     fold_factor: usize,
 ) -> Vec<F> {
-    let num_coeffs = interleaved_coeffs.first().unwrap().num_coeffs();
+    let num_coeffs = interleaved_coeffs.first().unwrap().len();
     let fold_factor = u32::try_from(fold_factor).unwrap();
     debug_assert!(expansion > 0);
     debug_assert!(num_coeffs.is_power_of_two());
@@ -51,7 +48,7 @@ pub fn interleaved_rs_encode<F: FftField>(
     let mut result: Vec<_> = vec![F::zero(); interleaved_coeffs.len() * expanded_size];
     for (i, poly) in interleaved_coeffs.iter().enumerate() {
         let offset = i * expanded_size;
-        result[offset..offset + num_coeffs].copy_from_slice(poly.coeffs());
+        result[offset..offset + num_coeffs].copy_from_slice(poly);
     }
 
     let rows = expanded_size / fold_factor_exp;
@@ -264,10 +261,10 @@ mod tests {
 
         let eval_domain = GeneralEvaluationDomain::<Field64>::new(count * expansion).unwrap();
 
-        let poly = CoefficientList::new((0..count).map(|_| Field64::rand(&mut rng)).collect());
+        let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
 
         // Compute things the old way
-        let mut expected = test_utils::expand_from_coeff(poly.coeffs(), expansion);
+        let mut expected = test_utils::expand_from_coeff(&poly, expansion);
         test_utils::transform_evaluations(
             &mut expected,
             eval_domain.group_gen_inv(),

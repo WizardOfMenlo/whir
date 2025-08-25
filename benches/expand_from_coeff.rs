@@ -1,5 +1,5 @@
 use divan::{black_box, AllocProfiler, Bencher};
-use whir::{crypto::fields::Field64, ntt, poly_utils::coeffs::CoefficientList};
+use whir::{crypto::fields::Field64, ntt};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
@@ -27,7 +27,7 @@ fn interleaved_rs_encode(bencher: Bencher, case: &(u32, usize, usize)) {
             let (exp, expansion, coset_sz) = *case;
 
             let size = 1 << exp;
-            let coeffs = CoefficientList::new((0..size).map(Field64::from).collect());
+            let coeffs: Vec<_> = (0..size).map(Field64::from).collect();
             (coeffs, expansion, coset_sz)
         })
         .bench_values(|(coeffs, expansion, coset_sz)| {

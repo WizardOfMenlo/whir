@@ -70,12 +70,14 @@ where
         let fold_size = 1 << self.0.folding_factor.at_round(0);
 
         let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
+        let mut poly_comb: Vec<Vec<_>> = Vec::with_capacity(polynomials.len());
         for poly in polynomials {
             poly_ext.push(poly.clone().to_extension());
+            poly_comb.push(poly.coeffs().to_vec());
         }
 
         let batched_base =
-            interleaved_rs_encode(polynomials, expansion, self.0.folding_factor.at_round(0));
+            interleaved_rs_encode(&poly_comb, expansion, self.0.folding_factor.at_round(0));
 
         let batched_ext: Vec<F> = {
             #[cfg(feature = "tracing")]
