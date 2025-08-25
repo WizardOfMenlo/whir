@@ -11,6 +11,42 @@ use tracing::instrument;
 
 use crate::poly_utils::multilinear::MultilinearPoint;
 
+///
+/// A utility function to compute the response to OOD challenge and add it to
+/// the transcript. The OOD challenge should have already been sampled and added
+/// to the transcript before this call.
+///
+#[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
+pub(crate) fn compute_ood_response<F, ProverState, E>(
+    prover_state: &mut ProverState,
+    ood_points: &[F],
+    num_variables: usize,
+    evaluate_fn: E,
+) -> ProofResult<Vec<F>>
+where
+    F: FftField,
+    ProverState: FieldToUnitSerialize<F>,
+    E: Fn(&MultilinearPoint<F>) -> F,
+{
+    let num_samples = ood_points.len();
+    let mut ood_answers = Vec::<F>::with_capacity(ood_points.len());
+
+    if num_samples > 0 {
+        // Evaluate the function at each OOD point
+        ood_answers.extend(ood_points.iter().map(|ood_point| {
+            evaluate_fn(&MultilinearPoint::expand_from_univariate(
+                *ood_point,
+                num_variables,
+            ))
+        }));
+
+        // Commit the answers to the narg_string
+        prover_state.add_scalars(&ood_answers)?;
+    }
+
+    Ok(ood_answers)
+}
+
 /// A utility function to sample Out-of-Domain (OOD) points and evaluate them
 ///
 /// This operates on the prover side.
@@ -27,23 +63,13 @@ where
     E: Fn(&MultilinearPoint<F>) -> F,
 {
     let mut ood_points = vec![F::ZERO; num_samples];
-    let mut ood_answers = Vec::with_capacity(num_samples);
-
-    if num_samples > 0 {
+    let ood_answers = if num_samples > 0 {
         // Generate OOD points from ProverState randomness
         prover_state.fill_challenge_scalars(&mut ood_points)?;
-
-        // Evaluate the function at each OOD point
-        ood_answers.extend(ood_points.iter().map(|ood_point| {
-            evaluate_fn(&MultilinearPoint::expand_from_univariate(
-                *ood_point,
-                num_variables,
-            ))
-        }));
-
-        // Commit the answers to the narg_string
-        prover_state.add_scalars(&ood_answers)?;
-    }
+        compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)?
+    } else {
+        vec![]
+    };
 
     Ok((ood_points, ood_answers))
 }
@@ -90,6 +116,29 @@ pub trait DigestToUnitSerialize<MerkleConfig: Config> {
 
 pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+}
+
+pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
+    leaves: Vec<Vec<F>>,
+    fold_size: usize,
+    batch_size: usize,
+    batching_randomness: F,
+) -> Vec<Vec<F>> {
+    leaves
+        .into_iter()
+        .map(|leaf| {
+            assert_eq!(leaf.len(), batch_size * fold_size);
+            let mut out = vec![F::ZERO; fold_size];
+            let mut pow = F::ONE;
+            for block in leaf.chunks_exact(fold_size).take(batch_size) {
+                for (o, v) in out.iter_mut().zip(block) {
+                    *o += pow * *v;
+                }
+                pow *= batching_randomness;
+            }
+            out
+        })
+        .collect()
 }
 
 pub trait HintSerialize {

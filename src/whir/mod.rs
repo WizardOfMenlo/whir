@@ -1,3 +1,4 @@
+pub mod batching;
 pub mod committer;
 pub mod domainsep;
 pub mod parameters;
@@ -85,6 +86,7 @@ mod tests {
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
+            batch_size: 1,
         };
 
         // Build global configuration from multivariate + protocol parameters
