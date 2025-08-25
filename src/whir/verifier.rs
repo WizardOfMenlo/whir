@@ -281,11 +281,8 @@ where
         )?;
 
         // Always open against the single batched commitment
-        let mut answers = self.verify_merkle_proof(
-            verifier_state,
-            &commitment.root,
-            &stir_challenges_indexes,
-        )?;
+        let mut answers =
+            self.verify_merkle_proof(verifier_state, &commitment.root, &stir_challenges_indexes)?;
 
         // If this is the first round and batching > 1, RLC per leaf to fold_size
         if round_index == 0 && self.params.batch_size > 1 {

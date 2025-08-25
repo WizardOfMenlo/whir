@@ -12,7 +12,7 @@ use spongefish_pow::{self, PoWChallenge};
 use tracing::{instrument, span, Level};
 
 use super::{
-    committer::{Witness},
+    committer::Witness,
     parameters::WhirConfig,
     statement::{Statement, Weights},
     utils::HintSerialize,
@@ -25,10 +25,7 @@ use crate::{
     utils::expand_randomness,
     whir::{
         parameters::RoundConfig,
-        utils::{
-            get_challenge_stir_queries, sample_ood_points,
-            DigestToUnitSerialize,
-        },
+        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
     },
 };
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
@@ -210,8 +207,11 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals =
-            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
+        let evals = interleaved_rs_encode(
+            &[folded_coefficients.clone()],
+            expansion,
+            folding_factor_next,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);

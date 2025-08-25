@@ -70,36 +70,30 @@ where
         let fold_size = 1 << self.0.folding_factor.at_round(0);
 
         let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
-        let mut evals_ext: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
-
         for poly in polynomials {
-            let poly_e = poly.clone().to_extension();
-            poly_ext.push(poly_e);
-
-            let evals = interleaved_rs_encode(
-                poly.coeffs(),
-                expansion,
-                self.0.folding_factor.at_round(0),
-            );
-            let folded_evals = {
-                #[cfg(feature = "tracing")]
-                let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
-                evals
-                .into_iter()
-                .map(F::from_base_prime_field)
-                .collect::<Vec<_>>()
-            };
-            evals_ext.push(folded_evals);
+            poly_ext.push(poly.clone().to_extension());
         }
 
-        let num_leaves = evals_ext[0].len() / fold_size;
+        let batched_base =
+            interleaved_rs_encode(polynomials, expansion, self.0.folding_factor.at_round(0));
+
+        let batched_ext: Vec<F> = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "evals_to_extension", size = batched_base.len());
+            batched_base
+                .into_iter()
+                .map(F::from_base_prime_field)
+                .collect()
+        };
+
+        let num_leaves = expansion * num_coeffs / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
         let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
         for i in 0..num_leaves {
             for p in 0..polynomials.len() {
-                let start = i * fold_size;
+                let start = p * expansion * num_coeffs + i * fold_size;
                 let end = start + fold_size;
-                stacked_leaves.extend_from_slice(&evals_ext[p][start..end]);
+                stacked_leaves.extend_from_slice(&batched_ext[start..end]);
             }
         }
 

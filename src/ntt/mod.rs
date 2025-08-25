@@ -14,6 +14,8 @@ use ark_ff::FftField;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use crate::poly_utils::coeffs::CoefficientList;
+
 use self::matrix::MatrixMut;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
@@ -31,22 +33,26 @@ pub use self::{
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[F],
+    interleaved_coeffs: &[CoefficientList<F>],
     expansion: usize,
     fold_factor: usize,
 ) -> Vec<F> {
+    let num_coeffs = interleaved_coeffs.first().unwrap().num_coeffs();
     let fold_factor = u32::try_from(fold_factor).unwrap();
     debug_assert!(expansion > 0);
-    debug_assert!(interleaved_coeffs.len().is_power_of_two());
+    debug_assert!(num_coeffs.is_power_of_two());
 
     let fold_factor_exp = 2usize.pow(fold_factor);
-    let expanded_size = interleaved_coeffs.len() * expansion;
+    let expanded_size = num_coeffs * expansion;
 
     debug_assert_eq!(expanded_size % fold_factor_exp, 0);
 
     // 1. Create zero-padded message of appropriate size
-    let mut result = vec![F::zero(); expanded_size];
-    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+    let mut result: Vec<_> = vec![F::zero(); interleaved_coeffs.len() * expanded_size];
+    for (i, poly) in interleaved_coeffs.iter().enumerate() {
+        let offset = i * expanded_size;
+        result[offset..offset + num_coeffs].copy_from_slice(poly.coeffs());
+    }
 
     let rows = expanded_size / fold_factor_exp;
     let columns = fold_factor_exp;
@@ -258,10 +264,10 @@ mod tests {
 
         let eval_domain = GeneralEvaluationDomain::<Field64>::new(count * expansion).unwrap();
 
-        let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
+        let poly = CoefficientList::new((0..count).map(|_| Field64::rand(&mut rng)).collect());
 
         // Compute things the old way
-        let mut expected = test_utils::expand_from_coeff(&poly, expansion);
+        let mut expected = test_utils::expand_from_coeff(&poly.coeffs(), expansion);
         test_utils::transform_evaluations(
             &mut expected,
             eval_domain.group_gen_inv(),
@@ -269,7 +275,7 @@ mod tests {
         );
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt = interleaved_rs_encode(&[poly], expansion, folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }
