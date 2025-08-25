@@ -10,16 +10,16 @@ mod transpose;
 mod utils;
 mod wavelet;
 
+use ark_ff::FftField;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
+
 use self::matrix::MatrixMut;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
-use ark_ff::FftField;
-#[cfg(feature = "tracing")]
-use tracing::instrument;
-
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
 /// 1/`expansion`, where 2^`fold_factor` elements are interleaved
