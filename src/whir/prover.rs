@@ -12,7 +12,7 @@ use spongefish_pow::{self, PoWChallenge};
 use tracing::{instrument, span, Level};
 
 use super::{
-    committer::{BatchingData, Witness},
+    committer::{Witness},
     parameters::WhirConfig,
     statement::{Statement, Weights},
     utils::HintSerialize,
@@ -26,7 +26,7 @@ use crate::{
     whir::{
         parameters::RoundConfig,
         utils::{
-            get_challenge_stir_queries, sample_ood_points, validate_stir_queries,
+            get_challenge_stir_queries, sample_ood_points,
             DigestToUnitSerialize,
         },
     },
@@ -60,52 +60,6 @@ where
             assert!(witness.ood_points.is_empty());
         }
         witness.polynomial.num_variables() == self.0.mv_parameters.num_variables
-    }
-
-    // Creates the merkle root paths if there are multiple oracles. Even in case of a single oracle, the first path is stored in the top level path and the rest are stored in other rounds
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    fn create_root_paths(
-        &self,
-        batched_mt: MultiPath<MerkleConfig>,
-        batched_stir: &[Vec<F>],
-        batching_data: &[BatchingData<F, MerkleConfig>],
-        batching_randomness: &F, // Only used in debug builds
-    ) -> ProofResult<Vec<RootPath<F, MerkleConfig>>> {
-        let fold_sz = 1 << self.0.folding_factor.at_round(0);
-
-        if batching_data.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let mut first_round_paths: Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)> =
-            Vec::with_capacity(batching_data.len());
-
-        let stir_indexes = batched_mt.leaf_indexes;
-
-        for BatchingData {
-            merkle_tree,
-            merkle_leaves,
-            ..
-        } in batching_data
-        {
-            let paths = merkle_tree
-                .generate_multi_proof(stir_indexes.clone())
-                .map_err(|_| spongefish::ProofError::InvalidProof)?;
-
-            let answers: Vec<_> = stir_indexes
-                .iter()
-                .map(|i| merkle_leaves[i * fold_sz..(i + 1) * fold_sz].to_vec())
-                .collect();
-
-            first_round_paths.push((paths, answers));
-        }
-
-        debug_assert!(
-            validate_stir_queries(batching_randomness, batched_stir, &first_round_paths,),
-            "The computed value of STIR queries must match the value in the leaf nodes"
-        );
-
-        Ok(first_round_paths)
     }
 
     /// Proves that the commitment satisfies constraints in `statement`.
@@ -193,7 +147,6 @@ where
             prev_merkle_answers: witness.merkle_leaves,
             randomness_vec,
             statement,
-            batching_data: witness.batching_data,
             batching_randomness: witness.batching_randomness,
         };
 
@@ -312,32 +265,28 @@ where
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
         let fold_size = 1 << folding_factor;
-        let answers: Vec<_> = stir_challenges_indexes
+        let leaf_size = if round_state.round == 0 && self.0.batch_size > 1 {
+            fold_size * self.0.batch_size
+        } else {
+            fold_size
+        };
+        let mut answers: Vec<_> = stir_challenges_indexes
             .iter()
-            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
+            .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
-        if round_state.round == 0 && !round_state.batching_data.is_empty() {
-            let first_round_merkle_paths = self.create_root_paths(
-                merkle_proof.clone(),
-                answers.clone().as_slice(),
-                &round_state.batching_data,
-                &round_state.batching_randomness,
-            )?;
-
-            if first_round_merkle_paths.is_empty() {
-                prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
-            } else {
-                prover_state.hint::<Vec<(MultiPath<MerkleConfig>, Vec<Vec<F>>)>>(
-                    &first_round_merkle_paths,
-                )?;
-            }
-        } else {
-            prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+        if round_state.round == 0 && self.0.batch_size > 1 {
+            answers = crate::whir::utils::rlc_batched_leaves(
+                answers,
+                fold_size,
+                self.0.batch_size,
+                round_state.batching_randomness,
+            );
         }
-        // Evaluate answers in the folding randomness.
+
         let mut stir_evaluations = ood_answers;
         stir_evaluations.extend(answers.iter().map(|answers| {
             CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
@@ -578,6 +527,5 @@ where
     /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
 
-    pub(crate) batching_data: Vec<BatchingData<F, MerkleConfig>>,
     pub(crate) batching_randomness: F,
 }

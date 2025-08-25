@@ -50,11 +50,7 @@ where
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
         let mut this = self;
-        for i in 0..params.batch_size {
-            let label = format!("merkle-root-{}", &i);
-            // Add the root of each Merkle tree
-            this = this.add_digest(&label);
-        }
+        this = this.add_digest("merkle-root");
 
         if params.committment_ood_samples > 0 {
             assert!(params.initial_statement);
@@ -95,13 +91,9 @@ where
                 .add_digest("merkle_digest")
                 .add_ood(r.ood_samples)
                 .pow(r.pow_bits)
-                .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries");
-
-            if round == 0 && params.batch_size > 1 {
-                self = self.hint("stir_answers").hint("first_round_merkle_proof");
-            } else {
-                self = self.hint("stir_answers").hint("merkle_proof");
-            }
+                .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
+                .hint("stir_answers")
+                .hint("merkle_proof");
 
             self = self
                 .challenge_scalars(1, "combination_randomness")

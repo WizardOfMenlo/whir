@@ -18,7 +18,7 @@ use crate::whir::{
 
 #[derive(Clone)]
 pub struct ParsedCommitment<F, D> {
-    pub root: Vec<D>,
+    pub root: D,
     pub num_variables: usize,
     pub ood_points: Vec<F>,
     pub ood_answers: Vec<Vec<F>>,
@@ -53,12 +53,7 @@ where
             + DigestToUnitDeserialize<MerkleConfig>
             + BytesToUnitDeserialize,
     {
-        let mut roots = Vec::<MerkleConfig::InnerDigest>::with_capacity(self.0.batch_size);
-
-        for _ in 0..self.0.batch_size {
-            let root = verifier_state.read_digest()?;
-            roots.push(root);
-        }
+        let root = verifier_state.read_digest()?;
 
         let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
         let mut ood_answers = Vec::with_capacity(self.0.batch_size);
@@ -79,7 +74,7 @@ where
         };
 
         Ok(ParsedCommitment {
-            root: roots,
+            root,
             batching_randomness,
             num_variables: self.0.mv_parameters.num_variables,
             ood_points,
@@ -113,7 +108,7 @@ where
 
         Ok(ParsedCommitment {
             num_variables,
-            root: vec![root],
+            root,
             ood_points,
             ood_answers: vec![ood_answers],
             batching_randomness: F::ZERO,
