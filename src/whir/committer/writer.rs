@@ -41,7 +41,7 @@ where
     pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
-
+    #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit_batch<ProverState>(
         &self,

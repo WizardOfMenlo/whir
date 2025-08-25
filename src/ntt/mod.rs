@@ -267,7 +267,7 @@ mod tests {
         let poly = CoefficientList::new((0..count).map(|_| Field64::rand(&mut rng)).collect());
 
         // Compute things the old way
-        let mut expected = test_utils::expand_from_coeff(&poly.coeffs(), expansion);
+        let mut expected = test_utils::expand_from_coeff(poly.coeffs(), expansion);
         test_utils::transform_evaluations(
             &mut expected,
             eval_domain.group_gen_inv(),

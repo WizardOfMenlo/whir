@@ -207,6 +207,7 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
+        #[allow(clippy::cloned_ref_to_slice_refs)]
         let evals = interleaved_rs_encode(
             &[folded_coefficients.clone()],
             expansion,
