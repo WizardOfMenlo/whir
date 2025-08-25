@@ -28,6 +28,7 @@ use crate::{
         utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
     },
 };
+pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
 pub struct Prover<F, MerkleConfig, PowStrategy>(pub WhirConfig<F, MerkleConfig, PowStrategy>)
 where
@@ -40,17 +41,17 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    fn validate_parameters(&self) -> bool {
+    pub(crate) fn validate_parameters(&self) -> bool {
         self.0.mv_parameters.num_variables
             == self.0.folding_factor.total_number(self.0.n_rounds()) + self.0.final_sumcheck_rounds
     }
 
-    fn validate_statement(&self, statement: &Statement<F>) -> bool {
+    pub(crate) fn validate_statement(&self, statement: &Statement<F>) -> bool {
         statement.num_variables() == self.0.mv_parameters.num_variables
             && (self.0.initial_statement || statement.constraints.is_empty())
     }
 
-    fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
+    pub(crate) fn validate_witness(&self, witness: &Witness<F, MerkleConfig>) -> bool {
         assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
         if !self.0.initial_statement {
             assert!(witness.ood_points.is_empty());
@@ -77,11 +78,9 @@ where
             + DigestToUnitSerialize<MerkleConfig>
             + HintSerialize,
     {
-        assert!(
-            self.validate_parameters()
-                && self.validate_statement(&statement)
-                && self.validate_witness(&witness)
-        );
+        assert!(self.validate_parameters());
+        assert!(self.validate_statement(&statement));
+        assert!(self.validate_witness(&witness));
 
         // Convert witness ood_points into constraints
         let new_constraints = witness
@@ -145,6 +144,7 @@ where
             prev_merkle_answers: witness.merkle_leaves,
             randomness_vec,
             statement,
+            batching_randomness: witness.batching_randomness,
         };
 
         // Run WHIR rounds
@@ -162,6 +162,7 @@ where
             .filter(|constraint| constraint.defer_evaluation)
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
+
         prover_state.hint::<Vec<F>>(&deferred)?;
 
         Ok((constraint_eval, deferred))
@@ -206,8 +207,11 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals =
-            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
+        let evals = interleaved_rs_encode(
+            &[folded_coefficients.coeffs().to_vec()],
+            expansion,
+            folding_factor_next,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
@@ -261,15 +265,28 @@ where
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
         let fold_size = 1 << folding_factor;
-        let answers: Vec<_> = stir_challenges_indexes
+        let leaf_size = if round_state.round == 0 && self.0.batch_size > 1 {
+            fold_size * self.0.batch_size
+        } else {
+            fold_size
+        };
+        let mut answers: Vec<_> = stir_challenges_indexes
             .iter()
-            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
+            .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
 
-        // Evaluate answers in the folding randomness.
+        if round_state.round == 0 && self.0.batch_size > 1 {
+            answers = crate::whir::utils::rlc_batched_leaves(
+                answers,
+                fold_size,
+                self.0.batch_size,
+                round_state.batching_randomness,
+            );
+        }
+
         let mut stir_evaluations = ood_answers;
         stir_evaluations.extend(answers.iter().map(|answers| {
             CoefficientList::new(answers.clone()).evaluate(&round_state.folding_randomness)
@@ -509,4 +526,6 @@ where
     ///
     /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
+
+    pub(crate) batching_randomness: F,
 }

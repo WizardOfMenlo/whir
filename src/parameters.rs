@@ -236,6 +236,9 @@ where
     /// These define the hashing function used when combining two child nodes into a parent node.
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    /// Number of polynomials committed in the batch.
+    pub batch_size: usize,
 }
 
 impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>

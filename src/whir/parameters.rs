@@ -62,6 +62,9 @@ where
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    // Batch size
+    pub batch_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +125,7 @@ where
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate);
 
-        let committment_ood_samples = if whir_parameters.initial_statement {
+        let commitment_ood_samples = if whir_parameters.initial_statement {
             Self::ood_samples(
                 whir_parameters.security_level,
                 whir_parameters.soundness_type,
@@ -165,6 +168,7 @@ where
             let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
 
             let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate);
+
             let num_queries = Self::queries(
                 whir_parameters.soundness_type,
                 protocol_security_level,
@@ -182,6 +186,7 @@ where
 
             let query_error =
                 Self::rbr_queries(whir_parameters.soundness_type, log_inv_rate, num_queries);
+
             let combination_error = Self::rbr_soundness_queries_combination(
                 whir_parameters.soundness_type,
                 field_size_bits,
@@ -245,7 +250,7 @@ where
             security_level: whir_parameters.security_level,
             max_pow_bits: whir_parameters.pow_bits,
             initial_statement: whir_parameters.initial_statement,
-            committment_ood_samples,
+            committment_ood_samples: commitment_ood_samples,
             mv_parameters,
             starting_domain,
             soundness_type: whir_parameters.soundness_type,
@@ -261,6 +266,7 @@ where
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
+            batch_size: whir_parameters.batch_size,
         }
     }
 
@@ -405,9 +411,18 @@ where
             log_eta,
         );
 
-        let error = prox_gaps_error.min(sumcheck_error);
+        let error = if prox_gaps_error < sumcheck_error {
+            prox_gaps_error
+        } else {
+            sumcheck_error
+        };
 
-        0_f64.max(security_level as f64 - error)
+        let candidate = security_level as f64 - error;
+        if candidate > 0_f64 {
+            candidate
+        } else {
+            0_f64
+        }
     }
 
     // Used to select the number of queries
@@ -595,6 +610,7 @@ where
             .field("folding_factor", &self.folding_factor)
             .field("leaf_hash_params", &self.leaf_hash_params)
             .field("two_to_one_params", &self.two_to_one_params)
+            .field("batch_size", &self.batch_size)
             .finish()
     }
 }
@@ -825,6 +841,7 @@ mod tests {
             soundness_type: SoundnessType::ConjectureList,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
+            batch_size: 1,
         }
     }
 

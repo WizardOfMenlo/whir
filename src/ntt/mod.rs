@@ -20,7 +20,6 @@ pub use self::{
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
-
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
 /// 1/`expansion`, where 2^`fold_factor` elements are interleaved
@@ -31,22 +30,26 @@ pub use self::{
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[F],
+    interleaved_coeffs: &[Vec<F>],
     expansion: usize,
     fold_factor: usize,
 ) -> Vec<F> {
+    let num_coeffs = interleaved_coeffs.first().unwrap().len();
     let fold_factor = u32::try_from(fold_factor).unwrap();
     debug_assert!(expansion > 0);
-    debug_assert!(interleaved_coeffs.len().is_power_of_two());
+    debug_assert!(num_coeffs.is_power_of_two());
 
     let fold_factor_exp = 2usize.pow(fold_factor);
-    let expanded_size = interleaved_coeffs.len() * expansion;
+    let expanded_size = num_coeffs * expansion;
 
     debug_assert_eq!(expanded_size % fold_factor_exp, 0);
 
     // 1. Create zero-padded message of appropriate size
-    let mut result = vec![F::zero(); expanded_size];
-    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+    let mut result: Vec<_> = vec![F::zero(); interleaved_coeffs.len() * expanded_size];
+    for (i, poly) in interleaved_coeffs.iter().enumerate() {
+        let offset = i * expanded_size;
+        result[offset..offset + num_coeffs].copy_from_slice(poly);
+    }
 
     let rows = expanded_size / fold_factor_exp;
     let columns = fold_factor_exp;
@@ -269,7 +272,7 @@ mod tests {
         );
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt = interleaved_rs_encode(&[poly], expansion, folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

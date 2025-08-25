@@ -18,7 +18,10 @@ use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
-    whir::utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
+    whir::{
+        prover::RootPath,
+        utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
+    },
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
@@ -82,6 +85,7 @@ where
                 .into_iter()
                 .chain(statement.constraints.iter().cloned())
                 .collect();
+
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness, constraints));
@@ -120,6 +124,7 @@ where
 
             // Verify in-domain challenges on the previous commitment.
             let stir_constraints = self.verify_stir_challenges(
+                round_index,
                 verifier_state,
                 round_params,
                 &prev_commitment,
@@ -155,6 +160,7 @@ where
 
         // Verify in-domain challenges on the previous commitment.
         let stir_constraints = self.verify_stir_challenges(
+            self.params.n_rounds(),
             verifier_state,
             &self.params.final_round_config(),
             &prev_commitment,
@@ -259,6 +265,7 @@ where
     /// Verify a STIR challenges against a commitment and return the constraints.
     pub fn verify_stir_challenges(
         &self,
+        round_index: usize,
         verifier_state: &mut VerifierState,
         params: &RoundConfig<F>,
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
@@ -273,8 +280,20 @@ where
             verifier_state,
         )?;
 
-        let answers =
+        // Always open against the single batched commitment
+        let mut answers =
             self.verify_merkle_proof(verifier_state, &commitment.root, &stir_challenges_indexes)?;
+
+        // If this is the first round and batching > 1, RLC per leaf to fold_size
+        if round_index == 0 && self.params.batch_size > 1 {
+            let fold_size = 1 << params.folding_factor;
+            answers = crate::whir::utils::rlc_batched_leaves(
+                answers,
+                fold_size,
+                self.params.batch_size,
+                commitment.batching_randomness,
+            );
+        }
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers
@@ -294,6 +313,42 @@ where
             .collect();
 
         Ok(stir_constraints)
+    }
+
+    pub fn verify_first_round(
+        &self,
+        verifier_state: &mut VerifierState,
+        root: &[MerkleConfig::InnerDigest],
+        indices: &[usize],
+    ) -> ProofResult<Vec<Vec<F>>> {
+        let answers: Vec<Vec<F>> = verifier_state.hint()?;
+
+        let first_round_merkle_proof: Vec<RootPath<F, MerkleConfig>> = verifier_state.hint()?;
+
+        if root.len() != first_round_merkle_proof.len() {
+            return Err(ProofError::InvalidProof);
+        }
+
+        let correct =
+            first_round_merkle_proof
+                .iter()
+                .zip(root.iter())
+                .all(|((path, answers), root_hash)| {
+                    path.verify(
+                        &self.params.leaf_hash_params,
+                        &self.params.two_to_one_params,
+                        root_hash,
+                        answers.iter().map(|a| a.as_ref()),
+                    )
+                    .unwrap()
+                        && path.leaf_indexes == *indices
+                });
+
+        if !correct {
+            return Err(ProofError::InvalidProof);
+        }
+
+        Ok(answers)
     }
 
     /// Verify a merkle multi-opening proof for the provided indices.

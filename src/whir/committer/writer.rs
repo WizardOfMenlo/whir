@@ -4,7 +4,7 @@ use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
+    codecs::arkworks_algebra::{BytesToUnitSerialize, FieldToUnitSerialize, UnitToField},
     ProofResult,
 };
 #[cfg(feature = "tracing")]
@@ -16,7 +16,7 @@ use crate::{
     poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
-        utils::{sample_ood_points, DigestToUnitSerialize},
+        utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
     },
 };
 
@@ -26,7 +26,9 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(WhirConfig<F, MerkleConfig, PowStrategy>)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(
+    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
+)
 where
     F: FftField,
     MerkleConfig: Config;
@@ -39,61 +41,68 @@ where
     pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
-
-    /// Commits a polynomial using a Merkle-based commitment scheme.
-    ///
-    /// This function:
-    /// - Expands polynomial coefficients to evaluations.
-    /// - Applies folding and restructuring optimizations.
-    /// - Converts evaluations to an extension field.
-    /// - Constructs a Merkle tree from the evaluations.
-    /// - Computes out-of-domain (OOD) challenge points and their evaluations.
-    /// - Returns a `Witness` containing the commitment data.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<ProverState>(
+    #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
+    pub fn commit_batch<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomial: CoefficientList<F::BasePrimeField>,
+        polynomials: &[CoefficientList<F::BasePrimeField>],
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + DigestToUnitSerialize<MerkleConfig>,
+        ProverState: FieldToUnitSerialize<F>
+            + BytesToUnitSerialize
+            + DigestToUnitSerialize<MerkleConfig>
+            + UnitToField<F>,
     {
-        // Retrieve the base domain, ensuring it is set.
+        assert!(!polynomials.is_empty());
+        assert_eq!(polynomials.len(), self.0.batch_size);
+
+        let num_vars = polynomials.first().unwrap().num_variables();
+        let num_coeffs = polynomials.first().unwrap().num_coeffs();
+
+        for poly in polynomials {
+            assert_eq!(poly.num_variables(), num_vars);
+            assert_eq!(poly.num_coeffs(), num_coeffs);
+        }
+
         let base_domain = self.0.starting_domain.base_domain.unwrap();
-
-        // Compute expansion factor based on the domain size and polynomial length.
-        let expansion = base_domain.size() / polynomial.num_coeffs();
-
-        // Expand the polynomial coefficients into evaluations over the extended domain.
-        let evals = interleaved_rs_encode(
-            polynomial.coeffs(),
-            expansion,
-            self.0.folding_factor.at_round(0),
-        );
-
-        // Convert to extension field.
-        // This is not necessary for the commit, but in further rounds
-        // we will need the extension field. For symplicity we do it here too.
-        // TODO: Commit to base field directly.
-        let folded_evals = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "evals_to_extension", size = evals.len());
-            evals
-                .into_iter()
-                .map(F::from_base_prime_field)
-                .collect::<Vec<_>>()
-        };
-
-        // Determine leaf size based on folding factor.
+        let expansion = base_domain.size() / num_coeffs;
         let fold_size = 1 << self.0.folding_factor.at_round(0);
 
-        // Chunk evaluations into leaves for Merkle tree construction.
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = folded_evals.chunks_exact(fold_size);
-        #[cfg(feature = "parallel")]
-        let leafs_iter = folded_evals.par_chunks_exact(fold_size);
+        let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
+        let mut poly_comb: Vec<Vec<_>> = Vec::with_capacity(polynomials.len());
+        for poly in polynomials {
+            poly_ext.push(poly.clone().to_extension());
+            poly_comb.push(poly.coeffs().to_vec());
+        }
 
-        // Construct the Merkle tree with given hash parameters.
+        let batched_base =
+            interleaved_rs_encode(&poly_comb, expansion, self.0.folding_factor.at_round(0));
+
+        let batched_ext: Vec<F> = {
+            #[cfg(feature = "tracing")]
+            let _span = span!(Level::INFO, "evals_to_extension", size = batched_base.len());
+            batched_base
+                .into_iter()
+                .map(F::from_base_prime_field)
+                .collect()
+        };
+
+        let num_leaves = expansion * num_coeffs / fold_size;
+        let stacked_leaf_size = fold_size * polynomials.len();
+        let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
+        for i in 0..num_leaves {
+            for p in 0..polynomials.len() {
+                let start = p * expansion * num_coeffs + i * fold_size;
+                let end = start + fold_size;
+                stacked_leaves.extend_from_slice(&batched_ext[start..end]);
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -104,27 +113,97 @@ where
             )
             .unwrap()
         };
-
-        // Retrieve the Merkle tree root and add it to the narg_string.
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
 
-        // Handle OOD (Out-Of-Domain) samples
-        let (ood_points, ood_answers) = sample_ood_points(
+        let (ood_points, first_answers) = sample_ood_points(
             prover_state,
             self.0.committment_ood_samples,
             self.0.mv_parameters.num_variables,
-            |point| polynomial.evaluate_at_extension(point),
+            |point| poly_ext[0].evaluate(point),
         )?;
+        let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
+        per_poly_ood_answers.push(first_answers);
+        for poly_e in poly_ext.iter().skip(1) {
+            let answers = compute_ood_response(
+                prover_state,
+                &ood_points,
+                self.0.mv_parameters.num_variables,
+                |point| poly_e.evaluate(point),
+            )?;
+            per_poly_ood_answers.push(answers);
+        }
 
-        // Return the witness containing the polynomial, Merkle tree, and OOD results.
+        let [batching_randomness] = if polynomials.len() > 1 {
+            prover_state.challenge_scalars()?
+        } else {
+            [F::zero()]
+        };
+
+        if polynomials.len() == 1 {
+            return Ok(Witness {
+                polynomial: poly_ext.remove(0),
+                merkle_tree,
+                merkle_leaves: stacked_leaves,
+                ood_points,
+                ood_answers: per_poly_ood_answers.remove(0),
+                batching_randomness,
+            });
+        }
+
+        let mut batched_poly = poly_ext[0].coeffs().to_vec();
+        let mut multiplier = batching_randomness;
+        for poly_e in poly_ext.iter().skip(1) {
+            for (dst, src) in batched_poly.iter_mut().zip(poly_e.coeffs()) {
+                *dst += multiplier * src;
+            }
+            multiplier *= batching_randomness;
+        }
+        let polynomial = CoefficientList::new(batched_poly);
+
+        let mut batched_ood_resp = per_poly_ood_answers[0].clone();
+        let mut multiplier = batching_randomness;
+        for answers in per_poly_ood_answers.iter().skip(1) {
+            for (dst, src) in batched_ood_resp.iter_mut().zip(answers) {
+                *dst += multiplier * src;
+            }
+            multiplier *= batching_randomness;
+        }
+
         Ok(Witness {
-            polynomial: polynomial.to_extension(),
+            polynomial,
             merkle_tree,
-            merkle_leaves: folded_evals,
+            merkle_leaves: stacked_leaves,
             ood_points,
-            ood_answers,
+            ood_answers: batched_ood_resp,
+            batching_randomness,
         })
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
+    pub fn commit<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        polynomial: CoefficientList<F::BasePrimeField>,
+    ) -> ProofResult<Witness<F, MerkleConfig>>
+    where
+        ProverState: FieldToUnitSerialize<F>
+            + UnitToField<F>
+            + DigestToUnitSerialize<MerkleConfig>
+            + BytesToUnitSerialize,
+    {
+        self.commit_batch(prover_state, &[polynomial])
+    }
+}
+
+impl<F, MerkleConfig> Witness<F, MerkleConfig>
+where
+    F: FftField,
+    MerkleConfig: Config<Leaf = [F]>,
+{
+    /// Returns the batched polynomial
+    pub const fn batched_poly(&self) -> &CoefficientList<F> {
+        &self.polynomial
     }
 }
 
@@ -181,6 +260,7 @@ mod tests {
             soundness_type: SoundnessType::ConjectureList,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
+            batch_size: 1,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -269,6 +349,7 @@ mod tests {
                 soundness_type: SoundnessType::ConjectureList,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 
@@ -308,6 +389,7 @@ mod tests {
                 soundness_type: SoundnessType::ConjectureList,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
+                batch_size: 1,
             },
         );
 

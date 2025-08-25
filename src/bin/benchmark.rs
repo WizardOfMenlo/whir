@@ -256,6 +256,7 @@ fn run_whir<F, MerkleConfig>(
         soundness_type,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
+        batch_size: 1,
     };
 
     let polynomial = CoefficientList::new(

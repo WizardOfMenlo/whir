@@ -32,16 +32,35 @@ where
     DomainSeparator:
         ByteDomainSeparator + FieldDomainSeparator<F> + DigestDomainSeparator<MerkleConfig>,
 {
+    //
+    // FS Batch Commitment:
+    // P -> V
+    //  For each batch entry:
+    //      Merkle Root of prover-id.
+    //      Sample List of OOD queries based on _all_ committed roots
+    //      Compute List of OOD responses for each root
+    //
+    //  If more than on entry is there add
+    //  V -> P
+    //      Sample Single field element
+    //
+
     fn commit_statement<PowStrategy>(
         self,
         params: &WhirConfig<F, MerkleConfig, PowStrategy>,
     ) -> Self {
-        // TODO: Add params
-        let mut this = self.add_digest("merkle_digest");
+        let mut this = self;
+        this = this.add_digest("merkle-root");
+
         if params.committment_ood_samples > 0 {
             assert!(params.initial_statement);
-            this = this.add_ood(params.committment_ood_samples);
+            this = this.add_ood(params.committment_ood_samples, params.batch_size);
         }
+
+        if params.batch_size > 1 {
+            this = this.challenge_scalars(1, "batching_randomness");
+        }
+
         this
     }
 
@@ -67,13 +86,16 @@ where
         for (round, r) in params.round_parameters.iter().enumerate() {
             let folded_domain_size = domain_size >> params.folding_factor.at_round(round);
             let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
+
             self = self
                 .add_digest("merkle_digest")
-                .add_ood(r.ood_samples)
+                .add_ood(r.ood_samples, 1)
                 .pow(r.pow_bits)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
                 .hint("stir_answers")
-                .hint("merkle_proof")
+                .hint("merkle_proof");
+
+            self = self
                 .challenge_scalars(1, "combination_randomness")
                 .add_sumcheck(
                     params.folding_factor.at_round(round + 1),
