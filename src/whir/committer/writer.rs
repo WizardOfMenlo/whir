@@ -43,13 +43,13 @@ where
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
-    pub fn commit_batch<ProverFSState>(
+    pub fn commit_batch<ProverState>(
         &self,
-        prover_state: &mut ProverFSState,
+        prover_state: &mut ProverState,
         polynomials: &[CoefficientList<F::BasePrimeField>],
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
-        ProverFSState: FieldToUnitSerialize<F>
+        ProverState: FieldToUnitSerialize<F>
             + BytesToUnitSerialize
             + DigestToUnitSerialize<MerkleConfig>
             + UnitToField<F>,

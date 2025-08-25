@@ -13,14 +13,7 @@ pub trait OODDomainSeparator<F: Field> {
     ///   - A corresponding response labeled `"ood_ans"` with `num_samples` elements.
     /// - If `num_samples == 0`, the DomainSeparator remains unchanged.
     #[must_use]
-    fn add_ood(self, num_samples: usize) -> Self;
-
-    ///
-    /// Adds `num_samples` OOD queries and `num_samples*batch_size` number of
-    /// OOD response. If num_samples == 0 or batch_size == 0, nothing is added
-    ///
-    #[must_use]
-    fn add_committed_ood(self, num_samples: usize, batch_size: usize) -> Self;
+    fn add_ood(self, num_samples: usize, batch_size: usize) -> Self;
 }
 
 impl<F, DomainSeparator> OODDomainSeparator<F> for DomainSeparator
@@ -28,11 +21,7 @@ where
     F: Field,
     DomainSeparator: FieldDomainSeparator<F>,
 {
-    fn add_ood(self, num_samples: usize) -> Self {
-        self.add_committed_ood(num_samples, 1)
-    }
-
-    fn add_committed_ood(mut self, num_samples: usize, batch_size: usize) -> Self {
+    fn add_ood(mut self, num_samples: usize, batch_size: usize) -> Self {
         if num_samples > 0 && batch_size > 0 {
             self = self.challenge_scalars(num_samples, "ood_query");
 
@@ -82,7 +71,7 @@ mod tests {
 
         // Apply OOD query addition
         let updated_domainsep =
-            <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(domainsep.clone(), 3);
+            <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(domainsep.clone(), 3, 1);
 
         // Convert to a string for inspection
         let pattern_str = String::from_utf8(updated_domainsep.as_bytes().to_vec()).unwrap();
@@ -93,7 +82,7 @@ mod tests {
 
         // Test case where num_samples = 0 (should not modify anything)
         let unchanged_domainsep =
-            <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(domainsep, 0);
+            <DomainSeparator as OODDomainSeparator<Field64>>::add_ood(domainsep, 0, 1);
         let unchanged_str = String::from_utf8(unchanged_domainsep.as_bytes().to_vec()).unwrap();
         assert_eq!(unchanged_str, "test_protocol"); // Should remain the same
     }

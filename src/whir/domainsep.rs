@@ -54,7 +54,7 @@ where
 
         if params.committment_ood_samples > 0 {
             assert!(params.initial_statement);
-            this = this.add_committed_ood(params.committment_ood_samples, params.batch_size);
+            this = this.add_ood(params.committment_ood_samples, params.batch_size);
         }
 
         if params.batch_size > 1 {
@@ -89,7 +89,7 @@ where
 
             self = self
                 .add_digest("merkle_digest")
-                .add_ood(r.ood_samples)
+                .add_ood(r.ood_samples, 1)
                 .pow(r.pow_bits)
                 .challenge_bytes(r.num_queries * domain_size_bytes, "stir_queries")
                 .hint("stir_answers")
