@@ -17,8 +17,8 @@ where
         for _ in 0..folding_factor {
             self = self
                 .add_scalars(3, "sumcheck_poly")
-                .challenge_scalars(1, "folding_randomness")
-                .pow(pow_bits);
+                .pow(pow_bits)
+                .challenge_scalars(1, "folding_randomness");
         }
         self
     }
