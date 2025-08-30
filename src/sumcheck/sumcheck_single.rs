@@ -174,8 +174,6 @@ where
         for _ in 0..folding_factor {
             let sumcheck_poly = self.compute_sumcheck_polynomial();
             prover_state.add_scalars(sumcheck_poly.evaluations())?;
-            let [folding_randomness] = prover_state.challenge_scalars()?;
-            res.push(folding_randomness);
 
             // Do PoW if needed
             if pow_bits > 0. {
@@ -183,6 +181,9 @@ where
                 let _span = span!(Level::INFO, "challenge_pow", pow_bits).entered();
                 prover_state.challenge_pow::<S>(pow_bits)?;
             }
+
+            let [folding_randomness] = prover_state.challenge_scalars()?;
+            res.push(folding_randomness);
 
             self.compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
         }
@@ -1179,12 +1180,12 @@ mod tests {
             // Absorb 3 field elements (evaluations of sumcheck polynomial)
             domsep = <DomainSeparator as FieldDomainSeparator<F>>::add_scalars(domsep, 3, "tag");
 
+            // Apply optional PoW grinding to ensure randomness
+            domsep = domsep.challenge_pow("tag");
+
             // Sample 1 challenge scalar from the Fiat-Shamir transcript
             domsep =
                 <DomainSeparator as FieldDomainSeparator<F>>::challenge_scalars(domsep, 1, "tag");
-
-            // Apply optional PoW grinding to ensure randomness
-            domsep = domsep.challenge_pow("tag");
         }
 
         // Convert the domain separator to a prover state
@@ -1230,12 +1231,12 @@ mod tests {
             // Absorb 3 field values (sumcheck evaluations at X = 0, 1, 2)
             domsep = <DomainSeparator as FieldDomainSeparator<F>>::add_scalars(domsep, 3, "tag");
 
+            // Apply challenge PoW (grinding) to enhance soundness
+            domsep = domsep.challenge_pow("tag");
+
             // Sample 1 field challenge (folding randomness)
             domsep =
                 <DomainSeparator as FieldDomainSeparator<F>>::challenge_scalars(domsep, 1, "tag");
-
-            // Apply challenge PoW (grinding) to enhance soundness
-            domsep = domsep.challenge_pow("tag");
         }
 
         // Convert the domain separator to a prover state

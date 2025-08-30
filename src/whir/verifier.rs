@@ -247,15 +247,15 @@ where
                 return Err(ProofError::InvalidProof);
             }
 
+            // Proof of work per round
+            self.verify_proof_of_work(verifier_state, proof_of_work)?;
+
             // Receive folding randomness
             let [folding_randomness_single] = verifier_state.challenge_scalars()?;
             randomness.push(folding_randomness_single);
 
             // Update claimed sum using folding randomness
             *claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
-
-            // Proof of work per round
-            self.verify_proof_of_work(verifier_state, proof_of_work)?;
         }
 
         randomness.reverse();
