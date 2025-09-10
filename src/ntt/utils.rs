@@ -1,8 +1,23 @@
 /// Target single-thread workload size for `T`.
 /// Should ideally be a multiple of a cache line (64 bytes)
-/// and close to the L1 cache size (32 KB).
+/// and close to the L1 cache size.
 pub const fn workload_size<T: Sized>() -> usize {
-    const CACHE_SIZE: usize = 1 << 15;
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    const CACHE_SIZE: usize = 1 << 17; // 128KB for Apple Silicon
+
+    #[cfg(all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")))]
+    const CACHE_SIZE: usize = 1 << 16; // 64KB for mobile ARM
+
+    #[cfg(target_arch = "x86_64")]
+    const CACHE_SIZE: usize = 1 << 15; // 32KB for x86-64
+
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "macos"),
+        all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")),
+        target_arch = "x86_64"
+    )))]
+    const CACHE_SIZE: usize = 1 << 15; // 32KB default
+
     CACHE_SIZE / size_of::<T>()
 }
 
