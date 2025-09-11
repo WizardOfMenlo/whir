@@ -29,12 +29,12 @@ pub use self::{
 /// outputs the interleaved alphabets in the same order as the input.
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
-pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[Vec<F>],
+pub fn interleaved_rs_encode<F: FftField, T: AsRef<[F]>>(
+    interleaved_coeffs: &[T],
     expansion: usize,
     fold_factor: usize,
 ) -> Vec<F> {
-    let num_coeffs = interleaved_coeffs.first().unwrap().len();
+    let num_coeffs = interleaved_coeffs.first().unwrap().as_ref().len();
     let fold_factor = u32::try_from(fold_factor).unwrap();
     debug_assert!(expansion > 0);
     debug_assert!(num_coeffs.is_power_of_two());
@@ -46,7 +46,8 @@ pub fn interleaved_rs_encode<F: FftField>(
 
     // 1. Create zero-padded message of appropriate size
     let mut result: Vec<_> = vec![F::zero(); interleaved_coeffs.len() * expanded_size];
-    for (i, poly) in interleaved_coeffs.iter().enumerate() {
+    for (i, coeffs_t) in interleaved_coeffs.iter().enumerate() {
+        let poly = coeffs_t.as_ref();
         let offset = i * expanded_size;
         result[offset..offset + num_coeffs].copy_from_slice(poly);
     }
@@ -54,18 +55,9 @@ pub fn interleaved_rs_encode<F: FftField>(
     let rows = expanded_size / fold_factor_exp;
     let columns = fold_factor_exp;
 
-    //
-    // 2. Convert from column-major (interleaved form) to row-major
-    //    representation.
-    //
-
-    // TODO: Might be useful to keep the transposed data for future use.
+    // 2. Transpose to row-major, 3. NTT rows, 4. Transpose back
     transpose(&mut result, rows, columns);
-
-    // 3. Compute NTT on row-major representation
     ntt_batch(&mut result, rows);
-
-    // 4. Convert back to column-major (interleaved) representation
     transpose(&mut result, columns, rows);
     result
 }

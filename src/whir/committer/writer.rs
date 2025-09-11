@@ -69,33 +69,33 @@ where
         let expansion = base_domain.size() / num_coeffs;
         let fold_size = 1 << self.0.folding_factor.at_round(0);
 
-        let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
-        let mut poly_comb: Vec<Vec<_>> = Vec::with_capacity(polynomials.len());
-        for poly in polynomials {
-            poly_ext.push(poly.clone().to_extension());
-            poly_comb.push(poly.coeffs().to_vec());
-        }
+        let coeff_slices: Vec<&[F::BasePrimeField]> =
+            polynomials.iter().map(|p| p.coeffs()).collect();
 
         let batched_base =
-            interleaved_rs_encode(&poly_comb, expansion, self.0.folding_factor.at_round(0));
-
-        let batched_ext: Vec<F> = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "evals_to_extension", size = batched_base.len());
-            batched_base
-                .into_iter()
-                .map(F::from_base_prime_field)
-                .collect()
-        };
+            interleaved_rs_encode(&coeff_slices, expansion, self.0.folding_factor.at_round(0));
+       
+        let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
+        for poly in coeff_slices {
+            poly_ext.push(CoefficientList::new(poly.to_vec()).to_extension());
+        }
 
         let num_leaves = expansion * num_coeffs / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
         let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
+        
         for i in 0..num_leaves {
             for p in 0..polynomials.len() {
-                let start = p * expansion * num_coeffs + i * fold_size;
-                let end = start + fold_size;
-                stacked_leaves.extend_from_slice(&batched_ext[start..end]);
+                let poly_offset = p * expansion * num_coeffs;
+                let leaf_start = poly_offset + i * fold_size;
+                let leaf_end = leaf_start + fold_size;
+        
+                // Push converting base -> extension on the fly
+                stacked_leaves.extend(
+                    batched_base[leaf_start..leaf_end]
+                        .iter()
+                        .map(|&x| F::from_base_prime_field(x)),
+                );
             }
         }
 
