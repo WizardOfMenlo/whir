@@ -6,6 +6,8 @@ pub mod blake3;
 pub mod digest;
 pub mod keccak;
 pub mod parameters;
+#[cfg(feature = "recursive")]
+pub mod proof;
 
 #[derive(Debug, Default)]
 pub struct HashCounter;

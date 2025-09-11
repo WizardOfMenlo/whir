@@ -98,14 +98,16 @@ where
     narg_string.fill_challenge_bytes(&mut queries)?;
 
     // Convert bytes into indices in **one efficient pass**
-    let indices = queries
+    let mut indices = queries
         .chunks_exact(domain_size_bytes)
         .map(|chunk| {
             chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
         })
         .sorted_unstable()
-        .dedup()
         .collect_vec();
+
+    #[cfg(not(feature = "recursive"))]
+    indices.dedup();
 
     Ok(indices)
 }

@@ -1,3 +1,6 @@
+#[cfg(feature = "recursive")]
+use std::collections::{BTreeMap, BTreeSet};
+
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -17,6 +20,8 @@ use super::{
     statement::{Statement, Weights},
     utils::HintSerialize,
 };
+#[cfg(feature = "recursive")]
+use crate::crypto::merkle_tree::proof::FullMultiPath;
 use crate::{
     domain::Domain,
     ntt::interleaved_rs_encode,
@@ -260,10 +265,30 @@ where
             ood_points,
         )?;
 
+        #[cfg(not(feature = "recursive"))]
         let merkle_proof = round_state
             .prev_merkle
             .generate_multi_proof(stir_challenges_indexes.clone())
             .unwrap();
+
+        #[cfg(feature = "recursive")]
+        let indexes_set = BTreeSet::from_iter(stir_challenges_indexes.clone());
+        #[cfg(feature = "recursive")]
+        let mut index_proof_map = BTreeMap::new();
+        #[cfg(feature = "recursive")]
+        for index in indexes_set {
+            index_proof_map.insert(
+                index,
+                round_state.prev_merkle.generate_proof(index).unwrap(),
+            );
+        }
+        #[cfg(feature = "recursive")]
+        let merkle_proof = stir_challenges_indexes
+            .iter()
+            .map(|index| index_proof_map[&index].clone())
+            .collect::<Vec<_>>()
+            .into();
+
         let fold_size = 1 << folding_factor;
         let leaf_size = if round_state.round == 0 && self.0.batch_size > 1 {
             fold_size * self.0.batch_size
@@ -276,7 +301,10 @@ where
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        #[cfg(not(feature = "recursive"))]
         prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+        #[cfg(feature = "recursive")]
+        prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;
 
         if round_state.round == 0 && self.0.batch_size > 1 {
             answers = crate::whir::utils::rlc_batched_leaves(
@@ -392,10 +420,30 @@ where
             prover_state,
         )?;
 
+        #[cfg(not(feature = "recursive"))]
         let merkle_proof = round_state
             .prev_merkle
             .generate_multi_proof(final_challenge_indexes.clone())
             .unwrap();
+
+        #[cfg(feature = "recursive")]
+        let indexes_set = BTreeSet::from_iter(final_challenge_indexes.clone());
+        #[cfg(feature = "recursive")]
+        let mut index_proof_map = BTreeMap::new();
+        #[cfg(feature = "recursive")]
+        for index in indexes_set {
+            index_proof_map.insert(
+                index,
+                round_state.prev_merkle.generate_proof(index).unwrap(),
+            );
+        }
+        #[cfg(feature = "recursive")]
+        let merkle_proof = final_challenge_indexes
+            .iter()
+            .map(|index| index_proof_map[&index].clone())
+            .collect::<Vec<_>>()
+            .into();
+
         // Every query requires opening these many in the previous Merkle tree
         let fold_size = 1 << folding_factor;
         let answers = final_challenge_indexes
@@ -404,7 +452,10 @@ where
             .collect::<Vec<_>>();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        #[cfg(not(feature = "recursive"))]
         prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+        #[cfg(feature = "recursive")]
+        prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;
 
         // Final sumcheck
         if self.0.final_sumcheck_rounds > 0 {

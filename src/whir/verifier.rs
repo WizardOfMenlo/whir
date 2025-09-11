@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_crypto_primitives::merkle_tree::Config;
+#[cfg(not(feature = "recursive"))]
+use ark_crypto_primitives::merkle_tree::MultiPath;
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
@@ -14,6 +16,8 @@ use super::{
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
+#[cfg(feature = "recursive")]
+use crate::crypto::merkle_tree::proof::FullMultiPath;
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
@@ -362,8 +366,17 @@ where
         let answers: Vec<Vec<F>> = verifier_state.hint()?;
 
         // Receive merkle proof for leaf indices
+        #[cfg(not(feature = "recursive"))]
         let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+        #[cfg(not(feature = "recursive"))]
         if merkle_proof.leaf_indexes != indices {
+            return Err(ProofError::InvalidProof);
+        }
+
+        #[cfg(feature = "recursive")]
+        let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
+        #[cfg(feature = "recursive")]
+        if merkle_proof.indices() != indices {
             return Err(ProofError::InvalidProof);
         }
 
