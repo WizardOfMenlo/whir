@@ -103,11 +103,13 @@ where
         .map(|chunk| {
             chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
         })
-        .sorted_unstable()
         .collect_vec();
 
     #[cfg(not(feature = "recursive"))]
-    indices.dedup();
+    {
+        indices.sort_unstable();
+        indices.dedup();
+    }
 
     Ok(indices)
 }
