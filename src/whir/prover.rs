@@ -280,7 +280,7 @@ where
             MerkleProofStrategy::Compressed => {
                 let merkle_proof = round_state
                     .prev_merkle
-                    .generate_multi_proof(stir_challenges_indexes.clone())
+                    .generate_multi_proof(stir_challenges_indexes)
                     .unwrap();
                 prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
             }
@@ -295,12 +295,12 @@ where
                 }
                 let merkle_proof = stir_challenges_indexes
                     .iter()
-                    .map(|index| index_proof_map[&index].clone())
+                    .map(|index| index_proof_map[index].clone())
                     .collect::<Vec<_>>()
                     .into();
                 prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;
             }
-        };
+        }
 
         if round_state.round == 0 && self.0.batch_size > 1 {
             answers = crate::whir::utils::rlc_batched_leaves(
@@ -430,7 +430,7 @@ where
             MerkleProofStrategy::Compressed => {
                 let merkle_proof = round_state
                     .prev_merkle
-                    .generate_multi_proof(final_challenge_indexes.clone())
+                    .generate_multi_proof(final_challenge_indexes)
                     .unwrap();
                 prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
             }
@@ -445,7 +445,7 @@ where
                 }
                 let merkle_proof = final_challenge_indexes
                     .iter()
-                    .map(|index| index_proof_map[&index].clone())
+                    .map(|index| index_proof_map[index].clone())
                     .collect::<Vec<_>>()
                     .into();
                 prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;

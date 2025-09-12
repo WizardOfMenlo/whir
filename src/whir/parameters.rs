@@ -73,7 +73,7 @@ where
     pub batch_size: usize,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MerkleProofStrategy {
     Compressed,
     Uncompressed,
@@ -629,9 +629,11 @@ where
             .field("final_log_inv_rate", &self.final_log_inv_rate)
             .field("final_sumcheck_rounds", &self.final_sumcheck_rounds)
             .field("final_folding_pow_bits", &self.final_folding_pow_bits)
+            .field("deduplication_strategy", &self.deduplication_strategy)
             .field("folding_factor", &self.folding_factor)
             .field("leaf_hash_params", &self.leaf_hash_params)
             .field("two_to_one_params", &self.two_to_one_params)
+            .field("merkle_proof_strategy", &self.merkle_proof_strategy)
             .field("batch_size", &self.batch_size)
             .finish()
     }
