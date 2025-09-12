@@ -134,6 +134,10 @@ impl<F> CoefficientList<F> {
         &self.coeffs
     }
 
+    pub fn into_coeffs(self) -> Vec<F> {
+        self.coeffs
+    }
+
     pub const fn num_variables(&self) -> usize {
         self.num_variables
     }

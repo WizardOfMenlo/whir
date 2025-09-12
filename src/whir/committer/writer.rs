@@ -110,13 +110,14 @@ where
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
     
+        let first_poly = CoefficientList::new(coeff_slices[0].to_vec()).to_extension::<F>();
+
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
             self.0.committment_ood_samples,
             self.0.mv_parameters.num_variables,
             |point| {
-                CoefficientList::new(coeff_slices[0].to_vec())
-                    .to_extension::<F>()
+                first_poly
                     .evaluate(point)
             },
         )?;
@@ -143,7 +144,7 @@ where
     
         if polynomials.len() == 1 {
             return Ok(Witness {
-                polynomial: CoefficientList::new(coeff_slices[0].to_vec()).to_extension(),
+                polynomial: first_poly,
                 merkle_tree,
                 merkle_leaves: stacked_leaves,
                 ood_points,
@@ -152,25 +153,21 @@ where
             });
         }
     
-        let mut batched_poly: Vec<F> = coeff_slices[0]
-            .iter()
-            .map(|&c| F::from_base_prime_field(c))
-            .collect();
+        let mut batched_poly: Vec<F> = first_poly.into_coeffs();
 
         let mut multiplier = batching_randomness;
     
         for poly in coeff_slices.iter().skip(1) {
-            let poly_e = CoefficientList::new(poly.to_vec()).to_extension::<F>();
-            for (dst, src) in batched_poly.iter_mut().zip(poly_e.coeffs()) {
-                *dst += multiplier * src;
+            for (dst, &src) in batched_poly.iter_mut().zip(poly.iter()) {
+                *dst += multiplier * F::from_base_prime_field(src);
             }
             multiplier *= batching_randomness;
         }
         let polynomial = CoefficientList::new(batched_poly);
     
-        let mut batched_ood_resp = per_poly_ood_answers[0].clone();
+        let mut batched_ood_resp = per_poly_ood_answers.remove(0);
         let mut multiplier = batching_randomness;
-        for answers in per_poly_ood_answers.iter().skip(1) {
+        for answers in per_poly_ood_answers {
             for (dst, src) in batched_ood_resp.iter_mut().zip(answers) {
                 *dst += multiplier * src;
             }
