@@ -27,6 +27,7 @@ use whir::{
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
+        parameters::{DeduplicationStrategy, MerkleProofStrategy},
         statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
@@ -262,7 +263,12 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         batch_size: 1,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        mv_params,
+        whir_params,
+        DeduplicationStrategy::Enabled,
+        MerkleProofStrategy::Compressed,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
@@ -376,7 +382,12 @@ fn run_whir_pcs<F, MerkleConfig>(
         batch_size: 1,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        mv_params,
+        whir_params,
+        DeduplicationStrategy::Enabled,
+        MerkleProofStrategy::Compressed,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)

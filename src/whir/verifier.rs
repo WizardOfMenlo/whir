@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use ark_crypto_primitives::merkle_tree::Config;
-#[cfg(not(feature = "recursive"))]
-use ark_crypto_primitives::merkle_tree::MultiPath;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
@@ -12,13 +10,12 @@ use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,
-    parameters::{RoundConfig, WhirConfig},
+    parameters::{MerkleProofStrategy, RoundConfig, WhirConfig},
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
-#[cfg(feature = "recursive")]
-use crate::crypto::merkle_tree::proof::FullMultiPath;
 use crate::{
+    crypto::merkle_tree::proof::FullMultiPath,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
@@ -282,6 +279,7 @@ where
             params.folding_factor,
             params.num_queries,
             verifier_state,
+            &self.params.deduplication_strategy,
         )?;
 
         // Always open against the single batched commitment
@@ -366,31 +364,43 @@ where
         let answers: Vec<Vec<F>> = verifier_state.hint()?;
 
         // Receive merkle proof for leaf indices
-        #[cfg(not(feature = "recursive"))]
-        let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
-        #[cfg(not(feature = "recursive"))]
-        if merkle_proof.leaf_indexes != indices {
-            return Err(ProofError::InvalidProof);
-        }
+        match self.params.merkle_proof_strategy {
+            MerkleProofStrategy::Compressed => {
+                let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+                if merkle_proof.leaf_indexes != indices {
+                    return Err(ProofError::InvalidProof);
+                }
 
-        #[cfg(feature = "recursive")]
-        let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
-        #[cfg(feature = "recursive")]
-        if merkle_proof.indices() != indices {
-            return Err(ProofError::InvalidProof);
-        }
+                let correct = merkle_proof
+                    .verify(
+                        &self.params.leaf_hash_params,
+                        &self.params.two_to_one_params,
+                        root,
+                        answers.iter().map(|a| a.as_ref()),
+                    )
+                    .map_err(|_e| ProofError::InvalidProof)?;
+                if !correct {
+                    return Err(ProofError::InvalidProof);
+                }
+            }
+            MerkleProofStrategy::Uncompressed => {
+                let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
+                if merkle_proof.indices() != indices {
+                    return Err(ProofError::InvalidProof);
+                }
 
-        // Verify merkle proof
-        let correct = merkle_proof
-            .verify(
-                &self.params.leaf_hash_params,
-                &self.params.two_to_one_params,
-                root,
-                answers.iter().map(|a| a.as_ref()),
-            )
-            .map_err(|_e| ProofError::InvalidProof)?;
-        if !correct {
-            return Err(ProofError::InvalidProof);
+                let correct = merkle_proof
+                    .verify(
+                        &self.params.leaf_hash_params,
+                        &self.params.two_to_one_params,
+                        root,
+                        answers.iter().map(|a| a.as_ref()),
+                    )
+                    .map_err(|_e| ProofError::InvalidProof)?;
+                if !correct {
+                    return Err(ProofError::InvalidProof);
+                }
+            }
         }
 
         Ok(answers)

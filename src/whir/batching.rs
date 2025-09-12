@@ -44,7 +44,7 @@ mod batching_tests {
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
-            parameters::WhirConfig,
+            parameters::{DeduplicationStrategy, MerkleProofStrategy, WhirConfig},
             prover::Prover,
             statement::{Statement, Weights},
             verifier::Verifier,
@@ -117,7 +117,12 @@ mod batching_tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, whir_params);
+        let params = WhirConfig::new(
+            mv_params,
+            whir_params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 

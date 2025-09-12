@@ -6,7 +6,7 @@ use ark_crypto_primitives::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct FullMultiPath<P: Config> {
     pub proofs: Vec<Path<P>>,
 }

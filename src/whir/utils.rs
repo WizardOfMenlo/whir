@@ -9,7 +9,7 @@ use spongefish::{
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::poly_utils::multilinear::MultilinearPoint;
+use crate::{poly_utils::multilinear::MultilinearPoint, whir::parameters::DeduplicationStrategy};
 
 ///
 /// A utility function to compute the response to OOD challenge and add it to
@@ -85,6 +85,7 @@ pub fn get_challenge_stir_queries<T>(
     folding_factor: usize,
     num_queries: usize,
     narg_string: &mut T,
+    deduplication_strategy: &DeduplicationStrategy,
 ) -> ProofResult<Vec<usize>>
 where
     T: UnitToBytes,
@@ -105,10 +106,12 @@ where
         })
         .collect_vec();
 
-    #[cfg(not(feature = "recursive"))]
-    {
-        indices.sort_unstable();
-        indices.dedup();
+    match deduplication_strategy {
+        DeduplicationStrategy::Enabled => {
+            indices.sort_unstable();
+            indices.dedup();
+        }
+        DeduplicationStrategy::Disabled => {}
     }
 
     Ok(indices)
@@ -198,9 +201,14 @@ mod tests {
             index: 0,
         };
 
-        let result =
-            get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut narg_string)
-                .unwrap();
+        let result = get_challenge_stir_queries(
+            domain_size,
+            folding_factor,
+            num_queries,
+            &mut narg_string,
+            &DeduplicationStrategy::Enabled,
+        )
+        .unwrap();
 
         let folded_domain_size = 128; // domain_size / 2
 
@@ -240,9 +248,14 @@ mod tests {
             index: 0,
         };
 
-        let result =
-            get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut narg_string)
-                .unwrap();
+        let result = get_challenge_stir_queries(
+            domain_size,
+            folding_factor,
+            num_queries,
+            &mut narg_string,
+            &DeduplicationStrategy::Enabled,
+        )
+        .unwrap();
 
         let folded_domain_size = 8192; // 65536 / 8
 
@@ -281,9 +294,14 @@ mod tests {
             index: 0,
         };
 
-        let result =
-            get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut narg_string)
-                .unwrap();
+        let result = get_challenge_stir_queries(
+            domain_size,
+            folding_factor,
+            num_queries,
+            &mut narg_string,
+            &DeduplicationStrategy::Enabled,
+        )
+        .unwrap();
 
         let folded_domain_size = 1_048_576; // 2^20
 
@@ -318,9 +336,14 @@ mod tests {
             index: 0,
         };
 
-        let result =
-            get_challenge_stir_queries(domain_size, folding_factor, num_queries, &mut narg_string)
-                .unwrap();
+        let result = get_challenge_stir_queries(
+            domain_size,
+            folding_factor,
+            num_queries,
+            &mut narg_string,
+            &DeduplicationStrategy::Enabled,
+        )
+        .unwrap();
 
         let folded_domain_size = 128;
 

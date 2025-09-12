@@ -224,7 +224,10 @@ mod tests {
         },
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::multilinear::MultilinearPoint,
-        whir::domainsep::WhirDomainSeparator,
+        whir::{
+            domainsep::WhirDomainSeparator,
+            parameters::{DeduplicationStrategy, MerkleProofStrategy},
+        },
     };
 
     #[test]
@@ -265,7 +268,12 @@ mod tests {
 
         // Define multivariate parameters for the polynomial.
         let mv_params = MultivariateParameters::<F>::new(num_variables);
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
+        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            mv_params,
+            whir_params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
@@ -351,6 +359,8 @@ mod tests {
                 starting_log_inv_rate: 1,
                 batch_size: 1,
             },
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
@@ -391,6 +401,8 @@ mod tests {
                 starting_log_inv_rate: 1,
                 batch_size: 1,
             },
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
         );
 
         params.committment_ood_samples = 0; // No OOD samples

@@ -74,7 +74,6 @@ parallel = [
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 tracing = ["dep:tracing"]
-recursive = []
 
 [[bench]]
 name = "expand_from_coeff"

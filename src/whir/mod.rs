@@ -29,7 +29,7 @@ mod tests {
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
-            parameters::WhirConfig,
+            parameters::{DeduplicationStrategy, MerkleProofStrategy, WhirConfig},
             prover::Prover,
             statement::{Statement, Weights},
             verifier::Verifier,
@@ -90,7 +90,12 @@ mod tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, whir_params);
+        let params = WhirConfig::new(
+            mv_params,
+            whir_params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         // Test that the config is serializable
         eprintln!("{params:?}");

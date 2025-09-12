@@ -32,6 +32,7 @@ use whir::{
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
+        parameters::{DeduplicationStrategy, MerkleProofStrategy},
         statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
@@ -282,7 +283,12 @@ fn run_whir<F, MerkleConfig>(
             initial_statement: false,
             ..whir_params.clone()
         };
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            mv_params,
+            whir_params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -355,7 +361,12 @@ fn run_whir<F, MerkleConfig>(
             prover::Prover, verifier::Verifier,
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            mv_params,
+            whir_params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }

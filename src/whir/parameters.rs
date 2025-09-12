@@ -53,6 +53,10 @@ where
     pub final_sumcheck_rounds: usize,
     pub final_folding_pow_bits: f64,
 
+    // Strategy to decide on the deduplication of challenges
+    // (Used for recursive proving where constant length transcript is needed)
+    pub deduplication_strategy: DeduplicationStrategy,
+
     // PoW parameters
     #[serde(skip)]
     pub pow_strategy: PhantomData<PowStrategy>,
@@ -63,8 +67,22 @@ where
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
+    pub merkle_proof_strategy: MerkleProofStrategy,
+
     // Batch size
     pub batch_size: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum MerkleProofStrategy {
+    Compressed,
+    Uncompressed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DeduplicationStrategy {
+    Enabled,  // Sort + dedup indices
+    Disabled, // Preserve order/multiplicity
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +116,8 @@ where
     pub fn new(
         mv_parameters: MultivariateParameters<F>,
         whir_parameters: ProtocolParameters<MerkleConfig, PowStrategy>,
+        deduplication_strategy: DeduplicationStrategy,
+        merkle_proof_strategy: MerkleProofStrategy,
     ) -> Self {
         whir_parameters
             .folding_factor
@@ -262,10 +282,12 @@ where
             final_pow_bits,
             final_sumcheck_rounds,
             final_folding_pow_bits,
+            deduplication_strategy,
             pow_strategy: PhantomData,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
+            merkle_proof_strategy,
             batch_size: whir_parameters.batch_size,
         }
     }
@@ -852,7 +874,12 @@ mod tests {
         let params = default_whir_params::<Field64>();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         assert_eq!(config.security_level, 100);
         assert_eq!(config.max_pow_bits, 20);
@@ -873,7 +900,12 @@ mod tests {
         let params = default_whir_params::<Field64>();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         test_serde(&config);
     }
@@ -884,7 +916,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         assert_eq!(config.n_rounds(), config.round_parameters.len());
     }
@@ -997,7 +1034,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         // Set all values within limits
         config.max_pow_bits = 20;
@@ -1047,7 +1089,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 21.0; // Exceeds max_pow_bits
@@ -1066,7 +1113,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 15.0;
@@ -1085,7 +1137,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 15.0;
@@ -1119,7 +1176,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 15.0;
@@ -1153,7 +1215,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 20.0;
@@ -1186,7 +1253,12 @@ mod tests {
 
         let params = default_whir_params::<Field64>();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(mv_params, params);
+        let mut config = WhirConfig::<Field64, MerkleConfig, u8>::new(
+            mv_params,
+            params,
+            DeduplicationStrategy::Enabled,
+            MerkleProofStrategy::Compressed,
+        );
 
         config.max_pow_bits = 20;
         config.starting_folding_pow_bits = 22.0;
