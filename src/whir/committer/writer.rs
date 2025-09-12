@@ -56,41 +56,35 @@ where
     {
         assert!(!polynomials.is_empty());
         assert_eq!(polynomials.len(), self.0.batch_size);
-
+    
         let num_vars = polynomials.first().unwrap().num_variables();
         let num_coeffs = polynomials.first().unwrap().num_coeffs();
-
+    
         for poly in polynomials {
             assert_eq!(poly.num_variables(), num_vars);
             assert_eq!(poly.num_coeffs(), num_coeffs);
         }
-
+    
         let base_domain = self.0.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / num_coeffs;
         let fold_size = 1 << self.0.folding_factor.at_round(0);
-
+    
         let coeff_slices: Vec<&[F::BasePrimeField]> =
             polynomials.iter().map(|p| p.coeffs()).collect();
-
+    
         let batched_base =
             interleaved_rs_encode(&coeff_slices, expansion, self.0.folding_factor.at_round(0));
-       
-        let mut poly_ext: Vec<_> = Vec::with_capacity(polynomials.len());
-        for poly in coeff_slices {
-            poly_ext.push(CoefficientList::new(poly.to_vec()).to_extension());
-        }
-
+    
         let num_leaves = expansion * num_coeffs / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
         let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
-        
+    
         for i in 0..num_leaves {
             for p in 0..polynomials.len() {
                 let poly_offset = p * expansion * num_coeffs;
                 let leaf_start = poly_offset + i * fold_size;
                 let leaf_end = leaf_start + fold_size;
-        
-                // Push converting base -> extension on the fly
+    
                 stacked_leaves.extend(
                     batched_base[leaf_start..leaf_end]
                         .iter()
@@ -98,7 +92,7 @@ where
                 );
             }
         }
-
+    
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
         #[cfg(feature = "parallel")]
@@ -115,16 +109,23 @@ where
         };
         let root = merkle_tree.root();
         prover_state.add_digest(root)?;
-
+    
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
             self.0.committment_ood_samples,
             self.0.mv_parameters.num_variables,
-            |point| poly_ext[0].evaluate(point),
+            |point| {
+                CoefficientList::new(coeff_slices[0].to_vec())
+                    .to_extension::<F>()
+                    .evaluate(point)
+            },
         )?;
+    
         let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
         per_poly_ood_answers.push(first_answers);
-        for poly_e in poly_ext.iter().skip(1) {
+    
+        for poly in coeff_slices.iter().skip(1) {
+            let poly_e = CoefficientList::new(poly.to_vec()).to_extension::<F>();
             let answers = compute_ood_response(
                 prover_state,
                 &ood_points,
@@ -133,16 +134,16 @@ where
             )?;
             per_poly_ood_answers.push(answers);
         }
-
+    
         let [batching_randomness] = if polynomials.len() > 1 {
             prover_state.challenge_scalars()?
         } else {
             [F::zero()]
         };
-
+    
         if polynomials.len() == 1 {
             return Ok(Witness {
-                polynomial: poly_ext.remove(0),
+                polynomial: CoefficientList::new(coeff_slices[0].to_vec()).to_extension(),
                 merkle_tree,
                 merkle_leaves: stacked_leaves,
                 ood_points,
@@ -150,17 +151,23 @@ where
                 batching_randomness,
             });
         }
+    
+        let mut batched_poly: Vec<F> = coeff_slices[0]
+            .iter()
+            .map(|&c| F::from_base_prime_field(c))
+            .collect();
 
-        let mut batched_poly = poly_ext[0].coeffs().to_vec();
         let mut multiplier = batching_randomness;
-        for poly_e in poly_ext.iter().skip(1) {
+    
+        for poly in coeff_slices.iter().skip(1) {
+            let poly_e = CoefficientList::new(poly.to_vec()).to_extension::<F>();
             for (dst, src) in batched_poly.iter_mut().zip(poly_e.coeffs()) {
                 *dst += multiplier * src;
             }
             multiplier *= batching_randomness;
         }
         let polynomial = CoefficientList::new(batched_poly);
-
+    
         let mut batched_ood_resp = per_poly_ood_answers[0].clone();
         let mut multiplier = batching_randomness;
         for answers in per_poly_ood_answers.iter().skip(1) {
@@ -169,7 +176,7 @@ where
             }
             multiplier *= batching_randomness;
         }
-
+    
         Ok(Witness {
             polynomial,
             merkle_tree,
@@ -179,6 +186,7 @@ where
             batching_randomness,
         })
     }
+    
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
     pub fn commit<ProverState>(
