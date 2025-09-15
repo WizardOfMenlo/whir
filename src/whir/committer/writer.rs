@@ -41,7 +41,7 @@ where
     pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self(config)
     }
-   
+
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit_batch<ProverState>(
@@ -72,17 +72,12 @@ where
 
         let num_leaves = (polynomials[0].num_coeffs() * expansion) / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
-        let mut stacked_leaves = Vec::<F>::with_capacity(num_leaves * stacked_leaf_size);
-
-        stacked_leaves.resize(num_leaves * stacked_leaf_size, F::zero());
+        let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals = interleaved_rs_encode(
-                poly.coeffs(),
-                expansion,
-                self.0.folding_factor.at_round(0),
-            );
-            
+            let evals =
+                interleaved_rs_encode(poly.coeffs(), expansion, self.0.folding_factor.at_round(0));
+
             for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
                 let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
                 for (j, &eval) in chunk.iter().enumerate() {
@@ -145,7 +140,7 @@ where
         }
 
         let mut batched_poly = polynomials[0].clone().to_extension().into_coeffs();
-        
+
         let mut multiplier = batching_randomness;
         for poly in polynomials.iter().skip(1) {
             let poly_e = poly.clone().to_extension();
@@ -159,7 +154,7 @@ where
 
         let mut per_poly_ood_iter = per_poly_ood_answers.into_iter();
         let mut batched_ood_resp = per_poly_ood_iter.next().unwrap();
-        
+
         let mut multiplier = batching_randomness;
         for answers in per_poly_ood_iter {
             for (dst, src) in batched_ood_resp.iter_mut().zip(&answers) {
