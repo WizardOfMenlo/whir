@@ -290,7 +290,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
     let prover = Prover::new(params.clone());
 
@@ -406,7 +406,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let committer = CommitmentWriter::new(params.clone());
     let witness = committer
-        .commit(&mut prover_state, polynomial.clone())
+        .commit(&mut prover_state, &polynomial)
         .unwrap();
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);

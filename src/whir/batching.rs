@@ -148,7 +148,7 @@ mod batching_tests {
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
         let batched_witness = committer
-            .commit_batch(&mut prover_state, &poly_list)
+            .commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
             .unwrap();
 
         // Get the batched polynomial
