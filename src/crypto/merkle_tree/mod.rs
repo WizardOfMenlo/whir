@@ -6,6 +6,7 @@ pub mod blake3;
 pub mod digest;
 pub mod keccak;
 pub mod parameters;
+pub mod proof;
 
 #[derive(Debug, Default)]
 pub struct HashCounter;

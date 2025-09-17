@@ -21,7 +21,8 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
+        default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
+        MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     whir::{
@@ -260,6 +261,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        deduplication_strategy: DeduplicationStrategy::Enabled,
+        merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -289,7 +292,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let committer = CommitmentWriter::new(params.clone());
     let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
-    let prover = Prover(params.clone());
+    let prover = Prover::new(params.clone());
 
     let statement = Statement::new(num_variables);
     prover
@@ -374,6 +377,8 @@ fn run_whir_pcs<F, MerkleConfig>(
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        deduplication_strategy: DeduplicationStrategy::Enabled,
+        merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -429,7 +434,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         statement.add_constraint(linear_claim_weight, sum);
     }
 
-    let prover = Prover(params.clone());
+    let prover = Prover::new(params.clone());
 
     prover
         .prove(&mut prover_state, statement.clone(), witness)

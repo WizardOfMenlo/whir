@@ -215,7 +215,10 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{
+            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+            ProtocolParameters, SoundnessType,
+        },
         poly_utils::multilinear::MultilinearPoint,
         whir::domainsep::WhirDomainSeparator,
     };
@@ -254,6 +257,8 @@ mod tests {
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
             batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -343,6 +348,8 @@ mod tests {
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                deduplication_strategy: DeduplicationStrategy::Enabled,
+                merkle_proof_strategy: MerkleProofStrategy::Compressed,
             },
         );
 
@@ -383,6 +390,8 @@ mod tests {
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                deduplication_strategy: DeduplicationStrategy::Enabled,
+                merkle_proof_strategy: MerkleProofStrategy::Compressed,
             },
         );
 

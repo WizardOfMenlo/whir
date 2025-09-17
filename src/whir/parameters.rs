@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
-    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+    parameters::{
+        DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+        ProtocolParameters, SoundnessType,
+    },
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -53,6 +56,10 @@ where
     pub final_sumcheck_rounds: usize,
     pub final_folding_pow_bits: f64,
 
+    // Strategy to decide on the deduplication of challenges
+    // (Used for recursive proving where constant length transcript is needed)
+    pub deduplication_strategy: DeduplicationStrategy,
+
     // PoW parameters
     #[serde(skip)]
     pub pow_strategy: PhantomData<PowStrategy>,
@@ -62,6 +69,8 @@ where
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
+
+    pub merkle_proof_strategy: MerkleProofStrategy,
 
     // Batch size
     pub batch_size: usize,
@@ -262,10 +271,12 @@ where
             final_pow_bits,
             final_sumcheck_rounds,
             final_folding_pow_bits,
+            deduplication_strategy: whir_parameters.deduplication_strategy,
             pow_strategy: PhantomData,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
+            merkle_proof_strategy: whir_parameters.merkle_proof_strategy,
             batch_size: whir_parameters.batch_size,
         }
     }
@@ -611,6 +622,8 @@ where
             .field("leaf_hash_params", &self.leaf_hash_params)
             .field("two_to_one_params", &self.two_to_one_params)
             .field("batch_size", &self.batch_size)
+            .field("deduplication_strategy", &self.deduplication_strategy)
+            .field("merkle_proof_strategy", &self.merkle_proof_strategy)
             .finish()
     }
 }
@@ -822,6 +835,7 @@ mod tests {
                 parameters::default_config,
             },
         },
+        parameters::{DeduplicationStrategy, MerkleProofStrategy},
         utils::test_serde,
     };
 
@@ -842,6 +856,8 @@ mod tests {
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         }
     }
 

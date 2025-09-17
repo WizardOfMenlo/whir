@@ -37,7 +37,10 @@ mod batching_tests {
                 parameters::default_config,
             },
         },
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{
+            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+            ProtocolParameters, SoundnessType,
+        },
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -114,6 +117,8 @@ mod batching_tests {
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
         // Build global configuration from multivariate + protocol parameters
@@ -172,7 +177,7 @@ mod batching_tests {
         statement.add_constraint(linear_claim_weight, sum);
 
         // Instantiate the prover with the given parameters
-        let prover = Prover(params.clone());
+        let prover = Prover::new(params.clone());
 
         // Extract verifier-side version of the statement (only public data)
 

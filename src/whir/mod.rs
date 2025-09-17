@@ -1,6 +1,7 @@
 pub mod batching;
 pub mod committer;
 pub mod domainsep;
+pub mod merkle;
 pub mod parameters;
 pub mod prover;
 pub mod statement;
@@ -21,7 +22,10 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{
+            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+            ProtocolParameters, SoundnessType,
+        },
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -87,6 +91,8 @@ mod tests {
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
         // Build global configuration from multivariate + protocol parameters
@@ -146,7 +152,7 @@ mod tests {
         let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
-        let prover = Prover(params.clone());
+        let prover = Prover::new(params.clone());
 
         // Generate a STARK proof for the given statement and witness
         prover
