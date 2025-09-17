@@ -46,7 +46,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
             config,
@@ -54,7 +54,7 @@ where
         }
     }
 
-    pub fn config(&self) -> &WhirConfig<F, MerkleConfig, PowStrategy> {
+    pub const fn config(&self) -> &WhirConfig<F, MerkleConfig, PowStrategy> {
         &self.config
     }
 
