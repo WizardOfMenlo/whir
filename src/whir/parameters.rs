@@ -622,6 +622,8 @@ where
             .field("leaf_hash_params", &self.leaf_hash_params)
             .field("two_to_one_params", &self.two_to_one_params)
             .field("batch_size", &self.batch_size)
+            .field("deduplication_strategy", &self.deduplication_strategy)
+            .field("merkle_proof_strategy", &self.merkle_proof_strategy)
             .finish()
     }
 }
