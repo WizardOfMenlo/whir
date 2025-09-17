@@ -21,7 +21,10 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{
+            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+            ProtocolParameters, SoundnessType,
+        },
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -29,7 +32,7 @@ mod tests {
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
-            parameters::{DeduplicationStrategy, MerkleProofStrategy, WhirConfig},
+            parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, Weights},
             verifier::Verifier,
@@ -87,15 +90,12 @@ mod tests {
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(
-            mv_params,
-            whir_params,
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
-        );
+        let params = WhirConfig::new(mv_params, whir_params);
 
         // Test that the config is serializable
         eprintln!("{params:?}");

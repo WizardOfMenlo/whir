@@ -222,12 +222,12 @@ mod tests {
                 parameters::default_config,
             },
         },
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        poly_utils::multilinear::MultilinearPoint,
-        whir::{
-            domainsep::WhirDomainSeparator,
-            parameters::{DeduplicationStrategy, MerkleProofStrategy},
+        parameters::{
+            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+            ProtocolParameters, SoundnessType,
         },
+        poly_utils::multilinear::MultilinearPoint,
+        whir::domainsep::WhirDomainSeparator,
     };
 
     #[test]
@@ -264,16 +264,13 @@ mod tests {
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
             batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
         // Define multivariate parameters for the polynomial.
         let mv_params = MultivariateParameters::<F>::new(num_variables);
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
-            mv_params,
-            whir_params,
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
-        );
+        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
 
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
@@ -358,9 +355,9 @@ mod tests {
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                deduplication_strategy: DeduplicationStrategy::Enabled,
+                merkle_proof_strategy: MerkleProofStrategy::Compressed,
             },
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
@@ -400,9 +397,9 @@ mod tests {
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                deduplication_strategy: DeduplicationStrategy::Enabled,
+                merkle_proof_strategy: MerkleProofStrategy::Compressed,
             },
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
         );
 
         params.committment_ood_samples = 0; // No OOD samples

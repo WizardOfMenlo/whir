@@ -9,7 +9,7 @@ use spongefish::{
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::{poly_utils::multilinear::MultilinearPoint, whir::parameters::DeduplicationStrategy};
+use crate::{parameters::DeduplicationStrategy, poly_utils::multilinear::MultilinearPoint};
 
 ///
 /// A utility function to compute the response to OOD challenge and add it to

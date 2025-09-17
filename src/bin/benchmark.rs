@@ -26,13 +26,13 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
+        default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
+        MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
-        parameters::{DeduplicationStrategy, MerkleProofStrategy},
         statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
@@ -258,6 +258,8 @@ fn run_whir<F, MerkleConfig>(
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        deduplication_strategy: DeduplicationStrategy::Enabled,
+        merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
     let polynomial = CoefficientList::new(
@@ -283,12 +285,7 @@ fn run_whir<F, MerkleConfig>(
             initial_statement: false,
             ..whir_params.clone()
         };
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
-            mv_params,
-            whir_params,
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
-        );
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -361,12 +358,7 @@ fn run_whir<F, MerkleConfig>(
             prover::Prover, verifier::Verifier,
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
-            mv_params,
-            whir_params,
-            DeduplicationStrategy::Enabled,
-            MerkleProofStrategy::Compressed,
-        );
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }

@@ -23,11 +23,12 @@ use crate::{
     crypto::merkle_tree::proof::FullMultiPath,
     domain::Domain,
     ntt::interleaved_rs_encode,
+    parameters::MerkleProofStrategy,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
-        parameters::{MerkleProofStrategy, RoundConfig},
+        parameters::RoundConfig,
         utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
     },
 };
@@ -276,6 +277,7 @@ where
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
 
+        // TODO: This should be replaced by a custom MT module.
         match self.0.merkle_proof_strategy {
             MerkleProofStrategy::Compressed => {
                 let merkle_proof = round_state
@@ -426,6 +428,7 @@ where
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
 
+        // TODO: This should be replaced by a custom MT module.
         match self.0.merkle_proof_strategy {
             MerkleProofStrategy::Compressed => {
                 let merkle_proof = round_state

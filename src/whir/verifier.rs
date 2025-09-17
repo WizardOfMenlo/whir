@@ -10,12 +10,13 @@ use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,
-    parameters::{MerkleProofStrategy, RoundConfig, WhirConfig},
+    parameters::{RoundConfig, WhirConfig},
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
 use crate::{
     crypto::merkle_tree::proof::FullMultiPath,
+    parameters::MerkleProofStrategy,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,

@@ -206,6 +206,18 @@ impl FoldingFactor {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum MerkleProofStrategy {
+    Compressed,
+    Uncompressed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DeduplicationStrategy {
+    Enabled,  // Sort + dedup indices
+    Disabled, // Preserve order/multiplicity
+}
+
 /// Configuration parameters for WHIR proofs.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProtocolParameters<MerkleConfig, PowStrategy>
@@ -239,6 +251,16 @@ where
 
     /// Number of polynomials committed in the batch.
     pub batch_size: usize,
+
+    /// Strategy to decide on the deduplication of challenges
+    /// Standard: Sort + dedup indices
+    /// Recursive: Preserve order/multiplicity
+    pub deduplication_strategy: DeduplicationStrategy,
+
+    /// Strategy to decide on compression of merkle proofs used in proving.
+    /// Standard: Compressed proofs.
+    /// Recursive: Full Proofs.
+    pub merkle_proof_strategy: MerkleProofStrategy,
 }
 
 impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
