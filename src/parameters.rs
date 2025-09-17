@@ -206,7 +206,7 @@ impl FoldingFactor {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum MerkleProofStrategy {
     Compressed,
     Uncompressed,

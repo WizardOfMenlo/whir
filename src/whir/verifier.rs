@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
@@ -15,12 +15,11 @@ use super::{
     utils::HintDeserialize,
 };
 use crate::{
-    crypto::merkle_tree::proof::FullMultiPath,
-    parameters::MerkleProofStrategy,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
     utils::expand_randomness,
     whir::{
+        merkle,
         prover::RootPath,
         utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
     },
@@ -38,6 +37,7 @@ where
         + HintDeserialize,
 {
     params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
+    merkle_state: merkle::VerifierMerkleState<'a, MerkleConfig>,
     _state: PhantomData<VerifierState>,
 }
 
@@ -57,6 +57,11 @@ where
     pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self {
             params,
+            merkle_state: merkle::VerifierMerkleState::new(
+                params.merkle_proof_strategy,
+                &params.leaf_hash_params,
+                &params.two_to_one_params,
+            ),
             _state: PhantomData,
         }
     }
@@ -364,45 +369,13 @@ where
         // Receive claimed leafs
         let answers: Vec<Vec<F>> = verifier_state.hint()?;
 
-        // Receive merkle proof for leaf indices
-        match self.params.merkle_proof_strategy {
-            MerkleProofStrategy::Compressed => {
-                let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
-                if merkle_proof.leaf_indexes != indices {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                let correct = merkle_proof
-                    .verify(
-                        &self.params.leaf_hash_params,
-                        &self.params.two_to_one_params,
-                        root,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .map_err(|_e| ProofError::InvalidProof)?;
-                if !correct {
-                    return Err(ProofError::InvalidProof);
-                }
-            }
-            MerkleProofStrategy::Uncompressed => {
-                let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
-                if merkle_proof.indices() != indices {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                let correct = merkle_proof
-                    .verify(
-                        &self.params.leaf_hash_params,
-                        &self.params.two_to_one_params,
-                        root,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .map_err(|_e| ProofError::InvalidProof)?;
-                if !correct {
-                    return Err(ProofError::InvalidProof);
-                }
-            }
-        }
+        self.merkle_state
+            .read_and_verify_proof::<VerifierState, _>(
+                verifier_state,
+                indices,
+                root,
+                answers.iter().map(|a| a.as_slice()),
+            )?;
 
         Ok(answers)
     }

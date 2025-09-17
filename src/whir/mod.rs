@@ -1,6 +1,7 @@
 pub mod batching;
 pub mod committer;
 pub mod domainsep;
+pub mod merkle;
 pub mod parameters;
 pub mod prover;
 pub mod statement;
@@ -151,7 +152,7 @@ mod tests {
         let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
-        let prover = Prover(params.clone());
+        let prover = Prover::new(params.clone());
 
         // Generate a STARK proof for the given statement and witness
         prover

@@ -177,7 +177,7 @@ mod batching_tests {
         statement.add_constraint(linear_claim_weight, sum);
 
         // Instantiate the prover with the given parameters
-        let prover = Prover(params.clone());
+        let prover = Prover::new(params.clone());
 
         // Extract verifier-side version of the statement (only public data)
 

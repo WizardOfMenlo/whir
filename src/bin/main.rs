@@ -292,7 +292,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let committer = CommitmentWriter::new(params.clone());
     let witness = committer.commit(&mut prover_state, polynomial).unwrap();
 
-    let prover = Prover(params.clone());
+    let prover = Prover::new(params.clone());
 
     let statement = Statement::new(num_variables);
     prover
@@ -434,7 +434,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         statement.add_constraint(linear_claim_weight, sum);
     }
 
-    let prover = Prover(params.clone());
+    let prover = Prover::new(params.clone());
 
     prover
         .prove(&mut prover_state, statement.clone(), witness)
