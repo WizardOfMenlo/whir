@@ -149,7 +149,7 @@ mod tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());

@@ -301,9 +301,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, polynomial.clone())
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         let prover = Prover::new(params.clone());
 
@@ -385,7 +383,7 @@ fn run_whir<F, MerkleConfig>(
         let whir_prover_time = Instant::now();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         let prover = Prover::new(params.clone());
 

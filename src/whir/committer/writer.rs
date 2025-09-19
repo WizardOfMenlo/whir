@@ -47,7 +47,7 @@ where
     pub fn commit_batch<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomials: &[CoefficientList<F::BasePrimeField>],
+        polynomials: &[&CoefficientList<F::BasePrimeField>],
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F>
@@ -90,6 +90,7 @@ where
         let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
         #[cfg(feature = "parallel")]
         let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
+
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -143,9 +144,8 @@ where
 
         let mut multiplier = batching_randomness;
         for poly in polynomials.iter().skip(1) {
-            let poly_e = poly.clone().to_extension();
-            for (dst, src) in batched_poly.iter_mut().zip(poly_e.coeffs()) {
-                *dst += multiplier * src;
+            for (dst, src) in batched_poly.iter_mut().zip(poly.coeffs()) {
+                *dst += multiplier * F::from_base_prime_field(*src);
             }
             multiplier *= batching_randomness;
         }
@@ -177,7 +177,7 @@ where
     pub fn commit<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        polynomial: CoefficientList<F::BasePrimeField>,
+        polynomial: &CoefficientList<F::BasePrimeField>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F>
@@ -276,9 +276,7 @@ mod tests {
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, polynomial.clone())
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -358,7 +356,7 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -402,7 +400,7 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),
