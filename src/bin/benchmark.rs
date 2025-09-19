@@ -301,9 +301,7 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, &polynomial)
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         let prover = Prover::new(params.clone());
 

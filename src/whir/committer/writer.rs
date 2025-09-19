@@ -90,7 +90,7 @@ where
         let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
         #[cfg(feature = "parallel")]
         let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
-        
+
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -276,9 +276,7 @@ mod tests {
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit(&mut prover_state, &polynomial)
-            .unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
