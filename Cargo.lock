@@ -73,8 +73,6 @@ dependencies = [
 [[package]]
 name = "ark-crypto-primitives"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0c292754729c8a190e50414fd1a37093c786c709899f29c9f7daccecfa855e"
 dependencies = [
  "ahash",
  "ark-crypto-primitives-macros",
@@ -97,8 +95,6 @@ dependencies = [
 [[package]]
 name = "ark-crypto-primitives-macros"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e89fe77d1f0f4fe5b96dfc940923d88d17b6a773808124f21e764dfb063c6a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -315,6 +311,7 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
+ "digest",
 ]
 
 [[package]]
@@ -1388,9 +1385,12 @@ dependencies = [
  "ark-poly",
  "ark-serialize",
  "ark-std",
+ "arrayvec",
  "blake3",
+ "bytemuck",
  "clap",
  "codspeed-divan-compat",
+ "digest",
  "hex",
  "itertools 0.14.0",
  "postcard",

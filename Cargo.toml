@@ -36,8 +36,9 @@ redundant_closure_for_method_calls = "allow"
 ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
-ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
+ark-crypto-primitives = { path="../../crypto-primitives/crypto-primitives", features = ["merkle_tree"] }
 ark-poly = "0.5"
+arrayvec = "0.7.6"
 blake3 = "1.5.0"
 sha3 = "0.10"
 rand = "0.8"
@@ -49,12 +50,15 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = [
 ] }
 spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" }
 rayon = { version = "1.10.0", optional = true }
+bytemuck = "1.18.0"
+digest = "0.10.7"
 thiserror = "2.0"
 itertools = "0.14"
 tracing = { version = "0.1.41", optional = true }
 hex = "0.4.3"
 
 [dev-dependencies]
+blake3 = { version = "1.5.0", features = ["traits-preview"] }
 proptest = "1.0"
 serde_json = "1.0"
 postcard = { version = "1.1", features = ["alloc"] }

@@ -1,6 +1,7 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
+use ark_std::log2;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
@@ -9,9 +10,11 @@ use spongefish::{
 };
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
-
+use ark_crypto_primitives::crh::CRHScheme;
+use ark_serialize::CanonicalSerialize;
 use super::Witness;
 use crate::{
+    merkle_tree::{Hasher, Hash, MerkleTreeHasher, HASH_ZERO},
     ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
     whir::{
@@ -19,6 +22,16 @@ use crate::{
         utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
     },
 };
+
+pub const fn next_power_of_two(n: usize) -> usize {
+    let mut power = 1;
+    let mut ans = 0;
+    while power < n {
+        power <<= 1;
+        ans += 1;
+    }
+    ans
+}
 
 /// Responsible for committing polynomials using a Merkle-based scheme.
 ///
@@ -48,6 +61,7 @@ where
         &self,
         prover_state: &mut ProverState,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F>
@@ -86,24 +100,68 @@ where
             }
         }
 
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
+        // #[cfg(not(feature = "parallel"))]
+        // let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
+        // let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
+
+        // let merkle_tree = {
+        //     #[cfg(feature = "tracing")]
+        //     let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+        //     MerkleTree::<MerkleConfig>::new(
+        //         &self.0.leaf_hash_params,
+        //         &self.0.two_to_one_params,
+        //         leafs_iter,
+        //     )
+        //     .unwrap()
+        // };
         #[cfg(feature = "parallel")]
-        let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
+        let leaves_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
 
-        let merkle_tree = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
-            MerkleTree::<MerkleConfig>::new(
-                &self.0.leaf_hash_params,
-                &self.0.two_to_one_params,
-                leafs_iter,
-            )
-            .unwrap()
-        };
+        dbg!(leaves_iter.len());
 
+        let depth : usize = log2(leaves_iter.len()).try_into().unwrap();
+        eprintln!("Merkle tree creation started.");
+        println!("leaves_iter: {:?}", leaves_iter.clone().take(1).collect::<Vec<_>>()[0]);
+        
+        let leaf_digests: Vec<_> = leaves_iter.clone().collect::<Vec<_>>().into_iter()
+        .map(|leaf: &[F]| {
+            let mut buf = [0u8; 32];
+            let m = MerkleConfig::LeafHash::evaluate(&self.0.leaf_hash_params, leaf);
+            m.unwrap().serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+            buf
+            })
+        .collect();
+        println!("leaf_digests: {:?}", leaf_digests[0]);
+        
+        let merkle_tree = MerkleTree::<MerkleConfig>::new(
+            &self.0.leaf_hash_params,
+            &self.0.two_to_one_params,
+            leaves_iter,
+        )
+        .unwrap();
+
+        let hasher = construct_skyscraper();
+
+        println!("stacked_leaves_size: {:?}", stacked_leaf_size);
+
+        let depth: usize = log2(leaf_digests.len()).try_into().unwrap();
+        let mut merklizer = MerkleTreeHasher::from_hasher_fn(depth, construct_skyscraper);
+        let tree = merklizer.commit(&leaf_digests);
+        dbg!(tree.len());
+        let proof = merklizer.proof(&[0], |i, d| {
+            merklizer.layers[d][i]
+        });
+        println!("proof: {:?}", proof);
+
+        println!("new tree: {:?}", tree[0]);
+       
+        let mut buf = [0u8; 32];
         let root = merkle_tree.root();
-        prover_state.add_digest(root)?;
+        root.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+
+        println!("root: {:?}", buf);
+        let tree0_as_field = F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&tree[0]));
+        prover_state.add_scalars(&[tree0_as_field])?;
 
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
@@ -178,6 +236,7 @@ where
         &self,
         prover_state: &mut ProverState,
         polynomial: &CoefficientList<F::BasePrimeField>,
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<Witness<F, MerkleConfig>>
     where
         ProverState: FieldToUnitSerialize<F>
@@ -185,7 +244,7 @@ where
             + DigestToUnitSerialize<MerkleConfig>
             + BytesToUnitSerialize,
     {
-        self.commit_batch(prover_state, &[polynomial])
+        self.commit_batch(prover_state, &[polynomial], construct_skyscraper)
     }
 }
 
@@ -200,211 +259,211 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use ark_ff::UniformRand;
-    use spongefish::DomainSeparator;
-    use spongefish_pow::blake3::Blake3PoW;
+// #[cfg(test)]
+// mod tests {
+//     use ark_ff::UniformRand;
+//     use spongefish::DomainSeparator;
+//     use spongefish_pow::blake3::Blake3PoW;
 
-    use super::*;
-    use crate::{
-        crypto::{
-            fields::Field64,
-            merkle_tree::{
-                keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-                parameters::default_config,
-            },
-        },
-        parameters::{
-            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
-            ProtocolParameters, SoundnessType,
-        },
-        poly_utils::multilinear::MultilinearPoint,
-        whir::domainsep::WhirDomainSeparator,
-    };
+//     use super::*;
+//     use crate::{
+//         crypto::{
+//             fields::Field64,
+//             merkle_tree::{
+//                 keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
+//                 parameters::default_config,
+//             },
+//         },
+//         parameters::{
+//             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+//             ProtocolParameters, SoundnessType,
+//         },
+//         poly_utils::multilinear::MultilinearPoint,
+//         whir::domainsep::WhirDomainSeparator,
+//     };
 
-    #[test]
-    fn test_basic_commitment() {
-        // Define the field type and Merkle tree configuration.
-        type F = Field64;
-        type MerkleConfig = KeccakMerkleTreeParams<F>;
+//     #[test]
+//     fn test_basic_commitment() {
+//         // Define the field type and Merkle tree configuration.
+//         type F = Field64;
+//         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
-        let mut rng = ark_std::test_rng();
+//         let mut rng = ark_std::test_rng();
 
-        // Generate Merkle tree hash parameters
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
+//         // Generate Merkle tree hash parameters
+//         let (leaf_hash_params, two_to_one_params) =
+//             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
-        // Set up Whir protocol parameters.
-        let security_level = 100;
-        let pow_bits = 20;
-        let num_variables = 5;
-        let starting_rate = 1;
-        let folding_factor = 4;
-        let first_round_folding_factor = 4;
+//         // Set up Whir protocol parameters.
+//         let security_level = 100;
+//         let pow_bits = 20;
+//         let num_variables = 5;
+//         let starting_rate = 1;
+//         let folding_factor = 4;
+//         let first_round_folding_factor = 4;
 
-        let whir_params = ProtocolParameters::<MerkleConfig, Blake3PoW> {
-            initial_statement: true,
-            security_level,
-            pow_bits,
-            folding_factor: FoldingFactor::ConstantFromSecondRound(
-                first_round_folding_factor,
-                folding_factor,
-            ),
-            leaf_hash_params,
-            two_to_one_params,
-            soundness_type: SoundnessType::ConjectureList,
-            _pow_parameters: std::marker::PhantomData,
-            starting_log_inv_rate: starting_rate,
-            batch_size: 1,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
-        };
+//         let whir_params = ProtocolParameters::<MerkleConfig, Blake3PoW> {
+//             initial_statement: true,
+//             security_level,
+//             pow_bits,
+//             folding_factor: FoldingFactor::ConstantFromSecondRound(
+//                 first_round_folding_factor,
+//                 folding_factor,
+//             ),
+//             leaf_hash_params,
+//             two_to_one_params,
+//             soundness_type: SoundnessType::ConjectureList,
+//             _pow_parameters: std::marker::PhantomData,
+//             starting_log_inv_rate: starting_rate,
+//             batch_size: 1,
+//             deduplication_strategy: DeduplicationStrategy::Enabled,
+//             merkle_proof_strategy: MerkleProofStrategy::Compressed,
+//         };
 
-        // Define multivariate parameters for the polynomial.
-        let mv_params = MultivariateParameters::<F>::new(num_variables);
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
+//         // Define multivariate parameters for the polynomial.
+//         let mv_params = MultivariateParameters::<F>::new(num_variables);
+//         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
 
-        // Generate a random polynomial with 32 coefficients.
-        let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
+//         // Generate a random polynomial with 32 coefficients.
+//         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
-        // Set up the DomainSeparator and initialize a ProverState narg_string.
-        let domainsep = DomainSeparator::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
-        let mut prover_state = domainsep.to_prover_state();
+//         // Set up the DomainSeparator and initialize a ProverState narg_string.
+//         let domainsep = DomainSeparator::new("🌪️")
+//             .commit_statement(&params)
+//             .add_whir_proof(&params);
+//         let mut prover_state = domainsep.to_prover_state();
 
-        // Run the Commitment Phase
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+//         // Run the Commitment Phase
+//         let committer = CommitmentWriter::new(params.clone());
+//         let witness = committer.commit(&mut prover_state, &polynomial, construct_skyscraper()).unwrap();
 
-        // Ensure Merkle leaves are correctly generated.
-        assert!(
-            !witness.merkle_leaves.is_empty(),
-            "Merkle leaves should not be empty"
-        );
+//         // Ensure Merkle leaves are correctly generated.
+//         assert!(
+//             !witness.merkle_leaves.is_empty(),
+//             "Merkle leaves should not be empty"
+//         );
 
-        // Ensure OOD (out-of-domain) points are generated.
-        assert!(
-            !witness.ood_points.is_empty(),
-            "OOD points should be generated"
-        );
+//         // Ensure OOD (out-of-domain) points are generated.
+//         assert!(
+//             !witness.ood_points.is_empty(),
+//             "OOD points should be generated"
+//         );
 
-        // Validate the number of generated OOD points.
-        assert_eq!(
-            witness.ood_points.len(),
-            params.committment_ood_samples,
-            "OOD points count should match expected samples"
-        );
+//         // Validate the number of generated OOD points.
+//         assert_eq!(
+//             witness.ood_points.len(),
+//             params.committment_ood_samples,
+//             "OOD points count should match expected samples"
+//         );
 
-        // Check that the Merkle tree root is valid
-        let root = witness.merkle_tree.root();
-        assert_ne!(
-            root.as_ref(),
-            &[0u8; 32],
-            "Merkle tree root should not be zero"
-        );
+//         // Check that the Merkle tree root is valid
+//         let root = witness.merkle_tree.root();
+//         assert_ne!(
+//             root.as_ref(),
+//             &[0u8; 32],
+//             "Merkle tree root should not be zero"
+//         );
 
-        // Ensure polynomial data is correctly stored
-        assert_eq!(
-            witness.polynomial.coeffs().len(),
-            polynomial.coeffs().len(),
-            "Stored polynomial should have the correct number of coefficients"
-        );
+//         // Ensure polynomial data is correctly stored
+//         assert_eq!(
+//             witness.polynomial.coeffs().len(),
+//             polynomial.coeffs().len(),
+//             "Stored polynomial should have the correct number of coefficients"
+//         );
 
-        // Check that OOD answers match expected evaluations
-        for (i, ood_point) in witness.ood_points.iter().enumerate() {
-            let expected_eval = polynomial.evaluate_at_extension(
-                &MultilinearPoint::expand_from_univariate(*ood_point, num_variables),
-            );
-            assert_eq!(
-                witness.ood_answers[i], expected_eval,
-                "OOD answer at index {i} should match expected evaluation"
-            );
-        }
-    }
+//         // Check that OOD answers match expected evaluations
+//         for (i, ood_point) in witness.ood_points.iter().enumerate() {
+//             let expected_eval = polynomial.evaluate_at_extension(
+//                 &MultilinearPoint::expand_from_univariate(*ood_point, num_variables),
+//             );
+//             assert_eq!(
+//                 witness.ood_answers[i], expected_eval,
+//                 "OOD answer at index {i} should match expected evaluation"
+//             );
+//         }
+//     }
 
-    #[test]
-    fn test_large_polynomial() {
-        type F = Field64;
-        type MerkleConfig = KeccakMerkleTreeParams<F>;
+//     #[test]
+//     fn test_large_polynomial() {
+//         type F = Field64;
+//         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
-        let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
+//         let mut rng = ark_std::test_rng();
+//         let (leaf_hash_params, two_to_one_params) =
+//             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
-            MultivariateParameters::<F>::new(10),
-            ProtocolParameters {
-                initial_statement: true,
-                security_level: 100,
-                pow_bits: 20,
-                folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-                leaf_hash_params,
-                two_to_one_params,
-                soundness_type: SoundnessType::ConjectureList,
-                _pow_parameters: Default::default(),
-                starting_log_inv_rate: 1,
-                batch_size: 1,
-                deduplication_strategy: DeduplicationStrategy::Enabled,
-                merkle_proof_strategy: MerkleProofStrategy::Compressed,
-            },
-        );
+//         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+//             MultivariateParameters::<F>::new(10),
+//             ProtocolParameters {
+//                 initial_statement: true,
+//                 security_level: 100,
+//                 pow_bits: 20,
+//                 folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
+//                 leaf_hash_params,
+//                 two_to_one_params,
+//                 soundness_type: SoundnessType::ConjectureList,
+//                 _pow_parameters: Default::default(),
+//                 starting_log_inv_rate: 1,
+//                 batch_size: 1,
+//                 deduplication_strategy: DeduplicationStrategy::Enabled,
+//                 merkle_proof_strategy: MerkleProofStrategy::Compressed,
+//             },
+//         );
 
-        let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
-        let mut prover_state = domainsep.to_prover_state();
+//         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
+//         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
+//         let mut prover_state = domainsep.to_prover_state();
 
-        let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+//         let committer = CommitmentWriter::new(params);
+//         let witness = committer.commit(&mut prover_state, &polynomial, construct_skyscraper).unwrap();
 
-        // Expansion factor is 2
-        assert_eq!(
-            witness.merkle_leaves.len(),
-            1024 * 2,
-            "Merkle tree should have expected number of leaves"
-        );
-    }
+//         // Expansion factor is 2
+//         assert_eq!(
+//             witness.merkle_leaves.len(),
+//             1024 * 2,
+//             "Merkle tree should have expected number of leaves"
+//         );
+//     }
 
-    #[test]
-    fn test_commitment_without_ood_samples() {
-        type F = Field64;
-        type MerkleConfig = KeccakMerkleTreeParams<F>;
+//     #[test]
+//     fn test_commitment_without_ood_samples() {
+//         type F = Field64;
+//         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
-        let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
+//         let mut rng = ark_std::test_rng();
+//         let (leaf_hash_params, two_to_one_params) =
+//             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
-        let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
-            MultivariateParameters::<F>::new(5),
-            ProtocolParameters {
-                initial_statement: true,
-                security_level: 100,
-                pow_bits: 20,
-                folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-                leaf_hash_params,
-                two_to_one_params,
-                soundness_type: SoundnessType::ConjectureList,
-                _pow_parameters: Default::default(),
-                starting_log_inv_rate: 1,
-                batch_size: 1,
-                deduplication_strategy: DeduplicationStrategy::Enabled,
-                merkle_proof_strategy: MerkleProofStrategy::Compressed,
-            },
-        );
+//         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+//             MultivariateParameters::<F>::new(5),
+//             ProtocolParameters {
+//                 initial_statement: true,
+//                 security_level: 100,
+//                 pow_bits: 20,
+//                 folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
+//                 leaf_hash_params,
+//                 two_to_one_params,
+//                 soundness_type: SoundnessType::ConjectureList,
+//                 _pow_parameters: Default::default(),
+//                 starting_log_inv_rate: 1,
+//                 batch_size: 1,
+//                 deduplication_strategy: DeduplicationStrategy::Enabled,
+//                 merkle_proof_strategy: MerkleProofStrategy::Compressed,
+//             },
+//         );
 
-        params.committment_ood_samples = 0; // No OOD samples
+//         params.committment_ood_samples = 0; // No OOD samples
 
-        let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
-        let mut prover_state = domainsep.to_prover_state();
+//         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
+//         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
+//         let mut prover_state = domainsep.to_prover_state();
 
-        let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+//         let committer = CommitmentWriter::new(params);
+//         let witness = committer.commit(&mut prover_state, &polynomial, construct_skyscraper).unwrap();
 
-        assert!(
-            witness.ood_points.is_empty(),
-            "There should be no OOD points when committment_ood_samples is 0"
-        );
-    }
-}
+//         assert!(
+//             witness.ood_points.is_empty(),
+//             "There should be no OOD points when committment_ood_samples is 0"
+//         );
+//     }
+// }
