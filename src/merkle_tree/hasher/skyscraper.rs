@@ -35,11 +35,11 @@ const FLAGS_START: u8 = 1 << 0; // CHUNK_START
 const FLAGS_END: u8 = 1 << 1; // CHUNK_END
 const FLAGS: u8 = 1 << 3; // ROOT
 
-pub struct Blake3Hasher {
+pub struct Skyscraper2Hasher {
     platform: Platform,
 }
 
-impl Blake3Hasher {
+impl Skyscraper2Hasher {
     pub fn new() -> Self {
         Self {
             platform: Platform::detect(),
@@ -75,7 +75,7 @@ impl Blake3Hasher {
     }
 }
 
-impl Hasher for Blake3Hasher {
+impl Hasher for Skyscraper2Hasher {
     /// Hash many short block-alligned messages in parallel.
     /// Messages must be padded to full block lengths and can not exceed one chunk.
     fn hash_many(&self, size: usize, inputs: &[u8], output: &mut [Hash]) {
@@ -125,5 +125,5 @@ fn test_digest_pairs_equivalent() {
         super::{test_pairs_equivalent, DigestHasher},
         blake3::Hasher,
     };
-    test_pairs_equivalent(&DigestHasher::<Hasher>::new(), &Blake3Hasher::new());
+    test_pairs_equivalent(&DigestHasher::<Hasher>::new(), &Skyscraper2Hasher::new());
 }

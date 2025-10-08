@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use ark_std::log2;
@@ -10,11 +10,9 @@ use spongefish::{
 };
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
-use ark_crypto_primitives::crh::CRHScheme;
-use ark_serialize::CanonicalSerialize;
 use super::Witness;
 use crate::{
-    merkle_tree::{Hasher, Hash, MerkleTreeHasher, HASH_ZERO},
+    merkle_tree::{Hasher, MerkleTreeHasher},
     ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
     whir::{
@@ -116,51 +114,33 @@ where
         // };
         #[cfg(feature = "parallel")]
         let leaves_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
-
-        dbg!(leaves_iter.len());
-
-        let depth : usize = log2(leaves_iter.len()).try_into().unwrap();
-        eprintln!("Merkle tree creation started.");
-        println!("leaves_iter: {:?}", leaves_iter.clone().take(1).collect::<Vec<_>>()[0]);
         
-        let leaf_digests: Vec<_> = leaves_iter.clone().collect::<Vec<_>>().into_iter()
-        .map(|leaf: &[F]| {
+        let depth: usize = log2(leaves_iter.len()).try_into().unwrap();
+        let mut merklizer = MerkleTreeHasher::from_hasher_fn(depth, construct_skyscraper);
+
+        let leaf_digests: Vec<_> = leaves_iter.map(|leaf: &[F]| {
+            let m = leaf.iter().cloned().reduce(|a, b| {
+                let mut l_input = [0u8; 32];
+                let mut r_input = [0u8; 32];
+                a.serialize_uncompressed(&mut l_input[..]).expect("leaf hash failed");
+                b.serialize_uncompressed(&mut r_input[..]).expect("leaf hash failed");
+                let mut out = [[0u8; 32]; 1];
+                merklizer.hasher_at_depth(0).hash_pairs(&[l_input, r_input], &mut out);
+                F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&out[0]))
+            }).unwrap();
             let mut buf = [0u8; 32];
-            let m = MerkleConfig::LeafHash::evaluate(&self.0.leaf_hash_params, leaf);
-            m.unwrap().serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+            m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
             buf
             })
         .collect();
         println!("leaf_digests: {:?}", leaf_digests[0]);
         
-        let merkle_tree = MerkleTree::<MerkleConfig>::new(
-            &self.0.leaf_hash_params,
-            &self.0.two_to_one_params,
-            leaves_iter,
-        )
-        .unwrap();
-
         let hasher = construct_skyscraper();
 
         println!("stacked_leaves_size: {:?}", stacked_leaf_size);
-
-        let depth: usize = log2(leaf_digests.len()).try_into().unwrap();
-        let mut merklizer = MerkleTreeHasher::from_hasher_fn(depth, construct_skyscraper);
         let tree = merklizer.commit(&leaf_digests);
-        dbg!(tree.len());
-        let proof = merklizer.proof(&[0], |i, d| {
-            merklizer.layers[d][i]
-        });
-        println!("proof: {:?}", proof);
-
-        println!("new tree: {:?}", tree[0]);
-       
-        let mut buf = [0u8; 32];
-        let root = merkle_tree.root();
-        root.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
-
-        println!("root: {:?}", buf);
         let tree0_as_field = F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&tree[0]));
+        println!("tree0_as_field: {:?}", tree0_as_field);
         prover_state.add_scalars(&[tree0_as_field])?;
 
         let (ood_points, first_answers) = sample_ood_points(
@@ -190,7 +170,8 @@ where
         if polynomials.len() == 1 {
             return Ok(Witness {
                 polynomial: polynomials[0].clone().to_extension(),
-                merkle_tree,
+                merkle_tree: None,
+                merkle_tree_new: merklizer,
                 merkle_leaves: stacked_leaves,
                 ood_points,
                 ood_answers: per_poly_ood_answers.remove(0),
@@ -223,8 +204,9 @@ where
 
         Ok(Witness {
             polynomial,
-            merkle_tree,
+            merkle_tree: None,
             merkle_leaves: stacked_leaves,
+            merkle_tree_new: merklizer,
             ood_points,
             ood_answers: batched_ood_resp,
             batching_randomness,

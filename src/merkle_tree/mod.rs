@@ -3,19 +3,42 @@ mod hasher;
 mod prove;
 mod verify;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 pub use hasher::{Hash, Hasher, Hashers, HASH_ZERO};
 use std::iter;
 
 pub struct MerkleTreeHasher {
+    pub root: Hash,
     pub depth: usize,
-    hasher: Vec<Box<dyn Hasher>>,
+    pub hasher: Vec<Box<dyn Hasher>>,
     pub layers: Vec<Vec<Hash>>,
 }
 
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct MerkleProof<F: CanonicalSerialize + CanonicalDeserialize> {
+    pub depth: usize,
+    pub indices: Vec<usize>,
+    pub proof: Vec<F>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MerkleRuntimeConfig {
+    pub construct_hasher: fn() -> Box<dyn Hasher>,
+}
+
+impl MerkleRuntimeConfig {
+    pub fn new(construct_hasher: fn() -> Box<dyn Hasher>) -> Self {
+        Self {
+            construct_hasher: construct_hasher,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Error {
     IndexOutOfBounds,
-    InsufficientSibblings,
-    ExcessSibblings,
+    InsufficientSiblings,
+    ExcessSiblings,
     LeafMismatch,
     RootMismatch,
 }
@@ -25,6 +48,7 @@ impl MerkleTreeHasher {
     pub fn new(depth: usize, hasher: Hashers) -> Self {
         assert!(depth <= 48, "Depth too large"); // Arbitrary limit
         Self {
+            root: HASH_ZERO,
             depth,
             hasher: iter::repeat_with(|| hasher.construct())
                 .take(depth + 1)
@@ -36,6 +60,7 @@ impl MerkleTreeHasher {
     /// Construct a Merkle tree hasher from a list of hashers for each level.
     pub fn from_hashers(hashers: &[Hashers]) -> Self {
         Self {
+            root: HASH_ZERO,
             depth: hashers.len(),
             hasher: hashers.iter().map(|h| h.construct()).collect(),
             layers: Vec::new(),
@@ -54,6 +79,7 @@ impl MerkleTreeHasher {
     pub fn from_hasher_fn(depth: usize, construct: fn() -> Box<dyn Hasher>) -> Self {
         assert!(depth <= 48, "Depth too large");
         Self {
+            root: HASH_ZERO,
             depth,
             hasher: iter::repeat_with(|| construct()).take(depth + 1).collect(),
             layers: Vec::new(),

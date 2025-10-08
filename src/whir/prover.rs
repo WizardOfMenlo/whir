@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -10,7 +10,7 @@ use spongefish::{
 use spongefish_pow::{self, PoWChallenge};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
-
+use ark_std::log2;
 use super::{
     committer::Witness,
     parameters::WhirConfig,
@@ -18,18 +18,10 @@ use super::{
     utils::HintSerialize,
 };
 use crate::{
-    domain::Domain,
-    ntt::interleaved_rs_encode,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckSingle,
-    utils::expand_randomness,
-    whir::{
-        merkle,
-        parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
-    },
+    domain::Domain, merkle_tree::{Hasher, MerkleTreeHasher}, ntt::interleaved_rs_encode, poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint}, sumcheck::SumcheckSingle, utils::expand_randomness, whir::{
+        merkle, parameters::RoundConfig, utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize}
+    }
 };
-pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
 pub struct Prover<F, MerkleConfig, PowStrategy>
 where
@@ -47,10 +39,9 @@ where
     PowStrategy: spongefish_pow::PowStrategy,
 {
     pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
             config,
-            merkle_state,
+            merkle_state: merkle::ProverMerkleState {  },
         }
     }
 
@@ -90,8 +81,10 @@ where
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
     where
+        MerkleConfig: Config<InnerDigest = F>,
         ProverState: UnitToField<F>
             + FieldToUnitSerialize<F>
             + UnitToBytes
@@ -161,7 +154,7 @@ where
             sumcheck_prover,
             folding_randomness,
             coefficients: witness.polynomial,
-            prev_merkle: witness.merkle_tree,
+            prev_merkle_new: witness.merkle_tree_new,
             prev_merkle_answers: witness.merkle_leaves,
             randomness_vec,
             statement,
@@ -170,7 +163,7 @@ where
 
         // Run WHIR rounds
         for _round in 0..=self.config.n_rounds() {
-            self.round(prover_state, &mut round_state)?;
+            self.round(prover_state, &mut round_state, construct_skyscraper)?;
         }
 
         // Hints for deferred constraints
@@ -194,9 +187,11 @@ where
     fn round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        round_state: &mut RoundState<F, MerkleConfig>,
+        round_state: &mut RoundState<F>,
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<()>
     where
+        MerkleConfig: Config<InnerDigest = F>,
         ProverState: UnitToField<F>
             + UnitToBytes
             + FieldToUnitSerialize<F>
@@ -235,19 +230,39 @@ where
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
         let leafs_iter = evals.par_chunks_exact(1 << folding_factor_next);
-        let merkle_tree = {
-            #[cfg(feature = "tracing")]
-            let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
-            MerkleTree::new(
-                &self.config.leaf_hash_params,
-                &self.config.two_to_one_params,
-                leafs_iter,
-            )
-            .unwrap()
-        };
+        // let merkle_tree = {
+        //     #[cfg(feature = "tracing")]
+        //     let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
+        //     MerkleTree::new(
+        //         &self.config.leaf_hash_params,
+        //         &self.config.two_to_one_params,
+        //         leafs_iter.clone(),
+        //     )
+        //     .unwrap()
+        // };
+        let depth: usize = log2(leafs_iter.len()).try_into().unwrap();
+        let mut merklizer = MerkleTreeHasher::from_hasher_fn(depth, construct_skyscraper);
 
-        let root = merkle_tree.root();
-        prover_state.add_digest(root)?;
+        let leaf_digests: Vec<_> = leafs_iter.collect::<Vec<_>>().into_iter()
+        .map(|leaf: &[F]| {
+            let m = leaf.iter().cloned().reduce(|a, b| {
+                let mut l_input = [0u8; 32];
+                let mut r_input = [0u8; 32];
+                a.serialize_uncompressed(&mut l_input[..]).expect("leaf hash failed");
+                b.serialize_uncompressed(&mut r_input[..]).expect("leaf hash failed");
+                let mut out = [[0u8; 32]; 1];
+                merklizer.hasher_at_depth(0).hash_pairs(&[l_input, r_input], &mut out);
+                F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&out[0]))
+            }).unwrap();
+            let mut buf = [0u8; 32];
+            m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+            buf
+            })
+        .collect();
+
+        let tree = merklizer.commit(&leaf_digests);
+        let tree0_as_field = F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&tree[0]));
+        prover_state.add_scalars(&[tree0_as_field])?;
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
@@ -289,9 +304,12 @@ where
             .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
+
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         self.merkle_state.write_proof_hint(
-            &round_state.prev_merkle,
+            leaf_size,
+            &round_state.prev_merkle_answers,
+            &round_state.prev_merkle_new,
             &stir_challenges_indexes,
             prover_state,
         )?;
@@ -364,7 +382,7 @@ where
         round_state.sumcheck_prover = Some(sumcheck_prover);
         round_state.folding_randomness = folding_randomness;
         round_state.coefficients = folded_coefficients;
-        round_state.prev_merkle = merkle_tree;
+        round_state.prev_merkle_new = merklizer;
         round_state.prev_merkle_answers = evals;
 
         Ok(())
@@ -374,7 +392,7 @@ where
     fn final_round<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        round_state: &mut RoundState<F, MerkleConfig>,
+        round_state: &mut RoundState<F>,
         folded_coefficients: &CoefficientList<F>,
     ) -> ProofResult<()>
     where
@@ -418,9 +436,13 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect::<Vec<_>>();
 
+        
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         self.merkle_state.write_proof_hint(
-            &round_state.prev_merkle,
+            fold_size,
+            &round_state.prev_merkle_answers,
+            // &round_state.prev_merkle,
+            &round_state.prev_merkle_new,
             &final_challenge_indexes,
             prover_state,
         )?;
@@ -456,7 +478,7 @@ where
     fn compute_stir_queries<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        round_state: &RoundState<F, MerkleConfig>,
+        round_state: &RoundState<F>,
         num_variables: usize,
         round_params: &RoundConfig<F>,
         ood_points: Vec<F>,
@@ -497,10 +519,9 @@ where
 /// responds to verifier queries, and updates internal randomness for the next step.
 /// This struct tracks all data needed to perform that round, and passes it forward
 /// across recursive iterations.
-pub(crate) struct RoundState<F, MerkleConfig>
+pub(crate) struct RoundState<F>
 where
     F: FftField,
-    MerkleConfig: Config,
 {
     /// Index of the current WHIR round (0-based).
     ///
@@ -530,7 +551,8 @@ where
     /// Merkle tree commitment to the polynomial evaluations from the previous round.
     ///
     /// Used to prove query openings from the folded function.
-    pub(crate) prev_merkle: MerkleTree<MerkleConfig>,
+    // pub(crate) prev_merkle: MerkleTree<MerkleConfig>,
+    pub(crate) prev_merkle_new: MerkleTreeHasher,
 
     /// Flat list of evaluations corresponding to `prev_merkle` leaves.
     ///

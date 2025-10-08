@@ -1,135 +1,98 @@
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MerkleTree, MultiPath, TwoToOneParam};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use spongefish::{ProofError, ProofResult};
-
+use crate::merkle_tree::{Hash, Hasher, MerkleProof};
 use crate::{
-    crypto::merkle_tree::proof::FullMultiPath,
-    parameters::MerkleProofStrategy,
-    whir::utils::{HintDeserialize, HintSerialize},
+    merkle_tree::MerkleTreeHasher, whir::utils::{HintDeserialize, HintSerialize}
 };
 
 /// Prover-side state for emitting Merkle proofs using a fixed strategy.
 pub struct ProverMerkleState {
-    strategy: MerkleProofStrategy,
 }
 
 impl ProverMerkleState {
-    pub const fn new(strategy: MerkleProofStrategy) -> Self {
-        Self { strategy }
+    pub const fn new() -> Self {
+        Self { }
     }
 
-    pub fn write_proof_hint<ProverState, MerkleConfig>(
+    pub fn write_proof_hint<F, ProverState>(
         &self,
-        tree: &MerkleTree<MerkleConfig>,
+        fold_size: usize,
+        previous_merkle_answers: &Vec<F>,
+        tree_new: &MerkleTreeHasher,
         indices: &[usize],
         prover_state: &mut ProverState,
     ) -> ProofResult<()>
     where
-        MerkleConfig: Config,
+        F: Clone + CanonicalSerialize + ark_ff::Field,
         ProverState: HintSerialize,
     {
-        match self.strategy {
-            MerkleProofStrategy::Compressed => {
-                let merkle_proof = tree
-                    .generate_multi_proof(indices.to_vec())
-                    .expect("indices sampled from transcript must be valid for the tree");
-                prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+        let new_proof =  tree_new.proof(indices, |i, d| {
+            if d == tree_new.depth {
+                let leaf : Vec<_> = previous_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec();
+                let mut buf = [0u8; 32];
+                let m = leaf.iter().cloned().reduce(|a, b| {
+                    let mut l_input = [0u8; 32];
+                    let mut r_input = [0u8; 32];
+                    a.serialize_uncompressed(&mut l_input[..]).expect("leaf hash failed");
+                    b.serialize_uncompressed(&mut r_input[..]).expect("leaf hash failed");
+                    let mut out = [[0u8; 32]; 1];
+                    tree_new.hasher_at_depth(0).hash_pairs(&[l_input, r_input], &mut out);
+                    F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&out[0]))
+                }).unwrap();
+                m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+                buf
+            } else {
+                println!("i: , d: {:?} {:?}", i, d);
+                tree_new.layers[d][i]
             }
-            MerkleProofStrategy::Uncompressed => {
-                let proofs = indices
-                    .iter()
-                    .map(|&index| {
-                        tree.generate_proof(index)
-                            .expect("indices sampled from transcript must be valid for the tree")
-                    })
-                    .collect::<Vec<_>>();
-                let merkle_proof: FullMultiPath<MerkleConfig> = proofs.into();
+        });
 
-                prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;
-            }
-        }
-
+        prover_state.hint::<MerkleProof<F>>(&new_proof)?;
+    
         Ok(())
     }
 }
 
 /// Verifier-side state for consuming Merkle proofs using a fixed strategy and hash parameters.
-pub struct VerifierMerkleState<'a, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    strategy: MerkleProofStrategy,
-    leaf_hash_params: &'a LeafParam<MerkleConfig>,
-    two_to_one_params: &'a TwoToOneParam<MerkleConfig>,
+pub struct VerifierMerkleState {
 }
 
-impl<'a, MerkleConfig> VerifierMerkleState<'a, MerkleConfig>
-where
-    MerkleConfig: Config,
+impl VerifierMerkleState
 {
-    pub const fn new(
-        strategy: MerkleProofStrategy,
-        leaf_hash_params: &'a LeafParam<MerkleConfig>,
-        two_to_one_params: &'a TwoToOneParam<MerkleConfig>,
-    ) -> Self {
-        Self {
-            strategy,
-            leaf_hash_params,
-            two_to_one_params,
-        }
+    pub const fn new() -> Self {
+        Self {}
     }
 
-    pub fn read_and_verify_proof<VerifierState, L>(
+    pub fn read_and_verify_proof<VerifierState, F>(
         &self,
         verifier_state: &mut VerifierState,
         indices: &[usize],
-        root: &MerkleConfig::InnerDigest,
-        leaves: impl IntoIterator<Item = L>,
+        root: &Hash,
+        leaves: &[Hash],
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<()>
     where
         VerifierState: HintDeserialize,
-        L: Clone + std::borrow::Borrow<MerkleConfig::Leaf>,
+        F: CanonicalSerialize + CanonicalDeserialize,
     {
-        let leaves: Vec<L> = leaves.into_iter().collect();
+        let new_proof: MerkleProof<F> = verifier_state.hint()?;
 
-        match self.strategy {
-            MerkleProofStrategy::Compressed => {
-                let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
-                if merkle_proof.leaf_indexes != indices {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                let correct = merkle_proof
-                    .verify(
-                        self.leaf_hash_params,
-                        self.two_to_one_params,
-                        root,
-                        leaves.iter().cloned(),
-                    )
-                    .map_err(|_| ProofError::InvalidProof)?;
-                if !correct {
-                    return Err(ProofError::InvalidProof);
-                }
-            }
-            MerkleProofStrategy::Uncompressed => {
-                let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
-                if merkle_proof.indices() != indices {
-                    return Err(ProofError::InvalidProof);
-                }
-
-                let correct = merkle_proof
-                    .verify(
-                        self.leaf_hash_params,
-                        self.two_to_one_params,
-                        root,
-                        leaves.iter().cloned(),
-                    )
-                    .map_err(|_| ProofError::InvalidProof)?;
-                if !correct {
-                    return Err(ProofError::InvalidProof);
-                }
-            }
+        println!("depth: {:?}", new_proof.depth);
+        // println!("new_proof: {:?}", new_proof.1);
+        println!("indices from proof: {:?}", new_proof.indices);
+        println!("indices: {:?}", indices);
+        if new_proof.indices != indices {
+            return Err(ProofError::InvalidProof);
         }
 
+        let merklizer = MerkleTreeHasher::from_hasher_fn(new_proof.depth, construct_skyscraper);
+
+        let correct = merklizer.verify_multi(root, &indices, &leaves, &new_proof.proof.iter().map(|h| {let mut buf = [0u8; 32]; h.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed"); buf}).collect::<Vec<_>>());
+        println!("correct: {:?}", correct.clone().err());
+        println!("correct: {:?}", correct.is_ok());
+        if !correct.is_ok() {
+            return Err(ProofError::InvalidProof);
+        }
         Ok(())
     }
 }

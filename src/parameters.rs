@@ -8,7 +8,7 @@ use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::utils::ark_eq;
+use crate::{merkle_tree::Hashers, utils::ark_eq};
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
@@ -206,11 +206,11 @@ impl FoldingFactor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum MerkleProofStrategy {
-    Compressed,
-    Uncompressed,
-}
+// #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+// pub enum MerkleProofStrategy {
+//     Compressed,
+//     Uncompressed,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeduplicationStrategy {
@@ -257,10 +257,7 @@ where
     /// Recursive: Preserve order/multiplicity
     pub deduplication_strategy: DeduplicationStrategy,
 
-    /// Strategy to decide on compression of merkle proofs used in proving.
-    /// Standard: Compressed proofs.
-    /// Recursive: Full Proofs.
-    pub merkle_proof_strategy: MerkleProofStrategy,
+    pub merkle_runtime_config: Hashers,
 }
 
 impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
@@ -285,6 +282,7 @@ where
             && self.soundness_type == other.soundness_type
             && self.security_level == other.security_level
             && self.pow_bits == other.pow_bits
+            && self.merkle_runtime_config == other.merkle_runtime_config
     }
 }
 

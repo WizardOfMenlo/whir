@@ -42,6 +42,7 @@ impl MerkleTreeHasher {
             self.commit_inner(0, leaves, nodes);
         }
         self.layers = layers.into_iter().map(|layer| layer.to_vec()).collect();
+        self.root = nodes[0];
         nodes
     }
 

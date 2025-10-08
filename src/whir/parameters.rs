@@ -15,7 +15,7 @@ use crate::{
     crypto::fields::FieldWithSize,
     domain::Domain,
     parameters::{
-        DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
+        DeduplicationStrategy, FoldingFactor, MultivariateParameters,
         ProtocolParameters, SoundnessType,
     },
     utils::{ark_eq, f64_eq_abs},
@@ -69,8 +69,6 @@ where
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     #[serde(with = "crate::ark_serde")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
-
-    pub merkle_proof_strategy: MerkleProofStrategy,
 
     // Batch size
     pub batch_size: usize,
@@ -276,7 +274,6 @@ where
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
             two_to_one_params: whir_parameters.two_to_one_params,
-            merkle_proof_strategy: whir_parameters.merkle_proof_strategy,
             batch_size: whir_parameters.batch_size,
         }
     }
@@ -623,7 +620,6 @@ where
             .field("two_to_one_params", &self.two_to_one_params)
             .field("batch_size", &self.batch_size)
             .field("deduplication_strategy", &self.deduplication_strategy)
-            .field("merkle_proof_strategy", &self.merkle_proof_strategy)
             .finish()
     }
 }
@@ -834,9 +830,7 @@ mod tests {
                 keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
                 parameters::default_config,
             },
-        },
-        parameters::{DeduplicationStrategy, MerkleProofStrategy},
-        utils::test_serde,
+        }, merkle_tree::Hashers, parameters::DeduplicationStrategy, utils::test_serde
     };
 
     /// Generates default WHIR parameters
@@ -857,7 +851,7 @@ mod tests {
             starting_log_inv_rate: 1,
             batch_size: 1,
             deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            merkle_runtime_config: Hashers::Skyscraper2,
         }
     }
 

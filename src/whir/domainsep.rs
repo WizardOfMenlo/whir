@@ -4,8 +4,7 @@ use spongefish::codecs::arkworks_algebra::{ByteDomainSeparator, FieldDomainSepar
 
 use super::parameters::WhirConfig;
 use crate::{
-    fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator},
-    sumcheck::SumcheckSingleDomainSeparator,
+    fs_utils::{OODDomainSeparator, WhirPoWDomainSeparator}, sumcheck::SumcheckSingleDomainSeparator
 };
 
 pub trait DigestDomainSeparator<MerkleConfig: Config> {

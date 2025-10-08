@@ -14,15 +14,12 @@ use super::{
     statement::{Constraint, Statement, Weights},
     utils::HintDeserialize,
 };
+use ark_serialize::CanonicalSerialize;
 use crate::{
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckPolynomial,
-    utils::expand_randomness,
-    whir::{
+    merkle_tree::{Hash, Hasher, MerkleTreeHasher}, poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint}, sumcheck::SumcheckPolynomial, utils::expand_randomness, whir::{
         merkle,
-        prover::RootPath,
         utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
-    },
+    }
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
@@ -37,7 +34,7 @@ where
         + HintDeserialize,
 {
     params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
-    merkle_state: merkle::VerifierMerkleState<'a, MerkleConfig>,
+    merkle_state: merkle::VerifierMerkleState,
     _state: PhantomData<VerifierState>,
 }
 
@@ -57,11 +54,7 @@ where
     pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         Self {
             params,
-            merkle_state: merkle::VerifierMerkleState::new(
-                params.merkle_proof_strategy,
-                &params.leaf_hash_params,
-                &params.two_to_one_params,
-            ),
+            merkle_state: merkle::VerifierMerkleState::new(),
             _state: PhantomData,
         }
     }
@@ -76,6 +69,7 @@ where
         verifier_state: &mut VerifierState,
         parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         statement: &Statement<F>,
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
         // During the rounds we collect constraints, combination randomness, folding randomness
         // and we update the claimed sum of constraint evaluation.
@@ -136,6 +130,7 @@ where
                 round_params,
                 &prev_commitment,
                 round_folding_randomness.last().unwrap(),
+                construct_skyscraper,
             )?;
 
             // Add out-of-domain and in-domain constraints to claimed_sum
@@ -172,6 +167,7 @@ where
             &self.params.final_round_config(),
             &prev_commitment,
             round_folding_randomness.last().unwrap(),
+            construct_skyscraper,
         )?;
 
         // Verify stir constraints directly on final polynomial
@@ -277,6 +273,7 @@ where
         params: &RoundConfig<F>,
         commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
         folding_randomness: &MultilinearPoint<F>,
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<Vec<Constraint<F>>> {
         self.verify_proof_of_work(verifier_state, params.pow_bits)?;
 
@@ -288,9 +285,13 @@ where
             &self.params.deduplication_strategy,
         )?;
 
+        let mut root_buff = [0u8; 32];
+        println!("commitment.root: {:?}", commitment.root);
+        commitment.root.serialize_uncompressed(&mut root_buff[..])?;
+        println!("root_buff: {:?}", root_buff);
         // Always open against the single batched commitment
         let mut answers =
-            self.verify_merkle_proof(verifier_state, &commitment.root, &stir_challenges_indexes)?;
+            self.verify_merkle_proof(verifier_state, &root_buff, &stir_challenges_indexes, construct_skyscraper)?;
 
         // If this is the first round and batching > 1, RLC per leaf to fold_size
         if round_index == 0 && self.params.batch_size > 1 {
@@ -323,58 +324,43 @@ where
         Ok(stir_constraints)
     }
 
-    pub fn verify_first_round(
-        &self,
-        verifier_state: &mut VerifierState,
-        root: &[MerkleConfig::InnerDigest],
-        indices: &[usize],
-    ) -> ProofResult<Vec<Vec<F>>> {
-        let answers: Vec<Vec<F>> = verifier_state.hint()?;
-
-        let first_round_merkle_proof: Vec<RootPath<F, MerkleConfig>> = verifier_state.hint()?;
-
-        if root.len() != first_round_merkle_proof.len() {
-            return Err(ProofError::InvalidProof);
-        }
-
-        let correct =
-            first_round_merkle_proof
-                .iter()
-                .zip(root.iter())
-                .all(|((path, answers), root_hash)| {
-                    path.verify(
-                        &self.params.leaf_hash_params,
-                        &self.params.two_to_one_params,
-                        root_hash,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .unwrap()
-                        && path.leaf_indexes == *indices
-                });
-
-        if !correct {
-            return Err(ProofError::InvalidProof);
-        }
-
-        Ok(answers)
-    }
-
     /// Verify a merkle multi-opening proof for the provided indices.
     pub fn verify_merkle_proof(
         &self,
         verifier_state: &mut VerifierState,
-        root: &MerkleConfig::InnerDigest,
+        root: &Hash,
         indices: &[usize],
+        construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<Vec<Vec<F>>> {
         // Receive claimed leafs
         let answers: Vec<Vec<F>> = verifier_state.hint()?;
 
+        let tree_new = MerkleTreeHasher::from_hasher_fn(1, construct_skyscraper);
+        let answers_new = answers.iter().map(|leaf: &Vec<F>| {
+            let m = leaf.iter().cloned().reduce(|a, b| {
+                let mut l_input = [0u8; 32];
+                let mut r_input = [0u8; 32];
+                a.serialize_uncompressed(&mut l_input[..]).expect("leaf hash failed");
+                b.serialize_uncompressed(&mut r_input[..]).expect("leaf hash failed");
+                let mut out = [[0u8; 32]; 1];
+                tree_new.hasher_at_depth(0).hash_pairs(&[l_input, r_input], &mut out); //(a, b)
+                F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&out[0]))
+            }).unwrap();
+            let mut buf = [0u8; 32];
+            m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+            buf
+            // let mut buf = [0u8; 32];
+            // let m = MerkleConfig::LeafHash::evaluate(leaf_hash_params, leaf.as_slice());
+            // m.unwrap().serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
+            // buf
+            }).collect::<Vec<_>>();
         self.merkle_state
-            .read_and_verify_proof::<VerifierState, _>(
+            .read_and_verify_proof::<VerifierState, F>(
                 verifier_state,
                 indices,
                 root,
-                answers.iter().map(|a| a.as_slice()),
+                &answers_new,
+                construct_skyscraper,
             )?;
 
         Ok(answers)

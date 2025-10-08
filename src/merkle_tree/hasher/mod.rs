@@ -1,17 +1,15 @@
 mod blake3;
 mod digest;
-
+mod skyscraper;
 use {
-    self::{blake3::Blake3Hasher, digest::DigestHasher},
-    bytemuck::cast_slice,
-    sha3::{Keccak256, Sha3_256},
+    self::{blake3::Blake3Hasher, digest::DigestHasher}, crate::merkle_tree::hasher::skyscraper::Skyscraper2Hasher, bytemuck::cast_slice, serde::{Deserialize, Serialize}, sha3::{Keccak256, Sha3_256}
 };
 
 pub const HASH_ZERO: Hash = [0; 32];
 
 pub type Hash = [u8; 32];
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Hashers {
     Blake3,
     Keccak,
@@ -45,7 +43,7 @@ impl Hashers {
             Hashers::Blake3 => Box::new(Blake3Hasher::new()),
             Hashers::Keccak => Box::new(DigestHasher::<Keccak256>::new()),
             Hashers::Sha3 => Box::new(DigestHasher::<Sha3_256>::new()),
-            // Hashers::Skyscraper2 => Box::new(SkyscraperHasher::new()),
+            Hashers::Skyscraper2 => Box::new(Skyscraper2Hasher::new()),
             _ => unimplemented!(),
         }
     }

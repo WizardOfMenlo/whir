@@ -1,6 +1,6 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 
-use crate::poly_utils::coeffs::CoefficientList;
+use crate::{merkle_tree::MerkleTreeHasher, poly_utils::coeffs::CoefficientList};
 
 pub mod reader;
 pub mod writer;
@@ -13,7 +13,6 @@ pub use writer::CommitmentWriter;
 /// This structure holds all necessary components to verify a commitment,
 /// including the polynomial itself, the Merkle tree used for commitment,
 /// and out-of-domain (OOD) evaluations.
-#[derive(Clone)]
 pub struct Witness<F, MerkleConfig>
 where
     MerkleConfig: Config,
@@ -25,7 +24,11 @@ where
 
     /// The Merkle tree constructed from the polynomial evaluations. In case of
     /// batching, it's the merkle tree of the batched polynomial.
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
+    pub(crate) merkle_tree: Option<MerkleTree<MerkleConfig>>,
+
+    /// The Merkle tree constructed from the polynomial evaluations. In case of
+    /// batching, it's the merkle tree of the batched polynomial.
+    pub(crate) merkle_tree_new: MerkleTreeHasher,
 
     /// The leaves of the Merkle tree, derived from folded polynomial
     /// evaluations. In case of batching, its the merkle leaves of the batched

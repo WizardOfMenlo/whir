@@ -26,8 +26,7 @@ use whir::{
         },
     },
     parameters::{
-        default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
-        MultivariateParameters, ProtocolParameters, SoundnessType,
+        default_max_pow, DeduplicationStrategy, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     whir::{

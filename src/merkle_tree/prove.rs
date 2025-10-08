@@ -1,30 +1,53 @@
+use ark_serialize::CanonicalSerialize;
+
+use crate::merkle_tree::HASH_ZERO;
+use crate::merkle_tree::Hash;
+
 use super::*;
 
 impl MerkleTreeHasher {
-    /// Produce a Merkle proof for the set of indices.
-    pub fn proof<F>(&self, indices: &[usize], mut leaves_lookup: F) -> Vec<Hash>
+    /// Produce a Merkle proof (multi- or single) for the given set of indices.
+    pub fn proof<F, Field>(&self, indices: &[usize], mut leaves_lookup: F) -> MerkleProof<Field>
     where
         F: FnMut(usize, usize) -> Hash,
+        Field: Clone + CanonicalSerialize + ark_ff::Field,
     {
         if indices.is_empty() {
-            return Vec::new();
+            return MerkleProof{
+                depth: self.depth, 
+                proof: vec![], 
+                indices: vec![]
+            };
         }
 
-        // Gather leaf hashes and sort/dedup by indices (validates duplicates)
-        let mut leaves = Vec::with_capacity(indices.len());
-        for &i in indices {
-            leaves.push(leaves_lookup(i, self.depth-1));
+        // Gather leaf hashes and sort/dedup to match verifier’s expectation
+        let mut combined = indices
+            .iter()
+            .copied()
+            .map(|i| (i, leaves_lookup(i, self.depth)))
+            .collect::<Vec<_>>();
+        combined.sort_by_key(|&(i, _)| i);
+
+        combined.dedup_by(|a, b| {
+            a.0 == b.0
+        });
+        println!("combined: {:?}", combined);
+
+        let original_indices = indices.to_vec();
+        let mut indices = Vec::with_capacity(combined.len());
+        let mut leaves  = Vec::with_capacity(combined.len());
+        for (i, leaf) in combined {
+            indices.push(i);
+            leaves.push(leaf);
         }
 
-        let mut indices = indices.to_vec();
+        let mut proof: Vec<Hash> = Vec::new();
 
-        let mut proof: Vec<Hash> = Vec::with_capacity(indices.len());
-
-        // Walk up the tree, emitting missing siblings in the verifier's consumption order
-        let mut depth = self.depth - 1;
+        // Walk up the tree, emitting missing siblings in verifier's order
+        let mut depth = self.depth ;
         while depth > 0 {
             let mut next_indices = Vec::with_capacity(indices.len());
-            let mut next_leaves = Vec::with_capacity(indices.len());
+            let mut next_leaves  = Vec::with_capacity(indices.len());
 
             let mut i = 0;
             while i < indices.len() {
@@ -33,7 +56,7 @@ impl MerkleTreeHasher {
                 if idx % 2 == 0 {
                     // Left child
                     if i + 1 < indices.len() && indices[i + 1] == idx + 1 {
-                        // Adjacent right child present -> merge without emitting a sibling
+                        // Adjacent right child present -> merge
                         let pair = [leaves[i], leaves[i + 1]];
                         let mut out = [HASH_ZERO; 1];
                         self.hasher_at_depth(depth).hash_pairs(&pair, &mut out);
@@ -41,7 +64,7 @@ impl MerkleTreeHasher {
                         next_leaves.push(out[0]);
                         i += 2;
                     } else {
-                        // Missing right sibling -> add it to the proof
+                        // Right sibling missing -> push it into proof
                         let sib = leaves_lookup(idx + 1, depth);
                         proof.push(sib);
 
@@ -53,7 +76,7 @@ impl MerkleTreeHasher {
                         i += 1;
                     }
                 } else {
-                    // Right child, missing left sibling -> add it to the proof
+                    // Right child -> fetch left sibling
                     let sib = leaves_lookup(idx - 1, depth);
                     proof.push(sib);
 
@@ -67,10 +90,14 @@ impl MerkleTreeHasher {
             }
 
             indices = next_indices;
-            leaves = next_leaves;
+            leaves  = next_leaves;
             depth -= 1;
         }
 
-        proof
+        MerkleProof{
+            depth: self.depth, 
+            proof: proof.iter().map(|h| Field::from_base_prime_field(<Field::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(h))).collect(), 
+            indices: original_indices
+        }
     }
 }

@@ -10,8 +10,7 @@ use clap::Parser;
 use spongefish::{DomainSeparator, ProverState, VerifierState};
 use spongefish_pow::blake3::Blake3PoW;
 use whir::{
-    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
-    crypto::{
+    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType}, crypto::{
         fields,
         merkle_tree::{
             self,
@@ -19,18 +18,15 @@ use whir::{
             keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
             HashCounter,
         },
-    },
-    parameters::{
-        default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
+    }, merkle_tree::Hashers, parameters::{
+        default_max_pow, DeduplicationStrategy, FoldingFactor,
         MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    whir::{
+    }, poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint}, whir::{
         committer::CommitmentReader,
         domainsep::DigestDomainSeparator,
         statement::{Statement, Weights},
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
-    },
+    }
 };
 
 use crate::merkle_tree::parameters::default_config;
@@ -262,7 +258,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         deduplication_strategy: DeduplicationStrategy::Enabled,
-        merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        merkle_runtime_config: Hashers::Blake3,
     };
 
     let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
@@ -290,7 +286,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+    let witness = committer.commit(&mut prover_state, &polynomial,).unwrap();
 
     let prover = Prover::new(params.clone());
 
