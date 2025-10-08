@@ -12,7 +12,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 /// # Type Parameters
 /// - `N`: The size of the digest in bytes (e.g., 32 for a 256-bit hash).
 #[derive(Clone, Debug, Eq, PartialEq, Hash, CanonicalSerialize, CanonicalDeserialize)]
-pub struct GenericDigest<const N: usize>(pub(crate) [u8; N]);
+pub struct GenericDigest<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> Default for GenericDigest<N> {
     fn default() -> Self {
