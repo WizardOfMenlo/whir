@@ -22,6 +22,7 @@ mod tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -51,6 +52,8 @@ mod tests {
 
     /// Extension field type used in the tests.
     type EF = Field64_2;
+
+    type RS = RSDefault;
 
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
     ///
@@ -149,14 +152,16 @@ mod tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer
+            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
+            .unwrap();
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());
 
         // Generate a STARK proof for the given statement and witness
         prover
-            .prove(&mut prover_state, statement.clone(), witness)
+            .prove::<_, RS>(&mut prover_state, statement.clone(), witness)
             .unwrap();
 
         // Create a commitment reader

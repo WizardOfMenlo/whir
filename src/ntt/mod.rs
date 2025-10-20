@@ -50,7 +50,6 @@ pub fn interleaved_rs_encode<F: FftField>(
 
     let rows = expanded_size / fold_factor_exp;
     let columns = fold_factor_exp;
-
     //
     // 2. Convert from column-major (interleaved form) to row-major
     //    representation.
@@ -61,6 +60,37 @@ pub fn interleaved_rs_encode<F: FftField>(
     ntt_batch(&mut result, rows);
     transpose(&mut result, columns, rows);
     result
+}
+
+/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField
+pub trait ReedSolomon<F: FftField> {
+    fn interleaved_encode(interleaved_coeffs: &[F], expansion: usize, fold_factor: usize)
+        -> Vec<F>;
+    fn interleaved_basefield_encode(
+        interleaved_coeffs: &[F::BasePrimeField],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F::BasePrimeField>;
+}
+
+/// Tag to select the built-in Reed Solomon Encoding
+pub struct RSDefault;
+
+impl<F: FftField> ReedSolomon<F> for RSDefault {
+    fn interleaved_encode(
+        interleaved_coeffs: &[F],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F> {
+        interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
+    }
+    fn interleaved_basefield_encode(
+        interleaved_coeffs: &[F::BasePrimeField],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F::BasePrimeField> {
+        interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +272,8 @@ mod tests {
         assert_eq!(computed_values, expected_values_transposed);
     }
 
+    type RS = RSDefault;
+
     #[test]
     fn test_interleaved_rs_encode() {
         use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
@@ -265,7 +297,7 @@ mod tests {
         );
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt = RS::interleaved_encode(&poly, expansion, folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

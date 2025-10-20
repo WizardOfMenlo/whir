@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    ntt::interleaved_rs_encode,
+    ntt::ReedSolomon,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
@@ -85,7 +85,7 @@ where
     /// When called without any constraints it only perfoms a low-degree test.
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove<ProverState>(
+    pub fn prove<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
@@ -98,6 +98,7 @@ where
             + PoWChallenge
             + DigestToUnitSerialize<MerkleConfig>
             + HintSerialize,
+        RS: ReedSolomon<F>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -170,7 +171,7 @@ where
 
         // Run WHIR rounds
         for _round in 0..=self.config.n_rounds() {
-            self.round(prover_state, &mut round_state)?;
+            self.round::<_, RS>(prover_state, &mut round_state)?;
         }
 
         // Hints for deferred constraints
@@ -191,7 +192,7 @@ where
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
-    fn round<ProverState>(
+    fn round<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
         round_state: &mut RoundState<F, MerkleConfig>,
@@ -203,6 +204,7 @@ where
             + PoWChallenge
             + DigestToUnitSerialize<MerkleConfig>
             + HintSerialize,
+        RS: ReedSolomon<F>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -229,7 +231,7 @@ where
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
         let evals =
-            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
+            RS::interleaved_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
