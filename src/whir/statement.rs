@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::poly_utils::{
-    coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+    coeffs::CoefficientList, evals::{geometric_till, EvaluationsList},
+    multilinear::MultilinearPoint,
 };
 
 /// Represents a weight function used in polynomial evaluations.
@@ -26,6 +27,16 @@ pub enum Weights<F> {
     Evaluation { point: MultilinearPoint<F> },
     /// Represents a weight function defined as a precomputed set of evaluations.
     Linear { weight: EvaluationsList<F> },
+    /// Represents a weight function which is a geometric progression.
+    Geometric {
+        #[serde(with = "crate::ark_serde")]
+        /// The multiplicative factor of the geometric progression.
+        a: F,
+        /// The number of terms in the geometric progression, post which all terms are zero.
+        n: usize,
+        /// Represents the geometric progression as a set of evaluations.
+        weight: EvaluationsList<F>,
+    },
 }
 
 impl<F: Field> Weights<F> {
@@ -62,11 +73,17 @@ impl<F: Field> Weights<F> {
         Self::Linear { weight }
     }
 
+    /// Similar to linear mode, but the weights are stored in a geometric progression.
+    pub const fn geometric(a: F, n: usize, weight: EvaluationsList<F>) -> Self {
+        Self::Geometric { a, n, weight }
+    }
+
     /// Returns the number of variables involved in the weight function.
     pub fn num_variables(&self) -> usize {
         match self {
             Self::Evaluation { point } => point.num_variables(),
             Self::Linear { weight } => weight.num_variables(),
+            Self::Geometric { weight, .. } => weight.num_variables(),
         }
     }
 
@@ -86,6 +103,12 @@ impl<F: Field> Weights<F> {
                     .zip(poly.evals())
                     .map(|(&w, &p)| w * p)
                     .sum()
+            }
+            Self::Geometric {
+                weight, ..
+            } => {
+                let poly: EvaluationsList<F> = poly.clone().into();
+                weight.evals().iter().zip(poly.evals()).map(|(&w, &p)| w * p).sum()
             }
         }
     }
@@ -115,6 +138,26 @@ impl<F: Field> Weights<F> {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
             Self::Linear { weight } => {
+                #[cfg(feature = "parallel")]
+                accumulator
+                    .evals_mut()
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
+
+                #[cfg(not(feature = "parallel"))]
+                accumulator
+                    .evals_mut()
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(corner, acc)| {
+                        *acc += factor * weight.index(corner);
+                    });
+            }
+            // TODO: Verify
+            Self::Geometric { weight, .. } => {
                 #[cfg(feature = "parallel")]
                 accumulator
                     .evals_mut()
@@ -171,6 +214,25 @@ impl<F: Field> Weights<F> {
                 }
             }
             Self::Evaluation { point } => poly.eval_extension(point),
+            Self::Geometric { weight, .. } => {
+                assert_eq!(poly.num_variables(), weight.num_variables());
+                #[cfg(not(feature = "parallel"))]
+                {
+                    poly.evals()
+                        .iter()
+                        .zip(weight.evals().iter())
+                        .map(|(p, w)| *p * *w)
+                        .sum()
+                }
+                #[cfg(feature = "parallel")]
+                {
+                    poly.evals()
+                        .par_iter()
+                        .zip(weight.evals().par_iter())
+                        .map(|(p, w)| *p * *w)
+                        .sum()
+                }
+            }
         }
     }
 
@@ -179,6 +241,9 @@ impl<F: Field> Weights<F> {
         match self {
             Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),
             Self::Linear { weight } => weight.eval_extension(folding_randomness),
+            Self::Geometric { a, n, .. } => {
+                geometric_till(*a, *n, &folding_randomness.0)
+            }
         }
     }
 }
@@ -258,6 +323,7 @@ impl<F: Field> Statement<F> {
         let defer_evaluation = match &weights {
             Weights::Evaluation { .. } => false,
             Weights::Linear { .. } => true,
+            Weights::Geometric { .. } => false,
         };
         self.constraints.push(Constraint {
             weights,
@@ -272,6 +338,7 @@ impl<F: Field> Statement<F> {
         let defer_evaluation = match &weights {
             Weights::Evaluation { .. } => false,
             Weights::Linear { .. } => true,
+            Weights::Geometric { .. } => true,
         };
         self.constraints.insert(
             0,
@@ -294,6 +361,7 @@ impl<F: Field> Statement<F> {
                 let defer_evaluation = match &weights {
                     Weights::Evaluation { .. } => false,
                     Weights::Linear { .. } => true,
+                    Weights::Geometric { .. } => true,
                 };
                 Constraint {
                     weights,

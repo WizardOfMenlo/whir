@@ -178,6 +178,26 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
     }
 }
 
+/// Evaluates the mle of a geometric progression at a given point x where the underlying vector is [1,x,x^2,x^3,...,x^{n-1},0,...,0]
+pub fn geometric_till<F: Field>(mut a: F, n: usize, x: &[F]) -> F {
+    let k = x.len();
+    assert!(n > 0 && n < (1 << k));
+    let mut borrow_0 = F::one();
+    let mut borrow_1 = F::zero();
+    for (i, &x) in x.iter().rev().enumerate() {
+        let bn = ((n - 1) >> i) & 1;
+        let b0 = F::one() - x;
+        let b1 = a * x;
+        (borrow_0, borrow_1) = if bn == 0 {
+            (b0 * borrow_0, (b0 + b1) * borrow_1 + b1 * borrow_0)
+        } else {
+            ((b0 + b1) * borrow_0 + b0 * borrow_1, b1 * borrow_1)
+        };
+        a = a.square();
+    }
+    borrow_0
+}
+
 #[cfg(test)]
 #[allow(clippy::should_panic_without_expect)]
 mod tests {
