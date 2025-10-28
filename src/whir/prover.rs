@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -36,6 +38,7 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
     config: WhirConfig<F, MerkleConfig, PowStrategy>,
     merkle_state: merkle::ProverMerkleState,
 }
@@ -46,9 +49,13 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(
+        reed_solomon: Arc<dyn ReedSolomon<F>>,
+        config: WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self {
         let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
+            reed_solomon,
             config,
             merkle_state,
         }
@@ -85,7 +92,7 @@ where
     /// When called without any constraints it only perfoms a low-degree test.
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove<ProverState, RS>(
+    pub fn prove<ProverState>(
         &self,
         prover_state: &mut ProverState,
         mut statement: Statement<F>,
@@ -98,7 +105,6 @@ where
             + PoWChallenge
             + DigestToUnitSerialize<MerkleConfig>
             + HintSerialize,
-        RS: ReedSolomon<F>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -171,7 +177,7 @@ where
 
         // Run WHIR rounds
         for _round in 0..=self.config.n_rounds() {
-            self.round::<_, RS>(prover_state, &mut round_state)?;
+            self.round(prover_state, &mut round_state)?;
         }
 
         // Hints for deferred constraints
@@ -192,7 +198,7 @@ where
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
-    fn round<ProverState, RS>(
+    fn round<ProverState>(
         &self,
         prover_state: &mut ProverState,
         round_state: &mut RoundState<F, MerkleConfig>,
@@ -204,7 +210,6 @@ where
             + PoWChallenge
             + DigestToUnitSerialize<MerkleConfig>
             + HintSerialize,
-        RS: ReedSolomon<F>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -230,8 +235,11 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals =
-            RS::interleaved_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
+        let evals = self.reed_solomon.interleaved_encode(
+            folded_coefficients.coeffs(),
+            expansion,
+            folding_factor_next,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);

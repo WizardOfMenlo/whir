@@ -25,6 +25,8 @@
 ///
 #[cfg(test)]
 mod batching_tests {
+    use std::sync::Arc;
+
     use ark_std::UniformRand;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
@@ -61,7 +63,6 @@ mod batching_tests {
     type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
     type F = Field64;
-    type RS = RSDefault;
 
     fn random_poly(num_coefficients: usize) -> CoefficientList<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
@@ -147,10 +148,12 @@ mod batching_tests {
         // Initialize the Merlin transcript from the IOPattern
         let mut prover_state = io.to_prover_state();
 
+        let reed_solomon = Arc::new(RSDefault);
+
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = CommitmentWriter::new(params.clone());
+        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
         let batched_witness = committer
-            .commit_batch::<_, RS>(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
+            .commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
             .unwrap();
 
         // Get the batched polynomial
@@ -179,13 +182,13 @@ mod batching_tests {
         statement.add_constraint(linear_claim_weight, sum);
 
         // Instantiate the prover with the given parameters
-        let prover = Prover::new(params.clone());
+        let prover = Prover::new(reed_solomon, params.clone());
 
         // Extract verifier-side version of the statement (only public data)
 
         // Generate a STARK proof for the given statement and witness
         prover
-            .prove::<_, RS>(&mut prover_state, statement.clone(), batched_witness)
+            .prove(&mut prover_state, statement.clone(), batched_witness)
             .unwrap();
 
         // Create a verifier with matching parameters

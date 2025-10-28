@@ -64,9 +64,14 @@ pub fn interleaved_rs_encode<F: FftField>(
 
 /// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField
 pub trait ReedSolomon<F: FftField> {
-    fn interleaved_encode(interleaved_coeffs: &[F], expansion: usize, fold_factor: usize)
-        -> Vec<F>;
+    fn interleaved_encode(
+        &self,
+        interleaved_coeffs: &[F],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F>;
     fn interleaved_basefield_encode(
+        &self,
         interleaved_coeffs: &[F::BasePrimeField],
         expansion: usize,
         fold_factor: usize,
@@ -78,6 +83,7 @@ pub struct RSDefault;
 
 impl<F: FftField> ReedSolomon<F> for RSDefault {
     fn interleaved_encode(
+        &self,
         interleaved_coeffs: &[F],
         expansion: usize,
         fold_factor: usize,
@@ -85,6 +91,7 @@ impl<F: FftField> ReedSolomon<F> for RSDefault {
         interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
     }
     fn interleaved_basefield_encode(
+        &self,
         interleaved_coeffs: &[F::BasePrimeField],
         expansion: usize,
         fold_factor: usize,
@@ -272,8 +279,6 @@ mod tests {
         assert_eq!(computed_values, expected_values_transposed);
     }
 
-    type RS = RSDefault;
-
     #[test]
     fn test_interleaved_rs_encode() {
         use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
@@ -296,8 +301,10 @@ mod tests {
             folding_factor,
         );
 
+        let rs = RSDefault;
+
         // Compute things the new way
-        let interleaved_ntt = RS::interleaved_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt = rs.interleaved_encode(&poly, expansion, folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

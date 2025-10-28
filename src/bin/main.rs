@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -92,14 +92,17 @@ fn main() {
 
     let mut rng = ark_std::test_rng();
 
+    let reed_solomon = Arc::new(RSDefault);
+
     match (field, merkle) {
         (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
             use fields::Field64 as F;
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -110,8 +113,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -122,8 +126,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -134,8 +139,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -146,8 +152,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -158,8 +165,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -170,8 +178,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -182,8 +191,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -194,8 +204,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -206,8 +217,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -218,8 +230,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -230,8 +243,9 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
+                reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -239,8 +253,9 @@ fn main() {
     }
 }
 
-fn run_whir<F, MerkleConfig, RS>(
+fn run_whir<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -250,20 +265,30 @@ fn run_whir<F, MerkleConfig, RS>(
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
-    RS: ReedSolomon<F>,
 {
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F, MerkleConfig, RS>(args, leaf_hash_params, two_to_one_params);
+            run_whir_pcs::<F, MerkleConfig>(
+                args,
+                reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
         WhirType::LDT => {
-            run_whir_as_ldt::<F, MerkleConfig, RS>(args, leaf_hash_params, two_to_one_params);
+            run_whir_as_ldt::<F, MerkleConfig>(
+                args,
+                reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
     }
 }
 
-fn run_whir_as_ldt<F, MerkleConfig, RS>(
+fn run_whir_as_ldt<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -273,7 +298,6 @@ fn run_whir_as_ldt<F, MerkleConfig, RS>(
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
-    RS: ReedSolomon<F>,
 {
     use whir::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
@@ -340,16 +364,14 @@ fn run_whir_as_ldt<F, MerkleConfig, RS>(
 
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(params.clone());
-    let witness = committer
-        .commit::<_, RS>(&mut prover_state, &polynomial)
-        .unwrap();
+    let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-    let prover = Prover::new(params.clone());
+    let prover = Prover::new(reed_solomon, params.clone());
 
     let statement = Statement::new(num_variables);
     prover
-        .prove::<_, RS>(&mut prover_state, statement.clone(), witness)
+        .prove(&mut prover_state, statement.clone(), witness)
         .unwrap();
 
     dbg!(whir_prover_time.elapsed());
@@ -379,8 +401,9 @@ fn run_whir_as_ldt<F, MerkleConfig, RS>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir_pcs<F, MerkleConfig, RS>(
+fn run_whir_pcs<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -390,7 +413,6 @@ fn run_whir_pcs<F, MerkleConfig, RS>(
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
-    RS: ReedSolomon<F>,
 {
     use whir::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
@@ -458,10 +480,8 @@ fn run_whir_pcs<F, MerkleConfig, RS>(
     );
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(params.clone());
-    let witness = committer
-        .commit::<_, RS>(&mut prover_state, &polynomial)
-        .unwrap();
+    let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
@@ -488,10 +508,10 @@ fn run_whir_pcs<F, MerkleConfig, RS>(
         statement.add_constraint(linear_claim_weight, sum);
     }
 
-    let prover = Prover::new(params.clone());
+    let prover = Prover::new(reed_solomon, params.clone());
 
     prover
-        .prove::<_, RS>(&mut prover_state, statement.clone(), witness)
+        .prove(&mut prover_state, statement.clone(), witness)
         .unwrap();
 
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());

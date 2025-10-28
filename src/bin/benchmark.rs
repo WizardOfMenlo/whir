@@ -1,6 +1,7 @@
 use std::{
     fs::OpenOptions,
     io::Write,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -25,7 +26,7 @@ use whir::{
             HashCounter,
         },
     },
-    ntt::{RSDefault, ReedSolomon},
+    ntt::RSDefault,
     parameters::{
         default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
         MultivariateParameters, ProtocolParameters, SoundnessType,
@@ -123,11 +124,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
@@ -135,11 +132,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
@@ -147,11 +140,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
@@ -159,11 +148,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
@@ -171,11 +156,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
@@ -183,11 +164,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Blake3) => {
@@ -195,11 +172,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
@@ -207,11 +180,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Blake3) => {
@@ -219,11 +188,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
@@ -231,11 +196,7 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Blake3) => {
@@ -244,11 +205,7 @@ fn main() {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
 
-            run_whir::<F, Blake3MerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
 
         (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
@@ -256,17 +213,13 @@ fn main() {
 
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>, RSDefault>(
-                &args,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
         }
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir<F, MerkleConfig, RS>(
+fn run_whir<F, MerkleConfig>(
     args: &Args,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
@@ -277,7 +230,6 @@ fn run_whir<F, MerkleConfig, RS>(
     DomainSeparator: DigestDomainSeparator<MerkleConfig>,
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
-    RS: ReedSolomon<F>,
 {
     let security_level = args.security_level;
     let pow_bits = args.pow_bits.unwrap();
@@ -350,17 +302,17 @@ fn run_whir<F, MerkleConfig, RS>(
 
         HashCounter::reset();
 
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit::<_, RS>(&mut prover_state, &polynomial)
-            .unwrap();
+        let reed_solomon = Arc::new(RSDefault);
 
-        let prover = Prover::new(params.clone());
+        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+
+        let prover = Prover::new(reed_solomon, params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
 
         prover
-            .prove::<_, RS>(&mut prover_state, statement_new.clone(), witness)
+            .prove(&mut prover_state, statement_new.clone(), witness)
             .unwrap();
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -434,15 +386,15 @@ fn run_whir<F, MerkleConfig, RS>(
         HashCounter::reset();
         let whir_prover_time = Instant::now();
 
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit::<_, RS>(&mut prover_state, &polynomial)
-            .unwrap();
+        let reed_solomon = Arc::new(RSDefault);
 
-        let prover = Prover::new(params.clone());
+        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+
+        let prover = Prover::new(reed_solomon, params.clone());
 
         prover
-            .prove::<_, RS>(&mut prover_state, statement.clone(), witness)
+            .prove(&mut prover_state, statement.clone(), witness)
             .unwrap();
 
         let whir_prover_time = whir_prover_time.elapsed();

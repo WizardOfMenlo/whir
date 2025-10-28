@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -26,25 +28,33 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(
-    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
-)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
-    MerkleConfig: Config;
+    MerkleConfig: Config,
+{
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
+    pub(crate) config: WhirConfig<F, MerkleConfig, PowStrategy>,
+}
 
 impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
 {
-    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Self(config)
+    pub const fn new(
+        reed_solomon: Arc<dyn ReedSolomon<F>>,
+        config: WhirConfig<F, MerkleConfig, PowStrategy>,
+    ) -> Self {
+        Self {
+            reed_solomon,
+            config,
+        }
     }
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
-    pub fn commit_batch<ProverState, RS>(
+    pub fn commit_batch<ProverState>(
         &self,
         prover_state: &mut ProverState,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
@@ -54,10 +64,9 @@ where
             + BytesToUnitSerialize
             + DigestToUnitSerialize<MerkleConfig>
             + UnitToField<F>,
-        RS: ReedSolomon<F>,
     {
         assert!(!polynomials.is_empty());
-        assert_eq!(polynomials.len(), self.0.batch_size);
+        assert_eq!(polynomials.len(), self.config.batch_size);
 
         let num_vars = polynomials.first().unwrap().num_variables();
         let num_coeffs = polynomials.first().unwrap().num_coeffs();
@@ -67,19 +76,19 @@ where
             assert_eq!(poly.num_coeffs(), num_coeffs);
         }
 
-        let base_domain = self.0.starting_domain.base_domain.unwrap();
+        let base_domain = self.config.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / num_coeffs;
-        let fold_size = 1 << self.0.folding_factor.at_round(0);
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
 
         let num_leaves = (polynomials[0].num_coeffs() * expansion) / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
         let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals = RS::interleaved_basefield_encode(
+            let evals = self.reed_solomon.interleaved_basefield_encode(
                 poly.coeffs(),
                 expansion,
-                self.0.folding_factor.at_round(0),
+                self.config.folding_factor.at_round(0),
             );
 
             for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
@@ -99,8 +108,8 @@ where
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
             MerkleTree::<MerkleConfig>::new(
-                &self.0.leaf_hash_params,
-                &self.0.two_to_one_params,
+                &self.config.leaf_hash_params,
+                &self.config.two_to_one_params,
                 leafs_iter,
             )
             .unwrap()
@@ -111,8 +120,8 @@ where
 
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
-            self.0.committment_ood_samples,
-            self.0.mv_parameters.num_variables,
+            self.config.committment_ood_samples,
+            self.config.mv_parameters.num_variables,
             |point| polynomials[0].evaluate_at_extension(point),
         )?;
         let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
@@ -121,7 +130,7 @@ where
             let answers = compute_ood_response(
                 prover_state,
                 &ood_points,
-                self.0.mv_parameters.num_variables,
+                self.config.mv_parameters.num_variables,
                 |point| poly.evaluate_at_extension(point),
             )?;
             per_poly_ood_answers.push(answers);
@@ -178,7 +187,7 @@ where
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<ProverState, RS>(
+    pub fn commit<ProverState>(
         &self,
         prover_state: &mut ProverState,
         polynomial: &CoefficientList<F::BasePrimeField>,
@@ -188,9 +197,8 @@ where
             + UnitToField<F>
             + DigestToUnitSerialize<MerkleConfig>
             + BytesToUnitSerialize,
-        RS: ReedSolomon<F>,
     {
-        self.commit_batch::<_, RS>(prover_state, &[polynomial])
+        self.commit_batch(prover_state, &[polynomial])
     }
 }
 
@@ -280,11 +288,10 @@ mod tests {
             .add_whir_proof(&params);
         let mut prover_state = domainsep.to_prover_state();
 
+        let reed_solomon = Arc::new(RSDefault);
         // Run the Commitment Phase
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer
-            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
-            .unwrap();
+        let committer = CommitmentWriter::new(reed_solomon, params.clone());
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -363,10 +370,10 @@ mod tests {
         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = domainsep.to_prover_state();
 
-        let committer = CommitmentWriter::new(params);
-        let witness = committer
-            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
-            .unwrap();
+        let reed_solomon = Arc::new(RSDefault);
+
+        let committer = CommitmentWriter::new(reed_solomon, params);
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -409,10 +416,10 @@ mod tests {
         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = domainsep.to_prover_state();
 
-        let committer = CommitmentWriter::new(params);
-        let witness = committer
-            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
-            .unwrap();
+        let reed_solomon = Arc::new(RSDefault);
+
+        let committer = CommitmentWriter::new(reed_solomon, params);
+        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         assert!(
             witness.ood_points.is_empty(),
