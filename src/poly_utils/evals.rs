@@ -178,7 +178,11 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
     }
 }
 
-/// Evaluates the mle of a geometric progression at a given point x where the underlying vector is [1,x,x^2,x^3,...,x^{n-1},0,...,0]
+/// Evaluates the mle of a polynomial from evaluations in a geometric progression.
+///
+/// The evaluation list is of the form [1,a,a^2,a^3,...,a^{n-1},0,...,0]
+/// a is the base of the geometric progression.
+/// n is the number of non-zero terms in the progression.
 pub fn geometric_till<F: Field>(mut a: F, n: usize, x: &[F]) -> F {
     let k = x.len();
     assert!(n > 0 && n < (1 << k));

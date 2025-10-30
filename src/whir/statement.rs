@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::poly_utils::{
-    coeffs::CoefficientList, evals::{geometric_till, EvaluationsList},
+    coeffs::CoefficientList,
+    evals::{geometric_till, EvaluationsList},
     multilinear::MultilinearPoint,
 };
 
@@ -82,8 +83,7 @@ impl<F: Field> Weights<F> {
     pub fn num_variables(&self) -> usize {
         match self {
             Self::Evaluation { point } => point.num_variables(),
-            Self::Linear { weight } => weight.num_variables(),
-            Self::Geometric { weight, .. } => weight.num_variables(),
+            Self::Linear { weight } | Self::Geometric { weight, .. } => weight.num_variables(),
         }
     }
 
@@ -92,7 +92,7 @@ impl<F: Field> Weights<F> {
         assert_eq!(self.num_variables(), poly.num_variables());
         match self {
             Self::Evaluation { point } => poly.evaluate(point),
-            Self::Linear { weight } => {
+            Self::Linear { weight } | Self::Geometric { weight, .. } => {
                 let poly: EvaluationsList<F> = poly.clone().into();
 
                 // We intentionally avoid parallel iterators here because this function is only called by the verifier,
@@ -103,12 +103,6 @@ impl<F: Field> Weights<F> {
                     .zip(poly.evals())
                     .map(|(&w, &p)| w * p)
                     .sum()
-            }
-            Self::Geometric {
-                weight, ..
-            } => {
-                let poly: EvaluationsList<F> = poly.clone().into();
-                weight.evals().iter().zip(poly.evals()).map(|(&w, &p)| w * p).sum()
             }
         }
     }
@@ -137,27 +131,7 @@ impl<F: Field> Weights<F> {
             Self::Evaluation { point } => {
                 eval_eq(&point.0, accumulator.evals_mut(), factor);
             }
-            Self::Linear { weight } => {
-                #[cfg(feature = "parallel")]
-                accumulator
-                    .evals_mut()
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
-
-                #[cfg(not(feature = "parallel"))]
-                accumulator
-                    .evals_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(corner, acc)| {
-                        *acc += factor * weight.index(corner);
-                    });
-            }
-            // TODO: Verify
-            Self::Geometric { weight, .. } => {
+            Self::Linear { weight } | Self::Geometric { weight, .. } => {
                 #[cfg(feature = "parallel")]
                 accumulator
                     .evals_mut()
@@ -194,7 +168,7 @@ impl<F: Field> Weights<F> {
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
     pub fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
         match self {
-            Self::Linear { weight } => {
+            Self::Linear { weight } | Self::Geometric { weight, .. } => {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 #[cfg(not(feature = "parallel"))]
                 {
@@ -214,25 +188,6 @@ impl<F: Field> Weights<F> {
                 }
             }
             Self::Evaluation { point } => poly.eval_extension(point),
-            Self::Geometric { weight, .. } => {
-                assert_eq!(poly.num_variables(), weight.num_variables());
-                #[cfg(not(feature = "parallel"))]
-                {
-                    poly.evals()
-                        .iter()
-                        .zip(weight.evals().iter())
-                        .map(|(p, w)| *p * *w)
-                        .sum()
-                }
-                #[cfg(feature = "parallel")]
-                {
-                    poly.evals()
-                        .par_iter()
-                        .zip(weight.evals().par_iter())
-                        .map(|(p, w)| *p * *w)
-                        .sum()
-                }
-            }
         }
     }
 
@@ -241,9 +196,7 @@ impl<F: Field> Weights<F> {
         match self {
             Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),
             Self::Linear { weight } => weight.eval_extension(folding_randomness),
-            Self::Geometric { a, n, .. } => {
-                geometric_till(*a, *n, &folding_randomness.0)
-            }
+            Self::Geometric { a, n, .. } => geometric_till(*a, *n, &folding_randomness.0),
         }
     }
 }
@@ -322,8 +275,7 @@ impl<F: Field> Statement<F> {
         assert_eq!(weights.num_variables(), self.num_variables());
         let defer_evaluation = match &weights {
             Weights::Evaluation { .. } => false,
-            Weights::Linear { .. } => true,
-            Weights::Geometric { .. } => false,
+            Weights::Linear { .. } | Weights::Geometric { .. } => true,
         };
         self.constraints.push(Constraint {
             weights,
@@ -337,8 +289,7 @@ impl<F: Field> Statement<F> {
         assert_eq!(weights.num_variables(), self.num_variables());
         let defer_evaluation = match &weights {
             Weights::Evaluation { .. } => false,
-            Weights::Linear { .. } => true,
-            Weights::Geometric { .. } => true,
+            Weights::Linear { .. } | Weights::Geometric { .. } => true,
         };
         self.constraints.insert(
             0,
@@ -360,8 +311,7 @@ impl<F: Field> Statement<F> {
             constraints.into_iter().map(|(weights, sum)| {
                 let defer_evaluation = match &weights {
                     Weights::Evaluation { .. } => false,
-                    Weights::Linear { .. } => true,
-                    Weights::Geometric { .. } => true,
+                    Weights::Linear { .. } | Weights::Geometric { .. } => true,
                 };
                 Constraint {
                     weights,
@@ -435,6 +385,18 @@ mod tests {
             Field64::from(3),
         ]);
         let weight = Weights::linear(evals);
+
+        // The number of variables in the weight should match the number of variables in evals
+        assert_eq!(weight.num_variables(), 2);
+    }
+
+    #[test]
+    fn test_weights_geometric() {
+        // Define a geometric progression
+        let a = Field64::from(2);
+        let n = 2;
+        let evals = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
+        let weight = Weights::geometric(a, n, evals);
 
         // The number of variables in the weight should match the number of variables in evals
         assert_eq!(weight.num_variables(), 2);
@@ -533,6 +495,43 @@ mod tests {
     }
 
     #[test]
+    fn test_accumulate_geometric() {
+        // Initialize an empty accumulator
+        let mut accumulator = EvaluationsList::new(vec![
+            Field64::from(2),
+            Field64::from(3),
+            Field64::from(4),
+            Field64::from(5),
+        ]);
+
+        // Define weights
+        let a = Field64::from(2);
+        let n = 3;
+        let weight_list = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
+        let weight = Weights::geometric(a, n, weight_list);
+
+        // Define a multiplication factor
+        let factor = Field64::from(4);
+
+        // Accumulate weighted values
+        weight.accumulate(&mut accumulator, factor);
+
+        // Expected result:
+        //
+        // \begin{equation}
+        // acc_i = factor \cdot w_i
+        // \end{equation}
+        let expected = vec![
+            Field64::from(2) + Field64::ONE * factor, // 2 + 1 * 4 = 6
+            Field64::from(3) + a * factor,            // 3 + 2 * 4 = 11
+            Field64::from(4) + a * a * factor,        // 4 + 2 * 2 * 4 = 20
+            Field64::from(5),                         // 5 + 0 * 4 = 5
+        ];
+
+        assert_eq!(accumulator.evals(), &expected);
+    }
+
+    #[test]
     fn test_statement_combine() {
         // Create a new statement with 1 variable
         let mut statement = Statement::new(1);
@@ -587,17 +586,26 @@ mod tests {
         let weight_list2 = EvaluationsList::new(vec![w4, w5, w6, w7]);
         let weight2 = Weights::linear(weight_list2);
 
+        // Define weights for third constraint (also 2 variables => 4 evaluations)
+        let a = Field64::from(2);
+        let n = 3;
+        let weight_list3 = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
+        let weight3 = Weights::geometric(a, n, weight_list3);
+
         // Define sum constraints
         let sum1 = Field64::from(5);
         let sum2 = Field64::from(7);
+        let sum3 = Field64::from(9);
 
         // Ensure both weight lists match the expected number of variables
         assert_eq!(weight1.num_variables(), 2);
         assert_eq!(weight2.num_variables(), 2);
+        assert_eq!(weight3.num_variables(), 2);
 
         // Add constraints to the statement
         statement.add_constraint(weight1, sum1);
         statement.add_constraint(weight2, sum2);
+        statement.add_constraint(weight3, sum3);
 
         // Define a challenge factor
         let challenge = Field64::from(2);
@@ -608,21 +616,20 @@ mod tests {
         // Expected evaluations:
         //
         // \begin{equation}
-        // combined = weight_1 + challenge \cdot weight_2
+        // combined = weight_1 + challenge \cdot weight_2 + challenge^2 \cdot weight_3
         // \end{equation}
         let expected_combined_evals = vec![
-            w0 + challenge * w4, // 1 + 2 * 5 = 11
-            w1 + challenge * w5, // 2 + 2 * 6 = 14
-            w2 + challenge * w6, // 3 + 2 * 7 = 17
-            w3 + challenge * w7, // 4 + 2 * 8 = 20
+            w0 + challenge * w4 + challenge * challenge * Field64::ONE, // 1 + 2 * 5 + 2^2 * 1 = 15
+            w1 + challenge * w5 + challenge * challenge * a,            // 2 + 2 * 6 + 2^2 * 2 = 22
+            w2 + challenge * w6 + challenge * challenge * a * a, // 3 + 2 * 7 + 2^2 * 2 * 2 = 33
+            w3 + challenge * w7 + challenge * challenge * Field64::ZERO, // 4 + 2 * 8 + 2^2 * 0 = 20
         ];
-
         // Expected sum:
         //
         // \begin{equation}
         // S_{combined} = S_1 + challenge \cdot S_2
         // \end{equation}
-        let expected_combined_sum = sum1 + challenge * sum2; // 5 + 2 * 7 = 19
+        let expected_combined_sum = sum1 + challenge * sum2 + challenge * challenge * sum3; // 5 + 2 * 7 + 2^2 * 9 = 19 + 36 = 55
 
         assert_eq!(combined_evals.evals(), &expected_combined_evals);
         assert_eq!(combined_sum, expected_combined_sum);
@@ -655,6 +662,22 @@ mod tests {
 
         // Expected result should be identity for equality polynomial
         let expected = point.eq_poly_outside(&folding_randomness);
+        assert_eq!(weight.compute(&folding_randomness), expected);
+    }
+
+    #[test]
+    fn test_compute_geometric_weight() {
+        // Define a geometric progression
+        let a = Field64::from(2);
+        let n = 3;
+        let weight_list = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
+        let weight = Weights::geometric(a, n, weight_list.clone());
+
+        // Define a randomness point for folding
+        let folding_randomness = MultilinearPoint(vec![Field64::from(2), Field64::from(3)]);
+
+        // Expected result is the evaluation of the geometric progression at the given randomness using geometric_till
+        let expected = weight_list.eval_extension(&folding_randomness);
         assert_eq!(weight.compute(&folding_randomness), expected);
     }
 }
