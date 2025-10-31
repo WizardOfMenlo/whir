@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -21,7 +19,6 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    ntt::ReedSolomon,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
@@ -38,7 +35,6 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
     config: WhirConfig<F, MerkleConfig, PowStrategy>,
     merkle_state: merkle::ProverMerkleState,
 }
@@ -49,13 +45,9 @@ where
     MerkleConfig: Config<Leaf = [F]>,
     PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(
-        reed_solomon: Arc<dyn ReedSolomon<F>>,
-        config: WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self {
+    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
         let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
-            reed_solomon,
             config,
             merkle_state,
         }
@@ -235,7 +227,7 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals = self.reed_solomon.interleaved_encode(
+        let evals = self.config.reed_solomon.interleaved_encode(
             folded_coefficients.coeffs(),
             expansion,
             folding_factor_next,

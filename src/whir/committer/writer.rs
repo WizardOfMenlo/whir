@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
@@ -14,7 +12,6 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
-    ntt::ReedSolomon,
     poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
@@ -33,7 +30,6 @@ where
     F: FftField,
     MerkleConfig: Config,
 {
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
     pub(crate) config: WhirConfig<F, MerkleConfig, PowStrategy>,
 }
 
@@ -42,14 +38,8 @@ where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
 {
-    pub const fn new(
-        reed_solomon: Arc<dyn ReedSolomon<F>>,
-        config: WhirConfig<F, MerkleConfig, PowStrategy>,
-    ) -> Self {
-        Self {
-            reed_solomon,
-            config,
-        }
+    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+        Self { config }
     }
 
     #[allow(clippy::too_many_lines)]
@@ -85,7 +75,7 @@ where
         let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals = self.reed_solomon.interleaved_basefield_encode(
+            let evals = self.config.basefield_reed_solomon.interleaved_encode(
                 poly.coeffs(),
                 expansion,
                 self.config.folding_factor.at_round(0),

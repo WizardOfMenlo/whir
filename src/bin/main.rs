@@ -93,6 +93,7 @@ fn main() {
     let mut rng = ark_std::test_rng();
 
     let reed_solomon = Arc::new(RSDefault);
+    let basefield_reed_solomon = reed_solomon.clone();
 
     match (field, merkle) {
         (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
@@ -103,6 +104,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -116,6 +118,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -129,6 +132,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -142,6 +146,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -155,6 +160,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -168,6 +174,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -181,6 +188,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -194,6 +202,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -207,6 +216,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -220,6 +230,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -233,6 +244,7 @@ fn main() {
             run_whir::<F, Blake3MerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -246,6 +258,7 @@ fn main() {
             run_whir::<F, KeccakMerkleTreeParams<F>>(
                 &args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -256,6 +269,7 @@ fn main() {
 fn run_whir<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -271,6 +285,7 @@ fn run_whir<F, MerkleConfig>(
             run_whir_pcs::<F, MerkleConfig>(
                 args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -279,6 +294,7 @@ fn run_whir<F, MerkleConfig>(
             run_whir_as_ldt::<F, MerkleConfig>(
                 args,
                 reed_solomon,
+                basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
@@ -289,6 +305,7 @@ fn run_whir<F, MerkleConfig>(
 fn run_whir_as_ldt<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -340,7 +357,12 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        whir_params,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
@@ -364,10 +386,10 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+    let committer = CommitmentWriter::new(params.clone());
     let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-    let prover = Prover::new(reed_solomon, params.clone());
+    let prover = Prover::new(params.clone());
 
     let statement = Statement::new(num_variables);
     prover
@@ -404,6 +426,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 fn run_whir_pcs<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -457,7 +480,12 @@ fn run_whir_pcs<F, MerkleConfig>(
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        whir_params,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
@@ -480,7 +508,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     );
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+    let committer = CommitmentWriter::new(params.clone());
     let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
@@ -508,7 +536,7 @@ fn run_whir_pcs<F, MerkleConfig>(
         statement.add_constraint(linear_claim_weight, sum);
     }
 
-    let prover = Prover::new(reed_solomon, params.clone());
+    let prover = Prover::new(params.clone());
 
     prover
         .prove(&mut prover_state, statement.clone(), witness)

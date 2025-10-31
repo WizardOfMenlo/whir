@@ -287,7 +287,14 @@ fn run_whir<F, MerkleConfig>(
             initial_statement: false,
             ..whir_params.clone()
         };
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            whir_params,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -302,12 +309,10 @@ fn run_whir<F, MerkleConfig>(
 
         HashCounter::reset();
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-        let prover = Prover::new(reed_solomon, params.clone());
+        let prover = Prover::new(params.clone());
 
         let statement_new = Statement::<F>::new(num_variables);
 
@@ -360,7 +365,14 @@ fn run_whir<F, MerkleConfig>(
             prover::Prover, verifier::Verifier,
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            reed_solomon.clone(),
+            reed_solomon,
+            mv_params,
+            whir_params,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -386,12 +398,10 @@ fn run_whir<F, MerkleConfig>(
         HashCounter::reset();
         let whir_prover_time = Instant::now();
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-        let prover = Prover::new(reed_solomon, params.clone());
+        let prover = Prover::new(params.clone());
 
         prover
             .prove(&mut prover_state, statement.clone(), witness)

@@ -70,12 +70,6 @@ pub trait ReedSolomon<F: FftField> {
         expansion: usize,
         fold_factor: usize,
     ) -> Vec<F>;
-    fn interleaved_basefield_encode(
-        &self,
-        interleaved_coeffs: &[F::BasePrimeField],
-        expansion: usize,
-        fold_factor: usize,
-    ) -> Vec<F::BasePrimeField>;
 }
 
 /// Tag to select the built-in Reed Solomon Encoding
@@ -88,14 +82,6 @@ impl<F: FftField> ReedSolomon<F> for RSDefault {
         expansion: usize,
         fold_factor: usize,
     ) -> Vec<F> {
-        interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
-    }
-    fn interleaved_basefield_encode(
-        &self,
-        interleaved_coeffs: &[F::BasePrimeField],
-        expansion: usize,
-        fold_factor: usize,
-    ) -> Vec<F::BasePrimeField> {
         interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
     }
 }
