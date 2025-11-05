@@ -98,8 +98,10 @@ mod tests {
             merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, whir_params);
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
 
         // Test that the config is serializable
         eprintln!("{params:?}");
@@ -150,14 +152,12 @@ mod tests {
         // Initialize the Merlin transcript from the domain separator
         let mut prover_state = domainsep.to_prover_state();
 
-        let reed_solomon = Arc::new(RSDefault);
-
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = CommitmentWriter::new(reed_solomon.clone(), params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Instantiate the prover with the given parameters
-        let prover = Prover::new(reed_solomon, params.clone());
+        let prover = Prover::new(params.clone());
 
         // Generate a STARK proof for the given statement and witness
         prover

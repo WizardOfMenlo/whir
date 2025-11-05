@@ -205,6 +205,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ark_ff::UniformRand;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
@@ -267,7 +269,14 @@ mod tests {
 
         // Define multivariate parameters for the polynomial.
         let mv_params = MultivariateParameters::<F>::new(num_variables);
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            whir_params,
+        );
 
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
@@ -278,9 +287,8 @@ mod tests {
             .add_whir_proof(&params);
         let mut prover_state = domainsep.to_prover_state();
 
-        let reed_solomon = Arc::new(RSDefault);
         // Run the Commitment Phase
-        let committer = CommitmentWriter::new(reed_solomon, params.clone());
+        let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Ensure Merkle leaves are correctly generated.
@@ -338,7 +346,11 @@ mod tests {
         let (leaf_hash_params, two_to_one_params) =
             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
             MultivariateParameters::<F>::new(10),
             ProtocolParameters {
                 initial_statement: true,
@@ -360,9 +372,7 @@ mod tests {
         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = domainsep.to_prover_state();
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let committer = CommitmentWriter::new(reed_solomon, params);
+        let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         // Expansion factor is 2
@@ -381,8 +391,11 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let (leaf_hash_params, two_to_one_params) =
             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
             MultivariateParameters::<F>::new(5),
             ProtocolParameters {
                 initial_statement: true,
@@ -406,9 +419,7 @@ mod tests {
         let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
         let mut prover_state = domainsep.to_prover_state();
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let committer = CommitmentWriter::new(reed_solomon, params);
+        let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
         assert!(
