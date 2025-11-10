@@ -90,173 +90,63 @@ fn main() {
         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
     }
 
+    runner(&args, field, merkle);
+}
+
+fn runner(args: &Args, field: AvailableFields, merkle: AvailableMerkle) {
+    // Type reflection on field
+    match field {
+        AvailableFields::Goldilocks1 => {
+            use fields::Field64 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Goldilocks2 => {
+            use fields::Field64_2 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Goldilocks3 => {
+            use fields::Field64_3 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field128 => {
+            use fields::Field128 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field192 => {
+            use fields::Field192 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field256 => {
+            use fields::Field256 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+    }
+}
+
+fn runner_merkle<F: FftField + CanonicalSerialize>(args: &Args, merkle: AvailableMerkle) {
     let mut rng = ark_std::test_rng();
 
     let reed_solomon = Arc::new(RSDefault);
     let basefield_reed_solomon = reed_solomon.clone();
 
-    match (field, merkle) {
-        (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
-            use fields::Field64 as F;
-
+    // Type reflection on merkle
+    match merkle {
+        AvailableMerkle::Blake3 => {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
             run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
+                args,
                 reed_solomon,
                 basefield_reed_solomon,
                 leaf_hash_params,
                 two_to_one_params,
             );
         }
-
-        (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
-            use fields::Field64 as F;
-
+        AvailableMerkle::Keccak256 => {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
             run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
-            use fields::Field64_2 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
-            use fields::Field64_2 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
-            use fields::Field64_3 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
-            use fields::Field64_3 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field128, AvailableMerkle::Blake3) => {
-            use fields::Field128 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
-            use fields::Field128 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field192, AvailableMerkle::Blake3) => {
-            use fields::Field192 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
-            use fields::Field192 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field256, AvailableMerkle::Blake3) => {
-            use fields::Field256 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                &args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
-        }
-
-        (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
-            use fields::Field256 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                &args,
+                args,
                 reed_solomon,
                 basefield_reed_solomon,
                 leaf_hash_params,
