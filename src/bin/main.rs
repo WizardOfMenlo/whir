@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use ark_crypto_primitives::{
     crh::{CRHScheme, TwoToOneCRHScheme},
@@ -20,6 +20,7 @@ use whir::{
             HashCounter,
         },
     },
+    ntt::{RSDefault, ReedSolomon},
     parameters::{
         default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
         MultivariateParameters, ProtocolParameters, SoundnessType,
@@ -89,109 +90,76 @@ fn main() {
         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
     }
 
+    runner(&args, field, merkle);
+}
+
+fn runner(args: &Args, field: AvailableFields, merkle: AvailableMerkle) {
+    // Type reflection on field
+    match field {
+        AvailableFields::Goldilocks1 => {
+            use fields::Field64 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Goldilocks2 => {
+            use fields::Field64_2 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Goldilocks3 => {
+            use fields::Field64_3 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field128 => {
+            use fields::Field128 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field192 => {
+            use fields::Field192 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+        AvailableFields::Field256 => {
+            use fields::Field256 as F;
+            runner_merkle::<F>(args, merkle);
+        }
+    }
+}
+
+fn runner_merkle<F: FftField + CanonicalSerialize>(args: &Args, merkle: AvailableMerkle) {
     let mut rng = ark_std::test_rng();
 
-    match (field, merkle) {
-        (AvailableFields::Goldilocks1, AvailableMerkle::Blake3) => {
-            use fields::Field64 as F;
+    let reed_solomon = Arc::new(RSDefault);
+    let basefield_reed_solomon = reed_solomon.clone();
 
+    // Type reflection on merkle
+    match merkle {
+        AvailableMerkle::Blake3 => {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, Blake3MerkleTreeParams<F>>(
+                args,
+                reed_solomon,
+                basefield_reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
-
-        (AvailableFields::Goldilocks1, AvailableMerkle::Keccak256) => {
-            use fields::Field64 as F;
-
+        AvailableMerkle::Keccak256 => {
             let (leaf_hash_params, two_to_one_params) =
                 default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Goldilocks2, AvailableMerkle::Blake3) => {
-            use fields::Field64_2 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Goldilocks2, AvailableMerkle::Keccak256) => {
-            use fields::Field64_2 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Goldilocks3, AvailableMerkle::Blake3) => {
-            use fields::Field64_3 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Goldilocks3, AvailableMerkle::Keccak256) => {
-            use fields::Field64_3 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field128, AvailableMerkle::Blake3) => {
-            use fields::Field128 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field128, AvailableMerkle::Keccak256) => {
-            use fields::Field128 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field192, AvailableMerkle::Blake3) => {
-            use fields::Field192 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field192, AvailableMerkle::Keccak256) => {
-            use fields::Field192 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field256, AvailableMerkle::Blake3) => {
-            use fields::Field256 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
-        }
-
-        (AvailableFields::Field256, AvailableMerkle::Keccak256) => {
-            use fields::Field256 as F;
-
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(&args, leaf_hash_params, two_to_one_params);
+            run_whir::<F, KeccakMerkleTreeParams<F>>(
+                args,
+                reed_solomon,
+                basefield_reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
     }
 }
 
 fn run_whir<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -204,16 +172,30 @@ fn run_whir<F, MerkleConfig>(
 {
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params);
+            run_whir_pcs::<F, MerkleConfig>(
+                args,
+                reed_solomon,
+                basefield_reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
         WhirType::LDT => {
-            run_whir_as_ldt::<F, MerkleConfig>(args, leaf_hash_params, two_to_one_params);
+            run_whir_as_ldt::<F, MerkleConfig>(
+                args,
+                reed_solomon,
+                basefield_reed_solomon,
+                leaf_hash_params,
+                two_to_one_params,
+            );
         }
     }
 }
 
 fn run_whir_as_ldt<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -265,7 +247,12 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        whir_params,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)
@@ -328,6 +315,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 #[allow(clippy::too_many_lines)]
 fn run_whir_pcs<F, MerkleConfig>(
     args: &Args,
+    reed_solomon: Arc<dyn ReedSolomon<F>>,
+    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
     leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
     two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
@@ -381,7 +370,12 @@ fn run_whir_pcs<F, MerkleConfig>(
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        whir_params,
+    );
 
     let domainsep = DomainSeparator::new("🌪️")
         .commit_statement(&params)

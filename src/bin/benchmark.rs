@@ -1,6 +1,7 @@
 use std::{
     fs::OpenOptions,
     io::Write,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -25,6 +26,7 @@ use whir::{
             HashCounter,
         },
     },
+    ntt::RSDefault,
     parameters::{
         default_max_pow, DeduplicationStrategy, FoldingFactor, MerkleProofStrategy,
         MultivariateParameters, ProtocolParameters, SoundnessType,
@@ -285,7 +287,14 @@ fn run_whir<F, MerkleConfig>(
             initial_statement: false,
             ..whir_params.clone()
         };
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            whir_params,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -356,7 +365,14 @@ fn run_whir<F, MerkleConfig>(
             prover::Prover, verifier::Verifier,
         };
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+
+        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+            reed_solomon.clone(),
+            reed_solomon,
+            mv_params,
+            whir_params,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }

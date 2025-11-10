@@ -12,7 +12,6 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
-    ntt::interleaved_rs_encode,
     poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
@@ -26,12 +25,13 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>(
-    pub(crate) WhirConfig<F, MerkleConfig, PowStrategy>,
-)
+pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
-    MerkleConfig: Config;
+    MerkleConfig: Config,
+{
+    pub(crate) config: WhirConfig<F, MerkleConfig, PowStrategy>,
+}
 
 impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
 where
@@ -39,7 +39,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
 {
     pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
-        Self(config)
+        Self { config }
     }
 
     #[allow(clippy::too_many_lines)]
@@ -56,7 +56,7 @@ where
             + UnitToField<F>,
     {
         assert!(!polynomials.is_empty());
-        assert_eq!(polynomials.len(), self.0.batch_size);
+        assert_eq!(polynomials.len(), self.config.batch_size);
 
         let num_vars = polynomials.first().unwrap().num_variables();
         let num_coeffs = polynomials.first().unwrap().num_coeffs();
@@ -66,17 +66,20 @@ where
             assert_eq!(poly.num_coeffs(), num_coeffs);
         }
 
-        let base_domain = self.0.starting_domain.base_domain.unwrap();
+        let base_domain = self.config.starting_domain.base_domain.unwrap();
         let expansion = base_domain.size() / num_coeffs;
-        let fold_size = 1 << self.0.folding_factor.at_round(0);
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
 
         let num_leaves = (polynomials[0].num_coeffs() * expansion) / fold_size;
         let stacked_leaf_size = fold_size * polynomials.len();
         let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals =
-                interleaved_rs_encode(poly.coeffs(), expansion, self.0.folding_factor.at_round(0));
+            let evals = self.config.basefield_reed_solomon.interleaved_encode(
+                poly.coeffs(),
+                expansion,
+                self.config.folding_factor.at_round(0),
+            );
 
             for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
                 let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
@@ -95,8 +98,8 @@ where
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
             MerkleTree::<MerkleConfig>::new(
-                &self.0.leaf_hash_params,
-                &self.0.two_to_one_params,
+                &self.config.leaf_hash_params,
+                &self.config.two_to_one_params,
                 leafs_iter,
             )
             .unwrap()
@@ -107,8 +110,8 @@ where
 
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
-            self.0.committment_ood_samples,
-            self.0.mv_parameters.num_variables,
+            self.config.committment_ood_samples,
+            self.config.mv_parameters.num_variables,
             |point| polynomials[0].evaluate_at_extension(point),
         )?;
         let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
@@ -117,7 +120,7 @@ where
             let answers = compute_ood_response(
                 prover_state,
                 &ood_points,
-                self.0.mv_parameters.num_variables,
+                self.config.mv_parameters.num_variables,
                 |point| poly.evaluate_at_extension(point),
             )?;
             per_poly_ood_answers.push(answers);
@@ -202,6 +205,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ark_ff::UniformRand;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
@@ -215,6 +220,7 @@ mod tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -263,7 +269,14 @@ mod tests {
 
         // Define multivariate parameters for the polynomial.
         let mv_params = MultivariateParameters::<F>::new(num_variables);
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            whir_params,
+        );
 
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
@@ -333,7 +346,11 @@ mod tests {
         let (leaf_hash_params, two_to_one_params) =
             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
             MultivariateParameters::<F>::new(10),
             ProtocolParameters {
                 initial_statement: true,
@@ -374,8 +391,11 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let (leaf_hash_params, two_to_one_params) =
             default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+            reed_solomon,
+            basefield_reed_solomon,
             MultivariateParameters::<F>::new(5),
             ProtocolParameters {
                 initial_statement: true,

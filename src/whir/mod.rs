@@ -10,6 +10,8 @@ pub mod verifier;
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ark_ff::Field;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
@@ -22,6 +24,7 @@ mod tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -95,8 +98,10 @@ mod tests {
             merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, whir_params);
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
 
         // Test that the config is serializable
         eprintln!("{params:?}");

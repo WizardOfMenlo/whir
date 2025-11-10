@@ -19,7 +19,6 @@ use super::{
 };
 use crate::{
     domain::Domain,
-    ntt::interleaved_rs_encode,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
@@ -228,8 +227,11 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals =
-            interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
+        let evals = self.config.reed_solomon.interleaved_encode(
+            folded_coefficients.coeffs(),
+            expansion,
+            folding_factor_next,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);

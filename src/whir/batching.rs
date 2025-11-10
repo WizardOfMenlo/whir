@@ -25,6 +25,8 @@
 ///
 #[cfg(test)]
 mod batching_tests {
+    use std::sync::Arc;
+
     use ark_std::UniformRand;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
@@ -37,6 +39,7 @@ mod batching_tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -120,9 +123,11 @@ mod batching_tests {
             deduplication_strategy: DeduplicationStrategy::Enabled,
             merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, whir_params);
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 
