@@ -640,7 +640,7 @@ where
             .field("batch_size", &self.batch_size)
             .field("deduplication_strategy", &self.deduplication_strategy)
             .field("merkle_proof_strategy", &self.merkle_proof_strategy)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
