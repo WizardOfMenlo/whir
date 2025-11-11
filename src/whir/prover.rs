@@ -304,7 +304,6 @@ where
             .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
-
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         self.merkle_state.write_proof_hint(
             leaf_size,
@@ -431,17 +430,15 @@ where
 
         // Every query requires opening these many in the previous Merkle tree
         let fold_size = 1 << folding_factor;
-        let answers = final_challenge_indexes
-            .iter()
-            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
-            .collect::<Vec<_>>();
-
+        let answers: Vec<_> = final_challenge_indexes
+        .iter()
+        .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
+        .collect();
         
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
         self.merkle_state.write_proof_hint(
             fold_size,
             &round_state.prev_merkle_answers,
-            // &round_state.prev_merkle,
             &round_state.prev_merkle_new,
             &final_challenge_indexes,
             prover_state,

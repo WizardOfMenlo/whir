@@ -15,10 +15,10 @@ pub struct MerkleTreeHasher {
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MerkleProof<F: CanonicalSerialize + CanonicalDeserialize> {
+pub struct MerkleProof {
     pub depth: usize,
     pub indices: Vec<usize>,
-    pub proof: Vec<F>,
+    pub proof: Vec<Hash>,
 }
 
 #[derive(Debug, Clone)]

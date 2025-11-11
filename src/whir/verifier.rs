@@ -286,9 +286,7 @@ where
         )?;
 
         let mut root_buff = [0u8; 32];
-        println!("commitment.root: {:?}", commitment.root);
         commitment.root.serialize_uncompressed(&mut root_buff[..])?;
-        println!("root_buff: {:?}", root_buff);
         // Always open against the single batched commitment
         let mut answers =
             self.verify_merkle_proof(verifier_state, &root_buff, &stir_challenges_indexes, construct_skyscraper)?;
@@ -349,10 +347,6 @@ where
             let mut buf = [0u8; 32];
             m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
             buf
-            // let mut buf = [0u8; 32];
-            // let m = MerkleConfig::LeafHash::evaluate(leaf_hash_params, leaf.as_slice());
-            // m.unwrap().serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
-            // buf
             }).collect::<Vec<_>>();
         self.merkle_state
             .read_and_verify_proof::<VerifierState, F>(

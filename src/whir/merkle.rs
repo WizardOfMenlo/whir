@@ -1,4 +1,4 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use spongefish::{ProofError, ProofResult};
 use crate::merkle_tree::{Hash, Hasher, MerkleProof};
 use crate::{
@@ -42,12 +42,11 @@ impl ProverMerkleState {
                 m.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed");
                 buf
             } else {
-                println!("i: , d: {:?} {:?}", i, d);
                 tree_new.layers[d][i]
             }
         });
 
-        prover_state.hint::<MerkleProof<F>>(&new_proof)?;
+        prover_state.hint::<MerkleProof>(&new_proof)?;
     
         Ok(())
     }
@@ -72,24 +71,16 @@ impl VerifierMerkleState
         construct_skyscraper: fn() -> Box<dyn Hasher>,
     ) -> ProofResult<()>
     where
-        VerifierState: HintDeserialize,
-        F: CanonicalSerialize + CanonicalDeserialize,
+        VerifierState: HintDeserialize
     {
-        let new_proof: MerkleProof<F> = verifier_state.hint()?;
-
-        println!("depth: {:?}", new_proof.depth);
-        // println!("new_proof: {:?}", new_proof.1);
-        println!("indices from proof: {:?}", new_proof.indices);
-        println!("indices: {:?}", indices);
+        let new_proof: MerkleProof = verifier_state.hint()?;
         if new_proof.indices != indices {
             return Err(ProofError::InvalidProof);
         }
 
         let merklizer = MerkleTreeHasher::from_hasher_fn(new_proof.depth, construct_skyscraper);
 
-        let correct = merklizer.verify_multi(root, &indices, &leaves, &new_proof.proof.iter().map(|h| {let mut buf = [0u8; 32]; h.serialize_uncompressed(&mut buf[..]).expect("leaf hash failed"); buf}).collect::<Vec<_>>());
-        println!("correct: {:?}", correct.clone().err());
-        println!("correct: {:?}", correct.is_ok());
+        let correct = merklizer.verify_multi(root, &indices, &leaves, &new_proof.proof);
         if !correct.is_ok() {
             return Err(ProofError::InvalidProof);
         }

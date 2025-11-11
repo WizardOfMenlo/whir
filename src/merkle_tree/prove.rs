@@ -1,5 +1,3 @@
-use ark_serialize::CanonicalSerialize;
-
 use crate::merkle_tree::HASH_ZERO;
 use crate::merkle_tree::Hash;
 
@@ -7,10 +5,9 @@ use super::*;
 
 impl MerkleTreeHasher {
     /// Produce a Merkle proof (multi- or single) for the given set of indices.
-    pub fn proof<F, Field>(&self, indices: &[usize], mut leaves_lookup: F) -> MerkleProof<Field>
+    pub fn proof<F>(&self, indices: &[usize], mut leaves_lookup: F) -> MerkleProof
     where
         F: FnMut(usize, usize) -> Hash,
-        Field: Clone + CanonicalSerialize + ark_ff::Field,
     {
         if indices.is_empty() {
             return MerkleProof{
@@ -31,7 +28,6 @@ impl MerkleTreeHasher {
         combined.dedup_by(|a, b| {
             a.0 == b.0
         });
-        println!("combined: {:?}", combined);
 
         let original_indices = indices.to_vec();
         let mut indices = Vec::with_capacity(combined.len());
@@ -96,7 +92,7 @@ impl MerkleTreeHasher {
 
         MerkleProof{
             depth: self.depth, 
-            proof: proof.iter().map(|h| Field::from_base_prime_field(<Field::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(h))).collect(), 
+            proof: proof,
             indices: original_indices
         }
     }

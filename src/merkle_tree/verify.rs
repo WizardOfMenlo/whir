@@ -74,7 +74,6 @@ impl MerkleTreeHasher {
         let mut next_indices = Vec::with_capacity(indices.len());
         let mut next_layer = Vec::new();
 
-        println!("indices in verify_inner: {:?}", indices);
         while depth > 0 {
             // Complete the current layer, adding missing siblings
             assert_eq!(indices.len(), leaves.len());
@@ -112,10 +111,9 @@ impl MerkleTreeHasher {
             // Compute the next layer hashes
             assert_eq!(layer.len() % 2, 0);
             next_layer.resize(layer.len() / 2, HASH_ZERO);
-
+            
             self.hasher_at_depth(depth)
                 .hash_pairs(&layer, &mut next_layer);
-
             
             // Repeat loop, re-using vecs
             depth -= 1;

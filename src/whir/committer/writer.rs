@@ -9,7 +9,7 @@ use spongefish::{
     ProofResult,
 };
 #[cfg(feature = "tracing")]
-use tracing::{instrument, span, Level};
+use tracing::instrument;
 use super::Witness;
 use crate::{
     merkle_tree::{Hasher, MerkleTreeHasher},
