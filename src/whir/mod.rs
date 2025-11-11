@@ -144,6 +144,39 @@ mod tests {
         // Add linear constraint to the statement
         statement.add_constraint(linear_claim_weight, sum);
 
+        // Base of the geometric progression [1, 2, 4, 8, 0, ...]
+        let geometric_base = F::from(2u64);
+
+        // Number of non-zero terms in the progression.
+        let geometric_n = num_coeffs - 1;
+
+        // Create geometric progression weights: [1, a, a^2, a^3, ..., a^(n-1), 0, 0, ..., 0]
+        let mut geometric_weights = vec![F::ONE];
+        let mut current_power = geometric_base;
+        for _i in 1..geometric_n {
+            geometric_weights.push(current_power);
+            current_power *= geometric_base;
+        }
+
+        // Fill remaining corners with zeros
+        geometric_weights.resize(num_coeffs, F::from(0));
+
+        // Create EvaluationsList from the geometric progression
+        let geometric_weight_list = EvaluationsList::new(geometric_weights);
+
+        // Create geometric weight function
+        let geometric_claim_weight =
+            Weights::geometric(geometric_base, geometric_n, geometric_weight_list);
+
+        // Convert polynomial to base field evaluation form for weighted_sum
+        let poly_base = EvaluationsList::from(polynomial.clone());
+
+        // Compute the weighted sum for geometric constraint
+        let geometric_sum = geometric_claim_weight.weighted_sum(&poly_base);
+
+        // Add geometric constraint to statement
+        statement.add_constraint(geometric_claim_weight, geometric_sum);
+
         // Define the Fiat-Shamir domain separator for committing and proving
         let domainsep = DomainSeparator::new("🌪️")
             .commit_statement(&params)
