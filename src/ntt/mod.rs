@@ -62,8 +62,8 @@ pub fn interleaved_rs_encode<F: FftField>(
     result
 }
 
-/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField
-pub trait ReedSolomon<F: FftField> {
+/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
+pub trait ReedSolomon<F: FftField>: Send + Sync {
     fn interleaved_encode(
         &self,
         interleaved_coeffs: &[F],
