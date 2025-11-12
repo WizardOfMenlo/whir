@@ -23,7 +23,6 @@
 ///
 /// - After the first round, rest of the protocol proceeds as usual.
 ///
-#[cfg(test)]
 mod batching_tests {
     use std::sync::Arc;
 
@@ -31,7 +30,7 @@ mod batching_tests {
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
 
-    use crate::{
+    use common::{
         crypto::{
             fields::Field64,
             merkle_tree::{
@@ -51,11 +50,11 @@ mod batching_tests {
             committer::{reader::CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
-            prover::Prover,
             statement::{Statement, Weights},
-            verifier::Verifier,
         },
     };
+    use prover::Prover;
+    use verifier::Verifier;
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
@@ -211,7 +210,7 @@ mod batching_tests {
     }
 
     #[test]
-    fn test_whir() {
+    fn test_whir_batching() {
         let folding_factors = [1, 4];
         let soundness_type = [
             SoundnessType::ConjectureList,

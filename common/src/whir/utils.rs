@@ -51,7 +51,7 @@ where
 ///
 /// This operates on the prover side.
 #[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
-pub(crate) fn sample_ood_points<F, ProverState, E>(
+pub fn sample_ood_points<F, ProverState, E>(
     prover_state: &mut ProverState,
     num_samples: usize,
     num_variables: usize,
@@ -125,7 +125,7 @@ pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
     fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
 }
 
-pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
+pub fn rlc_batched_leaves<F: ark_ff::Field>(
     leaves: Vec<Vec<F>>,
     fold_size: usize,
     batch_size: usize,
