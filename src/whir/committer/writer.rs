@@ -98,20 +98,7 @@ where
             }
         }
 
-        // #[cfg(not(feature = "parallel"))]
-        // let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
-        // let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
-
-        // let merkle_tree = {
-        //     #[cfg(feature = "tracing")]
-        //     let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
-        //     MerkleTree::<MerkleConfig>::new(
-        //         &self.0.leaf_hash_params,
-        //         &self.0.two_to_one_params,
-        //         leafs_iter,
-        //     )
-        //     .unwrap()
-        // };
+        // TODO: add a non-parallel version
         #[cfg(feature = "parallel")]
         let leaves_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
         
@@ -133,14 +120,11 @@ where
             buf
             })
         .collect();
-        println!("leaf_digests: {:?}", leaf_digests[0]);
-        
-        let hasher = construct_skyscraper();
-
-        println!("stacked_leaves_size: {:?}", stacked_leaf_size);
+        // println!("leaf_digests: {:?}", leaf_digests[0]);
+        // println!("stacked_leaves_size: {:?}", stacked_leaf_size);
         let tree = merklizer.commit(&leaf_digests);
         let tree0_as_field = F::from_base_prime_field(<F::BasePrimeField as ark_ff::PrimeField>::from_le_bytes_mod_order(&tree[0]));
-        println!("tree0_as_field: {:?}", tree0_as_field);
+        // println!("tree0_as_field: {:?}", tree0_as_field);
         prover_state.add_scalars(&[tree0_as_field])?;
 
         let (ood_points, first_answers) = sample_ood_points(
