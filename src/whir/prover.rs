@@ -373,8 +373,11 @@ where
         let new_domain = self.config.starting_domain.scale(2);
         let expansion = new_domain.size() / batched_folded_poly.num_coeffs();
         let folding_factor_next = self.config.folding_factor.at_round(1);
-        let batched_evals =
-            interleaved_rs_encode(batched_folded_poly.coeffs(), expansion, folding_factor_next);
+        let batched_evals = self.config.reed_solomon.interleaved_encode(
+            batched_folded_poly.coeffs(),
+            expansion,
+            folding_factor_next,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = batched_evals.chunks_exact(1 << folding_factor_next);

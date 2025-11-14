@@ -282,7 +282,9 @@ mod tests {
             merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
-        let params = WhirConfig::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
 
         // Create N different polynomials
         let polynomials: Vec<_> = (0..num_polynomials)
@@ -440,7 +442,9 @@ mod tests {
             merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
 
-        let params = WhirConfig::new(mv_params, whir_params);
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
