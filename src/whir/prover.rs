@@ -207,8 +207,8 @@ where
     pub fn prove_batch<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        statements: Vec<Statement<F>>,
-        witnesses: Vec<Witness<F, MerkleConfig>>,
+        statements: &[Statement<F>],
+        witnesses: &[Witness<F, MerkleConfig>],
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
     where
         ProverState: UnitToField<F>
@@ -236,13 +236,12 @@ where
             "Witness polynomial variables must match config"
         );
 
-        for (idx, (statement, witness)) in statements.iter().zip(&witnesses).enumerate() {
+        for (idx, (statement, witness)) in statements.iter().zip(witnesses).enumerate() {
             assert!(
                 self.validate_statement(statement),
-                "Statement {} is invalid",
-                idx
+                "Statement {idx} is invalid"
             );
-            assert!(self.validate_witness(witness), "Witness {} is invalid", idx);
+            assert!(self.validate_witness(witness), "Witness {idx} is invalid");
             assert_eq!(
                 witness.polynomial.num_variables(),
                 num_vars,
@@ -267,7 +266,7 @@ where
         let mut all_constraint_weights = Vec::new();
 
         // OOD constraints from each witness
-        for witness in &witnesses {
+        for witness in witnesses {
             for point in &witness.ood_points {
                 let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
                 all_constraint_weights.push(Weights::evaluation(ml_point));
@@ -275,7 +274,7 @@ where
         }
 
         // Statement constraints
-        for statement in &statements {
+        for statement in statements {
             for constraint in &statement.constraints {
                 all_constraint_weights.push(constraint.weights.clone());
             }
@@ -284,7 +283,7 @@ where
         // Evaluate EVERY polynomial at EVERY constraint point
         // This creates an N×M matrix where N = #polynomials, M = #constraints
         let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len());
-        for witness in &witnesses {
+        for witness in witnesses {
             let mut poly_evals = Vec::with_capacity(all_constraint_weights.len());
             for weights in &all_constraint_weights {
                 let eval = weights.evaluate(&witness.polynomial);
@@ -416,7 +415,7 @@ where
         let mut all_witness_answers = Vec::with_capacity(witnesses.len());
 
         // For each witness, provide Merkle proof opening at the challenge indices
-        for witness in &witnesses {
+        for witness in witnesses {
             let answers: Vec<_> = stir_indexes
                 .iter()
                 .map(|&i| witness.merkle_leaves[i * fold_size..(i + 1) * fold_size].to_vec())
@@ -478,26 +477,27 @@ where
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
         // Update sumcheck with STIR constraints
-        let mut sumcheck_prover = sumcheck_prover
-            .map(|mut sumcheck| {
-                sumcheck.add_new_equality(
-                    &stir_challenges,
-                    &stir_evaluations,
-                    &combination_randomness,
-                );
-                sumcheck
-            })
-            .unwrap_or_else(|| {
+        let mut sumcheck_prover = sumcheck_prover.map_or_else(
+            || {
                 let mut statement = Statement::new(batched_folded_poly.num_variables());
-                for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
-                    statement.add_constraint(Weights::evaluation(point), eval);
+                for (point, eval) in stir_challenges.iter().zip(stir_evaluations.iter()) {
+                    statement.add_constraint(Weights::evaluation(point.clone()), *eval);
                 }
                 SumcheckSingle::new(
                     batched_folded_poly.clone(),
                     &statement,
                     combination_randomness[1],
                 )
-            });
+            },
+            |mut sumcheck| {
+                sumcheck.add_new_equality(
+                    &stir_challenges,
+                    &stir_evaluations,
+                    &combination_randomness,
+                );
+                sumcheck
+            },
+        );
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
             prover_state,

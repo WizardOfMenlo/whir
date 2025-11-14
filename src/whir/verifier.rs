@@ -223,6 +223,7 @@ where
     /// N original commitment trees, while subsequent rounds verify the single batched polynomial.
     ///
     /// Returns the constraint evaluation point and values of deferred constraints.
+    #[allow(clippy::too_many_lines)]
     pub fn verify_batch(
         &self,
         verifier_state: &mut VerifierState,
@@ -304,7 +305,7 @@ where
                 self.params.folding_factor.at_round(0),
                 self.params.starting_folding_pow_bits,
             )?;
-            round_folding_randomness.push(folding_randomness.clone());
+            round_folding_randomness.push(folding_randomness);
         } else {
             for commitment in parsed_commitments {
                 assert_eq!(commitment.ood_points.len(), 0);
@@ -398,12 +399,12 @@ where
         let constraints: Vec<Constraint<F>> = prev_commitment
             .oods_constraints()
             .into_iter()
-            .chain(stir_constraints.into_iter())
+            .chain(stir_constraints)
             .collect();
 
         let combination_randomness =
             self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-        round_constraints.push((combination_randomness.clone(), constraints));
+        round_constraints.push((combination_randomness, constraints));
 
         let folding_randomness = self.verify_sumcheck_rounds(
             verifier_state,
