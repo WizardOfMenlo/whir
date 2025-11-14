@@ -345,7 +345,7 @@ mod tests {
 
         // Batch prove all polynomials together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, statements.clone(), witnesses);
+        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
 
         assert!(result.is_ok(), "Batch proving failed: {:?}", result.err());
 
@@ -479,7 +479,7 @@ mod tests {
 
         // ATTACK: Create a fake witness using poly_wrong instead of poly2
         // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
-        let mut witness2_fake = witness2_committed.clone();
+        let mut witness2_fake = witness2_committed;
         witness2_fake.polynomial = poly_wrong;
 
         let witnesses = vec![witness1, witness2_fake];
@@ -487,7 +487,7 @@ mod tests {
         // Generate proof with the mismatched polynomial
         // The prover will compute cross-terms using poly_wrong, not poly2
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, statements.clone(), witnesses);
+        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
 
         // Proof generation succeeds (prover doesn't verify polynomial-commitment consistency)
         assert!(result.is_ok(), "Prover generated proof");
