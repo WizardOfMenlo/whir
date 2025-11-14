@@ -25,9 +25,13 @@ use crate::{
     whir::{
         merkle,
         parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
+        utils::{
+            get_challenge_stir_queries, rlc_batched_leaves, sample_ood_points,
+            DigestToUnitSerialize,
+        },
     },
 };
+
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
 pub struct Prover<F, MerkleConfig, PowStrategy>
@@ -188,6 +192,364 @@ where
         Ok((constraint_eval, deferred))
     }
 
+    /// Proves that multiple commitments satisfy their respective constraints by batching them.
+    ///
+    /// This combines multiple independent witnesses and statements into a single proof using
+    /// random linear combination (RLC). The prover commits to a complete cross-term evaluation
+    /// matrix before sampling the batching randomness γ, preventing adaptive attacks.
+    ///
+    /// After Round 0, all polynomials are combined into a single batched polynomial and the
+    /// protocol proceeds as standard WHIR.
+    ///
+    /// Returns the constraint evaluation point and values of deferred constraints.
+    #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    pub fn prove_batch<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        statements: Vec<Statement<F>>,
+        witnesses: Vec<Witness<F, MerkleConfig>>,
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
+    where
+        ProverState: UnitToField<F>
+            + FieldToUnitSerialize<F>
+            + UnitToBytes
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
+    {
+        // Validation
+        assert!(self.validate_parameters());
+        assert!(
+            !witnesses.is_empty(),
+            "Cannot batch prove with no witnesses"
+        );
+        assert_eq!(
+            witnesses.len(),
+            statements.len(),
+            "Number of witnesses must match number of statements"
+        );
+
+        let num_vars = witnesses[0].polynomial.num_variables();
+        assert_eq!(
+            num_vars, self.config.mv_parameters.num_variables,
+            "Witness polynomial variables must match config"
+        );
+
+        for (idx, (statement, witness)) in statements.iter().zip(&witnesses).enumerate() {
+            assert!(
+                self.validate_statement(statement),
+                "Statement {} is invalid",
+                idx
+            );
+            assert!(self.validate_witness(witness), "Witness {} is invalid", idx);
+            assert_eq!(
+                witness.polynomial.num_variables(),
+                num_vars,
+                "All witness polynomials must have the same number of variables"
+            );
+            assert_eq!(
+                statement.num_variables(),
+                num_vars,
+                "All statements must have the same number of variables"
+            );
+        }
+
+        // Step 1: Commit to the full N×M constraint evaluation matrix BEFORE sampling γ.
+        //
+        // Security: The prover must commit to ALL cross-term evaluations (P_i(w_j) for all i,j)
+        // before learning the batching randomness γ. This prevents the prover from adaptively
+        // choosing P_i(w_j) values after seeing γ, which would allow breaking soundness by
+        // constructing polynomials that satisfy P_batched = Σ γ^i·P_i at constraint points
+        // but differ elsewhere.
+
+        // Collect all constraint weights from OOD samples and statements
+        let mut all_constraint_weights = Vec::new();
+
+        // OOD constraints from each witness
+        for witness in &witnesses {
+            for point in &witness.ood_points {
+                let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
+                all_constraint_weights.push(Weights::evaluation(ml_point));
+            }
+        }
+
+        // Statement constraints
+        for statement in &statements {
+            for constraint in &statement.constraints {
+                all_constraint_weights.push(constraint.weights.clone());
+            }
+        }
+
+        // Evaluate EVERY polynomial at EVERY constraint point
+        // This creates an N×M matrix where N = #polynomials, M = #constraints
+        let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len());
+        for witness in &witnesses {
+            let mut poly_evals = Vec::with_capacity(all_constraint_weights.len());
+            for weights in &all_constraint_weights {
+                let eval = weights.evaluate(&witness.polynomial);
+                poly_evals.push(eval);
+            }
+            constraint_evals_matrix.push(poly_evals);
+        }
+
+        // Commit the evaluation matrix to the transcript
+        let all_evals_flat: Vec<F> = constraint_evals_matrix
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect();
+        prover_state.add_scalars(&all_evals_flat)?;
+
+        // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
+        let [batching_randomness] = prover_state.challenge_scalars()?;
+
+        // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
+        let mut batched_coeffs = witnesses[0].polynomial.coeffs().to_vec();
+        let mut pow = batching_randomness;
+        for witness in witnesses.iter().skip(1) {
+            for (dst, src) in batched_coeffs.iter_mut().zip(witness.polynomial.coeffs()) {
+                *dst += pow * src;
+            }
+            pow *= batching_randomness;
+        }
+        let batched_poly = CoefficientList::new(batched_coeffs);
+
+        // Step 4: Build combined statement using RLC of the committed evaluation matrix
+        // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
+        let mut combined_statement = Statement::new(num_vars);
+
+        for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
+            let mut combined_eval = F::ZERO;
+            let mut pow = F::ONE;
+            for poly_evals in &constraint_evals_matrix {
+                combined_eval += pow * poly_evals[constraint_idx];
+                pow *= batching_randomness;
+            }
+            combined_statement.add_constraint(weights, combined_eval);
+        }
+
+        // Run initial sumcheck on batched polynomial with combined statement
+        let mut sumcheck_prover = None;
+        let folding_randomness = if self.config.initial_statement {
+            let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+            let mut sumcheck = SumcheckSingle::new(
+                batched_poly.clone(),
+                &combined_statement,
+                combination_randomness_gen,
+            );
+            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, _>(
+                prover_state,
+                self.config.folding_factor.at_round(0),
+                self.config.starting_folding_pow_bits,
+            )?;
+            sumcheck_prover = Some(sumcheck);
+            folding_randomness
+        } else {
+            let mut folding_randomness = vec![F::ZERO; self.config.folding_factor.at_round(0)];
+            prover_state.fill_challenge_scalars(&mut folding_randomness)?;
+            if self.config.starting_folding_pow_bits > 0. {
+                prover_state.challenge_pow::<PowStrategy>(self.config.starting_folding_pow_bits)?;
+            }
+            MultilinearPoint(folding_randomness)
+        };
+
+        let mut randomness_vec = Vec::with_capacity(self.config.mv_parameters.num_variables);
+        randomness_vec.extend(folding_randomness.0.iter().rev().copied());
+        randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
+
+        // Round 0: Batch-specific handling
+        //
+        // Unlike regular proving, Round 0 for batch proving:
+        // 1. Folds and commits the batched polynomial (for Round 1+)
+        // 2. Queries all N original witness Merkle trees (not the batched tree)
+        // 3. RLC-combines the N query answers before feeding them to sumcheck
+        //
+        // This allows the verifier to check consistency with the N original commitments
+        // while the rest of the protocol operates on the single batched polynomial.
+        let round_params = &self.config.round_parameters[0];
+        let num_variables_after_fold = num_vars - self.config.folding_factor.at_round(0);
+        let batched_folded_poly = batched_poly.fold(&folding_randomness);
+
+        // Build Merkle tree for the batched folded polynomial
+        let new_domain = self.config.starting_domain.scale(2);
+        let expansion = new_domain.size() / batched_folded_poly.num_coeffs();
+        let folding_factor_next = self.config.folding_factor.at_round(1);
+        let batched_evals =
+            interleaved_rs_encode(batched_folded_poly.coeffs(), expansion, folding_factor_next);
+
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = batched_evals.chunks_exact(1 << folding_factor_next);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = batched_evals.par_chunks_exact(1 << folding_factor_next);
+
+        let batched_merkle_tree = MerkleTree::new(
+            &self.config.leaf_hash_params,
+            &self.config.two_to_one_params,
+            leafs_iter,
+        )
+        .unwrap();
+        prover_state.add_digest(batched_merkle_tree.root())?;
+
+        // Handle OOD (Out-Of-Domain) samples
+        let (ood_points, ood_answers) = sample_ood_points(
+            prover_state,
+            round_params.ood_samples,
+            num_variables_after_fold,
+            |point| batched_folded_poly.evaluate(point),
+        )?;
+
+        // PoW
+        if round_params.pow_bits > 0. {
+            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+        }
+
+        // STIR Queries: Open all N original witness trees at challenge positions
+        let stir_indexes = get_challenge_stir_queries(
+            self.config.starting_domain.size(),
+            self.config.folding_factor.at_round(0),
+            round_params.num_queries,
+            prover_state,
+            &self.config.deduplication_strategy,
+        )?;
+
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+        let mut all_witness_answers = Vec::with_capacity(witnesses.len());
+
+        // For each witness, provide Merkle proof opening at the challenge indices
+        for witness in &witnesses {
+            let answers: Vec<_> = stir_indexes
+                .iter()
+                .map(|&i| witness.merkle_leaves[i * fold_size..(i + 1) * fold_size].to_vec())
+                .collect();
+            prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+            self.merkle_state.write_proof_hint(
+                &witness.merkle_tree,
+                &stir_indexes,
+                prover_state,
+            )?;
+            all_witness_answers.push(answers);
+        }
+
+        // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·witness_answers[i][j]
+        // This produces the expected answers for the batched polynomial
+        let rlc_answers: Vec<Vec<F>> = (0..stir_indexes.len())
+            .map(|query_idx| {
+                let mut combined = vec![F::ZERO; fold_size];
+                let mut pow = F::ONE;
+                for witness_answers in &all_witness_answers {
+                    for (dst, src) in combined.iter_mut().zip(&witness_answers[query_idx]) {
+                        *dst += pow * src;
+                    }
+                    pow *= batching_randomness;
+                }
+                combined
+            })
+            .collect();
+
+        // Compute STIR challenges and evaluations
+        let domain_scaled_gen = self
+            .config
+            .starting_domain
+            .backing_domain
+            .element(1 << self.config.folding_factor.at_round(0));
+        let stir_challenges: Vec<MultilinearPoint<F>> = ood_points
+            .iter()
+            .copied()
+            .chain(
+                stir_indexes
+                    .iter()
+                    .map(|&i| domain_scaled_gen.pow([i as u64])),
+            )
+            .map(|univariate| {
+                MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
+            })
+            .collect();
+
+        let mut stir_evaluations = ood_answers;
+        stir_evaluations.extend(
+            rlc_answers
+                .iter()
+                .map(|answer| CoefficientList::new(answer.clone()).evaluate(&folding_randomness)),
+        );
+
+        // Randomness for combination
+        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+        let combination_randomness =
+            expand_randomness(combination_randomness_gen, stir_challenges.len());
+
+        // Update sumcheck with STIR constraints
+        let mut sumcheck_prover = sumcheck_prover
+            .map(|mut sumcheck| {
+                sumcheck.add_new_equality(
+                    &stir_challenges,
+                    &stir_evaluations,
+                    &combination_randomness,
+                );
+                sumcheck
+            })
+            .unwrap_or_else(|| {
+                let mut statement = Statement::new(batched_folded_poly.num_variables());
+                for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
+                    statement.add_constraint(Weights::evaluation(point), eval);
+                }
+                SumcheckSingle::new(
+                    batched_folded_poly.clone(),
+                    &statement,
+                    combination_randomness[1],
+                )
+            });
+
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
+            prover_state,
+            folding_factor_next,
+            round_params.folding_pow_bits,
+        )?;
+
+        let start_idx = self.config.folding_factor.at_round(0);
+        let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
+        for (dst, src) in dst_randomness
+            .iter_mut()
+            .zip(folding_randomness.0.iter().rev())
+        {
+            *dst = *src;
+        }
+
+        // Transition to Round 1: From here on, the protocol operates on the single batched
+        // polynomial. All subsequent rounds use standard WHIR proving with one Merkle tree.
+        let mut round_state = RoundState {
+            domain: new_domain,
+            round: 1,
+            sumcheck_prover: Some(sumcheck_prover),
+            folding_randomness,
+            coefficients: batched_folded_poly,
+            prev_merkle: batched_merkle_tree,
+            prev_merkle_answers: batched_evals,
+            randomness_vec,
+            statement: combined_statement,
+            batching_randomness,
+        };
+
+        // Execute standard WHIR rounds 1 through n on the batched polynomial
+        for _round in 1..=self.config.n_rounds() {
+            self.round(prover_state, &mut round_state)?;
+        }
+
+        // Hints for deferred constraints
+        let constraint_eval =
+            MultilinearPoint(round_state.randomness_vec.iter().copied().rev().collect());
+        let deferred = round_state
+            .statement
+            .constraints
+            .iter()
+            .filter(|constraint| constraint.defer_evaluation)
+            .map(|constraint| constraint.weights.compute(&constraint_eval))
+            .collect();
+
+        prover_state.hint::<Vec<F>>(&deferred)?;
+
+        Ok((constraint_eval, deferred))
+    }
+
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
     fn round<ProverState>(
@@ -299,7 +661,7 @@ where
         )?;
 
         if round_state.round == 0 && self.config.batch_size > 1 {
-            answers = crate::whir::utils::rlc_batched_leaves(
+            answers = rlc_batched_leaves(
                 answers,
                 fold_size,
                 self.config.batch_size,
