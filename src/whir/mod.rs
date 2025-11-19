@@ -247,4 +247,273 @@ mod tests {
             }
         }
     }
+
+    /// Test batch proving with multiple independent polynomials and statements.
+    ///
+    /// Creates N separate polynomials, commits to each independently, and uses RLC to batch-prove
+    /// them together. This verifies the full lifecycle: commitment, batch proving, and verification.
+    fn make_whir_batch_things(
+        num_variables: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        num_polynomials: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let num_coeffs = 1 << num_variables;
+        let mut rng = ark_std::test_rng();
+
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
+
+        let mv_params = MultivariateParameters::new(num_variables);
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor,
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+
+        // Create N different polynomials
+        let polynomials: Vec<_> = (0..num_polynomials)
+            .map(|i| {
+                // Different polynomials: first is all 1s, second is all 2s, etc.
+                CoefficientList::new(vec![F::from((i + 1) as u64); num_coeffs])
+            })
+            .collect();
+
+        // Create N statements, one for each polynomial
+        let mut statements = Vec::new();
+        for poly in &polynomials {
+            let mut statement = Statement::new(num_variables);
+
+            // Add random point constraints
+            for _ in 0..num_points_per_poly {
+                let point = MultilinearPoint::rand(&mut rng, num_variables);
+                let eval = poly.evaluate_at_extension(&point);
+                statement.add_constraint(Weights::evaluation(point), eval);
+            }
+
+            // Add linear constraint
+            let input = CoefficientList::new(
+                (0..1 << num_variables)
+                    .map(<EF as Field>::BasePrimeField::from)
+                    .collect(),
+            );
+            let linear_claim_weight = Weights::linear(input.into());
+            let poly_evals = EvaluationsList::from(poly.clone().to_extension());
+            let sum = linear_claim_weight.weighted_sum(&poly_evals);
+            statement.add_constraint(linear_claim_weight, sum);
+
+            statements.push(statement);
+        }
+
+        // Set up domain separator for batch proving
+        // Each polynomial needs its own commitment phase
+        let mut domainsep = DomainSeparator::new("🌪️");
+        for _ in 0..num_polynomials {
+            domainsep = domainsep.commit_statement(&params);
+        }
+
+        // Calculate total constraints for the N×M evaluation matrix
+        let total_constraints = num_polynomials * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+        domainsep = domainsep.add_whir_batch_proof(&params, num_polynomials, total_constraints);
+        let mut prover_state = domainsep.to_prover_state();
+
+        // Commit to each polynomial and generate witnesses
+        let committer = CommitmentWriter::new(params.clone());
+        let mut witnesses = Vec::new();
+
+        for poly in &polynomials {
+            let witness = committer.commit(&mut prover_state, poly).unwrap();
+            witnesses.push(witness);
+        }
+
+        // Batch prove all polynomials together
+        let prover = Prover::new(params.clone());
+        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+
+        assert!(result.is_ok(), "Batch proving failed: {:?}", result.err());
+
+        // Set up verifier and parse commitments
+        let commitment_reader = CommitmentReader::new(&params);
+        let verifier = Verifier::new(&params);
+
+        // Reconstruct verifier's transcript view
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        // Parse all N commitments from the transcript
+        let mut parsed_commitments = Vec::new();
+        for _ in 0..num_polynomials {
+            let parsed_commitment = commitment_reader
+                .parse_commitment(&mut verifier_state)
+                .unwrap();
+            parsed_commitments.push(parsed_commitment);
+        }
+
+        // Verify the batched proof
+        verifier
+            .verify_batch(&mut verifier_state, &parsed_commitments, &statements)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_whir_batch() {
+        // Test with different configurations
+        let folding_factors = [2, 3, 4];
+        let num_polynomials = [2, 3, 4];
+        let num_points = [0, 1, 2];
+
+        for folding_factor in folding_factors {
+            for num_polys in num_polynomials {
+                for num_points_per_poly in num_points {
+                    make_whir_batch_things(
+                        folding_factor * 2, // num_variables
+                        FoldingFactor::Constant(folding_factor),
+                        num_points_per_poly,
+                        num_polys,
+                        SoundnessType::ConjectureList,
+                        0, // pow_bits
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_whir_batch_single_polynomial() {
+        // Edge case: batch proving with just one polynomial should also work
+        make_whir_batch_things(
+            6, // num_variables
+            FoldingFactor::Constant(2),
+            2, // num_points_per_poly
+            1, // num_polynomials (single!)
+            SoundnessType::ConjectureList,
+            0,
+        );
+    }
+
+    /// Test that batch verification rejects proofs with mismatched polynomials.
+    ///
+    /// This security test verifies that the cross-term commitment prevents the prover from
+    /// using a different polynomial than what was committed. The prover commits to poly2 but
+    /// attempts to use poly_wrong for evaluation, which should cause verification to fail.
+    #[test]
+    fn test_whir_batch_rejects_invalid_constraint() {
+        // Setup parameters
+        let num_variables = 4;
+        let folding_factor = FoldingFactor::Constant(2);
+        let num_polynomials = 2;
+        let num_coeffs = 1 << num_variables;
+        let mut rng = ark_std::test_rng();
+
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
+
+        let mv_params = MultivariateParameters::new(num_variables);
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits: 0,
+            folding_factor,
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type: SoundnessType::ConjectureList,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+
+        // Create test polynomials
+        let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
+        let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
+        let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
+
+        // Create valid statements for poly1 and poly2
+        let mut statement1 = Statement::new(num_variables);
+        let point1 = MultilinearPoint::rand(&mut rng, num_variables);
+        let eval1 = poly1.evaluate_at_extension(&point1);
+        statement1.add_constraint(Weights::evaluation(point1), eval1);
+
+        let mut statement2 = Statement::new(num_variables);
+        let point2 = MultilinearPoint::rand(&mut rng, num_variables);
+        let eval2 = poly2.evaluate_at_extension(&point2);
+        statement2.add_constraint(Weights::evaluation(point2), eval2);
+
+        let statements = vec![statement1, statement2];
+
+        // Commit to the correct polynomials
+        let mut domainsep = DomainSeparator::new("🌪️");
+        for _ in 0..num_polynomials {
+            domainsep = domainsep.commit_statement(&params);
+        }
+        let total_constraints = num_polynomials * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+        domainsep = domainsep.add_whir_batch_proof(&params, num_polynomials, total_constraints);
+        let mut prover_state = domainsep.to_prover_state();
+
+        let committer = CommitmentWriter::new(params.clone());
+        let witness1 = committer.commit(&mut prover_state, &poly1).unwrap();
+        let witness2_committed = committer.commit(&mut prover_state, &poly2).unwrap();
+
+        // ATTACK: Create a fake witness using poly_wrong instead of poly2
+        // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
+        let mut witness2_fake = witness2_committed;
+        witness2_fake.polynomial = poly_wrong;
+
+        let witnesses = vec![witness1, witness2_fake];
+
+        // Generate proof with the mismatched polynomial
+        // The prover will compute cross-terms using poly_wrong, not poly2
+        let prover = Prover::new(params.clone());
+        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+
+        // Proof generation succeeds (prover doesn't verify polynomial-commitment consistency)
+        assert!(result.is_ok(), "Prover generated proof");
+
+        // Verification should fail because the cross-terms don't match the commitment
+        let commitment_reader = CommitmentReader::new(&params);
+        let verifier = Verifier::new(&params);
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        let mut parsed_commitments = Vec::new();
+        for _ in 0..num_polynomials {
+            let parsed_commitment = commitment_reader
+                .parse_commitment(&mut verifier_state)
+                .unwrap();
+            parsed_commitments.push(parsed_commitment);
+        }
+
+        let verify_result =
+            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        assert!(
+            verify_result.is_err(),
+            "Verifier should reject mismatched polynomial"
+        );
+    }
 }
