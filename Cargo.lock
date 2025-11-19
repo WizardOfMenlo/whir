@@ -1143,8 +1143,8 @@ dependencies = [
 
 [[package]]
 name = "spongefish"
-version = "0.2.0"
-source = "git+https://github.com/arkworks-rs/spongefish#cbdd66620cb4660f0a9cc0fc943eff6d5fc14927"
+version = "0.2.0-alpha"
+source = "git+https://github.com/arkworks-rs/spongefish?rev=ecb4f08373ed930175585c856517efdb1851fb47#ecb4f08373ed930175585c856517efdb1851fb47"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -1153,13 +1153,16 @@ dependencies = [
  "hex",
  "keccak",
  "rand",
+ "sha3",
+ "thiserror",
+ "zerocopy 0.8.24",
  "zeroize",
 ]
 
 [[package]]
 name = "spongefish-pow"
-version = "0.1.0"
-source = "git+https://github.com/arkworks-rs/spongefish#cbdd66620cb4660f0a9cc0fc943eff6d5fc14927"
+version = "0.1.0-alpha"
+source = "git+https://github.com/arkworks-rs/spongefish?rev=ecb4f08373ed930175585c856517efdb1851fb47#ecb4f08373ed930175585c856517efdb1851fb47"
 dependencies = [
  "blake3",
  "bytemuck",
