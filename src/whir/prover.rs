@@ -415,13 +415,14 @@ where
         )?;
 
         let fold_size = 1 << self.config.folding_factor.at_round(0);
+        let leaf_size = fold_size * self.config.batch_size;
         let mut all_witness_answers = Vec::with_capacity(witnesses.len());
 
         // For each witness, provide Merkle proof opening at the challenge indices
         for witness in witnesses {
             let answers: Vec<_> = stir_indexes
                 .iter()
-                .map(|&i| witness.merkle_leaves[i * fold_size..(i + 1) * fold_size].to_vec())
+                .map(|&i| witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
                 .collect();
             prover_state.hint::<Vec<Vec<F>>>(&answers)?;
             self.merkle_state.write_proof_hint(
@@ -438,10 +439,19 @@ where
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
-                for witness_answers in &all_witness_answers {
-                    for (dst, src) in combined.iter_mut().zip(&witness_answers[query_idx]) {
-                        *dst += pow * src;
+                for (witness_idx, witness) in witnesses.iter().enumerate() {
+                    let answer = &all_witness_answers[witness_idx][query_idx];
+
+                    // First, internally reduce stacked leaf using witness's batching_randomness
+                    let mut internal_pow = F::ONE;
+                    for poly_idx in 0..self.config.batch_size {
+                        let start = poly_idx * fold_size;
+                        for j in 0..fold_size {
+                            combined[j] += pow * internal_pow * answer[start + j];
+                        }
+                        internal_pow *= witness.batching_randomness;
                     }
+
                     pow *= batching_randomness;
                 }
                 combined

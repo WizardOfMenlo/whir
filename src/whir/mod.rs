@@ -516,4 +516,173 @@ mod tests {
             "Verifier should reject mismatched polynomial"
         );
     }
+
+    /// Test batch proving with batch_size > 1 (multiple polynomials per commitment).
+    ///
+    /// This tests the case where each commitment contains multiple stacked polynomials
+    /// (e.g., masked witness + random blinding for ZK), and we batch-prove multiple
+    /// such commitments together.
+    ///
+    /// This was a regression test for a bug where the RLC combination of stacked
+    /// leaf answers was incorrect when batch_size > 1.
+    fn make_whir_batch_with_batch_size(
+        num_variables: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        num_witnesses: usize,
+        batch_size: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let num_coeffs = 1 << num_variables;
+        let mut rng = ark_std::test_rng();
+
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
+
+        let mv_params = MultivariateParameters::new(num_variables);
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor,
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size, // KEY: batch_size > 1
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+
+        // Create polynomials for each witness
+        // Each witness will contain batch_size polynomials committed together
+        let mut all_polynomials: Vec<Vec<CoefficientList<F>>> = Vec::new();
+        for w in 0..num_witnesses {
+            let witness_polys: Vec<_> = (0..batch_size)
+                .map(|b| {
+                    // Different polynomials: witness 0 batch 0 = all 1s, witness 0 batch 1 = all 2s, etc.
+                    CoefficientList::new(vec![
+                        F::from(((w * batch_size + b) + 1) as u64);
+                        num_coeffs
+                    ])
+                })
+                .collect();
+            all_polynomials.push(witness_polys);
+        }
+
+        // Create statements - one per witness, based on the first polynomial in each batch
+        // (the internally-batched polynomial is what the statement is about)
+        let mut statements = Vec::new();
+        for witness_polys in &all_polynomials {
+            let poly = &witness_polys[0]; // Use first poly for statement (will be batched internally)
+            let mut statement = Statement::new(num_variables);
+
+            for _ in 0..num_points_per_poly {
+                let point = MultilinearPoint::rand(&mut rng, num_variables);
+                let eval = poly.evaluate_at_extension(&point);
+                statement.add_constraint(Weights::evaluation(point), eval);
+            }
+
+            // Add a linear constraint
+            let input = CoefficientList::new(
+                (0..1 << num_variables)
+                    .map(<EF as Field>::BasePrimeField::from)
+                    .collect(),
+            );
+            let linear_claim_weight = Weights::linear(input.into());
+            let poly_evals = EvaluationsList::from(poly.clone().to_extension());
+            let sum = linear_claim_weight.weighted_sum(&poly_evals);
+            statement.add_constraint(linear_claim_weight, sum);
+
+            statements.push(statement);
+        }
+
+        // Set up domain separator
+        let mut domainsep = DomainSeparator::new("🌪️");
+        for _ in 0..num_witnesses {
+            domainsep = domainsep.commit_statement(&params);
+        }
+
+        let total_constraints = num_witnesses * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+        domainsep = domainsep.add_whir_batch_proof(&params, num_witnesses, total_constraints);
+        let mut prover_state = domainsep.to_prover_state();
+
+        // Commit using commit_batch (stacks batch_size polynomials per witness)
+        let committer = CommitmentWriter::new(params.clone());
+        let mut witnesses = Vec::new();
+
+        for witness_polys in &all_polynomials {
+            let poly_refs: Vec<_> = witness_polys.iter().collect();
+            let witness = committer
+                .commit_batch(&mut prover_state, &poly_refs)
+                .unwrap();
+            witnesses.push(witness);
+        }
+
+        // Batch prove all witnesses together
+        let prover = Prover::new(params.clone());
+        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        assert!(
+            result.is_ok(),
+            "Batch proving with batch_size={} failed: {:?}",
+            batch_size,
+            result.err()
+        );
+
+        // Verify
+        let commitment_reader = CommitmentReader::new(&params);
+        let verifier = Verifier::new(&params);
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        let mut parsed_commitments = Vec::new();
+        for _ in 0..num_witnesses {
+            let parsed_commitment = commitment_reader
+                .parse_commitment(&mut verifier_state)
+                .unwrap();
+            parsed_commitments.push(parsed_commitment);
+        }
+
+        let verify_result =
+            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        assert!(
+            verify_result.is_ok(),
+            "Batch verification with batch_size={} failed: {:?}",
+            batch_size,
+            verify_result.err()
+        );
+    }
+
+    #[test]
+    fn test_whir_batch_with_batch_size_2() {
+        // This is the key regression test for the batch_size > 1 bug
+        let batch_sizes = [2, 3];
+        let num_witnesses = [2, 3];
+        let folding_factors = [2, 3];
+
+        for batch_size in batch_sizes {
+            for num_witness in num_witnesses {
+                for folding_factor in folding_factors {
+                    make_whir_batch_with_batch_size(
+                        folding_factor * 2, // num_variables
+                        FoldingFactor::Constant(folding_factor),
+                        1, // num_points_per_poly
+                        num_witness,
+                        batch_size,
+                        SoundnessType::ConjectureList,
+                        0, // pow_bits
+                    );
+                }
+            }
+        }
+    }
 }

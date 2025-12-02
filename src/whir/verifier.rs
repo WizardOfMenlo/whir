@@ -236,7 +236,7 @@ where
         // Step 1: Read the N×M constraint evaluation matrix from the transcript
 
         // Collect all constraint weights to determine matrix dimensions
-        let mut all_constraint_weights = Vec::new();
+        let mut all_constraints_info: Vec<(Weights<F>, bool)> = Vec::new();
 
         // OOD constraints from each commitment
         for commitment in parsed_commitments {
@@ -245,20 +245,21 @@ where
                     *point,
                     self.params.mv_parameters.num_variables,
                 );
-                all_constraint_weights.push(Weights::evaluation(ml_point));
+                all_constraints_info.push((Weights::evaluation(ml_point), false));
             }
         }
 
         // Statement constraints
         for statement in statements {
             for constraint in &statement.constraints {
-                all_constraint_weights.push(constraint.weights.clone());
+                all_constraints_info
+                    .push((constraint.weights.clone(), constraint.defer_evaluation));
             }
         }
 
         // Read the N×M evaluation matrix from transcript
         let num_polynomials = parsed_commitments.len();
-        let num_constraints = all_constraint_weights.len();
+        let num_constraints = all_constraints_info.len();
         let mut constraint_evals_matrix = Vec::with_capacity(num_polynomials);
 
         for _ in 0..num_polynomials {
@@ -279,7 +280,9 @@ where
         if self.params.initial_statement {
             let mut all_constraints = Vec::new();
 
-            for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
+            for (constraint_idx, (weights, defer_evaluation)) in
+                all_constraints_info.into_iter().enumerate()
+            {
                 let mut combined_eval = F::ZERO;
                 let mut pow = F::ONE;
                 for poly_evals in &constraint_evals_matrix {
@@ -290,7 +293,7 @@ where
                 all_constraints.push(Constraint {
                     weights,
                     sum: combined_eval,
-                    defer_evaluation: false,
+                    defer_evaluation,
                 });
             }
 
@@ -368,10 +371,19 @@ where
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
-                for witness_answers in &all_answers {
-                    for (dst, src) in combined.iter_mut().zip(&witness_answers[query_idx]) {
-                        *dst += pow * src;
+                for (commitment, witness_answers) in parsed_commitments.iter().zip(&all_answers) {
+                    let stacked_answer = &witness_answers[query_idx];
+
+                    // First, internally reduce stacked leaf using commitment's batching_randomness
+                    let mut internal_pow = F::ONE;
+                    for poly_idx in 0..self.params.batch_size {
+                        let start = poly_idx * fold_size;
+                        for j in 0..fold_size {
+                            combined[j] += pow * internal_pow * stacked_answer[start + j];
+                        }
+                        internal_pow *= commitment.batching_randomness;
                     }
+
                     pow *= batching_randomness;
                 }
                 combined
