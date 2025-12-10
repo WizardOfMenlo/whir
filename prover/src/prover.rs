@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -11,13 +11,7 @@ use spongefish_pow::{self, PoWChallenge};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
-use super::{
-    committer::Witness,
-    parameters::WhirConfig,
-    statement::{Statement, Weights},
-    utils::HintSerialize,
-};
-use crate::{
+use common::{
     domain::Domain,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
@@ -31,8 +25,12 @@ use crate::{
         },
     },
 };
-
-pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
+use common::{
+    whir::committer::Witness,
+    whir::parameters::WhirConfig,
+    whir::statement::{Statement, Weights},
+    whir::utils::HintSerialize,
+};
 
 pub struct Prover<F, MerkleConfig, PowStrategy>
 where

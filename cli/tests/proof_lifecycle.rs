@@ -1,14 +1,3 @@
-pub mod batching;
-pub mod committer;
-pub mod domainsep;
-pub mod merkle;
-pub mod parameters;
-pub mod prover;
-pub mod statement;
-pub mod utils;
-pub mod verifier;
-
-#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
@@ -16,7 +5,7 @@ mod tests {
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
 
-    use crate::{
+    use common::{
         crypto::{
             fields::{Field64, Field64_2},
             merkle_tree::{
@@ -37,11 +26,12 @@ mod tests {
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
-            prover::Prover,
             statement::{Statement, Weights},
-            verifier::Verifier,
         },
     };
+
+    use prover::Prover;
+    use verifier::Verifier;
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
@@ -218,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_whir() {
+    fn test_whir_proof_lifecycle() {
         let folding_factors = [1, 2, 3, 4];
         let soundness_type = [
             SoundnessType::ConjectureList,

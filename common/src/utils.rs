@@ -1,9 +1,7 @@
-#[cfg(test)]
 use std::fmt::Debug;
 
 use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
-#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
 /// Workaround for Ark types that are missing comparisons
@@ -119,7 +117,6 @@ pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
     }
 }
 
-#[cfg(test)]
 #[track_caller]
 pub fn test_serde<T: Debug + PartialEq + Serialize + for<'a> Deserialize<'a>>(value: &T) {
     // Test in human-readable format

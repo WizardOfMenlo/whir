@@ -1,0 +1,41 @@
+[package]
+name = "common"
+description = "Common code for verifier and prover"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+ark-crypto-primitives = { workspace = true }
+ark-ff = { workspace = true }
+ark-poly = { workspace = true }
+ark-serialize = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+itertools = { workspace = true }
+postcard = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha3 = { workspace = true }
+spongefish = { workspace = true }
+spongefish-pow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+ark-std = { workspace = true }
+proptest = { workspace = true }
+
+[features]
+default = ["parallel"]
+asm = ["ark-ff/asm"]
+parallel = [
+    "dep:rayon",
+    "ark-poly/parallel",
+    "ark-ff/parallel",
+    "ark-crypto-primitives/parallel",
+]
+rayon = ["dep:rayon"]
+tracing = ["dep:tracing"]

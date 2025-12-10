@@ -1,11 +1,11 @@
 use ark_ff::fields::Field;
-use divan::{black_box, AllocProfiler, Bencher};
-use whir::{
+use common::{
     crypto::fields::Field64 as F,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     whir::statement::{Statement, Weights},
 };
+use divan::{black_box, AllocProfiler, Bencher};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();

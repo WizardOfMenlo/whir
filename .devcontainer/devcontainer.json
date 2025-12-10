@@ -1,0 +1,23 @@
+{
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {},
+        "ghcr.io/devcontainers/features/common-utils:2": {},
+        "ghcr.io/devcontainers/features/node:1": {}
+    },
+    "postCreateCommand": "./.devcontainer/post_create_command.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "vadimcn.vscode-lldb",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                "git.allowForcePush": true,
+                "diffEditor.ignoreTrimWhitespace": false,
+                "editor.formatOnSave": true
+            }
+        }
+    }
+}

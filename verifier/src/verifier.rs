@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use ark_crypto_primitives::merkle_tree::Config;
+use ark_crypto_primitives::merkle_tree::{Config, MultiPath};
 use ark_ff::FftField;
 use spongefish::{
     codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
@@ -8,21 +8,22 @@ use spongefish::{
 };
 use spongefish_pow::{self, PoWChallenge};
 
-use super::{
-    committer::reader::ParsedCommitment,
-    parameters::{RoundConfig, WhirConfig},
-    statement::{Constraint, Statement, Weights},
-    utils::HintDeserialize,
-};
-use crate::{
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckPolynomial,
-    utils::expand_randomness,
-    whir::{
+type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
+
+use {
+    common::poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    common::sumcheck::SumcheckPolynomial,
+    common::utils::expand_randomness,
+    common::whir::{
         merkle,
-        prover::RootPath,
         utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
     },
+};
+use {
+    common::whir::committer::reader::ParsedCommitment,
+    common::whir::parameters::{RoundConfig, WhirConfig},
+    common::whir::statement::{Constraint, Statement, Weights},
+    common::whir::utils::HintDeserialize,
 };
 
 pub struct Verifier<'a, F, MerkleConfig, PowStrategy, VerifierState>
@@ -596,7 +597,7 @@ where
         // If this is the first round and batching > 1, RLC per leaf to fold_size
         if round_index == 0 && self.params.batch_size > 1 {
             let fold_size = 1 << params.folding_factor;
-            answers = crate::whir::utils::rlc_batched_leaves(
+            answers = common::whir::utils::rlc_batched_leaves(
                 answers,
                 fold_size,
                 self.params.batch_size,

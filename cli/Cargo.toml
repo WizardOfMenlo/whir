@@ -1,0 +1,32 @@
+[package]
+name = "cli"
+description = "cli prover and verifier implementation"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+ark-std = { workspace = true }
+ark-crypto-primitives = { workspace = true }
+ark-ff = { workspace = true }
+ark-serialize = { workspace = true }
+clap = { workspace = true }
+common = { workspace = true }
+prover = { workspace = true }
+spongefish-pow = { workspace = true }
+spongefish = { workspace = true }
+verifier = { workspace = true }
+
+[dev-dependencies]
+divan = { version = "2.10.0", package = "codspeed-divan-compat" }
+
+[[bench]]
+name = "expand_from_coeff"
+harness = false
+
+[[bench]]
+name = "sumcheck"
+harness = false
+
+[features]
+asm = ["ark-ff/asm"]

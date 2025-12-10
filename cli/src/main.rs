@@ -7,9 +7,7 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{DomainSeparator, ProverState, VerifierState};
-use spongefish_pow::blake3::Blake3PoW;
-use whir::{
+use common::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
         fields,
@@ -33,6 +31,9 @@ use whir::{
         utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
+use spongefish::{DomainSeparator, ProverState, VerifierState};
+use spongefish_pow::blake3::Blake3PoW;
+use verifier::Verifier;
 
 use crate::merkle_tree::parameters::default_config;
 
@@ -206,10 +207,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
-    use whir::whir::{
+    use common::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, verifier::Verifier,
     };
+
+    use prover::Prover;
 
     // Runs as a LDT
     let security_level = args.security_level;
@@ -327,10 +329,12 @@ fn run_whir_pcs<F, MerkleConfig>(
     ProverState: DigestToUnitSerialize<MerkleConfig>,
     for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
 {
-    use whir::whir::{
+    use common::whir::{
         committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, statement::Statement, verifier::Verifier,
+        statement::Statement,
     };
+
+    use prover::Prover;
 
     // Runs as a PCS
     let security_level = args.security_level;

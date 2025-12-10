@@ -82,14 +82,15 @@ impl<F: FftField> NttEngine<F> {
     /// Construct a new engine from the field's `FftField` trait.
     pub(crate) fn new_from_fftfield() -> Self {
         // TODO: Support SMALL_SUBGROUP
-        if F::TWO_ADICITY <= 63 {
+        const MAX_SUPPORTED_TWO_ADDICITY: u32 = usize::BITS - 1;
+        if F::TWO_ADICITY <= MAX_SUPPORTED_TWO_ADDICITY {
             Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
         } else {
             let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
-            for _ in 0..(F::TWO_ADICITY - 63) {
+            for _ in 0..(F::TWO_ADICITY - MAX_SUPPORTED_TWO_ADDICITY) {
                 generator = generator.square();
             }
-            Self::new(1 << 63, generator)
+            Self::new(1 << MAX_SUPPORTED_TWO_ADDICITY, generator)
         }
     }
 }
