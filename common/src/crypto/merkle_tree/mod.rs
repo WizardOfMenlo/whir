@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use ark_crypto_primitives::{merkle_tree::DigestConverter, Error};
 
 pub mod blake3;
@@ -11,8 +9,13 @@ pub mod proof;
 #[derive(Debug, Default)]
 pub struct HashCounter;
 
+#[cfg(not(feature = "disable-hash-counter"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(not(feature = "disable-hash-counter"))]
 static HASH_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(not(feature = "disable-hash-counter"))]
 impl HashCounter {
     pub(crate) fn add() -> usize {
         HASH_COUNTER.fetch_add(1, Ordering::SeqCst)
@@ -24,6 +27,17 @@ impl HashCounter {
 
     pub fn get() -> usize {
         HASH_COUNTER.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(feature = "disable-hash-counter")]
+impl HashCounter {
+    pub(crate) fn add() -> usize {
+        0
+    }
+    pub fn reset() {}
+    pub fn get() -> usize {
+        0
     }
 }
 

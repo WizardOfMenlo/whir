@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use super::*;
 
 pub(super) fn expand_from_coeff<F: FftField>(coeffs: &[F], expansion: usize) -> Vec<F> {
-    let engine = cooley_tukey::NttEngine::<F>::new_from_cache();
+    let engine = cooley_tukey::NttEngine::<F>::get_or_create();
     let expanded_size = coeffs.len() * expansion;
     let mut result = Vec::with_capacity(expanded_size);
     // Note: We can also zero-extend the coefficients and do a larger NTT.

@@ -29,7 +29,7 @@ ark-std = { workspace = true }
 proptest = { workspace = true }
 
 [features]
-default = ["parallel"]
+default = []
 asm = ["ark-ff/asm"]
 parallel = [
     "dep:rayon",
@@ -39,3 +39,5 @@ parallel = [
 ]
 rayon = ["dep:rayon"]
 tracing = ["dep:tracing"]
+disable-hash-counter = []
+disable-ntt-cache = []

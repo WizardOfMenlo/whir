@@ -3,13 +3,10 @@
 //! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
 //! A global cache is used for twiddle factors.
 
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard},
-};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use ark_ff::{FftField, Field};
+
 #[cfg(feature = "parallel")]
 use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
 
@@ -18,9 +15,17 @@ use super::{
     utils::{lcm, sqrt_factor},
 };
 
+#[cfg(not(feature = "disable-ntt-cache"))]
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+
 /// Global cache for NTT engines, indexed by field.
 // TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
 // see https://github.com/rust-lang/rust/issues/102575
+#[cfg(not(feature = "disable-ntt-cache"))]
 static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -46,27 +51,28 @@ pub struct NttEngine<F: Field> {
 
 /// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
-    NttEngine::<F>::new_from_cache().ntt(values);
+    NttEngine::<F>::get_or_create().ntt(values);
 }
 
 /// Compute the many NTTs of size `size` using a cached engine.
 pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::<F>::new_from_cache().ntt_batch(values, size);
+    NttEngine::<F>::get_or_create().ntt_batch(values, size);
 }
 
 /// Compute the inverse NTT of a slice of field element without the 1/n scaling factor, using a cached engine.
 pub fn intt<F: FftField>(values: &mut [F]) {
-    NttEngine::<F>::new_from_cache().intt(values);
+    NttEngine::<F>::get_or_create().intt(values);
 }
 
 /// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the 1/n scaling factor and using a cached engine.
 pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::<F>::new_from_cache().intt_batch(values, size);
+    NttEngine::<F>::get_or_create().intt_batch(values, size);
 }
 
 impl<F: FftField> NttEngine<F> {
     /// Get or create a cached engine for the field `F`.
-    pub fn new_from_cache() -> Arc<Self> {
+    #[cfg(not(feature = "disable-ntt-cache"))]
+    pub fn get_or_create() -> Arc<Self> {
         let mut cache = ENGINE_CACHE.lock().unwrap();
         let type_id = TypeId::of::<F>();
         #[allow(clippy::option_if_let_else)]
@@ -77,6 +83,11 @@ impl<F: FftField> NttEngine<F> {
             cache.insert(type_id, engine.clone());
             engine
         }
+    }
+
+    #[cfg(feature = "disable-ntt-cache")]
+    pub fn get_or_create() -> Arc<Self> {
+        Arc::new(Self::new_from_fftfield())
     }
 
     /// Construct a new engine from the field's `FftField` trait.
@@ -714,12 +725,14 @@ mod tests {
     }
 
     #[test]
-    fn test_new_from_cache_singleton() {
+    fn test_get_or_create_singleton() {
         // Retrieve two instances of the engine
-        let engine1 = NttEngine::<Field64>::new_from_cache();
-        let engine2 = NttEngine::<Field64>::new_from_cache();
+        let engine1 = NttEngine::<Field64>::get_or_create();
+        #[cfg(not(feature = "disable-ntt-cache"))]
+        let engine2 = NttEngine::<Field64>::get_or_create();
 
         // Both instances should point to the same object in memory
+        #[cfg(not(feature = "disable-ntt-cache"))]
         assert!(Arc::ptr_eq(&engine1, &engine2));
 
         // Verify that the cached instance has the expected properties

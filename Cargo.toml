@@ -53,10 +53,10 @@ rayon = { version = "1.10.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha3 = "0.10"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = [
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", default-features = false, features = [
     "arkworks-algebra",
 ], rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
-spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish", rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
+spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish", default-features = false, rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
 thiserror = "2.0"
 tracing = { version = "0.1.41" }
 verifier = { path = "verifier/" }
