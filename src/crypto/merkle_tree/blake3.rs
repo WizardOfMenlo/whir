@@ -5,7 +5,7 @@ use ark_crypto_primitives::{
     Error,
 };
 use ark_serialize::CanonicalSerialize;
-use rand::RngCore;
+use ark_std::rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{digest::GenericDigest, parameters::MerkleTreeParams, HashCounter};
