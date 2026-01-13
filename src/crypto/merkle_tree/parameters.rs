@@ -5,13 +5,11 @@ use ark_crypto_primitives::{
     merkle_tree::Config,
     sponge::Absorb,
 };
-use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::{CryptoRng, RngCore};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use spongefish::{DomainSeparator, DuplexSpongeInterface, ProverState, VerifierState};
 
-use super::{digest::GenericDigest, IdentityDigestConverter};
+use super::IdentityDigestConverter;
 use crate::ark_rand::ArkRand;
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
