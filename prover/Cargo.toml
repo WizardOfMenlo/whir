@@ -1,0 +1,21 @@
+[package]
+name = "prover"
+description = "prover"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+ark-crypto-primitives = { workspace = true }
+ark-ff = { workspace = true }
+ark-poly = { workspace = true }
+common = { workspace = true, features = ["parallel"] }
+spongefish = { workspace = true }
+spongefish-pow = { workspace = true, features = ["parallel"] }
+rayon = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon", "common/parallel"]
+tracing = ["dep:tracing", "common/tracing"]

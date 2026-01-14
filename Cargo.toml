@@ -1,12 +1,14 @@
-[package]
-name = "whir"
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-default-run = "main"
 rust-version = "1.83.0"
 
-[lints.clippy]
+[workspace]
+resolver = "2"
+members = ["prover", "verifier", "common", "cli"]
+
+[workspace.lints.clippy]
 # all lints that are on by default (correctness, suspicious, style, complexity, perf)
 all = { level = "warn", priority = -1 }
 
@@ -32,53 +34,40 @@ suboptimal_flops = "allow"
 similar_names = "allow"
 redundant_closure_for_method_calls = "allow"
 
-[dependencies]
-ark-std = { version = "0.5", features = ["std"] }
-ark-ff = { version = "0.5", features = ["asm", "std"] }
-ark-serialize = "0.5"
+[workspace.dependencies]
 ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
+ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-poly = "0.5"
+ark-serialize = "0.5"
+ark-std = { version = "0.5", features = ["std"] }
 blake3 = "1.5.0"
-sha3 = "0.10"
-rand = "0.8"
 clap = { version = "4.4.17", features = ["derive"] }
+common = { path = "common/" }
+hex = "0.4.3"
+itertools = "0.14"
+postcard = { version = "1.1", features = ["alloc"] }
+proptest = "1.0"
+prover = { path = "prover/" }
+rand = { version = "0.8" }
+rayon = { version = "1.10.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = [
+sha3 = "0.10"
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", default-features = false, features = [
     "arkworks-algebra",
-], rev = "ecb4f08373ed930175585c856517efdb1851fb47"}
-spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" , rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
-rayon = { version = "1.10.0", optional = true }
+], rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
+spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish", default-features = false, rev = "ecb4f08373ed930175585c856517efdb1851fb47" }
 thiserror = "2.0"
-itertools = "0.14"
-tracing = { version = "0.1.41", optional = true }
-hex = "0.4.3"
-
-[dev-dependencies]
-proptest = "1.0"
-serde_json = "1.0"
-postcard = { version = "1.1", features = ["alloc"] }
-divan = { version = "2.10.0", package = "codspeed-divan-compat" }
+tracing = { version = "0.1.41" }
+verifier = { path = "verifier/" }
 
 [profile.release]
 debug = true
 
-[features]
-default = ["parallel"]
-parallel = [
-    "dep:rayon",
-    "ark-poly/parallel",
-    "ark-ff/parallel",
-    "ark-crypto-primitives/parallel",
-]
-rayon = ["dep:rayon"]
-asm = ["ark-ff/asm"]
-tracing = ["dep:tracing"]
-
-[[bench]]
-name = "expand_from_coeff"
-harness = false
-
-[[bench]]
-name = "sumcheck"
-harness = false
+# This profile could be used for an onchain verifier, e.g. for Solana SBF, WASM, etc.
+[profile.onchain]
+inherits = "release"
+codegen-units = 1
+debug = false
+lto = "fat"
+strip = "symbols"
