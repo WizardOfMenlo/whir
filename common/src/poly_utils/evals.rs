@@ -129,11 +129,13 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
     match point {
         [] => evals[0],
         [x] => evals[0] + (evals[1] - evals[0]) * *x,
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1] => {
             let a0 = evals[0] + (evals[1] - evals[0]) * *x1;
             let a1 = evals[2] + (evals[3] - evals[2]) * *x1;
             a0 + (a1 - a0) * *x0
         }
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1, x2] => {
             let a00 = evals[0] + (evals[1] - evals[0]) * *x2;
             let a01 = evals[2] + (evals[3] - evals[2]) * *x2;
@@ -143,6 +145,7 @@ fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
             let a1 = a10 + (a11 - a10) * *x1;
             a0 + (a1 - a0) * *x0
         }
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1, x2, x3] => {
             let a000 = evals[0] + (evals[1] - evals[0]) * *x3;
             let a001 = evals[2] + (evals[3] - evals[2]) * *x3;

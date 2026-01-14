@@ -166,11 +166,13 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     match point {
         [] => coeffs[0],
         [x] => coeffs[0] + coeffs[1] * x,
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1] => {
             let b0 = coeffs[0] + coeffs[1] * x1;
             let b1 = coeffs[2] + coeffs[3] * x1;
             b0 + b1 * x0
         }
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1, x2] => {
             let b00 = coeffs[0] + coeffs[1] * x2;
             let b01 = coeffs[2] + coeffs[3] * x2;
@@ -180,6 +182,7 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
             let b1 = b10 + b11 * x1;
             b0 + b1 * x0
         }
+        #[cfg(not(feature = "small-stack"))]
         [x0, x1, x2, x3] => {
             let b000 = coeffs[0] + coeffs[1] * x3;
             let b001 = coeffs[2] + coeffs[3] * x3;
