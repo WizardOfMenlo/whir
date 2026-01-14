@@ -128,9 +128,15 @@ pub fn test_serde<T: Debug + PartialEq + Serialize + for<'a> Deserialize<'a>>(va
     assert_eq!(value, &deserialized, "json serde roundtrip failed");
 
     // Test in schemaless binary format
-    let bytes = postcard::to_allocvec(value).expect("postcard serialization failed");
-    let deserialized = postcard::from_bytes(&bytes).expect("postcard deserialization failed");
-    assert_eq!(value, &deserialized, "postcard serde roundtrip failed");
+
+    let bytes = {
+        let mut writer = Vec::new();
+        ciborium::into_writer(value, &mut writer).expect("ciborium serialization failed");
+        writer
+    };
+    let deserialized =
+        ciborium::from_reader(bytes.as_slice()).expect("ciborium deserialization failed");
+    assert_eq!(value, &deserialized, "ciborium serde roundtrip failed");
 }
 
 #[cfg(test)]

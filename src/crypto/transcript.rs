@@ -4,23 +4,29 @@
 //! would roughly double the verifier cost.
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{
     Decoding, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, NargSerialize,
     StdHash, VerificationError, VerificationResult,
 };
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Proof {
-    narg_string: Vec<u8>,
-    hints: Vec<u8>,
+pub trait ProtocolId {
+    fn protocol_id(&self) -> [u8; 64];
 }
 
-pub struct ProverState<H = StdHash>
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proof {
+    pub narg_string: Vec<u8>,
+    pub hints: Vec<u8>,
+}
+
+pub struct ProverState<H = StdHash, R = StdRng>
 where
     H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
 {
-    inner: spongefish::ProverState<H>,
+    inner: spongefish::ProverState<H, R>,
     hints: Vec<u8>,
 }
 
@@ -40,20 +46,26 @@ pub trait VerifierMessage {
         T: Decoding<[Self::U]>;
 }
 
-impl<H> ProverState<H>
+impl<H, R> From<spongefish::ProverState<H, R>> for ProverState<H, R>
 where
     H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
 {
-    pub fn new<I>(protocol: [u8; 64], sponge: H, instance: &I) -> Self
-    where
-        I: Encoding<[H::U]>,
-        [u8; 64]: Encoding<[H::U]>,
-    {
-        let ds: DomainSeparator<_> = DomainSeparator::new(protocol);
+    fn from(inner: spongefish::ProverState<H, R>) -> Self {
         Self {
-            inner: ds.instance(instance).to_prover(sponge),
+            inner,
             hints: Vec::new(),
         }
+    }
+}
+
+impl<H, R> ProverState<H, R>
+where
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+{
+    pub fn into_inner(self) -> (spongefish::ProverState<H, R>, Vec<u8>) {
+        (self.inner, self.hints)
     }
 
     pub fn prover_message<T>(&mut self, message: &T)
@@ -80,6 +92,24 @@ where
     }
 }
 
+impl<H> ProverState<H, StdRng>
+where
+    H: DuplexSpongeInterface,
+{
+    pub fn new<S, I>(protocol: [u8; 64], session: S, instance: &I, sponge: H) -> Self
+    where
+        [u8; 64]: Encoding<[H::U]>,
+        S: Encoding<[H::U]>,
+        I: Encoding<[H::U]>,
+    {
+        DomainSeparator::new(protocol)
+            .session(session)
+            .instance(instance)
+            .to_prover(sponge)
+            .into()
+    }
+}
+
 impl<H> VerifierMessage for ProverState<H>
 where
     H: DuplexSpongeInterface,
@@ -98,14 +128,29 @@ impl<'a, H> VerifierState<'a, H>
 where
     H: DuplexSpongeInterface,
 {
-    pub fn new<I>(protocol: [u8; 64], sponge: H, instance: &I, proof: &'a Proof) -> Self
+    pub fn from(inner: spongefish::VerifierState<'a, H>, hints: &'a [u8]) -> Self {
+        Self { inner, hints }
+    }
+
+    pub fn into_inner(self) -> (spongefish::VerifierState<'a, H>, &'a [u8]) {
+        (self.inner, self.hints)
+    }
+
+    pub fn new<I, S>(
+        protocol: [u8; 64],
+        session: S,
+        sponge: H,
+        instance: &I,
+        proof: &'a Proof,
+    ) -> Self
     where
-        I: Encoding<[H::U]>,
         [u8; 64]: Encoding<[H::U]>,
+        S: Encoding<[H::U]>,
+        I: Encoding<[H::U]>,
     {
-        let ds: DomainSeparator<_> = DomainSeparator::new(protocol);
         Self {
-            inner: ds
+            inner: DomainSeparator::new(protocol)
+                .session(session)
                 .instance(instance)
                 .to_verifier(sponge, &proof.narg_string),
             hints: &proof.hints,

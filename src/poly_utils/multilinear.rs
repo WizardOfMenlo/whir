@@ -1,6 +1,6 @@
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
+use ark_std::rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use super::hypercube::BinaryHypercubePoint;
@@ -193,7 +193,7 @@ impl<F> From<F> for MultilinearPoint<F> {
 )]
 mod tests {
     use ark_ff::AdditiveGroup;
-    use rand::thread_rng;
+    use ark_std::rand::thread_rng;
 
     use super::*;
     use crate::crypto::fields::Field64;

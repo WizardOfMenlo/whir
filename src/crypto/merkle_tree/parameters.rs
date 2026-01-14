@@ -6,11 +6,10 @@ use ark_crypto_primitives::{
     sponge::Absorb,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
+use ark_std::rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::IdentityDigestConverter;
-use crate::ark_rand::ArkRand;
 
 /// A generic Merkle tree config usable across hash types (e.g., Blake3, Keccak).
 ///
@@ -72,9 +71,8 @@ where
     LeafH: CRHScheme<Input = [F]> + Send,
     CompressH: TwoToOneCRHScheme + Send,
 {
-    let mut rng = ArkRand(rng);
     (
-        LeafH::setup(&mut rng).expect("Failed to setup Leaf hash"),
-        CompressH::setup(&mut rng).expect("Failed to setup Compress hash"),
+        LeafH::setup(rng).expect("Failed to setup Leaf hash"),
+        CompressH::setup(rng).expect("Failed to setup Compress hash"),
     )
 }

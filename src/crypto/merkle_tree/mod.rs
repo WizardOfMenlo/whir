@@ -93,7 +93,7 @@ mod tests {
         merkle_tree::{MerkleTree, MultiPath},
     };
     use ark_serialize::CanonicalSerialize;
-    use spongefish::StdHash;
+    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::crypto::{
@@ -118,14 +118,11 @@ mod tests {
 
     #[test]
     fn test_merkle_tree() {
-        let mut rng = rand::rng();
         let num_leaves = 16;
         let leaves = (0..num_leaves).map(|i| Field::from(i)).collect::<Vec<_>>();
 
         // Create the tree
-        let (leaf_hash, node_hash) = default_config::<Field, LeafHash, NodeHash>(&mut rng);
-        let tree: MerkleTree<Config> =
-            MerkleTree::new(&leaf_hash, &node_hash, leaves_iter(&leaves, 1)).unwrap();
+        let tree: MerkleTree<Config> = MerkleTree::new(&(), &(), leaves_iter(&leaves, 1)).unwrap();
 
         // Get the root
         let root = tree.root();
@@ -142,29 +139,27 @@ mod tests {
 
         // Verify proof
         let correct = proof
-            .verify(&leaf_hash, &node_hash, &root, [[leaves[0]], [leaves[5]]])
+            .verify(&(), &(), &root, [[leaves[0]], [leaves[5]]])
             .unwrap();
         assert!(correct);
     }
 
     #[test]
     fn test_merkle_tree_transcript() {
-        let mut rng = rand::rng();
         let num_leaves = 16_usize;
         let leaves = (0..num_leaves)
             .map(|i| Field::from(i as u64))
             .collect::<Vec<_>>();
 
         // Create the transcript
-        let protocol = *b"Merkle Tree with blake3 for testing purposes____________________";
-        let sponge = StdHash::default();
-        let instance = b"test";
-        let mut prover: ProverState = ProverState::new(protocol, sponge, instance);
+        let instance = num_leaves as u32;
+        let ds = domain_separator!("asd")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+        let mut prover: ProverState = ds.std_prover().into();
 
         // Create the tree
-        let (leaf_hash, node_hash) = default_config::<Field, LeafHash, NodeHash>(&mut rng);
-        let tree: MerkleTree<Config> =
-            MerkleTree::new(&leaf_hash, &node_hash, leaves_iter(&leaves, 1)).unwrap();
+        let tree: MerkleTree<Config> = MerkleTree::new(&(), &(), leaves_iter(&leaves, 1)).unwrap();
 
         // Write the root to the transcript
         let root = tree.root();
@@ -181,15 +176,14 @@ mod tests {
         let proof = prover.proof();
         let mut buffer = Vec::new();
         ciborium::into_writer(&proof, &mut buffer).unwrap();
-        assert_eq!(hex::encode(&buffer), "a26b6e6172675f737472696e67983018ac188f18f71824182f188403182a184b18fc18af182b185718341863181e18e9187f18d518b618871871081839185f05188018bb18c118ad18c3187d010000000000000007000000000000006568696e7473990130020000000000000018741850061897187617184818e718dc030218d31867187818f8189c186a18b3182418ef1894182718731897186b189218a718bb18ef18a1188c18d2184d18c1188618f3186c188f18560c18fb18ac187c18cf18e918f918e218ff185218b5186918fd18461839185818c5187d187118dd18be18fc18771847181a020000000000000000000000000000000100000000000000020000000000000003000000000000000918af18611840187518b418b10a1819186d18761872182518c118ae18b918a318b5183718b618a8184018a4183d1875181f186718da18a318b81318e918c1188118a4188d1881184f09189b18c9186718c718e0187f1880182018ff18771838181f1852183c186102186f18b0185318c906187118e818b518b418a218f418f31894184118bc0418e218b418ec18a818750418a818de186e1876182718c518ca186b18301118b4121864151877189c18291861040200000000000000181a189d184518ab18bd184a18561819189618b9187d18ef18b3187318f41828189d18dc183a18aa185918f818de18be18e318d018ec18891838188c186d18a6186c186418ff18ac18e4182f18f618c9161828181b1862188a0618c418dd1825186415185b18f118e20601183218ec03182118c31718c918fb020000000000000001000000000000000700000000000000");
+        assert_eq!(hex::encode(&buffer), "a26b6e6172675f737472696e67983018ac188f18f71824182f188403182a184b18fc18af182b185718341863181e18e9187f18d518b618871871081839185f05188018bb18c118ad18c3187d05000000000000000f000000000000006568696e7473990150020000000000000018aa189918de18f21850181f18eb18f9189f18301876185c1839188018ad183a18e3181e1824188c18d70918bf187d18a318d8183c182f18c318c718aa181b18af18e218a718c218b3189218400a184b18750618da121819187f185600185e18501877188518e3183b18e91836186e11185c18f9188a1853183d020000000000000000000000000000000000000000000000020000000000000003000000000000000918af18611840187518b418b10a1819186d18761872182518c118ae18b918a318b5183718b618a8184018a4183d1875181f186718da18a318b81318e9181a189d184518ab18bd184a18561819189618b9187d18ef18b3187318f41828189d18dc183a18aa185918f818de18be18e318d018ec18891838188c186d18a6184d18f418751118e71201184e1869186718de18ab1518b618c20410188f18541839186e183618af1821187518a318eb18e318c31879183b186f0300000000000000182a1837184c18a7189d18b918451834182218e71872185e185718a9183118cf1827188918860012184a18eb18fe181e0d187315188c18310c181e1847185d183418281873151873182118cb183518a6186718a518d018a518e41871181818b706186218ce18d41885182718ef187318f0184618dd18cc18fb18f818a318b0181e188e18da189618dd189718ef18f5186418b418d8181f0c1824186d18531618801859185a18ea1845189f1882186d18a318b70418a4020000000000000005000000000000000f00000000000000");
 
         //
         // Verifier
         //
 
         // Create verifier
-        let sponge = StdHash::default();
-        let mut verifier = VerifierState::new(protocol, sponge, instance, &proof);
+        let mut verifier = VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         // Read root, challenge indices and proof.
         let root: Digest = verifier.prover_message().unwrap();
@@ -200,7 +194,7 @@ mod tests {
 
         let proof: MultiPath<Config> = verifier.prover_hint_ark().unwrap();
         assert_eq!(proof.leaf_indexes, indices);
-        let ok = proof.verify(&leaf_hash, &node_hash, &root, leaves).unwrap();
+        let ok = proof.verify(&(), &(), &root, leaves).unwrap();
         assert!(ok);
     }
 }
