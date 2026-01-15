@@ -2,9 +2,12 @@ use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::{Codec, DuplexSpongeInterface, VerificationResult, VerifierState};
 
-use crate::whir::{
-    parameters::WhirConfig,
-    statement::{Constraint, Weights},
+use crate::{
+    transcript::ProverMessage,
+    whir::{
+        parameters::WhirConfig,
+        statement::{Constraint, Weights},
+    },
 };
 
 ///
@@ -45,7 +48,7 @@ where
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         let root = verifier_state.prover_message()?;
 
@@ -94,7 +97,7 @@ where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
         MerkleConfig: Config<Leaf = [F]>,
-        MerkleConfig::InnerDigest: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         let root = verifier_state.prover_message()?;
 

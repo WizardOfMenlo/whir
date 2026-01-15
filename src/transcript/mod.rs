@@ -164,6 +164,10 @@ where
         (self.inner, self.hints)
     }
 
+    pub fn inner_mut(&mut self) -> &mut spongefish::VerifierState<'a, H> {
+        &mut self.inner
+    }
+
     pub fn new<I, S>(
         protocol: [u8; 64],
         session: S,
