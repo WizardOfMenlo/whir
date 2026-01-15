@@ -6,7 +6,7 @@ pub mod blake3;
 mod digest;
 pub mod keccak;
 mod parameters;
-mod proof;
+pub mod proof;
 
 pub use parameters::{default_config, MerkleTreeParams};
 #[cfg(feature = "parallel")]

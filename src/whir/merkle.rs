@@ -1,9 +1,11 @@
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MerkleTree, MultiPath, TwoToOneParam};
+use ark_std::rand::{CryptoRng, RngCore};
+use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 
 use crate::{
     crypto::merkle_tree::proof::FullMultiPath,
     parameters::MerkleProofStrategy,
-    whir::utils::{HintDeserialize, HintSerialize},
+    transcript::{ProverState, VerifierState},
 };
 
 /// Prover-side state for emitting Merkle proofs using a fixed strategy.
@@ -16,22 +18,22 @@ impl ProverMerkleState {
         Self { strategy }
     }
 
-    pub fn write_proof_hint<ProverState, MerkleConfig>(
+    pub fn write_proof_hint<H, R, MerkleConfig>(
         &self,
         tree: &MerkleTree<MerkleConfig>,
         indices: &[usize],
-        prover_state: &mut ProverState,
-    ) -> ProofResult<()>
-    where
+        prover_state: &mut ProverState<H, R>,
+    ) where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
         MerkleConfig: Config,
-        ProverState: HintSerialize,
     {
         match self.strategy {
             MerkleProofStrategy::Compressed => {
                 let merkle_proof = tree
                     .generate_multi_proof(indices.to_vec())
                     .expect("indices sampled from transcript must be valid for the tree");
-                prover_state.hint::<MultiPath<MerkleConfig>>(&merkle_proof)?;
+                prover_state.prover_hint_ark(&merkle_proof);
             }
             MerkleProofStrategy::Uncompressed => {
                 let proofs = indices
@@ -43,11 +45,9 @@ impl ProverMerkleState {
                     .collect::<Vec<_>>();
                 let merkle_proof: FullMultiPath<MerkleConfig> = proofs.into();
 
-                prover_state.hint::<FullMultiPath<MerkleConfig>>(&merkle_proof)?;
+                prover_state.prover_hint_ark(&merkle_proof);
             }
         }
-
-        Ok(())
     }
 }
 
@@ -77,24 +77,24 @@ where
         }
     }
 
-    pub fn read_and_verify_proof<VerifierState, L>(
+    pub fn read_and_verify_proof<H, L>(
         &self,
-        verifier_state: &mut VerifierState,
+        verifier_state: &mut VerifierState<H>,
         indices: &[usize],
         root: &MerkleConfig::InnerDigest,
         leaves: impl IntoIterator<Item = L>,
-    ) -> ProofResult<()>
+    ) -> VerificationResult<()>
     where
-        VerifierState: HintDeserialize,
+        H: DuplexSpongeInterface,
         L: Clone + std::borrow::Borrow<MerkleConfig::Leaf>,
     {
         let leaves: Vec<L> = leaves.into_iter().collect();
 
         match self.strategy {
             MerkleProofStrategy::Compressed => {
-                let merkle_proof: MultiPath<MerkleConfig> = verifier_state.hint()?;
+                let merkle_proof: MultiPath<MerkleConfig> = verifier_state.prover_hint_ark()?;
                 if merkle_proof.leaf_indexes != indices {
-                    return Err(ProofError::InvalidProof);
+                    return Err(VerificationError);
                 }
 
                 let correct = merkle_proof
@@ -104,15 +104,15 @@ where
                         root,
                         leaves.iter().cloned(),
                     )
-                    .map_err(|_| ProofError::InvalidProof)?;
+                    .map_err(|_| VerificationError)?;
                 if !correct {
-                    return Err(ProofError::InvalidProof);
+                    return Err(VerificationError);
                 }
             }
             MerkleProofStrategy::Uncompressed => {
-                let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.hint()?;
+                let merkle_proof: FullMultiPath<MerkleConfig> = verifier_state.prover_hint_ark()?;
                 if merkle_proof.indices() != indices {
-                    return Err(ProofError::InvalidProof);
+                    return Err(VerificationError);
                 }
 
                 let correct = merkle_proof
@@ -122,9 +122,9 @@ where
                         root,
                         leaves.iter().cloned(),
                     )
-                    .map_err(|_| ProofError::InvalidProof)?;
+                    .map_err(|_| VerificationError)?;
                 if !correct {
-                    return Err(ProofError::InvalidProof);
+                    return Err(VerificationError);
                 }
             }
         }

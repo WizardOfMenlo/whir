@@ -1,11 +1,13 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::Itertools;
+use ark_std::rand::{CryptoRng, RngCore};
+use spongefish::{Codec, Decoding, DuplexSpongeInterface, ProverState};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::{parameters::DeduplicationStrategy, poly_utils::multilinear::MultilinearPoint};
+use crate::{
+    crypto::merkle_tree::challenge_indices, parameters::DeduplicationStrategy,
+    poly_utils::multilinear::MultilinearPoint, transcript::VerifierMessage,
+};
 
 ///
 /// A utility function to compute the response to OOD challenge and add it to
@@ -13,15 +15,16 @@ use crate::{parameters::DeduplicationStrategy, poly_utils::multilinear::Multilin
 /// to the transcript before this call.
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
-pub(crate) fn compute_ood_response<F, ProverState, E>(
-    prover_state: &mut ProverState,
+pub(crate) fn compute_ood_response<H, R, F, E>(
+    prover_state: &mut ProverState<H, R>,
     ood_points: &[F],
     num_variables: usize,
     evaluate_fn: E,
-) -> ProofResult<Vec<F>>
+) -> Vec<F>
 where
-    F: FftField,
-    ProverState: FieldToUnitSerialize<F>,
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+    F: FftField + Codec<[H::U]>,
     E: Fn(&MultilinearPoint<F>) -> F,
 {
     let num_samples = ood_points.len();
@@ -37,37 +40,38 @@ where
         }));
 
         // Commit the answers to the narg_string
-        prover_state.add_scalars(&ood_answers)?;
+        prover_state.prover_messages(&ood_answers);
     }
 
-    Ok(ood_answers)
+    ood_answers
 }
 
 /// A utility function to sample Out-of-Domain (OOD) points and evaluate them
 ///
 /// This operates on the prover side.
 #[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
-pub(crate) fn sample_ood_points<F, ProverState, E>(
-    prover_state: &mut ProverState,
+pub(crate) fn sample_ood_points<F, H, R, E>(
+    prover_state: &mut ProverState<H, R>,
     num_samples: usize,
     num_variables: usize,
     evaluate_fn: E,
-) -> ProofResult<(Vec<F>, Vec<F>)>
+) -> (Vec<F>, Vec<F>)
 where
-    F: FftField,
-    ProverState: FieldToUnitSerialize<F> + UnitToField<F>,
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+    F: FftField + Codec<[H::U]>,
     E: Fn(&MultilinearPoint<F>) -> F,
 {
-    let mut ood_points = vec![F::ZERO; num_samples];
+    let ood_points: Vec<F> = (0..num_samples)
+        .map(|_| prover_state.verifier_message())
+        .collect();
     let ood_answers = if num_samples > 0 {
-        // Generate OOD points from ProverState randomness
-        prover_state.fill_challenge_scalars(&mut ood_points)?;
-        compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)?
+        compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)
     } else {
         vec![]
     };
 
-    Ok((ood_points, ood_answers))
+    (ood_points, ood_answers)
 }
 
 /// Generates a list of unique challenge queries within a folded domain.
@@ -77,30 +81,19 @@ where
 /// - Derives query indices from random narg_string bytes.
 /// - Deduplicates indices while preserving order.
 pub fn get_challenge_stir_queries<T>(
+    transcript: &mut T,
     domain_size: usize,
     folding_factor: usize,
     num_queries: usize,
-    narg_string: &mut T,
     deduplication_strategy: &DeduplicationStrategy,
-) -> ProofResult<Vec<usize>>
+) -> Vec<usize>
 where
-    T: UnitToBytes,
+    T: VerifierMessage,
+    u8: Decoding<[T::U]>,
 {
     let folded_domain_size = domain_size >> folding_factor;
-    // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
-    let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
-    // Allocate space for query bytes
-    let mut queries = vec![0u8; num_queries * domain_size_bytes];
-    narg_string.fill_challenge_bytes(&mut queries)?;
-
-    // Convert bytes into indices in **one efficient pass**
-    let mut indices = queries
-        .chunks_exact(domain_size_bytes)
-        .map(|chunk| {
-            chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
-        })
-        .collect_vec();
+    let mut indices = challenge_indices(transcript, folded_domain_size, num_queries);
 
     match deduplication_strategy {
         DeduplicationStrategy::Enabled => {
@@ -110,15 +103,7 @@ where
         DeduplicationStrategy::Disabled => {}
     }
 
-    Ok(indices)
-}
-
-pub trait DigestToUnitSerialize<MerkleConfig: Config> {
-    fn add_digest(&mut self, digest: MerkleConfig::InnerDigest) -> ProofResult<()>;
-}
-
-pub trait DigestToUnitDeserialize<MerkleConfig: Config> {
-    fn read_digest(&mut self) -> ProofResult<MerkleConfig::InnerDigest>;
+    indices
 }
 
 pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
@@ -144,34 +129,44 @@ pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
         .collect()
 }
 
-pub trait HintSerialize {
-    fn hint<T: CanonicalSerialize>(&mut self, hint: &T) -> ProofResult<()>;
-}
-
-pub trait HintDeserialize {
-    fn hint<T: CanonicalDeserialize>(&mut self) -> ProofResult<T>;
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use spongefish::{domain_separator, session};
 
-    struct MockTranscript {
-        data: Vec<u8>,
-        index: usize,
+    use super::*;
+    use crate::transcript::codecs::Empty;
+
+    #[derive(Clone, Debug)]
+    struct MockSponge<'a> {
+        absorb: Option<&'a [u8]>,
+        squeeze: &'a [u8],
     }
 
-    impl UnitToBytes for MockTranscript {
-        fn fill_challenge_bytes(
-            &mut self,
-            buffer: &mut [u8],
-        ) -> Result<(), DomainSeparatorMismatch> {
-            if self.index + buffer.len() > self.data.len() {
-                return Err(String::from("Invalid input").into());
+    impl<'a> DuplexSpongeInterface for MockSponge<'a> {
+        type U = u8;
+
+        fn absorb(&mut self, input: &[Self::U]) -> &mut Self {
+            if let Some(absorb) = self.absorb.as_mut() {
+                assert!(&absorb[..input.len()] == input);
+                *absorb = &absorb[input.len()..];
             }
-            buffer.copy_from_slice(&self.data[self.index..self.index + buffer.len()]);
-            self.index += buffer.len();
-            Ok(())
+            self
+        }
+
+        fn squeeze(&mut self, output: &mut [Self::U]) -> &mut Self {
+            output.copy_from_slice(&self.squeeze[..output.len()]);
+            self.squeeze = &self.squeeze[output.len()..];
+            self
+        }
+
+        fn ratchet(&mut self) -> &mut Self {
+            if let Some(absorb) = self.absorb.as_mut() {
+                assert!(&absorb[..7] == b"RATCHET");
+                *absorb = &absorb[7..];
+            }
+            assert!(&self.squeeze[..7] == b"RATCHET");
+            self.squeeze = &self.squeeze[7..];
+            self
         }
     }
 
@@ -182,27 +177,29 @@ mod tests {
         let folding_factor = 1;
         let num_queries = 5;
 
-        // Mock narg_string with fixed bytes (ensuring reproducibility)
-        let narg_string_data = vec![
-            0x01, 0x23, 0x45, 0x67, 0x89, // Query 1
-            0xAB, 0xCD, 0xEF, 0x12, 0x34, // Query 2
-            0x56, 0x78, 0x9A, 0xBC, 0xDE, // Query 3
-            0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
-            0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
-        ];
-        let mut narg_string = MockTranscript {
-            data: narg_string_data,
-            index: 0,
+        // Mock transcript with fixed bytes (ensuring reproducibility)
+        let sponge = MockSponge {
+            absorb: None, // Anything is fine
+            squeeze: &[
+                0x01, 0x23, 0x45, 0x67, 0x89, // Query 1
+                0xAB, 0xCD, 0xEF, 0x12, 0x34, // Query 2
+                0x56, 0x78, 0x9A, 0xBC, 0xDE, // Query 3
+                0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
+                0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
+            ],
         };
+        let mut prover_state = domain_separator!("whir::utils")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .to_prover(sponge);
 
         let result = get_challenge_stir_queries(
+            &mut prover_state,
             domain_size,
             folding_factor,
             num_queries,
-            &mut narg_string,
             &DeduplicationStrategy::Enabled,
-        )
-        .unwrap();
+        );
 
         let folded_domain_size = 128; // domain_size / 2
 
@@ -230,26 +227,28 @@ mod tests {
         let num_queries = 5;
 
         // Expected `folded_domain_size = 65536 / 8 = 8192`
-        let narg_string_data = vec![
-            0x01, 0x23, 0x45, 0x67, 0x89, // Query 1
-            0xAB, 0xCD, 0xEF, 0x12, 0x34, // Query 2
-            0x56, 0x78, 0x9A, 0xBC, 0xDE, // Query 3
-            0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
-            0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
-        ];
-        let mut narg_string = MockTranscript {
-            data: narg_string_data,
-            index: 0,
+        let sponge = MockSponge {
+            absorb: None,
+            squeeze: &[
+                0x01, 0x23, 0x45, 0x67, 0x89, // Query 1
+                0xAB, 0xCD, 0xEF, 0x12, 0x34, // Query 2
+                0x56, 0x78, 0x9A, 0xBC, 0xDE, // Query 3
+                0xF0, 0x11, 0x22, 0x33, 0x44, // Query 4
+                0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
+            ],
         };
+        let mut prover_state = domain_separator!("whir::utils")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .to_prover(sponge);
 
         let result = get_challenge_stir_queries(
+            &mut prover_state,
             domain_size,
             folding_factor,
             num_queries,
-            &mut narg_string,
             &DeduplicationStrategy::Enabled,
-        )
-        .unwrap();
+        );
 
         let folded_domain_size = 8192; // 65536 / 8
 
@@ -277,25 +276,27 @@ mod tests {
         let num_queries = 4;
 
         // Expected `folded_domain_size = 2^24 / 16 = 2^20 = 1,048,576`
-        let narg_string_data = vec![
-            0x12, 0x34, 0x56, // Query 1
-            0x78, 0x9A, 0xBC, // Query 2
-            0xDE, 0xF0, 0x11, // Query 3
-            0x22, 0x33, 0x44, // Query 4
-        ];
-        let mut narg_string = MockTranscript {
-            data: narg_string_data,
-            index: 0,
+        let sponge = MockSponge {
+            absorb: None,
+            squeeze: &[
+                0x12, 0x34, 0x56, // Query 1
+                0x78, 0x9A, 0xBC, // Query 2
+                0xDE, 0xF0, 0x11, // Query 3
+                0x22, 0x33, 0x44, // Query 4
+            ],
         };
+        let mut prover_state = domain_separator!("whir::utils")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .to_prover(sponge);
 
         let result = get_challenge_stir_queries(
+            &mut prover_state,
             domain_size,
             folding_factor,
             num_queries,
-            &mut narg_string,
             &DeduplicationStrategy::Enabled,
-        )
-        .unwrap();
+        );
 
         let folded_domain_size = 1_048_576; // 2^20
 
@@ -322,22 +323,24 @@ mod tests {
         let num_queries = 5;
 
         // Mock narg_string where some indices will collide
-        let narg_string_data = vec![
-            0x20, 0x40, 0x20, 0x60, 0x40, // Duplicate indices 0x20 and 0x40
-        ];
-        let mut narg_string = MockTranscript {
-            data: narg_string_data,
-            index: 0,
+        let sponge = MockSponge {
+            absorb: None,
+            squeeze: &[
+                0x20, 0x40, 0x20, 0x60, 0x40, // Duplicate indices 0x20 and 0x40
+            ],
         };
+        let mut prover_state = domain_separator!("whir::utils")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .to_prover(sponge);
 
         let result = get_challenge_stir_queries(
+            &mut prover_state,
             domain_size,
             folding_factor,
             num_queries,
-            &mut narg_string,
             &DeduplicationStrategy::Enabled,
-        )
-        .unwrap();
+        );
 
         let folded_domain_size = 128;
 

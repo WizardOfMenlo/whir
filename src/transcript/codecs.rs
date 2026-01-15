@@ -1,16 +1,16 @@
 use spongefish::{Codec, Decoding, Encoding, NargDeserialize};
 use static_assertions::assert_impl_all;
 
-/// An empty object.
-pub struct None;
+/// An empty object. Like `()` with a `Codec`.
+pub struct Empty;
 
-impl<T> Encoding<[T]> for None {
+impl<T> Encoding<[T]> for Empty {
     fn encode(&self) -> impl AsRef<[T]> {
         []
     }
 }
 
-impl<T> Decoding<[T]> for None {
+impl<T> Decoding<[T]> for Empty {
     type Repr = [T; 0];
 
     fn decode(_buf: Self::Repr) -> Self {
@@ -18,13 +18,13 @@ impl<T> Decoding<[T]> for None {
     }
 }
 
-impl NargDeserialize for None {
+impl NargDeserialize for Empty {
     fn deserialize_from_narg(_buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
         Ok(Self)
     }
 }
 
-assert_impl_all!(None: Codec);
+assert_impl_all!(Empty: Codec);
 
 /// Wrapper because spongefish is missing NargDeserialize for `u64`.
 pub struct U64(pub u64);

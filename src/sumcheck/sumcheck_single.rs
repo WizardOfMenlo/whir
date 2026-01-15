@@ -4,8 +4,8 @@ use ark_std::rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use serde::Serialize;
 use spongefish::{
-    Codec, Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState,
-    VerificationError, VerificationResult, VerifierState,
+    Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
+    VerifierState,
 };
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
@@ -434,7 +434,6 @@ mod tests {
             coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
             multilinear::MultilinearPoint,
         },
-        transcript::Protocol,
         whir::statement::Weights,
     };
 

@@ -51,7 +51,7 @@ impl Debug for ProtocolId {
             for bytes in &self.0[0..6] {
                 write!(f, "{:02x}", bytes)?;
             }
-            write!(f, "…");
+            write!(f, "…")?;
             for bytes in &self.0[26..32] {
                 write!(f, "{:02x}", bytes)?;
             }

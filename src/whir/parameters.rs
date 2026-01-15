@@ -840,16 +840,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_std::test_rng;
-
     use super::*;
     use crate::{
         crypto::{
             fields::{Field256, Field64},
-            merkle_tree::{
-                keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-                parameters::default_config,
-            },
+            merkle_tree::keccak::KeccakMerkleTreeParams,
         },
         parameters::{DeduplicationStrategy, MerkleProofStrategy},
         utils::test_serde,
@@ -857,17 +852,13 @@ mod tests {
 
     /// Generates default WHIR parameters
     fn default_whir_params<F: FftField>() -> ProtocolParameters<KeccakMerkleTreeParams<F>, u8> {
-        let mut rng = test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-
         ProtocolParameters {
             initial_statement: true,
             security_level: 100,
             pow_bits: 20,
             folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,

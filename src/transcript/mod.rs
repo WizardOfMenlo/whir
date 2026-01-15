@@ -22,6 +22,22 @@ pub use self::{
     protocol_id::{Protocol, ProtocolId},
 };
 
+/// Marker trait for types that can be used as prover messages.
+///
+/// Like [`spongefish::Codec`], but without the [`Encoding<T>`] requirement.
+pub trait ProverMessage<U = [u8]>: NargDeserialize + NargSerialize + Encoding<U>
+where
+    U: ?Sized,
+{
+}
+
+impl<T, U> ProverMessage<U> for T
+where
+    T: NargSerialize + NargDeserialize + Encoding<U> + ?Sized,
+    U: ?Sized,
+{
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
     pub narg_string: Vec<u8>,
@@ -201,5 +217,33 @@ where
         T: Decoding<[H::U]>,
     {
         self.inner.verifier_message()
+    }
+}
+
+impl<H, R> VerifierMessage for spongefish::ProverState<H, R>
+where
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+{
+    type U = H::U;
+
+    fn verifier_message<T>(&mut self) -> T
+    where
+        T: Decoding<[H::U]>,
+    {
+        spongefish::ProverState::verifier_message(self)
+    }
+}
+impl<'a, H> VerifierMessage for spongefish::VerifierState<'a, H>
+where
+    H: DuplexSpongeInterface,
+{
+    type U = H::U;
+
+    fn verifier_message<T>(&mut self) -> T
+    where
+        T: Decoding<[H::U]>,
+    {
+        spongefish::VerifierState::verifier_message(self)
     }
 }

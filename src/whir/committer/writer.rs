@@ -1,17 +1,20 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
+use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spongefish::{Codec, DuplexSpongeInterface, ProverState};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
     poly_utils::coeffs::CoefficientList,
+    transcript::ProverMessage,
     whir::{
         parameters::WhirConfig,
-        utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
+        utils::{compute_ood_response, sample_ood_points},
     },
 };
 
@@ -40,16 +43,16 @@ where
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
-    pub fn commit_batch<ProverState>(
+    pub fn commit_batch<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
-    ) -> ProofResult<Witness<F, MerkleConfig>>
+    ) -> Witness<F, MerkleConfig>
     where
-        ProverState: FieldToUnitSerialize<F>
-            + BytesToUnitSerialize
-            + DigestToUnitSerialize<MerkleConfig>
-            + UnitToField<F>,
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         assert!(!polynomials.is_empty());
         assert_eq!(polynomials.len(), self.config.batch_size);
@@ -102,14 +105,14 @@ where
         };
 
         let root = merkle_tree.root();
-        prover_state.add_digest(root)?;
+        prover_state.prover_message(&root);
 
         let (ood_points, first_answers) = sample_ood_points(
             prover_state,
             self.config.committment_ood_samples,
             self.config.mv_parameters.num_variables,
             |point| polynomials[0].evaluate_at_extension(point),
-        )?;
+        );
         let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
         per_poly_ood_answers.push(first_answers);
         for poly in polynomials.iter().skip(1) {
@@ -118,25 +121,25 @@ where
                 &ood_points,
                 self.config.mv_parameters.num_variables,
                 |point| poly.evaluate_at_extension(point),
-            )?;
+            );
             per_poly_ood_answers.push(answers);
         }
 
-        let [batching_randomness] = if polynomials.len() > 1 {
-            prover_state.challenge_scalars()?
+        let batching_randomness = if polynomials.len() > 1 {
+            prover_state.verifier_message()
         } else {
-            [F::zero()]
+            F::zero()
         };
 
         if polynomials.len() == 1 {
-            return Ok(Witness {
+            return Witness {
                 polynomial: polynomials[0].clone().to_extension(),
                 merkle_tree,
                 merkle_leaves: stacked_leaves,
                 ood_points,
                 ood_answers: per_poly_ood_answers.remove(0),
                 batching_randomness,
-            });
+            };
         }
 
         let mut batched_poly = polynomials[0].clone().to_extension().into_coeffs();
@@ -162,27 +165,27 @@ where
             multiplier *= batching_randomness;
         }
 
-        Ok(Witness {
+        Witness {
             polynomial,
             merkle_tree,
             merkle_leaves: stacked_leaves,
             ood_points,
             ood_answers: batched_ood_resp,
             batching_randomness,
-        })
+        }
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<ProverState>(
+    pub fn commit<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         polynomial: &CoefficientList<F::BasePrimeField>,
-    ) -> ProofResult<Witness<F, MerkleConfig>>
+    ) -> Witness<F, MerkleConfig>
     where
-        ProverState: FieldToUnitSerialize<F>
-            + UnitToField<F>
-            + DigestToUnitSerialize<MerkleConfig>
-            + BytesToUnitSerialize,
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         self.commit_batch(prover_state, &[polynomial])
     }
@@ -204,21 +207,19 @@ mod tests {
     use std::sync::Arc;
 
     use ark_ff::UniformRand;
-    use spongefish::DomainSeparator;
+    use spongefish::{domain_separator, session};
     use spongefish_pow::blake3::Blake3PoW;
 
     use super::*;
     use crate::{
-        crypto::{
-            fields::Field64,
-            merkle_tree::keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-        },
+        crypto::{fields::Field64, merkle_tree::keccak::KeccakMerkleTreeParams},
         ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
         },
         poly_utils::multilinear::MultilinearPoint,
+        transcript::codecs::Empty,
     };
 
     #[test]
@@ -228,10 +229,6 @@ mod tests {
         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
-
-        // Generate Merkle tree hash parameters
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
         // Set up Whir protocol parameters.
         let security_level = 100;
@@ -249,8 +246,8 @@ mod tests {
                 first_round_folding_factor,
                 folding_factor,
             ),
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
             _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
@@ -274,14 +271,14 @@ mod tests {
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
         // Set up the DomainSeparator and initialize a ProverState narg_string.
-        let domainsep = DomainSeparator::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = domain_separator!("whir::comitter::writer")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .std_prover();
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -335,8 +332,6 @@ mod tests {
         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
@@ -349,8 +344,8 @@ mod tests {
                 security_level: 100,
                 pow_bits: 20,
                 folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-                leaf_hash_params,
-                two_to_one_params,
+                leaf_hash_params: (),
+                two_to_one_params: (),
                 soundness_type: SoundnessType::ConjectureList,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
@@ -361,11 +356,13 @@ mod tests {
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .std_prover();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         // Expansion factor is 2
         assert_eq!(
@@ -381,8 +378,6 @@ mod tests {
         type MerkleConfig = KeccakMerkleTreeParams<F>;
 
         let mut rng = ark_std::test_rng();
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
@@ -394,8 +389,8 @@ mod tests {
                 security_level: 100,
                 pow_bits: 20,
                 folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-                leaf_hash_params,
-                two_to_one_params,
+                leaf_hash_params: (),
+                two_to_one_params: (),
                 soundness_type: SoundnessType::ConjectureList,
                 _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
@@ -408,11 +403,13 @@ mod tests {
         params.committment_ood_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let domainsep = DomainSeparator::new("🌪️").commit_statement(&params);
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty)
+            .std_prover();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         assert!(
             witness.ood_points.is_empty(),
