@@ -137,9 +137,10 @@ where
     }
 }
 
-impl<H> VerifierMessage for ProverState<H>
+impl<H, R> VerifierMessage for ProverState<H, R>
 where
     H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
 {
     type U = H::U;
 
