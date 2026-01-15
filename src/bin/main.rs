@@ -7,17 +7,14 @@ use ark_crypto_primitives::{
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{DomainSeparator, ProverState, VerifierState};
+use spongefish::{domain_separator, session, Codec};
 use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
         fields,
         merkle_tree::{
-            self,
-            blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
-            keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-            HashCounter,
+            blake3::Blake3MerkleTreeParams, keccak::KeccakMerkleTreeParams, HashCounter,
         },
     },
     ntt::{RSDefault, ReedSolomon},
@@ -26,15 +23,12 @@ use whir::{
         MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
+    transcript::{codecs::Empty, ProverMessage, ProverState, VerifierState},
     whir::{
         committer::CommitmentReader,
-        domainsep::DigestDomainSeparator,
         statement::{Statement, Weights},
-        utils::{DigestToUnitDeserialize, DigestToUnitSerialize},
     },
 };
-
-use crate::merkle_tree::parameters::default_config;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -42,7 +36,7 @@ struct Args {
     #[arg(short = 't', long = "type", default_value = "PCS")]
     protocol_type: WhirType,
 
-    #[arg(short = 'l', long, default_value = "100")]
+    #[arg(short = 'l', long, default_value = "128")]
     security_level: usize,
 
     #[arg(short = 'p', long)]
@@ -69,10 +63,10 @@ struct Args {
     #[arg(short = 'k', long = "fold", default_value = "4")]
     folding_factor: usize,
 
-    #[arg(long = "sec", default_value = "ConjectureList")]
+    #[arg(long = "sec", default_value = "ProvableList")]
     soundness_type: SoundnessType,
 
-    #[arg(short = 'f', long = "field", default_value = "Goldilocks2")]
+    #[arg(short = 'f', long = "field", default_value = "Goldilocks3")]
     field: AvailableFields,
 
     #[arg(long = "hash", default_value = "Blake3")]
@@ -123,35 +117,17 @@ fn runner(args: &Args, field: AvailableFields, merkle: AvailableMerkle) {
     }
 }
 
-fn runner_merkle<F: FftField + CanonicalSerialize>(args: &Args, merkle: AvailableMerkle) {
-    let mut rng = ark_std::test_rng();
-
+fn runner_merkle<F: FftField + CanonicalSerialize + Codec>(args: &Args, merkle: AvailableMerkle) {
     let reed_solomon = Arc::new(RSDefault);
     let basefield_reed_solomon = reed_solomon.clone();
 
     // Type reflection on merkle
     match merkle {
         AvailableMerkle::Blake3 => {
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-            run_whir::<F, Blake3MerkleTreeParams<F>>(
-                args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, Blake3MerkleTreeParams<F>>(args, reed_solomon, basefield_reed_solomon);
         }
         AvailableMerkle::Keccak256 => {
-            let (leaf_hash_params, two_to_one_params) =
-                default_config::<F, KeccakLeafHash<F>, KeccakCompress>(&mut rng);
-            run_whir::<F, KeccakMerkleTreeParams<F>>(
-                args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir::<F, KeccakMerkleTreeParams<F>>(args, reed_solomon, basefield_reed_solomon);
         }
     }
 }
@@ -160,34 +136,19 @@ fn run_whir<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
     basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
-    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
-    F: FftField + CanonicalSerialize,
+    F: FftField + CanonicalSerialize + Codec,
     MerkleConfig: Config<Leaf = [F]> + Clone,
-    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestToUnitSerialize<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]> + ProverMessage,
+    MerkleConfig::LeafHash: CRHScheme<Parameters = ()>,
+    MerkleConfig::TwoToOneHash: TwoToOneCRHScheme<Parameters = ()>,
 {
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F, MerkleConfig>(
-                args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir_pcs::<F, MerkleConfig>(args, reed_solomon, basefield_reed_solomon);
         }
         WhirType::LDT => {
-            run_whir_as_ldt::<F, MerkleConfig>(
-                args,
-                reed_solomon,
-                basefield_reed_solomon,
-                leaf_hash_params,
-                two_to_one_params,
-            );
+            run_whir_as_ldt::<F, MerkleConfig>(args, reed_solomon, basefield_reed_solomon);
         }
     }
 }
@@ -196,19 +157,15 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
     basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
-    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
-    F: FftField + CanonicalSerialize,
+    F: FftField + CanonicalSerialize + Codec,
     MerkleConfig: Config<Leaf = [F]> + Clone,
-    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestToUnitSerialize<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]> + ProverMessage,
+    MerkleConfig::LeafHash: CRHScheme<Parameters = ()>,
+    MerkleConfig::TwoToOneHash: TwoToOneCRHScheme<Parameters = ()>,
 {
     use whir::whir::{
-        committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, verifier::Verifier,
+        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
     };
 
     // Runs as a LDT
@@ -237,8 +194,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
             first_round_folding_factor,
             folding_factor,
         ),
-        leaf_hash_params,
-        two_to_one_params,
+        leaf_hash_params: (),
+        two_to_one_params: (),
         soundness_type,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
@@ -254,11 +211,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         whir_params,
     );
 
-    let domainsep = DomainSeparator::new("🌪️")
-        .commit_statement(&params)
-        .add_whir_proof(&params);
+    let ds = domain_separator!("🌪️")
+        .session(session!("Example at {}:{}", file!(), line!()))
+        .instance(&Empty);
 
-    let mut prover_state = domainsep.to_prover_state();
+    let mut prover_state = ProverState::from(ds.std_prover());
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -277,20 +234,18 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+    let witness = committer.commit(prover_state.inner_mut(), &polynomial);
 
     let prover = Prover::new(params.clone());
 
     let statement = Statement::new(num_variables);
-    prover
-        .prove(&mut prover_state, statement.clone(), witness)
-        .unwrap();
+    prover.prove(&mut prover_state, statement.clone(), witness);
 
     dbg!(whir_prover_time.elapsed());
 
     // Serialize proof
-    let narg_string = prover_state.narg_string().to_vec();
-    let proof_size = narg_string.len();
+    let proof = prover_state.proof();
+    let proof_size = proof.narg_string.len() + proof.hints.len();
     dbg!(proof_size);
 
     // Just not to count that initial inversion (which could be precomputed)
@@ -300,9 +255,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = domainsep.to_verifier_state(&narg_string);
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+
         let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
+            .parse_commitment(verifier_state.inner_mut())
             .unwrap();
         verifier
             .verify(&mut verifier_state, &parsed_commitment, &statement)
@@ -317,19 +274,16 @@ fn run_whir_pcs<F, MerkleConfig>(
     args: &Args,
     reed_solomon: Arc<dyn ReedSolomon<F>>,
     basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-    leaf_hash_params: <<MerkleConfig as Config>::LeafHash as CRHScheme>::Parameters,
-    two_to_one_params: <<MerkleConfig as Config>::TwoToOneHash as TwoToOneCRHScheme>::Parameters,
 ) where
-    F: FftField + CanonicalSerialize,
+    F: FftField + CanonicalSerialize + Codec,
     MerkleConfig: Config<Leaf = [F]> + Clone,
-    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]>,
-    DomainSeparator: DigestDomainSeparator<MerkleConfig>,
-    ProverState: DigestToUnitSerialize<MerkleConfig>,
-    for<'a> VerifierState<'a>: DigestToUnitDeserialize<MerkleConfig>,
+    MerkleConfig::InnerDigest: AsRef<[u8]> + From<[u8; 32]> + ProverMessage,
+    MerkleConfig::LeafHash: CRHScheme<Parameters = ()>,
+    MerkleConfig::TwoToOneHash: TwoToOneCRHScheme<Parameters = ()>,
 {
     use whir::whir::{
-        committer::CommitmentWriter, domainsep::WhirDomainSeparator, parameters::WhirConfig,
-        prover::Prover, statement::Statement, verifier::Verifier,
+        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, statement::Statement,
+        verifier::Verifier,
     };
 
     // Runs as a PCS
@@ -360,8 +314,8 @@ fn run_whir_pcs<F, MerkleConfig>(
             first_round_folding_factor,
             folding_factor,
         ),
-        leaf_hash_params,
-        two_to_one_params,
+        leaf_hash_params: (),
+        two_to_one_params: (),
         soundness_type,
         _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
@@ -377,11 +331,11 @@ fn run_whir_pcs<F, MerkleConfig>(
         whir_params,
     );
 
-    let domainsep = DomainSeparator::new("🌪️")
-        .commit_statement(&params)
-        .add_whir_proof(&params);
+    let ds = domain_separator!("🌪️")
+        .session(session!("Example at {}:{}", file!(), line!()))
+        .instance(&Empty);
 
-    let mut prover_state = domainsep.to_prover_state();
+    let mut prover_state = ProverState::from(ds.std_prover());
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
@@ -399,7 +353,7 @@ fn run_whir_pcs<F, MerkleConfig>(
     let whir_prover_time = Instant::now();
 
     let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+    let witness = committer.commit(prover_state.inner_mut(), &polynomial);
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
@@ -428,14 +382,13 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let prover = Prover::new(params.clone());
 
-    prover
-        .prove(&mut prover_state, statement.clone(), witness)
-        .unwrap();
+    prover.prove(&mut prover_state, statement.clone(), witness);
 
+    let proof = prover_state.proof();
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!(
         "Proof size: {:.1} KiB",
-        prover_state.narg_string().len() as f64 / 1024.0
+        (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
 
     // Just not to count that initial inversion (which could be precomputed)
@@ -445,9 +398,11 @@ fn run_whir_pcs<F, MerkleConfig>(
     HashCounter::reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+
         let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
+            .parse_commitment(verifier_state.inner_mut())
             .unwrap();
         verifier
             .verify(&mut verifier_state, &parsed_commitment, &statement)
