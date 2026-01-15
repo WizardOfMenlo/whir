@@ -7,19 +7,18 @@ pub mod statement;
 pub mod utils;
 pub mod verifier;
 
-/*
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use ark_ff::Field;
-    use spongefish::DomainSeparator;
+    use spongefish::{domain_separator, session};
     use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::{
             fields::{Field64, Field64_2},
-            merkle_tree::blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
+            merkle_tree::blake3::Blake3MerkleTreeParams,
         },
         ntt::RSDefault,
         parameters::{
@@ -29,6 +28,7 @@ mod tests {
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
+        transcript::{codecs::Empty, ProverState, VerifierState},
         utils::test_serde,
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
@@ -71,9 +71,6 @@ mod tests {
 
         // Randomness source
         let mut rng = ark_std::test_rng();
-        // Generate Merkle parameters: hash function and compression function
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
 
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);
@@ -84,8 +81,8 @@ mod tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
@@ -174,24 +171,22 @@ mod tests {
         statement.add_constraint(geometric_claim_weight, geometric_sum);
 
         // Define the Fiat-Shamir domain separator for committing and proving
-        let domainsep = DomainSeparator::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
+        let ds = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
 
         // Initialize the Merlin transcript from the domain separator
-        let mut prover_state = domainsep.to_prover_state();
+        let mut prover_state = ProverState::from(ds.std_prover());
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer.commit(prover_state.inner_mut(), &polynomial);
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());
 
         // Generate a STARK proof for the given statement and witness
-        prover
-            .prove(&mut prover_state, statement.clone(), witness)
-            .unwrap();
+        prover.prove(&mut prover_state, statement.clone(), witness);
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
@@ -200,11 +195,13 @@ mod tests {
         let verifier = Verifier::new(&params);
 
         // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
-        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         // Parse the commitment
         let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
+            .parse_commitment(verifier_state.inner_mut())
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
@@ -259,17 +256,14 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
-
         let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
@@ -318,47 +312,38 @@ mod tests {
 
         // Set up domain separator for batch proving
         // Each polynomial needs its own commitment phase
-        let mut domainsep = DomainSeparator::new("🌪️");
-        for _ in 0..num_polynomials {
-            domainsep = domainsep.commit_statement(&params);
-        }
-
-        // Calculate total constraints for the N×M evaluation matrix
-        let total_constraints = num_polynomials * params.committment_ood_samples
-            + statements
-                .iter()
-                .map(|s| s.constraints.len())
-                .sum::<usize>();
-        domainsep = domainsep.add_whir_batch_proof(&params, num_polynomials, total_constraints);
-        let mut prover_state = domainsep.to_prover_state();
+        let ds = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::from(ds.std_prover());
 
         // Commit to each polynomial and generate witnesses
         let committer = CommitmentWriter::new(params.clone());
         let mut witnesses = Vec::new();
 
         for poly in &polynomials {
-            let witness = committer.commit(&mut prover_state, poly).unwrap();
+            let witness = committer.commit(prover_state.inner_mut(), poly);
             witnesses.push(witness);
         }
 
         // Batch prove all polynomials together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
-
-        assert!(result.is_ok(), "Batch proving failed: {:?}", result.err());
+        let (_point, _evals) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
 
         // Set up verifier and parse commitments
         let commitment_reader = CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
 
         // Reconstruct verifier's transcript view
-        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         // Parse all N commitments from the transcript
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_polynomials {
             let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
+                .parse_commitment(verifier_state.inner_mut())
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }
@@ -419,17 +404,14 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
-
         let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             initial_statement: true,
             security_level: 32,
             pow_bits: 0,
             folding_factor,
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
@@ -461,21 +443,14 @@ mod tests {
         let statements = vec![statement1, statement2];
 
         // Commit to the correct polynomials
-        let mut domainsep = DomainSeparator::new("🌪️");
-        for _ in 0..num_polynomials {
-            domainsep = domainsep.commit_statement(&params);
-        }
-        let total_constraints = num_polynomials * params.committment_ood_samples
-            + statements
-                .iter()
-                .map(|s| s.constraints.len())
-                .sum::<usize>();
-        domainsep = domainsep.add_whir_batch_proof(&params, num_polynomials, total_constraints);
-        let mut prover_state = domainsep.to_prover_state();
+        let ds = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::from(ds.std_prover());
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness1 = committer.commit(&mut prover_state, &poly1).unwrap();
-        let witness2_committed = committer.commit(&mut prover_state, &poly2).unwrap();
+        let witness1 = committer.commit(prover_state.inner_mut(), &poly1);
+        let witness2_committed = committer.commit(prover_state.inner_mut(), &poly2);
 
         // ATTACK: Create a fake witness using poly_wrong instead of poly2
         // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
@@ -487,20 +462,19 @@ mod tests {
         // Generate proof with the mismatched polynomial
         // The prover will compute cross-terms using poly_wrong, not poly2
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
-
-        // Proof generation succeeds (prover doesn't verify polynomial-commitment consistency)
-        assert!(result.is_ok(), "Prover generated proof");
+        let (_evalpoint, _values) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
 
         // Verification should fail because the cross-terms don't match the commitment
         let commitment_reader = CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
-        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_polynomials {
             let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
+                .parse_commitment(verifier_state.inner_mut())
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }
@@ -533,17 +507,14 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
-
         let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
@@ -600,18 +571,10 @@ mod tests {
         }
 
         // Set up domain separator
-        let mut domainsep = DomainSeparator::new("🌪️");
-        for _ in 0..num_witnesses {
-            domainsep = domainsep.commit_statement(&params);
-        }
-
-        let total_constraints = num_witnesses * params.committment_ood_samples
-            + statements
-                .iter()
-                .map(|s| s.constraints.len())
-                .sum::<usize>();
-        domainsep = domainsep.add_whir_batch_proof(&params, num_witnesses, total_constraints);
-        let mut prover_state = domainsep.to_prover_state();
+        let ds = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::from(ds.std_prover());
 
         // Commit using commit_batch (stacks batch_size polynomials per witness)
         let committer = CommitmentWriter::new(params.clone());
@@ -619,31 +582,25 @@ mod tests {
 
         for witness_polys in &all_polynomials {
             let poly_refs: Vec<_> = witness_polys.iter().collect();
-            let witness = committer
-                .commit_batch(&mut prover_state, &poly_refs)
-                .unwrap();
+            let witness = committer.commit_batch(prover_state.inner_mut(), &poly_refs);
             witnesses.push(witness);
         }
 
         // Batch prove all witnesses together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
-        assert!(
-            result.is_ok(),
-            "Batch proving with batch_size={} failed: {:?}",
-            batch_size,
-            result.err()
-        );
+        let (_point, _evals) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
 
         // Verify
         let commitment_reader = CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
-        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_witnesses {
             let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
+                .parse_commitment(verifier_state.inner_mut())
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }
@@ -682,4 +639,3 @@ mod tests {
         }
     }
 }
-*/

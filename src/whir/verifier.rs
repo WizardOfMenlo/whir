@@ -747,7 +747,7 @@ where
         MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         let pow_config = proof_of_work::Config::sha2(Bits::new(bits));
-        pow_config.verify(verifier_state.inner_mut());
+        pow_config.verify(verifier_state.inner_mut())?;
         Ok(())
     }
 
