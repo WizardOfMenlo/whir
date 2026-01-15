@@ -28,14 +28,11 @@ mod batching_tests {
     use std::sync::Arc;
 
     use ark_std::UniformRand;
-    use spongefish::DomainSeparator;
+    use spongefish::{domain_separator, session};
     use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
-        crypto::{
-            fields::Field64,
-            merkle_tree::blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
-        },
+        crypto::{fields::Field64, merkle_tree::blake3::Blake3MerkleTreeParams},
         ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
@@ -44,6 +41,7 @@ mod batching_tests {
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
+        transcript::{codecs::Empty, ProverState, VerifierState},
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
             parameters::WhirConfig,
@@ -97,10 +95,6 @@ mod batching_tests {
 
         // Randomness source
         let mut rng = ark_std::test_rng();
-        // Generate Merkle parameters: hash function and compression function
-        let (leaf_hash_params, two_to_one_params) =
-            default_config::<F, Blake3LeafHash<F>, Blake3Compress>(&mut rng);
-
         // Configure multivariate polynomial parameters
         let mv_params = MultivariateParameters::new(num_variables);
 
@@ -110,8 +104,8 @@ mod batching_tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params,
-            two_to_one_params,
+            leaf_hash_params: (),
+            two_to_one_params: (),
             soundness_type,
             _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
@@ -138,19 +132,19 @@ mod batching_tests {
             .collect();
 
         // Define the Fiat-Shamir IOPattern for committing and proving
-        let io = DomainSeparator::new("🌪️")
-            .commit_statement(&params)
-            .add_whir_proof(&params);
+        let ds = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
 
-        // println!("IO Domain Separator: {:?}", str::from_utf8(io.as_bytes()));
-        // Initialize the Merlin transcript from the IOPattern
-        let mut prover_state = io.to_prover_state();
+        // Initialize the Merlin transcript from the domain separator
+        let mut prover_state = ProverState::from(ds.std_prover());
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let batched_witness = committer
-            .commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
-            .unwrap();
+        let batched_witness = committer.commit_batch(
+            prover_state.inner_mut(),
+            &poly_list.iter().collect::<Vec<_>>(),
+        );
 
         // Get the batched polynomial
         let batched_poly = batched_witness.batched_poly();
@@ -183,21 +177,21 @@ mod batching_tests {
         // Extract verifier-side version of the statement (only public data)
 
         // Generate a STARK proof for the given statement and witness
-        prover
-            .prove(&mut prover_state, statement.clone(), batched_witness)
-            .unwrap();
+        prover.prove(&mut prover_state, statement.clone(), batched_witness);
 
         // Create a verifier with matching parameters
         let verifier = Verifier::new(&params);
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
-        let mut verifier_state = io.to_verifier_state(prover_state.narg_string());
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);
 
         let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
+            .parse_commitment(verifier_state.inner_mut())
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
