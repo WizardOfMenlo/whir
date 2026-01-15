@@ -3,6 +3,11 @@
 //! We need these for the Merkle tree proofs as doing them in-transcript
 //! would roughly double the verifier cost.
 
+pub mod codecs;
+mod engines;
+mod field;
+mod protocol_id;
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -11,9 +16,11 @@ use spongefish::{
     StdHash, VerificationError, VerificationResult,
 };
 
-pub trait ProtocolId {
-    fn protocol_id(&self) -> [u8; 64];
-}
+pub use self::{
+    engines::Engines,
+    field::FieldConfig,
+    protocol_id::{Protocol, ProtocolId},
+};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
@@ -66,6 +73,10 @@ where
 {
     pub fn into_inner(self) -> (spongefish::ProverState<H, R>, Vec<u8>) {
         (self.inner, self.hints)
+    }
+
+    pub fn inner_mut(&mut self) -> &mut spongefish::ProverState<H, R> {
+        &mut self.inner
     }
 
     pub fn prover_message<T>(&mut self, message: &T)

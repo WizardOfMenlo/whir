@@ -1,20 +1,166 @@
 use ark_ff::Field;
+use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use serde::Serialize;
 use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProofResult,
+    Codec, Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState,
+    VerificationError, VerificationResult, VerifierState,
 };
-use spongefish_pow::{PoWChallenge, PowStrategy};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
 use super::SumcheckPolynomial;
 use crate::{
+    crypto::proof_of_work,
+    ensure,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
+    transcript::{codecs::U64, FieldConfig},
     utils::eval_eq,
     whir::statement::Statement,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct Config<F>
+where
+    F: Field,
+{
+    pub field: FieldConfig<F>,
+    pub initial_size: usize,
+    pub rounds: Vec<RoundConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct RoundConfig {
+    pub pow: proof_of_work::Config,
+}
+
+impl<F: Field> Config<F> {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        ensure!(
+            self.initial_size.is_power_of_two(),
+            "Initial size must be power of two."
+        );
+        ensure!(
+            self.initial_size.ilog2() as usize >= self.rounds.len(),
+            "Initial size must be >= 2^{rounds}."
+        );
+        for round in &self.rounds {
+            round.pow.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn final_size(&self) -> usize {
+        self.initial_size >> self.num_rounds()
+    }
+
+    pub fn num_rounds(&self) -> usize {
+        self.rounds.len()
+    }
+
+    /// Implements `folding_factor` rounds of the sumcheck protocol.
+    ///
+    /// The sumcheck protocol progressively reduces the number of variables in a multilinear
+    /// polynomial. At each step, a quadratic polynomial is derived and verified.
+    ///
+    /// Given a polynomial \( p(X_1, \dots, X_n) \), this function iteratively applies the
+    /// transformation:
+    ///
+    /// \begin{equation}
+    /// h(X) = \sum_b p(b, X) \cdot w(b, X)
+    /// \end{equation}
+    ///
+    /// where:
+    /// - \( b \) are points in \{0,1,2\}.
+    /// - \( w(b, X) \) represents generic weights applied to \( p(b, X) \).
+    /// - \( h(X) \) is a quadratic polynomial in \( X \).
+    ///
+    /// This function:
+    /// - Samples random values to progressively reduce the polynomial.
+    /// - Applies proof-of-work grinding if required.
+    /// - Returns the sampled folding randomness values used in each reduction step.
+    #[cfg_attr(feature = "tracing", instrument(skip(self, prover_state)))]
+    pub fn prove<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        instance: &mut SumcheckSingle<F>,
+    ) -> MultilinearPoint<F>
+    where
+        H: DuplexSpongeInterface,
+        R: CryptoRng + RngCore,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+    {
+        self.validate().expect("Invalid configuration");
+        assert_eq!(
+            1 << instance.num_variables(),
+            self.initial_size,
+            "Configured for input size {} and got {}",
+            self.initial_size,
+            1 << instance.num_variables(),
+        );
+
+        let mut res = Vec::with_capacity(self.num_rounds());
+        for round in &self.rounds {
+            // Send sumcheck polynomial
+            let sumcheck_poly = instance.compute_sumcheck_polynomial();
+            prover_state.prover_messages_iter(sumcheck_poly.evaluations().iter().copied());
+
+            // Do Proof of Work (if any)
+            round.pow.prove(prover_state);
+
+            // Receive the random evaluation point
+            let folding_randomness = prover_state.verifier_message::<F>();
+            res.push(folding_randomness);
+
+            instance.compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
+        }
+
+        res.reverse();
+        MultilinearPoint(res)
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip(verifier_state)))]
+    pub fn verify<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+        sum: &mut F,
+    ) -> VerificationResult<MultilinearPoint<F>>
+    where
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+    {
+        self.validate().map_err(|_| VerificationError)?;
+        let mut res = Vec::with_capacity(self.num_rounds());
+        for round in &self.rounds {
+            // Receive sumcheck polynomial
+            let evals = verifier_state.prover_messages_vec(3)?;
+            let sumcheck_poly = SumcheckPolynomial::new(evals, 1);
+
+            // Check the sum
+            if sumcheck_poly.sum_over_boolean_hypercube() != *sum {
+                return Err(VerificationError);
+            }
+
+            // Check proof of work (if any)
+            round.pow.verify(verifier_state)?;
+
+            // Receive the random evaluation point
+            let folding_randomness = verifier_state.verifier_message::<F>();
+            res.push(folding_randomness);
+
+            // Update the sum
+            let point = MultilinearPoint(vec![folding_randomness]);
+            *sum = sumcheck_poly.evaluate_at_point(&point);
+        }
+        res.reverse();
+        Ok(MultilinearPoint(res))
+    }
+}
 
 /// Implements the single-round sumcheck protocol for verifying a multilinear polynomial evaluation.
 ///
@@ -135,61 +281,6 @@ where
         let eval_2 = eval_1 + c1 + c2 + c2.double();
 
         SumcheckPolynomial::new(vec![eval_0, eval_1, eval_2], 1)
-    }
-
-    /// Implements `folding_factor` rounds of the sumcheck protocol.
-    ///
-    /// The sumcheck protocol progressively reduces the number of variables in a multilinear
-    /// polynomial. At each step, a quadratic polynomial is derived and verified.
-    ///
-    /// Given a polynomial \( p(X_1, \dots, X_n) \), this function iteratively applies the
-    /// transformation:
-    ///
-    /// \begin{equation}
-    /// h(X) = \sum_b p(b, X) \cdot w(b, X)
-    /// \end{equation}
-    ///
-    /// where:
-    /// - \( b \) are points in \{0,1,2\}.
-    /// - \( w(b, X) \) represents generic weights applied to \( p(b, X) \).
-    /// - \( h(X) \) is a quadratic polynomial in \( X \).
-    ///
-    /// This function:
-    /// - Samples random values to progressively reduce the polynomial.
-    /// - Applies proof-of-work grinding if required.
-    /// - Returns the sampled folding randomness values used in each reduction step.
-    #[cfg_attr(feature = "tracing", instrument(skip(self, prover_state)))]
-    pub fn compute_sumcheck_polynomials<S, ProverState>(
-        &mut self,
-        prover_state: &mut ProverState,
-        folding_factor: usize,
-        pow_bits: f64,
-    ) -> ProofResult<MultilinearPoint<F>>
-    where
-        ProverState: FieldToUnitSerialize<F> + UnitToField<F> + PoWChallenge,
-        S: PowStrategy,
-    {
-        let mut res = Vec::with_capacity(folding_factor);
-
-        for _ in 0..folding_factor {
-            let sumcheck_poly = self.compute_sumcheck_polynomial();
-            prover_state.add_scalars(sumcheck_poly.evaluations())?;
-
-            // Do PoW if needed
-            if pow_bits > 0. {
-                #[cfg(feature = "tracing")]
-                let _span = span!(Level::INFO, "challenge_pow", pow_bits).entered();
-                prover_state.challenge_pow::<S>(pow_bits)?;
-            }
-
-            let [folding_randomness] = prover_state.challenge_scalars()?;
-            res.push(folding_randomness);
-
-            self.compress(F::ONE, &folding_randomness.into(), &sumcheck_poly);
-        }
-
-        res.reverse();
-        Ok(MultilinearPoint(res))
     }
 
     /// Adds new weighted constraints to the polynomial.
@@ -333,18 +424,17 @@ mod tests {
     use core::slice;
 
     use ark_ff::AdditiveGroup;
-    use spongefish::{
-        codecs::arkworks_algebra::FieldDomainSeparator, DefaultHash, DomainSeparator,
-    };
-    use spongefish_pow::{blake3::Blake3PoW, PoWDomainSeparator};
+    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
+        bits::Bits,
         crypto::fields::Field64 as F,
         poly_utils::{
             coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
             multilinear::MultilinearPoint,
         },
+        transcript::Protocol,
         whir::statement::Weights,
     };
 
@@ -1116,6 +1206,19 @@ mod tests {
 
     #[test]
     fn test_compute_sumcheck_polynomials_basic_case() {
+        let config = Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 2,
+            rounds: vec![RoundConfig {
+                pow: proof_of_work::Config::none(),
+            }],
+        };
+        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
+            "Test at {}:{}",
+            file!(),
+            line!()
+        ));
+
         // Polynomial with 1 variable: f(X1) = 1 + 2*X1
         let c1 = F::from(1);
         let c2 = F::from(2);
@@ -1125,40 +1228,50 @@ mod tests {
         let statement = Statement::new(1);
 
         // Instantiate the Sumcheck prover
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
-
-        // Domain separator setup
-        // Step 1: Initialize domain separator with a context label
-        let domsep: DomainSeparator<DefaultHash> = DomainSeparator::new("test");
-
-        // Step 2: Register the fact that we’re about to absorb 3 field elements
-        let domsep = <DomainSeparator as FieldDomainSeparator<F>>::add_scalars(domsep, 3, "test");
-
-        // Step 3: Sample 1 challenge scalar from the transcript
-        let domsep =
-            <DomainSeparator as FieldDomainSeparator<F>>::challenge_scalars(domsep, 1, "test");
-
-        // Convert the domain separator to a prover state
-        let mut prover_state = domsep.to_prover_state();
-
-        let folding_factor = 1; // Minimum folding factor
-        let pow_bits = 0.; // No grinding
+        let mut instance = SumcheckSingle::new(coeffs.clone(), &statement, F::ONE);
+        let ds = ds.instance(&c1);
+        let mut prover_state = ds.std_prover();
 
         // Compute sumcheck polynomials
-        let result = prover
-            .compute_sumcheck_polynomials::<Blake3PoW, _>(
-                &mut prover_state,
-                folding_factor,
-                pow_bits,
-            )
-            .unwrap();
+        let randomness = config.prove(&mut prover_state, &mut instance);
 
-        // The result should contain `folding_factor` elements
-        assert_eq!(result.0.len(), folding_factor);
+        // The result should contain `num_rounds` elements
+        assert_eq!(randomness.0.len(), config.num_rounds());
+
+        // Create verifier
+        let narg = prover_state.narg_string();
+        let mut verifier_state = ds.std_verifier(narg);
+
+        // Verify sumcheck
+        let mut sum = F::ZERO;
+        let verifier_randomness = config.verify(&mut verifier_state, &mut sum).unwrap();
+        assert_eq!(verifier_randomness, randomness);
+
+        // Final sum should be zero.
+        assert_eq!(sum, F::ZERO);
     }
 
     #[test]
     fn test_compute_sumcheck_polynomials_with_multiple_folding_factors() {
+        let config = Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 4,
+            rounds: vec![
+                RoundConfig {
+                    pow: proof_of_work::Config {
+                        engine_id: proof_of_work::SHA2,
+                        difficulty: Bits::new(2.0),
+                    }
+                };
+                2
+            ],
+        };
+        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
+            "Test at {}:{}",
+            file!(),
+            line!()
+        ));
+
         // Polynomial with 2 variables: f(X1, X2) = 1 + 2*X1 + 3*X2 + 4*X1*X2
         let c1 = F::from(1);
         let c2 = F::from(2);
@@ -1167,44 +1280,39 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
 
         let statement = Statement::new(2);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
-
-        let folding_factor = 2; // Increase folding factor
-        let pow_bits = 1.; // Minimal grinding
-
-        // Setup the domain separator
-        let mut domsep: DomainSeparator<DefaultHash> = DomainSeparator::new("test");
-
-        // For each folding round, we must absorb values, sample challenge, and apply PoW
-        for _ in 0..folding_factor {
-            // Absorb 3 field elements (evaluations of sumcheck polynomial)
-            domsep = <DomainSeparator as FieldDomainSeparator<F>>::add_scalars(domsep, 3, "tag");
-
-            // Apply optional PoW grinding to ensure randomness
-            domsep = domsep.challenge_pow("tag");
-
-            // Sample 1 challenge scalar from the Fiat-Shamir transcript
-            domsep =
-                <DomainSeparator as FieldDomainSeparator<F>>::challenge_scalars(domsep, 1, "tag");
-        }
+        let mut instance = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let ds = ds.instance(&c1);
 
         // Convert the domain separator to a prover state
-        let mut prover_state = domsep.to_prover_state();
+        let mut prover_state = ds.std_prover();
 
-        let result = prover
-            .compute_sumcheck_polynomials::<Blake3PoW, _>(
-                &mut prover_state,
-                folding_factor,
-                pow_bits,
-            )
-            .unwrap();
+        let result = config.prove(&mut prover_state, &mut instance);
 
         // Ensure we get `folding_factor` sampled randomness values
-        assert_eq!(result.0.len(), folding_factor);
+        assert_eq!(result.0.len(), config.num_rounds());
     }
 
     #[test]
     fn test_compute_sumcheck_polynomials_with_three_variables() {
+        let config = Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 8,
+            rounds: vec![
+                RoundConfig {
+                    pow: proof_of_work::Config {
+                        engine_id: proof_of_work::SHA2,
+                        difficulty: Bits::new(2.0),
+                    }
+                };
+                3
+            ],
+        };
+        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
+            "Test at {}:{}",
+            file!(),
+            line!()
+        ));
+
         // Multilinear polynomial with 3 variables:
         // f(X1, X2, X3) = 1 + 2*X1 + 3*X2 + 4*X3 + 5*X1*X2 + 6*X1*X3 + 7*X2*X3 + 8*X1*X2*X3
         let c1 = F::from(1);
@@ -1218,43 +1326,30 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4, c5, c6, c7, c8]);
 
         let statement = Statement::new(3);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
-
-        let folding_factor = 3;
-        let pow_bits = 2.;
-
-        // Setup the domain separator
-        let mut domsep: DomainSeparator<DefaultHash> = DomainSeparator::new("test");
-
-        // Register interactions with the transcript for each round
-        for _ in 0..folding_factor {
-            // Absorb 3 field values (sumcheck evaluations at X = 0, 1, 2)
-            domsep = <DomainSeparator as FieldDomainSeparator<F>>::add_scalars(domsep, 3, "tag");
-
-            // Apply challenge PoW (grinding) to enhance soundness
-            domsep = domsep.challenge_pow("tag");
-
-            // Sample 1 field challenge (folding randomness)
-            domsep =
-                <DomainSeparator as FieldDomainSeparator<F>>::challenge_scalars(domsep, 1, "tag");
-        }
+        let mut instance = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let ds = ds.instance(&c1);
 
         // Convert the domain separator to a prover state
-        let mut prover_state = domsep.to_prover_state();
+        let mut prover_state = ds.std_prover();
 
-        let result = prover
-            .compute_sumcheck_polynomials::<Blake3PoW, _>(
-                &mut prover_state,
-                folding_factor,
-                pow_bits,
-            )
-            .unwrap();
+        let result = config.prove(&mut prover_state, &mut instance);
 
-        assert_eq!(result.0.len(), folding_factor);
+        assert_eq!(result.0.len(), config.num_rounds());
     }
 
     #[test]
     fn test_compute_sumcheck_polynomials_edge_case_zero_folding() {
+        let config = Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 4,
+            rounds: vec![],
+        };
+        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
+            "Test at {}:{}",
+            file!(),
+            line!()
+        ));
+
         // Multilinear polynomial with 2 variables:
         // f(X1, X2) = 1 + 2*X1 + 3*X2 + 4*X1*X2
         let c1 = F::from(1);
@@ -1264,23 +1359,14 @@ mod tests {
         let coeffs = CoefficientList::new(vec![c1, c2, c3, c4]);
 
         let statement = Statement::new(2);
-        let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
-
-        let folding_factor = 0; // Edge case: No folding
-        let pow_bits = 1.;
+        let mut instance = SumcheckSingle::new(coeffs, &statement, F::ONE);
+        let ds = ds.instance(&c1);
 
         // No domain separator logic needed since we don't fold
-        let domsep: DomainSeparator<DefaultHash> = DomainSeparator::new("test");
-        let mut prover_state = domsep.to_prover_state();
+        let mut prover_state = ds.std_prover();
 
-        let result = prover
-            .compute_sumcheck_polynomials::<Blake3PoW, _>(
-                &mut prover_state,
-                folding_factor,
-                pow_bits,
-            )
-            .unwrap();
+        let result = config.prove(&mut prover_state, &mut instance);
 
-        assert_eq!(result.0.len(), 0);
+        assert_eq!(result.0.len(), config.num_rounds());
     }
 }

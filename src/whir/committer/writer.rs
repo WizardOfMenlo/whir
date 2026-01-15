@@ -3,10 +3,6 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use spongefish::{
-    codecs::arkworks_algebra::{BytesToUnitSerialize, FieldToUnitSerialize, UnitToField},
-    ProofResult,
-};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
@@ -215,10 +211,7 @@ mod tests {
     use crate::{
         crypto::{
             fields::Field64,
-            merkle_tree::{
-                keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
-                parameters::default_config,
-            },
+            merkle_tree::keccak::{KeccakCompress, KeccakLeafHash, KeccakMerkleTreeParams},
         },
         ntt::RSDefault,
         parameters::{
@@ -226,7 +219,6 @@ mod tests {
             ProtocolParameters, SoundnessType,
         },
         poly_utils::multilinear::MultilinearPoint,
-        whir::domainsep::WhirDomainSeparator,
     };
 
     #[test]

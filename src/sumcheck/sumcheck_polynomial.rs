@@ -98,7 +98,7 @@ where
         ternary_index
     }
 
-    /// Evaluates the polynomial at an arbitrary point in the domain `{0,1,2}^n`.
+    /// Evaluates the polynomial at an arbitrary point in the domain `F^n`.
     ///
     /// Given an interpolation point `point ∈ F^n`, this computes:
     /// ```ignore

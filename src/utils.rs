@@ -6,6 +6,15 @@ use ark_serialize::CanonicalSerialize;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err.into());
+        }
+    };
+}
+
 /// Workaround for Ark types that are missing comparisons
 pub fn ark_eq<T: CanonicalSerialize>(a: &T, b: &T) -> bool {
     let mut buf_a = Vec::new();

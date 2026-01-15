@@ -2,11 +2,6 @@ use std::marker::PhantomData;
 
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    ProofError, ProofResult, UnitToBytes,
-};
-use spongefish_pow::{self, PoWChallenge};
 
 use super::{
     committer::reader::ParsedCommitment,

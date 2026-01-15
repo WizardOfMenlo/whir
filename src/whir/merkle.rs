@@ -1,5 +1,4 @@
 use ark_crypto_primitives::merkle_tree::{Config, LeafParam, MerkleTree, MultiPath, TwoToOneParam};
-use spongefish::{ProofError, ProofResult};
 
 use crate::{
     crypto::merkle_tree::proof::FullMultiPath,

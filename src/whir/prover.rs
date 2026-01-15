@@ -3,11 +3,6 @@ use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProofResult, UnitToBytes,
-};
-use spongefish_pow::{self, PoWChallenge};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 

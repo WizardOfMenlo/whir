@@ -34,10 +34,7 @@ mod batching_tests {
     use crate::{
         crypto::{
             fields::Field64,
-            merkle_tree::{
-                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
-                parameters::default_config,
-            },
+            merkle_tree::blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
         },
         ntt::RSDefault,
         parameters::{
@@ -49,7 +46,6 @@ mod batching_tests {
         },
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
-            domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, Weights},

@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ark_crypto_primitives::{merkle_tree::DigestConverter, Error};
 
-mod blake3;
+pub mod blake3;
 mod digest;
-mod keccak;
+pub mod keccak;
 mod parameters;
 mod proof;
 
@@ -13,7 +13,7 @@ pub use parameters::{default_config, MerkleTreeParams};
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use spongefish::Decoding;
 
-use crate::crypto::transcript::VerifierMessage;
+use crate::transcript::VerifierMessage;
 
 #[derive(Debug, Default)]
 pub struct HashCounter;
@@ -96,8 +96,8 @@ mod tests {
     use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::crypto::{
-        fields::Field64,
+    use crate::{
+        crypto::fields::Field64,
         transcript::{ProverState, VerifierState},
     };
 

@@ -1,9 +1,5 @@
 use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitDeserialize, UnitToField},
-    BytesToUnitDeserialize, ProofResult, UnitToBytes,
-};
 
 use crate::whir::{
     parameters::WhirConfig,

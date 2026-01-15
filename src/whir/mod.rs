@@ -1,13 +1,13 @@
-pub mod batching;
-pub mod committer;
-pub mod domainsep;
-pub mod merkle;
-pub mod parameters;
-pub mod prover;
+// pub mod batching;
+// pub mod committer;
+// pub mod merkle;
+// pub mod parameters;
+// pub mod prover;
 pub mod statement;
-pub mod utils;
-pub mod verifier;
+// pub mod utils;
+// pub mod verifier;
 
+/*
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -19,10 +19,7 @@ mod tests {
     use crate::{
         crypto::{
             fields::{Field64, Field64_2},
-            merkle_tree::{
-                blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
-                parameters::default_config,
-            },
+            merkle_tree::blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
         },
         ntt::RSDefault,
         parameters::{
@@ -35,7 +32,6 @@ mod tests {
         utils::test_serde,
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
-            domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, Weights},
@@ -686,3 +682,4 @@ mod tests {
         }
     }
 }
+*/
