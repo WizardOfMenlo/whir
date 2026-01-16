@@ -237,8 +237,6 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     let statement = Statement::new(num_variables);
     prover.prove(&mut prover_state, statement.clone(), witness);
 
-    dbg!(whir_prover_time.elapsed());
-
     // Serialize proof
     let proof = prover_state.proof();
     let proof_size = proof.narg_string.len() + proof.hints.len();

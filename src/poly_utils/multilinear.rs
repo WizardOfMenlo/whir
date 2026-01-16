@@ -10,7 +10,7 @@ use super::hypercube::BinaryHypercubePoint;
 /// Often, `x_i` are binary. If strictly binary, `BinaryHypercubePoint` is used.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
-pub struct MultilinearPoint<F>(#[serde(with = "crate::ark_serde")] pub Vec<F>);
+pub struct MultilinearPoint<F>(#[serde(with = "crate::ark_serde::canonical")] pub Vec<F>);
 
 impl<F> MultilinearPoint<F>
 where

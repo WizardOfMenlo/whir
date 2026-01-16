@@ -8,14 +8,8 @@ use serde::{
 };
 
 /// Zero-sized type that represents a Galois field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct FieldConfig<F: Field> {
-    #[serde(
-        flatten,
-        serialize_with = "serialize",
-        deserialize_with = "deserialize"
-    )]
     field: PhantomData<F>,
 }
 
@@ -25,48 +19,53 @@ impl<F: Field> FieldConfig<F> {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
-struct Parameters<'a> {
-    prime: &'a [u8],
+/// Internal helper
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename = "FieldConfig")]
+struct Parameters<BigInt: BigInteger> {
+    #[serde(with = "crate::ark_serde::bigint")]
+    prime: BigInt,
     extension_degree: u64,
 }
 
-fn serialize<S, F>(value: &PhantomData<F>, s: S) -> Result<S::Ok, S::Error>
-where
-    F: Field,
-    S: Serializer,
-{
-    let modulus = F::BasePrimeField::MODULUS.to_bytes_be();
-    let leading_zeros = modulus.iter().take_while(|&&b| b == 0).count();
-    Parameters {
-        prime: &modulus[leading_zeros..],
-        extension_degree: F::extension_degree(),
+impl<F: Field> Serialize for FieldConfig<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Parameters {
+            prime: F::BasePrimeField::MODULUS,
+            extension_degree: F::extension_degree(),
+        }
+        .serialize(serializer)
     }
-    .serialize(s)
 }
 
-fn deserialize<'de, D, F>(d: D) -> Result<PhantomData<F>, D::Error>
-where
-    F: Field,
-    D: Deserializer<'de>,
-{
-    let modulus = F::BasePrimeField::MODULUS.to_bytes_be();
-    let leading_zeros = modulus.iter().take_while(|&&b| b == 0).count();
-    let expected = Parameters {
-        prime: &modulus[leading_zeros..],
-        extension_degree: F::extension_degree(),
-    };
-    let params = Parameters::deserialize(d)?;
-    if expected != params {
-        return Err(D::Error::custom(format!("Mismatch in field")));
+impl<'de, F: Field> Deserialize<'de> for FieldConfig<F> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let expected = Parameters {
+            prime: F::BasePrimeField::MODULUS,
+            extension_degree: F::extension_degree(),
+        };
+        let params: Parameters<<F::BasePrimeField as PrimeField>::BigInt> =
+            Parameters::deserialize(deserializer)?;
+        if expected != params {
+            return Err(D::Error::custom(format!("Mismatch in field")));
+        }
+        Ok(Self::default())
     }
-    Ok(PhantomData)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::fields::Field64_3;
+    use crate::{
+        crypto::fields::{Field256, Field64_3},
+        utils::test_serde,
+    };
 
     #[test]
     fn test_json_goldilocks_3() {
@@ -76,7 +75,13 @@ mod tests {
         let json = serde_json::to_string(&field_config).unwrap();
         assert_eq!(
             json,
-            "{\"prime\":[255,255,255,255,0,0,0,1],\"extension_degree\":3}"
+            "{\"prime\":\"ffffffff00000001\",\"extension_degree\":3}"
         );
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        test_serde(&FieldConfig::<Field256>::new());
+        test_serde(&FieldConfig::<Field64_3>::new());
     }
 }

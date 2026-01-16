@@ -24,6 +24,7 @@ use crate::{
         ProtocolParameters, SoundnessType,
     },
     sumcheck,
+    transcript::FieldConfig,
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ where
     pub starting_domain: Domain<F>,
     pub starting_log_inv_rate: usize,
 
-    // pub initial_sumcheck: sumcheck::Config<F>,
+    pub initial_sumcheck: Option<sumcheck::Config<F>>,
     pub starting_folding_pow_bits: proof_of_work::Config,
 
     pub folding_factor: FoldingFactor,
@@ -69,9 +70,9 @@ where
     pub deduplication_strategy: DeduplicationStrategy,
 
     // Merkle tree parameters
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub leaf_hash_params: LeafParam<MerkleConfig>,
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
     pub merkle_proof_strategy: MerkleProofStrategy,
@@ -104,11 +105,11 @@ where
     pub num_variables: usize,
     pub folding_factor: usize,
     pub domain_size: usize,
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::field")]
     pub domain_gen: F,
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::field")]
     pub domain_gen_inv: F,
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::field")]
     pub exp_domain_gen: F,
 }
 
@@ -283,9 +284,22 @@ where
             initial_statement: whir_parameters.initial_statement,
             committment_ood_samples: commitment_ood_samples,
             mv_parameters,
-            starting_domain,
+            starting_domain: starting_domain.clone(),
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
+            initial_sumcheck: Some(sumcheck::Config {
+                field: FieldConfig::new(),
+                initial_size: starting_domain.size(),
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: proof_of_work::Config {
+                            engine_id: proof_of_work::BLAKE3,
+                            difficulty: Bits::new(starting_folding_pow_bits),
+                        }
+                    };
+                    whir_parameters.folding_factor.at_round(0)
+                ],
+            }),
             starting_folding_pow_bits: proof_of_work::Config {
                 engine_id: proof_of_work::BLAKE3,
                 difficulty: Bits::new(starting_folding_pow_bits),

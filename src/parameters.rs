@@ -239,12 +239,12 @@ where
     /// Parameters for hashing Merkle tree leaves.
     ///
     /// These define how individual leaves in the Merkle tree are hashed.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     /// Parameters for hashing inner nodes in the Merkle tree.
     ///
     /// These define the hashing function used when combining two child nodes into a parent node.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
     /// Number of polynomials committed in the batch.

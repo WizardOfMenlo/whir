@@ -22,7 +22,7 @@ use crate::poly_utils::{
 /// - Evaluation mode: Represents an equality constraint at a specific `MultilinearPoint<F>`.
 /// - Linear mode: Represents a set of per-corner weights stored as `EvaluationsList<F>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+#[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
 pub enum Weights<F> {
     /// Represents a weight function that enforces equality constraints at a specific point.
     Evaluation { point: MultilinearPoint<F> },
@@ -30,7 +30,7 @@ pub enum Weights<F> {
     Linear { weight: EvaluationsList<F> },
     /// Represents a weight function which is a geometric progression.
     Geometric {
-        #[serde(with = "crate::ark_serde")]
+        #[serde(with = "crate::ark_serde::field")]
         /// The multiplicative factor of the geometric progression.
         a: F,
         /// The number of terms in the geometric progression, post which all terms are zero.
@@ -219,7 +219,7 @@ impl<F: Field> Weights<F> {
 /// W(X) = w_1(X) + \gamma w_2(X) + \gamma^2 w_3(X) + \dots + \gamma^{k-1} w_k(X)
 /// \end{equation}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+#[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
 pub struct Statement<F> {
     /// Number of variables defining the polynomial space.
     num_variables: usize,
@@ -232,11 +232,11 @@ pub struct Statement<F> {
 
 /// A constraint as a weight function and a target sum.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+#[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
 pub struct Constraint<F> {
     pub weights: Weights<F>,
 
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::field")]
     pub sum: F,
 
     /// When set, the weight evaluation will not be checked by the WHIR verifier,
