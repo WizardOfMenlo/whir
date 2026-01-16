@@ -44,7 +44,6 @@ clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = ["ark-ff"], rev = "fcc277f8a857fdeeadd7cca92ab08de63b1ff1a1"}
-spongefish-pow = { git = "https://github.com/arkworks-rs/spongefish" , rev = "fcc277f8a857fdeeadd7cca92ab08de63b1ff1a1" }
 rayon = { version = "1.10", optional = true }
 thiserror = "2.0"
 itertools = "0.14"

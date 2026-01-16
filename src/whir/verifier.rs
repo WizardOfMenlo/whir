@@ -17,22 +17,21 @@ use crate::{
     whir::{merkle, prover::RootPath, utils::get_challenge_stir_queries},
 };
 
-pub struct Verifier<'a, F, MerkleConfig, PowStrategy>
+pub struct Verifier<'a, F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    params: &'a WhirConfig<F, MerkleConfig, PowStrategy>,
+    params: &'a WhirConfig<F, MerkleConfig>,
     merkle_state: merkle::VerifierMerkleState<'a, MerkleConfig>,
 }
 
-impl<'a, F, MerkleConfig, PowStrategy> Verifier<'a, F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig> Verifier<'a, F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(params: &'a WhirConfig<F, MerkleConfig>) -> Self {
         Self {
             params,
             merkle_state: merkle::VerifierMerkleState::new(

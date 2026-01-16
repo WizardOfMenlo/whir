@@ -220,7 +220,7 @@ pub enum DeduplicationStrategy {
 
 /// Configuration parameters for WHIR proofs.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ProtocolParameters<MerkleConfig, PowStrategy>
+pub struct ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -236,8 +236,6 @@ where
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
     pub pow_bits: usize,
-    /// Phantom type for PoW parameters.
-    pub _pow_parameters: PhantomData<PowStrategy>,
     /// Parameters for hashing Merkle tree leaves.
     ///
     /// These define how individual leaves in the Merkle tree are hashed.
@@ -263,7 +261,7 @@ where
     pub merkle_proof_strategy: MerkleProofStrategy,
 }
 
-impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> Debug for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -272,7 +270,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> PartialEq for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> PartialEq for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -288,7 +286,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> Display for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> Display for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {

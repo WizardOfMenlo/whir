@@ -24,20 +24,17 @@ pub struct ParsedCommitment<F, D> {
     pub batching_randomness: F,
 }
 
-pub struct CommitmentReader<'a, F, MerkleConfig, PowStrategy>(
-    &'a WhirConfig<F, MerkleConfig, PowStrategy>,
-)
+pub struct CommitmentReader<'a, F, MerkleConfig>(&'a WhirConfig<F, MerkleConfig>)
 where
     F: FftField,
     MerkleConfig: Config;
 
-impl<'a, F, MerkleConfig, PowStrategy> CommitmentReader<'a, F, MerkleConfig, PowStrategy>
+impl<'a, F, MerkleConfig> CommitmentReader<'a, F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(params: &'a WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(params: &'a WhirConfig<F, MerkleConfig>) -> Self {
         Self(params)
     }
 

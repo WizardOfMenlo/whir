@@ -13,7 +13,6 @@ mod tests {
 
     use ark_ff::Field;
     use spongefish::{domain_separator, session};
-    use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::{
@@ -41,9 +40,6 @@ mod tests {
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
-
-    /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
-    type PowStrategy = Blake3PoW;
 
     /// Field type used in the tests.
     type F = Field64;
@@ -76,7 +72,7 @@ mod tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
@@ -84,7 +80,6 @@ mod tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type,
-            _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
             deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -257,7 +252,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
@@ -265,7 +260,6 @@ mod tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type,
-            _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
             deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -405,7 +399,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level: 32,
             pow_bits: 0,
@@ -413,7 +407,6 @@ mod tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
-            _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size: 1,
             deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -508,7 +501,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
@@ -516,7 +509,6 @@ mod tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type,
-            _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size, // KEY: batch_size > 1
             deduplication_strategy: DeduplicationStrategy::Enabled,

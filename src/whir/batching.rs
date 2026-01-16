@@ -29,7 +29,6 @@ mod batching_tests {
 
     use ark_std::UniformRand;
     use spongefish::{domain_separator, session};
-    use spongefish_pow::blake3::Blake3PoW;
 
     use crate::{
         crypto::{fields::Field64, merkle_tree::blake3::Blake3MerkleTreeParams},
@@ -53,8 +52,6 @@ mod batching_tests {
 
     /// Merkle tree configuration type for commitment layers.
     type MerkleConfig = Blake3MerkleTreeParams<F>;
-    /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
-    type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
     type F = Field64;
 
@@ -99,7 +96,7 @@ mod batching_tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level: 32,
             pow_bits,
@@ -107,7 +104,6 @@ mod batching_tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type,
-            _pow_parameters: Default::default(),
             starting_log_inv_rate: 1,
             batch_size,
             deduplication_strategy: DeduplicationStrategy::Enabled,

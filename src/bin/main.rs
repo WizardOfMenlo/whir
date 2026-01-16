@@ -8,7 +8,6 @@ use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use spongefish::{domain_separator, session, Codec};
-use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
     crypto::{
@@ -72,8 +71,6 @@ struct Args {
     #[arg(long = "hash", default_value = "Blake3")]
     merkle_tree: AvailableMerkle,
 }
-
-type PowStrategy = Blake3PoW;
 
 fn main() {
     let mut args = Args::parse();
@@ -186,7 +183,7 @@ fn run_whir_as_ldt<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig> {
         initial_statement: false,
         security_level,
         pow_bits,
@@ -197,14 +194,13 @@ fn run_whir_as_ldt<F, MerkleConfig>(
         leaf_hash_params: (),
         two_to_one_params: (),
         soundness_type,
-        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         deduplication_strategy: DeduplicationStrategy::Enabled,
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+    let params = WhirConfig::<F, MerkleConfig>::new(
         reed_solomon,
         basefield_reed_solomon,
         mv_params,
@@ -306,7 +302,7 @@ fn run_whir_pcs<F, MerkleConfig>(
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig> {
         initial_statement: true,
         security_level,
         pow_bits,
@@ -317,14 +313,13 @@ fn run_whir_pcs<F, MerkleConfig>(
         leaf_hash_params: (),
         two_to_one_params: (),
         soundness_type,
-        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         deduplication_strategy: DeduplicationStrategy::Enabled,
         merkle_proof_strategy: MerkleProofStrategy::Compressed,
     };
 
-    let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+    let params = WhirConfig::<F, MerkleConfig>::new(
         reed_solomon,
         basefield_reed_solomon,
         mv_params,

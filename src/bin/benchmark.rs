@@ -14,7 +14,6 @@ use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use serde::Serialize;
 use spongefish::{domain_separator, session, Codec};
-use spongefish_pow::blake3::Blake3PoW;
 use whir::{
     cmdline_utils::{AvailableFields, AvailableMerkle},
     crypto::{
@@ -100,8 +99,6 @@ struct BenchmarkOutput {
     whir_ldt_verifier_time: Duration,
     whir_ldt_verifier_hashes: usize,
 }
-
-type PowStrategy = Blake3PoW;
 
 fn main() {
     let mut args = Args::parse();
@@ -211,7 +208,7 @@ where
 
     let mv_params = MultivariateParameters::<F>::new(num_variables);
 
-    let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+    let whir_params = ProtocolParameters::<MerkleConfig> {
         initial_statement: true,
         security_level,
         pow_bits,
@@ -222,7 +219,6 @@ where
         leaf_hash_params: (),
         two_to_one_params: (),
         soundness_type,
-        _pow_parameters: Default::default(),
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -247,13 +243,13 @@ where
             committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
         };
 
-        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: false,
             ..whir_params.clone()
         };
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        let params = WhirConfig::<F, MerkleConfig>::new(
             reed_solomon,
             basefield_reed_solomon,
             mv_params,
@@ -331,7 +327,7 @@ where
 
         let reed_solomon = Arc::new(RSDefault);
 
-        let params = WhirConfig::<F, MerkleConfig, PowStrategy>::new(
+        let params = WhirConfig::<F, MerkleConfig>::new(
             reed_solomon.clone(),
             reed_solomon,
             mv_params,

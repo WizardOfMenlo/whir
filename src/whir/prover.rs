@@ -30,22 +30,21 @@ use crate::{
 
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
-pub struct Prover<F, MerkleConfig, PowStrategy>
+pub struct Prover<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    config: WhirConfig<F, MerkleConfig, PowStrategy>,
+    config: WhirConfig<F, MerkleConfig>,
     merkle_state: merkle::ProverMerkleState,
 }
 
-impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig> Prover<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(config: WhirConfig<F, MerkleConfig>) -> Self {
         let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
             config,
@@ -53,7 +52,7 @@ where
         }
     }
 
-    pub const fn config(&self) -> &WhirConfig<F, MerkleConfig, PowStrategy> {
+    pub const fn config(&self) -> &WhirConfig<F, MerkleConfig> {
         &self.config
     }
 

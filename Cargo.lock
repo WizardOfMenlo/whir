@@ -282,9 +282,6 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-dependencies = [
- "zeroize",
-]
 
 [[package]]
 name = "autocfg"
@@ -335,7 +332,6 @@ dependencies = [
  "constant_time_eq",
  "cpufeatures",
  "digest",
- "zeroize",
 ]
 
 [[package]]
@@ -346,12 +342,6 @@ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
-
-[[package]]
-name = "bytemuck"
-version = "1.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
 
 [[package]]
 name = "byteorder"
@@ -1417,27 +1407,12 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=fcc277f8a857fdeeadd7
 dependencies = [
  "ark-ff",
  "ark-serialize",
- "blake3",
  "digest",
- "keccak",
  "p3-koala-bear",
  "rand 0.8.5",
  "sha2",
  "sha3",
  "zeroize",
-]
-
-[[package]]
-name = "spongefish-pow"
-version = "1.0.0-rc1"
-source = "git+https://github.com/arkworks-rs/spongefish?rev=fcc277f8a857fdeeadd7cca92ab08de63b1ff1a1#fcc277f8a857fdeeadd7cca92ab08de63b1ff1a1"
-dependencies = [
- "blake3",
- "bytemuck",
- "keccak",
- "rand 0.8.5",
- "rayon",
- "spongefish",
 ]
 
 [[package]]
@@ -1704,7 +1679,6 @@ dependencies = [
  "sha2",
  "sha3",
  "spongefish",
- "spongefish-pow",
  "static_assertions",
  "thiserror",
  "tracing",

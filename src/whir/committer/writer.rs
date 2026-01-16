@@ -24,20 +24,20 @@ use crate::{
 /// and constructs a Merkle tree from the resulting values.
 ///
 /// It provides a commitment that can be used for proof generation and verification.
-pub struct CommitmentWriter<F, MerkleConfig, PowStrategy>
+pub struct CommitmentWriter<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    pub(crate) config: WhirConfig<F, MerkleConfig, PowStrategy>,
+    pub(crate) config: WhirConfig<F, MerkleConfig>,
 }
 
-impl<F, MerkleConfig, PowStrategy> CommitmentWriter<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig> CommitmentWriter<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
 {
-    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(config: WhirConfig<F, MerkleConfig>) -> Self {
         Self { config }
     }
 
@@ -208,7 +208,6 @@ mod tests {
 
     use ark_ff::UniformRand;
     use spongefish::{domain_separator, session};
-    use spongefish_pow::blake3::Blake3PoW;
 
     use super::*;
     use crate::{
@@ -238,7 +237,7 @@ mod tests {
         let folding_factor = 4;
         let first_round_folding_factor = 4;
 
-        let whir_params = ProtocolParameters::<MerkleConfig, Blake3PoW> {
+        let whir_params = ProtocolParameters::<MerkleConfig> {
             initial_statement: true,
             security_level,
             pow_bits,
@@ -249,7 +248,6 @@ mod tests {
             leaf_hash_params: (),
             two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
-            _pow_parameters: std::marker::PhantomData,
             starting_log_inv_rate: starting_rate,
             batch_size: 1,
             deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -260,7 +258,7 @@ mod tests {
         let mv_params = MultivariateParameters::<F>::new(num_variables);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+        let params = WhirConfig::<F, MerkleConfig>::new(
             reed_solomon,
             basefield_reed_solomon,
             mv_params,
@@ -335,7 +333,7 @@ mod tests {
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+        let params = WhirConfig::<F, MerkleConfig>::new(
             reed_solomon,
             basefield_reed_solomon,
             MultivariateParameters::<F>::new(10),
@@ -347,7 +345,6 @@ mod tests {
                 leaf_hash_params: (),
                 two_to_one_params: (),
                 soundness_type: SoundnessType::ConjectureList,
-                _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
                 deduplication_strategy: DeduplicationStrategy::Enabled,
@@ -380,7 +377,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut params = WhirConfig::<F, MerkleConfig, Blake3PoW>::new(
+        let mut params = WhirConfig::<F, MerkleConfig>::new(
             reed_solomon,
             basefield_reed_solomon,
             MultivariateParameters::<F>::new(5),
@@ -392,7 +389,6 @@ mod tests {
                 leaf_hash_params: (),
                 two_to_one_params: (),
                 soundness_type: SoundnessType::ConjectureList,
-                _pow_parameters: Default::default(),
                 starting_log_inv_rate: 1,
                 batch_size: 1,
                 deduplication_strategy: DeduplicationStrategy::Enabled,
