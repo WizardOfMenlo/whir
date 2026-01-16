@@ -8,10 +8,9 @@ use super::{
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
-    crypto::proof_of_work,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckPolynomial,
-    transcript::{codecs::U64, ProverMessage, VerifierMessage, VerifierState},
+    sumcheck,
+    transcript::{codecs::U64, FieldConfig, ProverMessage, VerifierMessage, VerifierState},
     utils::expand_randomness,
     whir::{merkle, prover::RootPath, utils::get_challenge_stir_queries},
 };
@@ -81,12 +80,17 @@ where
             round_constraints.push((combination_randomness, constraints));
 
             // Initial sumcheck
-            let folding_randomness = self.verify_sumcheck_rounds(
-                verifier_state,
-                &mut claimed_sum,
-                self.params.folding_factor.at_round(0),
-                self.params.starting_folding_pow_bits,
-            )?;
+            let config = sumcheck::Config {
+                field: FieldConfig::new(),
+                initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: self.params.starting_folding_pow_bits
+                    };
+                    self.params.folding_factor.at_round(0)
+                ],
+            };
+            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
         } else {
             assert_eq!(prev_commitment.ood_points.len(), 0);
@@ -136,12 +140,17 @@ where
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
 
-            let folding_randomness = self.verify_sumcheck_rounds(
-                verifier_state,
-                &mut claimed_sum,
-                self.params.folding_factor.at_round(round_index + 1),
-                round_params.folding_pow_bits,
-            )?;
+            let config = sumcheck::Config {
+                field: FieldConfig::new(),
+                initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: round_params.folding_pow_bits
+                    };
+                    self.params.folding_factor.at_round(round_index + 1)
+                ],
+            };
+            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             // Update round parameters
@@ -172,12 +181,18 @@ where
             return Err(VerificationError);
         }
 
-        let final_sumcheck_randomness = self.verify_sumcheck_rounds(
-            verifier_state,
-            &mut claimed_sum,
-            self.params.final_sumcheck_rounds,
-            self.params.final_folding_pow_bits,
-        )?;
+        let config = sumcheck::Config {
+            field: FieldConfig::new(),
+            initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: self.params.final_folding_pow_bits
+                };
+                self.params.final_sumcheck_rounds
+            ],
+        };
+        let final_sumcheck_randomness =
+            config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds.
@@ -302,12 +317,17 @@ where
             round_constraints.push((combination_randomness, all_constraints));
 
             // Initial sumcheck on the combined constraints
-            let folding_randomness = self.verify_sumcheck_rounds(
-                verifier_state,
-                &mut claimed_sum,
-                self.params.folding_factor.at_round(0),
-                self.params.starting_folding_pow_bits,
-            )?;
+            let config = sumcheck::Config {
+                field: FieldConfig::new(),
+                initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: self.params.starting_folding_pow_bits
+                    };
+                    self.params.folding_factor.at_round(0)
+                ],
+            };
+            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
         } else {
             for commitment in parsed_commitments {
@@ -423,12 +443,17 @@ where
             self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
         round_constraints.push((combination_randomness, constraints));
 
-        let folding_randomness = self.verify_sumcheck_rounds(
-            verifier_state,
-            &mut claimed_sum,
-            self.params.folding_factor.at_round(1),
-            round_params.folding_pow_bits,
-        )?;
+        let config = sumcheck::Config {
+            field: FieldConfig::new(),
+            initial_size: 1 << self.params.folding_factor.at_round(1), // Not used
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: round_params.folding_pow_bits
+                };
+                self.params.folding_factor.at_round(1)
+            ],
+        };
+        let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
         round_folding_randomness.push(folding_randomness);
 
         // Rounds 1+: Standard WHIR verification on the single batched polynomial
@@ -460,12 +485,17 @@ where
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
 
-            let folding_randomness = self.verify_sumcheck_rounds(
-                verifier_state,
-                &mut claimed_sum,
-                self.params.folding_factor.at_round(round_index + 1),
-                round_params.folding_pow_bits,
-            )?;
+            let config = sumcheck::Config {
+                field: FieldConfig::new(),
+                initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: round_params.folding_pow_bits
+                    };
+                    self.params.folding_factor.at_round(round_index + 1)
+                ],
+            };
+            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             prev_commitment = new_commitment;
@@ -493,12 +523,18 @@ where
             return Err(VerificationError);
         }
 
-        let final_sumcheck_randomness = self.verify_sumcheck_rounds(
-            verifier_state,
-            &mut claimed_sum,
-            self.params.final_sumcheck_rounds,
-            self.params.final_folding_pow_bits,
-        )?;
+        let config = sumcheck::Config {
+            field: FieldConfig::new(),
+            initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: self.params.final_folding_pow_bits
+                };
+                self.params.final_sumcheck_rounds
+            ],
+        };
+        let final_sumcheck_randomness =
+            config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
@@ -550,52 +586,6 @@ where
             .sum::<F>();
 
         Ok(combination_randomness)
-    }
-
-    /// Verify rounds of sumcheck updating the claimed_sum and returning the folding randomness.
-    pub fn verify_sumcheck_rounds<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        claimed_sum: &mut F,
-        rounds: usize,
-        proof_of_work: proof_of_work::Config,
-    ) -> VerificationResult<MultilinearPoint<F>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
-    {
-        let mut randomness = Vec::with_capacity(rounds);
-        for _ in 0..rounds {
-            // Receive this round's sumcheck polynomial
-            let mut sumcheck_poly_evals = [F::zero(); 3];
-            for eval in &mut sumcheck_poly_evals {
-                *eval = verifier_state.prover_message()?;
-            }
-
-            let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
-
-            // Verify claimed sum is consistent with polynomial
-            if sumcheck_poly.sum_over_boolean_hypercube() != *claimed_sum {
-                return Err(VerificationError);
-            }
-
-            // Proof of work per round
-            proof_of_work.verify(verifier_state.inner_mut())?;
-
-            // Receive folding randomness
-            let folding_randomness_single: F = verifier_state.verifier_message();
-            randomness.push(folding_randomness_single);
-
-            // Update claimed sum using folding randomness
-            *claimed_sum = sumcheck_poly.evaluate_at_point(&folding_randomness_single.into());
-        }
-
-        randomness.reverse();
-        Ok(MultilinearPoint(randomness))
     }
 
     /// Verify a STIR challenges against a commitment and return the constraints.
