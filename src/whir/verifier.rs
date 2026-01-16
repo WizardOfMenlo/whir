@@ -85,7 +85,7 @@ where
                 initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.params.starting_folding_pow_bits
+                        pow: self.params.starting_folding_pow
                     };
                     self.params.folding_factor.at_round(0)
                 ],
@@ -105,7 +105,7 @@ where
 
             // PoW
             self.params
-                .starting_folding_pow_bits
+                .starting_folding_pow
                 .verify(verifier_state.inner_mut())?;
         }
 
@@ -145,7 +145,7 @@ where
                 initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: round_params.folding_pow_bits
+                        pow: round_params.folding_pow
                     };
                     self.params.folding_factor.at_round(round_index + 1)
                 ],
@@ -186,7 +186,7 @@ where
             initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: self.params.final_folding_pow_bits
+                    pow: self.params.final_folding_pow
                 };
                 self.params.final_sumcheck_rounds
             ],
@@ -322,7 +322,7 @@ where
                 initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.params.starting_folding_pow_bits
+                        pow: self.params.starting_folding_pow
                     };
                     self.params.folding_factor.at_round(0)
                 ],
@@ -345,7 +345,7 @@ where
             round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
             self.params
-                .starting_folding_pow_bits
+                .starting_folding_pow
                 .verify(verifier_state.inner_mut())?;
         }
 
@@ -369,7 +369,7 @@ where
             )?;
 
         // Verify STIR challenges on N original witness trees
-        round_params.pow_bits.verify(verifier_state.inner_mut())?;
+        round_params.pow.verify(verifier_state.inner_mut())?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
@@ -448,7 +448,7 @@ where
             initial_size: 1 << self.params.folding_factor.at_round(1), // Not used
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: round_params.folding_pow_bits
+                    pow: round_params.folding_pow
                 };
                 self.params.folding_factor.at_round(1)
             ],
@@ -490,7 +490,7 @@ where
                 initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: round_params.folding_pow_bits
+                        pow: round_params.folding_pow
                     };
                     self.params.folding_factor.at_round(round_index + 1)
                 ],
@@ -528,7 +528,7 @@ where
             initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: self.params.final_folding_pow_bits
+                    pow: self.params.final_folding_pow
                 };
                 self.params.final_sumcheck_rounds
             ],
@@ -605,7 +605,7 @@ where
         U64: Codec<[H::U]>,
         MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
-        params.pow_bits.verify(verifier_state.inner_mut())?;
+        params.pow.verify(verifier_state.inner_mut())?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,

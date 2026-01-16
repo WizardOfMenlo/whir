@@ -127,7 +127,7 @@ where
                 initial_size: witness.polynomial.num_coeffs(),
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.config.starting_folding_pow_bits
+                        pow: self.config.starting_folding_pow
                     };
                     self.config.folding_factor.at_round(0)
                 ],
@@ -151,7 +151,7 @@ where
             }
 
             self.config
-                .starting_folding_pow_bits
+                .starting_folding_pow
                 .prove(prover_state.inner_mut());
 
             MultilinearPoint(folding_randomness)
@@ -341,7 +341,7 @@ where
                 initial_size: batched_poly.num_coeffs(),
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.config.starting_folding_pow_bits
+                        pow: self.config.starting_folding_pow
                     };
                     self.config.folding_factor.at_round(0)
                 ],
@@ -360,7 +360,7 @@ where
                 *randomness = prover_state.verifier_message();
             }
             self.config
-                .starting_folding_pow_bits
+                .starting_folding_pow
                 .prove(prover_state.inner_mut());
             MultilinearPoint(folding_randomness)
         };
@@ -414,7 +414,7 @@ where
         );
 
         // PoW
-        round_params.pow_bits.prove(prover_state.inner_mut());
+        round_params.pow.prove(prover_state.inner_mut());
 
         // STIR Queries: Open all N original witness trees at challenge positions
         let stir_indexes = get_challenge_stir_queries(
@@ -525,7 +525,7 @@ where
             initial_size: 1 << sumcheck_prover.num_variables(),
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: round_params.folding_pow_bits,
+                    pow: round_params.folding_pow,
                 };
                 folding_factor_next
             ],
@@ -650,7 +650,7 @@ where
         );
 
         // PoW
-        round_params.pow_bits.prove(prover_state.inner_mut());
+        round_params.pow.prove(prover_state.inner_mut());
 
         // STIR Queries
         let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
@@ -729,7 +729,7 @@ where
             initial_size: 1 << sumcheck_prover.num_variables(),
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: round_params.folding_pow_bits,
+                    pow: round_params.folding_pow,
                 };
                 folding_factor_next
             ],
@@ -782,7 +782,7 @@ where
         let folding_factor = self.config.folding_factor.at_round(round_state.round);
 
         // PoW
-        self.config.final_pow_bits.prove(prover_state.inner_mut());
+        self.config.final_pow.prove(prover_state.inner_mut());
 
         // Final verifier queries and answers. The indices are over the
         // *folded* domain.
@@ -821,7 +821,7 @@ where
                 initial_size: 1 << final_folding_sumcheck.num_variables(),
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.config.final_folding_pow_bits
+                        pow: self.config.final_folding_pow
                     };
                     self.config.final_sumcheck_rounds
                 ],
