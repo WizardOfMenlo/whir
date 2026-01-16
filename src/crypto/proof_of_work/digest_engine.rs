@@ -5,7 +5,7 @@ use hex_literal::hex;
 use sha3::Sha3_256;
 use zerocopy::FromBytes;
 
-use super::Engine;
+use super::{threshold, Engine};
 use crate::{
     crypto::proof_of_work::find_min,
     transcript::{Protocol, ProtocolId},
@@ -45,13 +45,12 @@ where
     D: AssociatedOid + Digest + Sync + Send,
 {
     fn check(&self, challenge: [u8; 32], difficulty: f64, nonce: u64) -> bool {
-        let threshold = (64.0 - difficulty).exp2().ceil() as u64;
         let mut hasher = D::new();
         hasher.update(&challenge);
         hasher.update(&nonce.to_le_bytes());
         let hash = hasher.finalize();
         let (prefix, _) = u64::read_from_prefix(&*hash).expect("Hash must be at least 64 bit.");
-        prefix < threshold
+        prefix < threshold(difficulty)
     }
 
     fn solve(&self, challenge: [u8; 32], difficulty: f64) -> Option<u64> {

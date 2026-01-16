@@ -36,13 +36,6 @@ impl ProtocolId {
 
 impl Display for ProtocolId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <Self as Debug>::fmt(self, f)
-    }
-}
-
-impl Debug for ProtocolId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#")?;
         if f.alternate() {
             for bytes in &self.0 {
                 write!(f, "{:02x}", bytes)?;
@@ -57,5 +50,11 @@ impl Debug for ProtocolId {
             }
         }
         Ok(())
+    }
+}
+
+impl Debug for ProtocolId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:#}")
     }
 }

@@ -1,3 +1,4 @@
+mod blake3_engine;
 mod digest_engine;
 mod none_engine;
 
@@ -12,6 +13,7 @@ use spongefish::{
 use static_assertions::assert_obj_safe;
 
 pub use self::{
+    blake3_engine::{Blake3, BLAKE3},
     digest_engine::{DigestEngine, Sha2, Sha3, SHA2, SHA3},
     none_engine::NoneEngine,
 };
@@ -26,6 +28,7 @@ pub const ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     engines.register(Arc::new(NoneEngine));
     engines.register(Arc::new(Sha2::new()));
     engines.register(Arc::new(Sha3::new()));
+    engines.register(Arc::new(Blake3::new()));
     engines
 });
 
@@ -121,6 +124,11 @@ impl Config {
         }
         Ok(())
     }
+}
+
+fn threshold(difficulty: f64) -> u64 {
+    assert!(difficulty >= 0.0 && difficulty < 60.0);
+    (64.0 - f64::from(difficulty)).exp2().ceil() as u64
 }
 
 #[cfg(not(feature = "parallel"))]
