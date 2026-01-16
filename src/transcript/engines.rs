@@ -9,11 +9,12 @@ use std::{
 
 use super::{Protocol, ProtocolId};
 
+#[derive(Debug, Default)]
 pub struct Engines<T: ?Sized>(Mutex<HashMap<ProtocolId, Arc<T>>>);
 
 impl<T: Protocol + ?Sized> Engines<T> {
     pub fn new() -> Self {
-        Engines(Mutex::new(HashMap::new()))
+        Self(Mutex::new(HashMap::new()))
     }
 
     pub fn register(&self, engine: Arc<T>) {

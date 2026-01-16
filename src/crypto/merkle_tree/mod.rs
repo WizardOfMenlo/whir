@@ -48,13 +48,13 @@ impl<T> DigestConverter<T, T> for IdentityDigestConverter<T> {
 
 #[cfg(not(feature = "parallel"))]
 pub fn leaves_iter<F>(leaves: &[F], size: usize) -> impl Iterator<Item = &[F]> {
-    assert!(leaves.len().is_multiple_of(size));
+    assert!(leaves.len() % size == 0);
     leaves.chunks_exact(size)
 }
 
 #[cfg(feature = "parallel")]
 pub fn leaves_iter<F: Sync>(leaves: &[F], size: usize) -> impl ParallelIterator<Item = &[F]> {
-    assert!(leaves.len().is_multiple_of(size));
+    assert!(leaves.len() % size == 0);
     leaves.par_chunks_exact(size)
 }
 
@@ -82,7 +82,6 @@ where
         .chunks_exact(size_bytes)
         .map(|chunk| chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % num_leaves)
         .collect::<Vec<usize>>()
-        .into()
 }
 
 #[cfg(test)]
@@ -119,7 +118,7 @@ mod tests {
     #[test]
     fn test_merkle_tree() {
         let num_leaves = 16;
-        let leaves = (0..num_leaves).map(|i| Field::from(i)).collect::<Vec<_>>();
+        let leaves = (0..num_leaves).map(Field::from).collect::<Vec<_>>();
 
         // Create the tree
         let tree: MerkleTree<Config> = MerkleTree::new(&(), &(), leaves_iter(&leaves, 1)).unwrap();

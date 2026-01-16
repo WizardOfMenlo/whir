@@ -15,7 +15,7 @@ use static_assertions::assert_obj_safe;
 pub use self::{
     blake3_engine::{Blake3, BLAKE3},
     digest_engine::{DigestEngine, Sha2, Sha3, SHA2, SHA3},
-    none_engine::NoneEngine,
+    none_engine::{NoneEngine, NONE},
 };
 use crate::{
     bits::Bits,
@@ -23,7 +23,7 @@ use crate::{
     transcript::{codecs::U64, Engines, Protocol, ProtocolId},
 };
 
-pub const ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
+pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     let engines = Engines::<dyn Engine>::new();
     engines.register(Arc::new(NoneEngine));
     engines.register(Arc::new(Sha2::new()));
@@ -32,7 +32,7 @@ pub const ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     engines
 });
 
-pub trait Engine: Protocol {
+pub trait Engine: Protocol + Send + Sync {
     /// Checks if the given nonce satisfies the challenge.
     ///
     /// It does **not** check if it is the minimal solution.
@@ -121,9 +121,10 @@ impl Config {
     }
 }
 
+#[allow(clippy::cast_sign_loss)] // TODO: More robust method.
 fn threshold(difficulty: f64) -> u64 {
-    assert!(difficulty >= 0.0 && difficulty < 60.0);
-    (64.0 - f64::from(difficulty)).exp2().ceil() as u64
+    assert!((0.0..60.0).contains(&difficulty));
+    (64.0 - difficulty).exp2().ceil() as u64
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -160,7 +161,7 @@ where
     let nonce = global_min.load(Ordering::SeqCst);
     if nonce == u64::MAX {
         // This may be the initial value or a solution.
-        check(nonce).then(|| nonce)
+        check(nonce).then_some(nonce)
     } else {
         Some(nonce)
     }

@@ -1228,7 +1228,7 @@ mod tests {
         let statement = Statement::new(1);
 
         // Instantiate the Sumcheck prover
-        let mut instance = SumcheckSingle::new(coeffs.clone(), &statement, F::ONE);
+        let mut instance = SumcheckSingle::new(coeffs, &statement, F::ONE);
         let ds = ds.instance(&c1);
         let mut prover_state = ds.std_prover();
 

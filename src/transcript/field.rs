@@ -14,7 +14,7 @@ pub struct FieldConfig<F: Field> {
 }
 
 impl<F: Field> FieldConfig<F> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { field: PhantomData }
     }
 }
@@ -53,7 +53,7 @@ impl<'de, F: Field> Deserialize<'de> for FieldConfig<F> {
         let params: Parameters<<F::BasePrimeField as PrimeField>::BigInt> =
             Parameters::deserialize(deserializer)?;
         if expected != params {
-            return Err(D::Error::custom(format!("Mismatch in field")));
+            return Err(D::Error::custom("Mismatch in field"));
         }
         Ok(Self::default())
     }

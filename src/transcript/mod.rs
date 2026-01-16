@@ -33,7 +33,7 @@ where
 
 impl<T, U> ProverMessage<U> for T
 where
-    T: NargSerialize + NargDeserialize + Encoding<U> + ?Sized,
+    T: NargSerialize + NargDeserialize + Encoding<U>,
     U: ?Sized,
 {
 }
@@ -91,7 +91,7 @@ where
         (self.inner, self.hints)
     }
 
-    pub fn inner_mut(&mut self) -> &mut spongefish::ProverState<H, R> {
+    pub const fn inner_mut(&mut self) -> &mut spongefish::ProverState<H, R> {
         &mut self.inner
     }
 
@@ -156,7 +156,7 @@ impl<'a, H> VerifierState<'a, H>
 where
     H: DuplexSpongeInterface,
 {
-    pub fn from(inner: spongefish::VerifierState<'a, H>, hints: &'a [u8]) -> Self {
+    pub const fn from(inner: spongefish::VerifierState<'a, H>, hints: &'a [u8]) -> Self {
         Self { inner, hints }
     }
 
@@ -164,7 +164,7 @@ where
         (self.inner, self.hints)
     }
 
-    pub fn inner_mut(&mut self) -> &mut spongefish::VerifierState<'a, H> {
+    pub const fn inner_mut(&mut self) -> &mut spongefish::VerifierState<'a, H> {
         &mut self.inner
     }
 
@@ -211,7 +211,7 @@ where
     }
 }
 
-impl<'a, H> VerifierMessage for VerifierState<'a, H>
+impl<H> VerifierMessage for VerifierState<'_, H>
 where
     H: DuplexSpongeInterface,
 {
@@ -236,10 +236,10 @@ where
     where
         T: Decoding<[H::U]>,
     {
-        spongefish::ProverState::verifier_message(self)
+        Self::verifier_message(self)
     }
 }
-impl<'a, H> VerifierMessage for spongefish::VerifierState<'a, H>
+impl<H> VerifierMessage for spongefish::VerifierState<'_, H>
 where
     H: DuplexSpongeInterface,
 {
@@ -249,6 +249,6 @@ where
     where
         T: Decoding<[H::U]>,
     {
-        spongefish::VerifierState::verifier_message(self)
+        Self::verifier_message(self)
     }
 }

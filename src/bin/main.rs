@@ -240,7 +240,8 @@ fn run_whir_as_ldt<F, MerkleConfig>(
     // Serialize proof
     let proof = prover_state.proof();
     let proof_size = proof.narg_string.len() + proof.hints.len();
-    dbg!(proof_size);
+    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
 
     // Just not to count that initial inversion (which could be precomputed)
     let commitment_reader = CommitmentReader::new(&params);

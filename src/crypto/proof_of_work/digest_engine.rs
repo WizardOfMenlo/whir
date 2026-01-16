@@ -21,6 +21,7 @@ pub const SHA3: ProtocolId = ProtocolId::new(hex!(
 pub type Sha2 = DigestEngine<sha2::Sha256>;
 pub type Sha3 = DigestEngine<sha3::Sha3_256>;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct DigestEngine<D>
 where
     D: AssociatedOid + Digest + Sync + Send,
@@ -46,10 +47,10 @@ where
 {
     fn check(&self, challenge: [u8; 32], difficulty: f64, nonce: u64) -> bool {
         let mut hasher = D::new();
-        hasher.update(&challenge);
-        hasher.update(&nonce.to_le_bytes());
+        hasher.update(challenge);
+        hasher.update(nonce.to_le_bytes());
         let hash = hasher.finalize();
-        let (prefix, _) = u64::read_from_prefix(&*hash).expect("Hash must be at least 64 bit.");
+        let (prefix, _) = u64::read_from_prefix(&hash).expect("Hash must be at least 64 bit.");
         prefix < threshold(difficulty)
     }
 
@@ -98,7 +99,7 @@ mod tests {
         config.prove(&mut prover_state);
         let proof = prover_state.narg_string();
 
-        let mut verifier_state = ds.std_verifier(&proof);
+        let mut verifier_state = ds.std_verifier(proof);
         config.verify(&mut verifier_state).unwrap();
     }
 
@@ -116,7 +117,7 @@ mod tests {
         config.prove(&mut prover_state);
         let proof = prover_state.narg_string();
 
-        let mut verifier_state = ds.std_verifier(&proof);
+        let mut verifier_state = ds.std_verifier(proof);
         config.verify(&mut verifier_state).unwrap();
     }
 }

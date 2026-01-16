@@ -21,7 +21,7 @@ impl Eq for Bits {}
 impl Bits {
     pub fn new(bits: f64) -> Self {
         assert!(bits.is_finite());
-        Bits(bits)
+        Self(bits)
     }
 
     pub fn is_zero(&self) -> bool {
@@ -31,7 +31,7 @@ impl Bits {
 
 impl From<f64> for Bits {
     fn from(bits: f64) -> Self {
-        Bits::new(bits)
+        Self::new(bits)
     }
 }
 
@@ -49,7 +49,7 @@ impl Display for Bits {
 
 impl PartialOrd for Bits {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 

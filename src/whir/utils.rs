@@ -142,7 +142,7 @@ mod tests {
         squeeze: &'a [u8],
     }
 
-    impl<'a> DuplexSpongeInterface for MockSponge<'a> {
+    impl DuplexSpongeInterface for MockSponge<'_> {
         type U = u8;
 
         fn absorb(&mut self, input: &[Self::U]) -> &mut Self {

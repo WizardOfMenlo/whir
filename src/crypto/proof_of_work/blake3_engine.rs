@@ -20,6 +20,7 @@ pub struct Blake3 {
 }
 
 /// Default Blake3 initialization vector. Copied here because it is not publicly exported.
+#[allow(clippy::unreadable_literal)]
 const BLAKE3_IV: [u32; 8] = [
     0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 ];
@@ -36,6 +37,11 @@ impl Blake3 {
         Self {
             platform: Platform::detect(),
         }
+    }
+}
+impl Default for Blake3 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -207,7 +213,7 @@ mod tests {
         config.prove(&mut prover_state);
         let proof = prover_state.narg_string();
 
-        let mut verifier_state = ds.std_verifier(&proof);
+        let mut verifier_state = ds.std_verifier(proof);
         config.verify(&mut verifier_state).unwrap();
     }
 }

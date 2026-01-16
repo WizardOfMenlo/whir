@@ -39,7 +39,7 @@ impl Decoding<[u8]> for U64 {
     type Repr = [u8; 8];
 
     fn decode(buf: Self::Repr) -> Self {
-        U64(u64::from_le_bytes(buf))
+        Self(u64::from_le_bytes(buf))
     }
 }
 

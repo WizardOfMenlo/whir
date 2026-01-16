@@ -1,3 +1,4 @@
+use ark_ff::Zero;
 use hex_literal::hex;
 use sha3::{Digest, Sha3_256};
 
@@ -8,22 +9,29 @@ pub const NONE: ProtocolId = ProtocolId::new(hex!(
     "3a777695dad25e7b8a5e69f2ecf25e6a0f8927fd334377d297644b14a761dd3d"
 ));
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct NoneEngine;
 
 impl NoneEngine {
-    pub fn new() -> Self {
-        NoneEngine
+    pub const fn new() -> Self {
+        Self
     }
 }
 
 impl Engine for NoneEngine {
     fn check(&self, _challenge: [u8; 32], difficulty: f64, nonce: u64) -> bool {
-        assert_eq!(difficulty, 0.0, "Null engine only supports zero difficulty");
+        assert!(
+            difficulty.is_zero(),
+            "Null engine only supports zero difficulty"
+        );
         nonce == 0
     }
 
     fn solve(&self, _challenge: [u8; 32], difficulty: f64) -> Option<u64> {
-        assert_eq!(difficulty, 0.0, "Null engine only supports zero difficulty");
+        assert!(
+            difficulty.is_zero(),
+            "Null engine only supports zero difficulty"
+        );
         Some(0)
     }
 }

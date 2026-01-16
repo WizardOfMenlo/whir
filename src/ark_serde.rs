@@ -48,7 +48,7 @@ pub mod bytes {
             let hex = hex::encode(value);
             serializer.serialize_str(&hex)
         } else {
-            serializer.serialize_bytes(&value)
+            serializer.serialize_bytes(value)
         }
     }
 

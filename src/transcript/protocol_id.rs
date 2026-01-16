@@ -20,16 +20,16 @@ impl From<ProtocolId> for [u8; 32] {
 
 impl From<[u8; 32]> for ProtocolId {
     fn from(bytes: [u8; 32]) -> Self {
-        ProtocolId(bytes)
+        Self(bytes)
     }
 }
 
 impl ProtocolId {
     pub const fn new(bytes: [u8; 32]) -> Self {
-        ProtocolId(bytes)
+        Self(bytes)
     }
 
-    pub fn as_slice(&self) -> &[u8] {
+    pub const fn as_slice(&self) -> &[u8] {
         &self.0
     }
 }
@@ -37,16 +37,16 @@ impl ProtocolId {
 impl Display for ProtocolId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if f.alternate() {
-            for bytes in &self.0 {
-                write!(f, "{:02x}", bytes)?;
+            for byte in &self.0 {
+                write!(f, "{byte:02x}")?;
             }
         } else {
-            for bytes in &self.0[0..6] {
-                write!(f, "{:02x}", bytes)?;
+            for byte in &self.0[0..6] {
+                write!(f, "{byte:02x}")?;
             }
             write!(f, "…")?;
-            for bytes in &self.0[26..32] {
-                write!(f, "{:02x}", bytes)?;
+            for byte in &self.0[26..32] {
+                write!(f, "{byte:02x}")?;
             }
         }
         Ok(())
