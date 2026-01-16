@@ -194,7 +194,7 @@ mod tests {
 
         let proof: MultiPath<Config> = verifier.prover_hint_ark().unwrap();
         let mut sorted = indices.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         assert_eq!(proof.leaf_indexes, sorted);
 
         let sorted_leaves = proof.leaf_indexes.iter().map(|i| {
