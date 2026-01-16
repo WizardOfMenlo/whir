@@ -1,9 +1,13 @@
-use std::hash::Hash;
+use std::{
+    cmp::Ordering,
+    fmt::{self, Display},
+    hash::Hash,
+};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Wrapper for `bits` value types.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Bits(f64);
 
 impl Hash for Bits {
@@ -34,5 +38,23 @@ impl From<f64> for Bits {
 impl From<Bits> for f64 {
     fn from(bits: Bits) -> Self {
         bits.0
+    }
+}
+
+impl Display for Bits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <f64 as Display>::fmt(&self.0, f)
+    }
+}
+
+impl PartialOrd for Bits {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl Ord for Bits {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.partial_cmp(&other.0).unwrap()
     }
 }

@@ -8,7 +8,6 @@ use super::{
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
-    bits::Bits,
     crypto::proof_of_work,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     sumcheck::SumcheckPolynomial,
@@ -101,7 +100,9 @@ where
             round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
             // PoW
-            self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
+            self.params
+                .starting_folding_pow_bits
+                .verify(verifier_state.inner_mut())?;
         }
 
         for round_index in 0..self.params.n_rounds() {
@@ -323,7 +324,9 @@ where
             }
             round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
-            self.verify_proof_of_work(verifier_state, self.params.starting_folding_pow_bits)?;
+            self.params
+                .starting_folding_pow_bits
+                .verify(verifier_state.inner_mut())?;
         }
 
         // Round 0: Batch-specific verification
@@ -346,7 +349,7 @@ where
             )?;
 
         // Verify STIR challenges on N original witness trees
-        self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
+        round_params.pow_bits.verify(verifier_state.inner_mut())?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
@@ -555,7 +558,7 @@ where
         verifier_state: &mut VerifierState<'_, H>,
         claimed_sum: &mut F,
         rounds: usize,
-        proof_of_work: f64,
+        proof_of_work: proof_of_work::Config,
     ) -> VerificationResult<MultilinearPoint<F>>
     where
         H: DuplexSpongeInterface,
@@ -581,7 +584,7 @@ where
             }
 
             // Proof of work per round
-            self.verify_proof_of_work(verifier_state, proof_of_work)?;
+            proof_of_work.verify(verifier_state.inner_mut())?;
 
             // Receive folding randomness
             let folding_randomness_single: F = verifier_state.verifier_message();
@@ -612,7 +615,7 @@ where
         U64: Codec<[H::U]>,
         MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
-        self.verify_proof_of_work(verifier_state, params.pow_bits)?;
+        params.pow_bits.verify(verifier_state.inner_mut())?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
@@ -728,26 +731,6 @@ where
         )?;
 
         Ok(answers)
-    }
-
-    /// Verify a proof of work challenge.
-    /// Does nothing when `bits == 0.`.
-    pub fn verify_proof_of_work<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        bits: f64,
-    ) -> VerificationResult<()>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
-    {
-        let pow_config = proof_of_work::Config::sha2(Bits::new(bits));
-        pow_config.verify(verifier_state.inner_mut())?;
-        Ok(())
     }
 
     /// Evaluate the random linear combination of constraints in `point`.

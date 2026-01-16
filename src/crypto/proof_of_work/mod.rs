@@ -5,7 +5,7 @@ mod none_engine;
 use std::sync::{Arc, LazyLock};
 
 use ark_std::rand::{CryptoRng, RngCore};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spongefish::{
     Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
     VerifierState,
@@ -47,9 +47,11 @@ pub trait Engine: Protocol {
 
 assert_obj_safe!(Engine);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Config {
     pub engine_id: ProtocolId,
+
+    // TODO: Use threshold to be more determistic.
     pub difficulty: Bits,
 }
 
@@ -74,13 +76,6 @@ impl Config {
         Self {
             engine_id: NoneEngine.protocol_id(),
             difficulty: Bits::new(0.0),
-        }
-    }
-
-    pub fn sha2(difficulty: Bits) -> Self {
-        Self {
-            engine_id: Sha2::new().protocol_id(),
-            difficulty,
         }
     }
 

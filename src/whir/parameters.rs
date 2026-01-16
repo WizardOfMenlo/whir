@@ -12,7 +12,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::fields::FieldWithSize,
+    bits::Bits,
+    crypto::{
+        fields::FieldWithSize,
+        proof_of_work::{self, BLAKE3},
+    },
     domain::Domain,
     ntt::{RSDefault, ReedSolomon},
     parameters::{
@@ -46,16 +50,16 @@ where
     pub initial_statement: bool,
     pub starting_domain: Domain<F>,
     pub starting_log_inv_rate: usize,
-    pub starting_folding_pow_bits: f64,
+    pub starting_folding_pow_bits: proof_of_work::Config,
 
     pub folding_factor: FoldingFactor,
     pub round_parameters: Vec<RoundConfig<F>>,
 
     pub final_queries: usize,
-    pub final_pow_bits: f64,
+    pub final_pow_bits: proof_of_work::Config,
     pub final_log_inv_rate: usize,
     pub final_sumcheck_rounds: usize,
-    pub final_folding_pow_bits: f64,
+    pub final_folding_pow_bits: proof_of_work::Config,
 
     // Strategy to decide on the deduplication of challenges
     // (Used for recursive proving where constant length transcript is needed)
@@ -89,8 +93,8 @@ pub struct RoundConfig<F>
 where
     F: FftField,
 {
-    pub pow_bits: f64,
-    pub folding_pow_bits: f64,
+    pub pow_bits: proof_of_work::Config,
+    pub folding_pow_bits: proof_of_work::Config,
     pub num_queries: usize,
     pub ood_samples: usize,
     pub log_inv_rate: usize,
@@ -228,8 +232,14 @@ where
             );
 
             round_parameters.push(RoundConfig {
-                pow_bits,
-                folding_pow_bits,
+                pow_bits: proof_of_work::Config {
+                    engine_id: BLAKE3,
+                    difficulty: Bits::new(pow_bits),
+                },
+                folding_pow_bits: proof_of_work::Config {
+                    engine_id: BLAKE3,
+                    difficulty: Bits::new(folding_pow_bits),
+                },
                 num_queries,
                 ood_samples,
                 log_inv_rate,
@@ -273,13 +283,22 @@ where
             starting_domain,
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
-            starting_folding_pow_bits,
+            starting_folding_pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(starting_folding_pow_bits),
+            },
             folding_factor: whir_parameters.folding_factor,
             round_parameters,
             final_queries,
-            final_pow_bits,
+            final_pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(final_pow_bits),
+            },
             final_sumcheck_rounds,
-            final_folding_pow_bits,
+            final_folding_pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(final_folding_pow_bits),
+            },
             deduplication_strategy: whir_parameters.deduplication_strategy,
             final_log_inv_rate: log_inv_rate,
             leaf_hash_params: whir_parameters.leaf_hash_params,
@@ -296,12 +315,12 @@ where
     }
 
     pub fn check_pow_bits(&self) -> bool {
-        let max_bits = self.max_pow_bits as f64;
+        let max_bits = Bits::new(self.max_pow_bits as f64);
 
         // Check the main pow bits values
-        if self.starting_folding_pow_bits > max_bits
-            || self.final_pow_bits > max_bits
-            || self.final_folding_pow_bits > max_bits
+        if self.starting_folding_pow_bits.difficulty > max_bits
+            || self.final_pow_bits.difficulty > max_bits
+            || self.final_folding_pow_bits.difficulty > max_bits
         {
             return false;
         }
@@ -309,7 +328,7 @@ where
         // Check all round parameters
         self.round_parameters
             .iter()
-            .all(|r| r.pow_bits <= max_bits && r.folding_pow_bits <= max_bits)
+            .all(|r| r.pow_bits.difficulty <= max_bits && r.folding_pow_bits.difficulty <= max_bits)
     }
 
     pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: usize) -> f64 {
@@ -568,17 +587,21 @@ where
             && self.security_level == other.security_level
             && self.max_pow_bits == other.max_pow_bits
             && f64_eq_abs(
-                self.starting_folding_pow_bits,
-                other.starting_folding_pow_bits,
+                self.starting_folding_pow_bits.difficulty.into(),
+                other.starting_folding_pow_bits.difficulty.into(),
                 0.001,
             )
             && self.round_parameters == other.round_parameters
             && self.final_queries == other.final_queries
             && self.final_log_inv_rate == other.final_log_inv_rate
-            && f64_eq_abs(self.final_pow_bits, other.final_pow_bits, 0.001)
             && f64_eq_abs(
-                self.final_folding_pow_bits,
-                other.final_folding_pow_bits,
+                self.final_pow_bits.difficulty.into(),
+                other.final_pow_bits.difficulty.into(),
+                0.001,
+            )
+            && f64_eq_abs(
+                self.final_folding_pow_bits.difficulty.into(),
+                other.final_folding_pow_bits.difficulty.into(),
                 0.001,
             )
             && self.committment_ood_samples == other.committment_ood_samples
@@ -594,9 +617,15 @@ where
     F: FftField,
 {
     fn eq(&self, other: &Self) -> bool {
-        f64_eq_abs(self.pow_bits, other.pow_bits, 0.001)
-            && f64_eq_abs(self.folding_pow_bits, other.folding_pow_bits, 0.001)
-            && self.num_queries == other.num_queries
+        f64_eq_abs(
+            self.pow_bits.difficulty.into(),
+            other.pow_bits.difficulty.into(),
+            0.001,
+        ) && f64_eq_abs(
+            self.folding_pow_bits.difficulty.into(),
+            other.folding_pow_bits.difficulty.into(),
+            0.001,
+        ) && self.num_queries == other.num_queries
             && self.ood_samples == other.ood_samples
             && self.log_inv_rate == other.log_inv_rate
     }
@@ -656,7 +685,7 @@ where
         writeln!(
             f,
             "initial_folding_pow_bits: {}",
-            self.starting_folding_pow_bits
+            self.starting_folding_pow_bits.difficulty
         )?;
         for r in &self.round_parameters {
             write!(f, "{r}")?;
@@ -667,8 +696,8 @@ where
             "final_queries: {}, final_rate: 2^-{}, final_pow_bits: {}, final_folding_pow_bits: {}",
             self.final_queries,
             self.final_log_inv_rate,
-            self.final_pow_bits,
-            self.final_folding_pow_bits,
+            self.final_pow_bits.difficulty,
+            self.final_folding_pow_bits.difficulty,
         )?;
 
         writeln!(f, "------------------------------------")?;
@@ -711,11 +740,12 @@ where
         writeln!(
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-            prox_gaps_error.min(sumcheck_error) + self.starting_folding_pow_bits,
+            prox_gaps_error.min(sumcheck_error)
+                + f64::from(self.starting_folding_pow_bits.difficulty),
             self.folding_factor.at_round(0),
             prox_gaps_error,
             sumcheck_error,
-            self.starting_folding_pow_bits,
+            self.starting_folding_pow_bits.difficulty,
         )?;
 
         num_variables -= self.folding_factor.at_round(0);
@@ -752,10 +782,10 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, combination: {:.1}, pow: {:.1}",
-                query_error.min(combination_error) + r.pow_bits,
+                query_error.min(combination_error) + f64::from(r.pow_bits.difficulty),
                 query_error,
                 combination_error,
-                r.pow_bits,
+                r.pow_bits.difficulty,
             )?;
 
             let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
@@ -776,11 +806,11 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + r.folding_pow_bits,
+                prox_gaps_error.min(sumcheck_error) + f64::from(r.folding_pow_bits.difficulty),
                 self.folding_factor.at_round(round + 1),
                 prox_gaps_error,
                 sumcheck_error,
-                r.folding_pow_bits,
+                r.folding_pow_bits.difficulty,
             )?;
 
             num_variables -= self.folding_factor.at_round(round + 1);
@@ -794,9 +824,9 @@ where
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-            query_error + self.final_pow_bits,
+            query_error + f64::from(self.final_pow_bits.difficulty),
             query_error,
-            self.final_pow_bits,
+            self.final_pow_bits.difficulty,
         )?;
 
         if self.final_sumcheck_rounds > 0 {
@@ -804,10 +834,10 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + self.final_pow_bits,
+                combination_error + f64::from(self.final_pow_bits.difficulty),
                 self.final_sumcheck_rounds,
                 combination_error,
-                self.final_folding_pow_bits,
+                self.final_folding_pow_bits.difficulty,
             )?;
         }
 
@@ -825,9 +855,9 @@ where
             "Num_queries: {}, rate: 2^-{}, pow_bits: {}, ood_samples: {}, folding_pow: {}",
             self.num_queries,
             self.log_inv_rate,
-            self.pow_bits,
+            self.pow_bits.difficulty,
             self.ood_samples,
-            self.folding_pow_bits,
+            self.folding_pow_bits.difficulty,
         )
     }
 }
@@ -836,9 +866,11 @@ where
 mod tests {
     use super::*;
     use crate::{
+        bits::Bits,
         crypto::{
             fields::{Field256, Field64},
             merkle_tree::keccak::KeccakMerkleTreeParams,
+            proof_of_work::BLAKE3,
         },
         parameters::{DeduplicationStrategy, MerkleProofStrategy},
         utils::test_serde,
@@ -1045,15 +1077,30 @@ mod tests {
 
         // Set all values within limits
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 15.0;
-        config.final_pow_bits = 18.0;
-        config.final_folding_pow_bits = 19.5;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(15.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(18.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(19.5),
+        };
 
         // Ensure all rounds are within limits
         config.round_parameters = vec![
             RoundConfig {
-                pow_bits: 17.0,
-                folding_pow_bits: 19.0,
+                pow_bits: proof_of_work::Config {
+                    engine_id: proof_of_work::BLAKE3,
+                    difficulty: Bits::new(17.0),
+                },
+                folding_pow_bits: proof_of_work::Config {
+                    engine_id: proof_of_work::BLAKE3,
+                    difficulty: Bits::new(19.0),
+                },
                 num_queries: 5,
                 ood_samples: 2,
                 log_inv_rate: 3,
@@ -1065,8 +1112,14 @@ mod tests {
                 exp_domain_gen: Field64::from(2),
             },
             RoundConfig {
-                pow_bits: 18.0,
-                folding_pow_bits: 19.5,
+                pow_bits: proof_of_work::Config {
+                    engine_id: proof_of_work::BLAKE3,
+                    difficulty: Bits::new(18.0),
+                },
+                folding_pow_bits: proof_of_work::Config {
+                    engine_id: proof_of_work::BLAKE3,
+                    difficulty: Bits::new(19.5),
+                },
                 num_queries: 6,
                 ood_samples: 2,
                 log_inv_rate: 4,
@@ -1101,9 +1154,18 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 21.0; // Exceeds max_pow_bits
-        config.final_pow_bits = 18.0;
-        config.final_folding_pow_bits = 19.5;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(21.0),
+        }; // Exceeds max_pow_bits
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(18.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(19.5),
+        };
 
         assert!(
             !config.check_pow_bits(),
@@ -1127,9 +1189,18 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 15.0;
-        config.final_pow_bits = 21.0; // Exceeds max_pow_bits
-        config.final_folding_pow_bits = 19.5;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(15.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(21.0),
+        }; // Exceeds max_pow_bits
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(19.5),
+        };
 
         assert!(
             !config.check_pow_bits(),
@@ -1153,14 +1224,29 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 15.0;
-        config.final_pow_bits = 18.0;
-        config.final_folding_pow_bits = 19.5;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(15.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(18.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(19.5),
+        };
 
         // One round's pow_bits exceeds limit
         config.round_parameters = vec![RoundConfig {
-            pow_bits: 21.0, // Exceeds max_pow_bits
-            folding_pow_bits: 19.0,
+            pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(21.0),
+            }, // Exceeds max_pow_bits
+            folding_pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(19.0),
+            },
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1194,14 +1280,29 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 15.0;
-        config.final_pow_bits = 18.0;
-        config.final_folding_pow_bits = 19.5;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(15.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(18.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: proof_of_work::BLAKE3,
+            difficulty: Bits::new(19.5),
+        };
 
         // One round's folding_pow_bits exceeds limit
         config.round_parameters = vec![RoundConfig {
-            pow_bits: 19.0,
-            folding_pow_bits: 21.0, // Exceeds max_pow_bits
+            pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(19.0),
+            },
+            folding_pow_bits: proof_of_work::Config {
+                engine_id: proof_of_work::BLAKE3,
+                difficulty: Bits::new(21.0),
+            }, // Exceeds max_pow_bits
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1235,13 +1336,28 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 20.0;
-        config.final_pow_bits = 20.0;
-        config.final_folding_pow_bits = 20.0;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(20.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(20.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(20.0),
+        };
 
         config.round_parameters = vec![RoundConfig {
-            pow_bits: 20.0,
-            folding_pow_bits: 20.0,
+            pow_bits: proof_of_work::Config {
+                engine_id: BLAKE3,
+                difficulty: Bits::new(20.0),
+            },
+            folding_pow_bits: proof_of_work::Config {
+                engine_id: BLAKE3,
+                difficulty: Bits::new(20.0),
+            },
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1275,13 +1391,28 @@ mod tests {
         );
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow_bits = 22.0;
-        config.final_pow_bits = 23.0;
-        config.final_folding_pow_bits = 24.0;
+        config.starting_folding_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(22.0),
+        };
+        config.final_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(23.0),
+        };
+        config.final_folding_pow_bits = proof_of_work::Config {
+            engine_id: BLAKE3,
+            difficulty: Bits::new(24.0),
+        };
 
         config.round_parameters = vec![RoundConfig {
-            pow_bits: 25.0,
-            folding_pow_bits: 26.0,
+            pow_bits: proof_of_work::Config {
+                engine_id: BLAKE3,
+                difficulty: Bits::new(25.0),
+            },
+            folding_pow_bits: proof_of_work::Config {
+                engine_id: BLAKE3,
+                difficulty: Bits::new(26.0),
+            },
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
