@@ -169,13 +169,12 @@ mod tests {
         for index in &indices {
             prover.prover_message(&leaves[*index]);
         }
-        let proof = tree.generate_multi_proof(indices).unwrap();
+        let proof = tree.generate_multi_proof(indices.iter().copied()).unwrap();
         prover.prover_hint_ark(&proof);
 
         let proof = prover.proof();
-        let mut buffer = Vec::new();
-        ciborium::into_writer(&proof, &mut buffer).unwrap();
-        assert_eq!(hex::encode(&buffer), "a26b6e6172675f737472696e67983018ac188f18f71824182f188403182a184b18fc18af182b185718341863181e18e9187f18d518b618871871081839185f05188018bb18c118ad18c3187d05000000000000000f000000000000006568696e7473990150020000000000000018aa189918de18f21850181f18eb18f9189f18301876185c1839188018ad183a18e3181e1824188c18d70918bf187d18a318d8183c182f18c318c718aa181b18af18e218a718c218b3189218400a184b18750618da121819187f185600185e18501877188518e3183b18e91836186e11185c18f9188a1853183d020000000000000000000000000000000000000000000000020000000000000003000000000000000918af18611840187518b418b10a1819186d18761872182518c118ae18b918a318b5183718b618a8184018a4183d1875181f186718da18a318b81318e9181a189d184518ab18bd184a18561819189618b9187d18ef18b3187318f41828189d18dc183a18aa185918f818de18be18e318d018ec18891838188c186d18a6184d18f418751118e71201184e1869186718de18ab1518b618c20410188f18541839186e183618af1821187518a318eb18e318c31879183b186f0300000000000000182a1837184c18a7189d18b918451834182218e71872185e185718a9183118cf1827188918860012184a18eb18fe181e0d187315188c18310c181e1847185d183418281873151873182118cb183518a6186718a518d018a518e41871181818b706186218ce18d41885182718ef187318f0184618dd18cc18fb18f818a318b0181e188e18da189618dd189718ef18f5186418b418d8181f0c1824186d18531618801859185a18ea1845189f1882186d18a318b70418a4020000000000000005000000000000000f00000000000000");
+        assert_eq!(hex::encode(&proof.narg_string), "ac8ff7242f84032a4bfcaf2b5734631ee97fd5b6877108395f0580bbc1adc37d0d000000000000000700000000000000");
+        assert_eq!(hex::encode(&proof.hints), "02000000000000004dc186f36c8f560cfbac7ccfe9f9e2ff52b569fd463958c57d71ddbefc77471a94ad4a635d5eb054b5ce5e3ba338dd487c623756fd2b12d1c6349d95fe35bc060200000000000000000000000000000000000000000000000200000000000000030000000000000009af614075b4b10a196d767225c1aeb9a3b537b6a840a43d751f67daa3b813e91a9d45abbd4a561996b97defb373f4289ddc3aaa59f8debee3d0ec89388c6da66c64fface42ff6c916281b628a06c4dd2564155bf1e2060132ec0321c317c9fb03000000000000002a374ca79db9453422e7725e57a931cf27898600124aebfe1e0d73158c310c1e475d342873157321cb35a667a5d0a5e47118b70662ced48527ef73f046ddccfb18c3de7682b0bac8831cfa4f379db39880cf8d42a6c288d4d8b37ae54a2be4d0020000000000000007000000000000000d00000000000000");
 
         //
         // Verifier
@@ -185,15 +184,27 @@ mod tests {
         let mut verifier = VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
 
         // Read root, challenge indices and proof.
-        let root: Digest = verifier.prover_message().unwrap();
-        let indices = challenge_indices(&mut verifier, num_leaves, 2);
+        let verifier_root: Digest = verifier.prover_message().unwrap();
+        assert_eq!(verifier_root, root);
+        let verifier_indices = challenge_indices(&mut verifier, num_leaves, 2);
+        assert_eq!(&verifier_indices, &indices);
         let leaves = (0..indices.len())
             .map(|_| [verifier.prover_message().unwrap()])
             .collect::<Vec<_>>();
 
         let proof: MultiPath<Config> = verifier.prover_hint_ark().unwrap();
-        assert_eq!(proof.leaf_indexes, indices);
-        let ok = proof.verify(&(), &(), &root, leaves).unwrap();
+        let mut sorted = indices.clone();
+        sorted.sort();
+        assert_eq!(proof.leaf_indexes, sorted);
+
+        let sorted_leaves = proof.leaf_indexes.iter().map(|i| {
+            let k = indices
+                .iter()
+                .position(|j| j == i)
+                .expect("Missing leaf index");
+            leaves[k]
+        });
+        let ok = proof.verify(&(), &(), &root, sorted_leaves).unwrap();
         assert!(ok);
     }
 }
