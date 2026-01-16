@@ -2,7 +2,7 @@ use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spongefish::{
     Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
     VerifierState,
@@ -20,7 +20,8 @@ use crate::{
     whir::statement::Statement,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Config<F>
 where
     F: Field,
@@ -30,7 +31,7 @@ where
     pub rounds: Vec<RoundConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RoundConfig {
     pub pow: proof_of_work::Config,
 }

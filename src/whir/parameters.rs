@@ -23,6 +23,7 @@ use crate::{
         DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
         ProtocolParameters, SoundnessType,
     },
+    sumcheck,
     utils::{ark_eq, f64_eq_abs},
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -50,6 +51,8 @@ where
     pub initial_statement: bool,
     pub starting_domain: Domain<F>,
     pub starting_log_inv_rate: usize,
+
+    // pub initial_sumcheck: sumcheck::Config<F>,
     pub starting_folding_pow_bits: proof_of_work::Config,
 
     pub folding_factor: FoldingFactor,
