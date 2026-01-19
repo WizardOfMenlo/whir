@@ -1,5 +1,9 @@
 use ark_crypto_primitives::sponge::Absorb;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use spongefish::{Encoding, NargDeserialize};
+use static_assertions::assert_impl_all;
+
+use crate::transcript::ProverMessage;
 
 /// A generic fixed-size digest wrapper used in cryptographic hashing.
 ///
@@ -41,3 +45,23 @@ impl<const N: usize> Absorb for GenericDigest<N> {
         dest.push(F::from_be_bytes_mod_order(&self.0));
     }
 }
+
+impl<const N: usize> Encoding for GenericDigest<N> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        &self.0
+    }
+}
+
+impl<const N: usize> NargDeserialize for GenericDigest<N> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+        if buf.len() < N {
+            return Err(spongefish::VerificationError);
+        }
+        let mut bytes = [0; N];
+        bytes.copy_from_slice(&buf[..N]);
+        *buf = &buf[N..];
+        Ok(Self(bytes))
+    }
+}
+
+assert_impl_all!(GenericDigest<32>: ProverMessage);

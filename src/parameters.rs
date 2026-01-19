@@ -220,7 +220,7 @@ pub enum DeduplicationStrategy {
 
 /// Configuration parameters for WHIR proofs.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ProtocolParameters<MerkleConfig, PowStrategy>
+pub struct ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -236,17 +236,15 @@ where
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
     pub pow_bits: usize,
-    /// Phantom type for PoW parameters.
-    pub _pow_parameters: PhantomData<PowStrategy>,
     /// Parameters for hashing Merkle tree leaves.
     ///
     /// These define how individual leaves in the Merkle tree are hashed.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub leaf_hash_params: LeafParam<MerkleConfig>,
     /// Parameters for hashing inner nodes in the Merkle tree.
     ///
     /// These define the hashing function used when combining two child nodes into a parent node.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
     /// Number of polynomials committed in the batch.
@@ -263,7 +261,7 @@ where
     pub merkle_proof_strategy: MerkleProofStrategy,
 }
 
-impl<MerkleConfig, PowStrategy> Debug for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> Debug for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -272,7 +270,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> PartialEq for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> PartialEq for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {
@@ -288,7 +286,7 @@ where
     }
 }
 
-impl<MerkleConfig, PowStrategy> Display for ProtocolParameters<MerkleConfig, PowStrategy>
+impl<MerkleConfig> Display for ProtocolParameters<MerkleConfig>
 where
     MerkleConfig: Config,
 {

@@ -14,7 +14,7 @@ use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::Multilin
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct EvaluationsList<F> {
     /// Stores evaluations in **lexicographic order**.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     evals: Vec<F>,
     /// Number of variables in the multilinear polynomial.
     /// Ensures `evals.len() = 2^{num_variables}`.

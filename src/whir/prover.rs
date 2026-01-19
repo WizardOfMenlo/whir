@@ -1,13 +1,10 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
+use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use spongefish::{
-    codecs::arkworks_algebra::{FieldToUnitSerialize, UnitToField},
-    ProofResult, UnitToBytes,
-};
-use spongefish_pow::{self, PoWChallenge};
+use spongefish::{Codec, Decoding, DuplexSpongeInterface};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 
@@ -15,41 +12,37 @@ use super::{
     committer::Witness,
     parameters::WhirConfig,
     statement::{Statement, Weights},
-    utils::HintSerialize,
 };
 use crate::{
     domain::Domain,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckSingle,
+    sumcheck::{self, SumcheckSingle},
+    transcript::{codecs::U64, FieldConfig, ProverMessage, ProverState, VerifierMessage},
     utils::expand_randomness,
     whir::{
         merkle,
         parameters::RoundConfig,
-        utils::{
-            get_challenge_stir_queries, rlc_batched_leaves, sample_ood_points,
-            DigestToUnitSerialize,
-        },
+        utils::{get_challenge_stir_queries, rlc_batched_leaves, sample_ood_points},
     },
 };
 
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
-pub struct Prover<F, MerkleConfig, PowStrategy>
+pub struct Prover<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config,
 {
-    config: WhirConfig<F, MerkleConfig, PowStrategy>,
+    config: WhirConfig<F, MerkleConfig>,
     merkle_state: merkle::ProverMerkleState,
 }
 
-impl<F, MerkleConfig, PowStrategy> Prover<F, MerkleConfig, PowStrategy>
+impl<F, MerkleConfig> Prover<F, MerkleConfig>
 where
     F: FftField,
     MerkleConfig: Config<Leaf = [F]>,
-    PowStrategy: spongefish_pow::PowStrategy,
 {
-    pub const fn new(config: WhirConfig<F, MerkleConfig, PowStrategy>) -> Self {
+    pub const fn new(config: WhirConfig<F, MerkleConfig>) -> Self {
         let merkle_state = merkle::ProverMerkleState::new(config.merkle_proof_strategy);
         Self {
             config,
@@ -57,7 +50,7 @@ where
         }
     }
 
-    pub const fn config(&self) -> &WhirConfig<F, MerkleConfig, PowStrategy> {
+    pub const fn config(&self) -> &WhirConfig<F, MerkleConfig> {
         &self.config
     }
 
@@ -88,19 +81,20 @@ where
     /// When called without any constraints it only perfoms a low-degree test.
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove<ProverState>(
+    pub fn prove<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         mut statement: Statement<F>,
         witness: Witness<F, MerkleConfig>,
-    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
+    ) -> (MultilinearPoint<F>, Vec<F>)
     where
-        ProverState: UnitToField<F>
-            + FieldToUnitSerialize<F>
-            + UnitToBytes
-            + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>
-            + HintSerialize,
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
@@ -125,20 +119,25 @@ where
         let folding_randomness = if self.config.initial_statement {
             // If there is initial statement, then we run the sum-check for
             // this initial statement.
-            let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+            let combination_randomness_gen = prover_state.verifier_message();
 
             // Create the sumcheck prover
+            let sumcheck_config = sumcheck::Config {
+                field: FieldConfig::<F>::new(),
+                initial_size: witness.polynomial.num_coeffs(),
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: self.config.starting_folding_pow
+                    };
+                    self.config.folding_factor.at_round(0)
+                ],
+            };
             let mut sumcheck = SumcheckSingle::new(
                 witness.polynomial.clone(),
                 &statement,
                 combination_randomness_gen,
             );
-
-            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, _>(
-                prover_state,
-                self.config.folding_factor.at_round(0),
-                self.config.starting_folding_pow_bits,
-            )?;
+            let folding_randomness = sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck);
 
             sumcheck_prover = Some(sumcheck);
             folding_randomness
@@ -147,11 +146,14 @@ where
             // initial rounds of the sum-check, and the verifier directly sends
             // the initial folding randomnesses.
             let mut folding_randomness = vec![F::ZERO; self.config.folding_factor.at_round(0)];
-            prover_state.fill_challenge_scalars(&mut folding_randomness)?;
-
-            if self.config.starting_folding_pow_bits > 0. {
-                prover_state.challenge_pow::<PowStrategy>(self.config.starting_folding_pow_bits)?;
+            for randomness in &mut folding_randomness {
+                *randomness = prover_state.verifier_message();
             }
+
+            self.config
+                .starting_folding_pow
+                .prove(prover_state.inner_mut());
+
             MultilinearPoint(folding_randomness)
         };
         let mut randomness_vec = Vec::with_capacity(self.config.mv_parameters.num_variables);
@@ -173,7 +175,7 @@ where
 
         // Run WHIR rounds
         for _round in 0..=self.config.n_rounds() {
-            self.round(prover_state, &mut round_state)?;
+            self.round(prover_state, &mut round_state);
         }
 
         // Hints for deferred constraints
@@ -187,9 +189,9 @@ where
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
 
-        prover_state.hint::<Vec<F>>(&deferred)?;
+        prover_state.prover_hint_ark(&deferred);
 
-        Ok((constraint_eval, deferred))
+        (constraint_eval, deferred)
     }
 
     /// Proves that multiple commitments satisfy their respective constraints by batching them.
@@ -204,19 +206,20 @@ where
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove_batch<ProverState>(
+    pub fn prove_batch<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         statements: &[Statement<F>],
         witnesses: &[Witness<F, MerkleConfig>],
-    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
+    ) -> (MultilinearPoint<F>, Vec<F>)
     where
-        ProverState: UnitToField<F>
-            + FieldToUnitSerialize<F>
-            + UnitToBytes
-            + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>
-            + HintSerialize,
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        u8: Decoding<[H::U]>,
     {
         // Validation
         assert!(self.validate_parameters());
@@ -293,14 +296,15 @@ where
         }
 
         // Commit the evaluation matrix to the transcript
-        let all_evals_flat: Vec<F> = constraint_evals_matrix
+        let all_evals_flat = constraint_evals_matrix
             .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
-        prover_state.add_scalars(&all_evals_flat)?;
+            .flat_map(|row| row.iter().copied());
+        for eval in all_evals_flat {
+            prover_state.prover_message(&eval);
+        }
 
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
-        let [batching_randomness] = prover_state.challenge_scalars()?;
+        let batching_randomness = prover_state.verifier_message();
 
         // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
         let mut batched_coeffs = witnesses[0].polynomial.coeffs().to_vec();
@@ -330,25 +334,34 @@ where
         // Run initial sumcheck on batched polynomial with combined statement
         let mut sumcheck_prover = None;
         let folding_randomness = if self.config.initial_statement {
-            let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+            let combination_randomness_gen = prover_state.verifier_message();
+            let sumcheck_config = sumcheck::Config {
+                // TODO: Make part of parameters
+                field: FieldConfig::<F>::new(),
+                initial_size: batched_poly.num_coeffs(),
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: self.config.starting_folding_pow
+                    };
+                    self.config.folding_factor.at_round(0)
+                ],
+            };
             let mut sumcheck = SumcheckSingle::new(
                 batched_poly.clone(),
                 &combined_statement,
                 combination_randomness_gen,
             );
-            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, _>(
-                prover_state,
-                self.config.folding_factor.at_round(0),
-                self.config.starting_folding_pow_bits,
-            )?;
+            let folding_randomness = sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck);
             sumcheck_prover = Some(sumcheck);
             folding_randomness
         } else {
             let mut folding_randomness = vec![F::ZERO; self.config.folding_factor.at_round(0)];
-            prover_state.fill_challenge_scalars(&mut folding_randomness)?;
-            if self.config.starting_folding_pow_bits > 0. {
-                prover_state.challenge_pow::<PowStrategy>(self.config.starting_folding_pow_bits)?;
+            for randomness in &mut folding_randomness {
+                *randomness = prover_state.verifier_message();
             }
+            self.config
+                .starting_folding_pow
+                .prove(prover_state.inner_mut());
             MultilinearPoint(folding_randomness)
         };
 
@@ -390,29 +403,27 @@ where
             leafs_iter,
         )
         .unwrap();
-        prover_state.add_digest(batched_merkle_tree.root())?;
+        prover_state.prover_message(&batched_merkle_tree.root());
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
+            prover_state.inner_mut(),
             round_params.ood_samples,
             num_variables_after_fold,
             |point| batched_folded_poly.evaluate(point),
-        )?;
+        );
 
         // PoW
-        if round_params.pow_bits > 0. {
-            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-        }
+        round_params.pow.prove(prover_state.inner_mut());
 
         // STIR Queries: Open all N original witness trees at challenge positions
         let stir_indexes = get_challenge_stir_queries(
+            prover_state,
             self.config.starting_domain.size(),
             self.config.folding_factor.at_round(0),
             round_params.num_queries,
-            prover_state,
             &self.config.deduplication_strategy,
-        )?;
+        );
 
         let fold_size = 1 << self.config.folding_factor.at_round(0);
         let leaf_size = fold_size * self.config.batch_size;
@@ -424,12 +435,9 @@ where
                 .iter()
                 .map(|&i| witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
                 .collect();
-            prover_state.hint::<Vec<Vec<F>>>(&answers)?;
-            self.merkle_state.write_proof_hint(
-                &witness.merkle_tree,
-                &stir_indexes,
-                prover_state,
-            )?;
+            prover_state.prover_hint_ark(&answers);
+            self.merkle_state
+                .write_proof_hint(&witness.merkle_tree, &stir_indexes, prover_state);
             all_witness_answers.push(answers);
         }
 
@@ -485,7 +493,7 @@ where
         );
 
         // Randomness for combination
-        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+        let combination_randomness_gen = prover_state.verifier_message();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
@@ -512,11 +520,18 @@ where
             },
         );
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
-            prover_state,
-            folding_factor_next,
-            round_params.folding_pow_bits,
-        )?;
+        let sumcheck_config = sumcheck::Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 1 << sumcheck_prover.num_variables(),
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: round_params.folding_pow,
+                };
+                folding_factor_next
+            ],
+        };
+        let folding_randomness =
+            sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck_prover);
 
         let start_idx = self.config.folding_factor.at_round(0);
         let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
@@ -544,7 +559,7 @@ where
 
         // Execute standard WHIR rounds 1 through n on the batched polynomial
         for _round in 1..=self.config.n_rounds() {
-            self.round(prover_state, &mut round_state)?;
+            self.round(prover_state, &mut round_state);
         }
 
         // Hints for deferred constraints
@@ -558,25 +573,25 @@ where
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
 
-        prover_state.hint::<Vec<F>>(&deferred)?;
+        prover_state.prover_hint_ark(&deferred);
 
-        Ok((constraint_eval, deferred))
+        (constraint_eval, deferred)
     }
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
-    fn round<ProverState>(
+    fn round<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         round_state: &mut RoundState<F, MerkleConfig>,
-    ) -> ProofResult<()>
-    where
-        ProverState: UnitToField<F>
-            + UnitToBytes
-            + FieldToUnitSerialize<F>
-            + PoWChallenge
-            + DigestToUnitSerialize<MerkleConfig>
-            + HintSerialize,
+    ) where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         // Fold the coefficients
         let folded_coefficients = round_state
@@ -624,27 +639,18 @@ where
         };
 
         let root = merkle_tree.root();
-        prover_state.add_digest(root)?;
+        prover_state.prover_message(&root);
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
+            prover_state.inner_mut(),
             round_params.ood_samples,
             num_variables,
             |point| folded_coefficients.evaluate(point),
-        )?;
+        );
 
         // PoW
-        if round_params.pow_bits > 0. {
-            #[cfg(feature = "tracing")]
-            let _span = span!(
-                Level::INFO,
-                "challenge_pow",
-                pow_bits = round_params.pow_bits
-            )
-            .entered();
-            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
-        }
+        round_params.pow.prove(prover_state.inner_mut());
 
         // STIR Queries
         let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
@@ -653,7 +659,7 @@ where
             num_variables,
             round_params,
             ood_points,
-        )?;
+        );
 
         let fold_size = 1 << folding_factor;
         let leaf_size = if round_state.round == 0 && self.config.batch_size > 1 {
@@ -666,12 +672,12 @@ where
             .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
-        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.prover_hint_ark(&answers);
         self.merkle_state.write_proof_hint(
             &round_state.prev_merkle,
             &stir_challenges_indexes,
             prover_state,
-        )?;
+        );
 
         if round_state.round == 0 && self.config.batch_size > 1 {
             answers = rlc_batched_leaves(
@@ -688,7 +694,7 @@ where
         }));
 
         // Randomness for combination
-        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+        let combination_randomness_gen = prover_state.verifier_message();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
@@ -718,11 +724,18 @@ where
                 )
             });
 
-        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
-            prover_state,
-            folding_factor_next,
-            round_params.folding_pow_bits,
-        )?;
+        let sumcheck_config = sumcheck::Config {
+            field: FieldConfig::<F>::new(),
+            initial_size: 1 << sumcheck_prover.num_variables(),
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: round_params.folding_pow,
+                };
+                folding_factor_next
+            ],
+        };
+        let folding_randomness =
+            sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck_prover);
 
         let start_idx = self.config.folding_factor.total_number(round_state.round);
         let dst_randomness =
@@ -743,50 +756,45 @@ where
         round_state.coefficients = folded_coefficients;
         round_state.prev_merkle = merkle_tree;
         round_state.prev_merkle_answers = evals;
-
-        Ok(())
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_coefficients.num_coeffs())))]
-    fn final_round<ProverState>(
+    fn final_round<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         round_state: &mut RoundState<F, MerkleConfig>,
         folded_coefficients: &CoefficientList<F>,
-    ) -> ProofResult<()>
-    where
-        ProverState:
-            UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge + HintSerialize,
+    ) where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
     {
         // Directly send coefficients of the polynomial to the verifier.
-        prover_state.add_scalars(folded_coefficients.coeffs())?;
+        for coeff in folded_coefficients.coeffs() {
+            prover_state.prover_message(coeff);
+        }
 
         // Precompute the folding factors for later use
         let folding_factor = self.config.folding_factor.at_round(round_state.round);
 
         // PoW
-        if self.config.final_pow_bits > 0. {
-            #[cfg(feature = "tracing")]
-            let _span = span!(
-                Level::INFO,
-                "challenge_pow",
-                pow_bits = self.config.final_pow_bits
-            )
-            .entered();
-            prover_state.challenge_pow::<PowStrategy>(self.config.final_pow_bits)?;
-        }
+        self.config.final_pow.prove(prover_state.inner_mut());
 
         // Final verifier queries and answers. The indices are over the
         // *folded* domain.
         let final_challenge_indexes = get_challenge_stir_queries(
+            prover_state,
             // The size of the *original* domain before folding
             round_state.domain.size(),
             // The folding factor we used to fold the previous polynomial
             folding_factor,
             self.config.final_queries,
-            prover_state,
             &self.config.deduplication_strategy,
-        )?;
+        );
 
         // Every query requires opening these many in the previous Merkle tree
         let fold_size = 1 << folding_factor;
@@ -795,26 +803,32 @@ where
             .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
             .collect::<Vec<_>>();
 
-        prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+        prover_state.prover_hint_ark(&answers);
         self.merkle_state.write_proof_hint(
             &round_state.prev_merkle,
             &final_challenge_indexes,
             prover_state,
-        )?;
+        );
 
         // Final sumcheck
         if self.config.final_sumcheck_rounds > 0 {
-            let final_folding_randomness = round_state
-                .sumcheck_prover
-                .clone()
-                .unwrap_or_else(|| {
+            let mut final_folding_sumcheck =
+                round_state.sumcheck_prover.clone().unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
-                })
-                .compute_sumcheck_polynomials::<PowStrategy, _>(
-                    prover_state,
-                    self.config.final_sumcheck_rounds,
-                    self.config.final_folding_pow_bits,
-                )?;
+                });
+            let sumcheck_config = sumcheck::Config {
+                field: FieldConfig::<F>::new(),
+                initial_size: 1 << final_folding_sumcheck.num_variables(),
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: self.config.final_folding_pow
+                    };
+                    self.config.final_sumcheck_rounds
+                ],
+            };
+
+            let final_folding_randomness =
+                sumcheck_config.prove(prover_state.inner_mut(), &mut final_folding_sumcheck);
             let start_idx = self.config.folding_factor.total_number(round_state.round);
             let rand_dst = &mut round_state.randomness_vec
                 [start_idx..start_idx + final_folding_randomness.0.len()];
@@ -826,28 +840,28 @@ where
                 *dst = *src;
             }
         }
-
-        Ok(())
     }
 
-    fn compute_stir_queries<ProverState>(
+    fn compute_stir_queries<H, R>(
         &self,
-        prover_state: &mut ProverState,
+        prover_state: &mut ProverState<H, R>,
         round_state: &RoundState<F, MerkleConfig>,
         num_variables: usize,
         round_params: &RoundConfig<F>,
         ood_points: Vec<F>,
-    ) -> ProofResult<(Vec<MultilinearPoint<F>>, Vec<usize>)>
+    ) -> (Vec<MultilinearPoint<F>>, Vec<usize>)
     where
-        ProverState: UnitToBytes,
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        u8: Decoding<[H::U]>,
     {
         let stir_challenges_indexes = get_challenge_stir_queries(
+            prover_state,
             round_state.domain.size(),
             self.config.folding_factor.at_round(round_state.round),
             round_params.num_queries,
-            prover_state,
             &self.config.deduplication_strategy,
-        )?;
+        );
 
         // Compute the generator of the folded domain, in the extension field
         let domain_scaled_gen = round_state
@@ -864,7 +878,7 @@ where
             .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
             .collect();
 
-        Ok((stir_challenges, stir_challenges_indexes))
+        (stir_challenges, stir_challenges_indexes)
     }
 }
 

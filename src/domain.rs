@@ -19,10 +19,10 @@ where
     ///
     /// This is useful when operating in an extension field `F`, where `F::PrimeSubfield`
     /// represents the base field from which the extension was built.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub base_domain: Option<GeneralEvaluationDomain<F::BasePrimeField>>,
     /// The actual working domain used for FFT operations.
-    #[serde(with = "crate::ark_serde")]
+    #[serde(with = "crate::ark_serde::canonical")]
     pub backing_domain: GeneralEvaluationDomain<F>,
 }
 

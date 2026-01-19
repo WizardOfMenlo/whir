@@ -1,6 +1,6 @@
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
+use ark_std::rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use super::hypercube::BinaryHypercubePoint;
@@ -10,7 +10,7 @@ use super::hypercube::BinaryHypercubePoint;
 /// Often, `x_i` are binary. If strictly binary, `BinaryHypercubePoint` is used.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
-pub struct MultilinearPoint<F>(#[serde(with = "crate::ark_serde")] pub Vec<F>);
+pub struct MultilinearPoint<F>(#[serde(with = "crate::ark_serde::canonical")] pub Vec<F>);
 
 impl<F> MultilinearPoint<F>
 where
@@ -193,7 +193,7 @@ impl<F> From<F> for MultilinearPoint<F> {
 )]
 mod tests {
     use ark_ff::AdditiveGroup;
-    use rand::thread_rng;
+    use ark_std::rand::thread_rng;
 
     use super::*;
     use crate::crypto::fields::Field64;
