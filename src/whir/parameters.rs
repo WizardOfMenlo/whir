@@ -13,17 +13,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bits::Bits,
-    crypto::{
-        fields::FieldWithSize,
-        proof_of_work::{self, BLAKE3},
-    },
+    crypto::fields::FieldWithSize,
     domain::Domain,
     ntt::{RSDefault, ReedSolomon},
     parameters::{
         DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
         ProtocolParameters, SoundnessType,
     },
-    sumcheck,
+    protocols::{proof_of_work, proof_of_work::BLAKE3, sumcheck},
     transcript::FieldConfig,
     utils::{ark_eq, f64_eq_abs},
 };
@@ -886,9 +883,9 @@ mod tests {
         crypto::{
             fields::{Field256, Field64},
             merkle_tree::keccak::KeccakMerkleTreeParams,
-            proof_of_work::BLAKE3,
         },
         parameters::{DeduplicationStrategy, MerkleProofStrategy},
+        protocols::proof_of_work::BLAKE3,
         utils::test_serde,
     };
 

@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::Domain,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::{self, SumcheckSingle},
+    protocols::sumcheck::{self, SumcheckSingle},
     transcript::{codecs::U64, FieldConfig, ProverMessage, ProverState, VerifierMessage},
     utils::expand_randomness,
     whir::{

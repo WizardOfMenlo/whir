@@ -12,9 +12,9 @@ use tracing::{instrument, span, Level};
 
 use super::SumcheckPolynomial;
 use crate::{
-    crypto::proof_of_work,
     ensure,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
+    protocols::proof_of_work,
     transcript::{codecs::U64, FieldConfig},
     utils::eval_eq,
     whir::statement::Statement,

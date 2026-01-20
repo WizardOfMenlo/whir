@@ -7,7 +7,7 @@ use zerocopy::FromBytes;
 
 use super::{threshold, Engine};
 use crate::{
-    crypto::proof_of_work::find_min,
+    protocols::proof_of_work::find_min,
     transcript::{Protocol, ProtocolId},
 };
 
@@ -77,7 +77,7 @@ mod tests {
     use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::{bits::Bits, crypto::proof_of_work::Config};
+    use crate::{bits::Bits, protocols::proof_of_work::Config};
 
     #[test]
     fn protocol_id() {

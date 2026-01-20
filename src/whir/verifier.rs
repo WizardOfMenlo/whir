@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck,
+    protocols::sumcheck,
     transcript::{codecs::U64, FieldConfig, ProverMessage, VerifierMessage, VerifierState},
     utils::expand_randomness,
     whir::{merkle, prover::RootPath, utils::get_challenge_stir_queries},
