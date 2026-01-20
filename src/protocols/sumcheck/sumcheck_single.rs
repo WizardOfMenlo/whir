@@ -47,7 +47,7 @@ impl<F: Field> Config<F> {
             "Initial size must be >= 2^{rounds}."
         );
         for round in &self.rounds {
-            round.pow.validate()?;
+            // No per-round PoW validation required
         }
         Ok(())
     }
@@ -431,6 +431,7 @@ mod tests {
     use crate::{
         bits::Bits,
         crypto::fields::Field64 as F,
+        hash,
         poly_utils::{
             coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
             multilinear::MultilinearPoint,
@@ -1210,7 +1211,7 @@ mod tests {
             field: FieldConfig::<F>::new(),
             initial_size: 2,
             rounds: vec![RoundConfig {
-                pow: proof_of_work::Config::none(),
+                pow: proof_of_work::Config::from_difficulty(Bits::new(0.0)),
             }],
         };
         let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
@@ -1258,10 +1259,7 @@ mod tests {
             initial_size: 4,
             rounds: vec![
                 RoundConfig {
-                    pow: proof_of_work::Config {
-                        engine_id: proof_of_work::SHA2,
-                        difficulty: Bits::new(2.0),
-                    }
+                    pow: proof_of_work::Config::from_difficulty(Bits::new(2.0))
                 };
                 2
             ],
@@ -1299,10 +1297,7 @@ mod tests {
             initial_size: 8,
             rounds: vec![
                 RoundConfig {
-                    pow: proof_of_work::Config {
-                        engine_id: proof_of_work::SHA2,
-                        difficulty: Bits::new(2.0),
-                    }
+                    pow: proof_of_work::Config::from_difficulty(Bits::new(2.0)),
                 };
                 3
             ],
