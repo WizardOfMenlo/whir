@@ -1,0 +1,271 @@
+use std::mem::swap;
+
+use ark_std::rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
+use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
+use zerocopy::IntoBytes;
+
+use crate::{
+    ensure,
+    hash::{Hash, ENGINES},
+    transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Config {
+    /// Layer configurations for the Merkle tree, root to bottom.
+    pub layers: Vec<LayerConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct LayerConfig {
+    /// The engine used to hash siblings.
+    pub hash_id: ProtocolId,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Commitment {
+    /// The commitment root hash.
+    hash: Hash,
+}
+
+#[derive(Clone, Debug)]
+pub struct Witness {
+    /// The nodes in the Merkle tree, starting with the leaf hash layer.
+    nodes: Vec<Hash>,
+}
+
+impl Config {
+    pub fn num_leaves(&self) -> usize {
+        1 << self.layers.len()
+    }
+
+    pub fn num_nodes(&self) -> usize {
+        (1 << (self.layers.len() + 1)) - 1
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves)))]
+    pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, leaves: Vec<Hash>) -> Witness
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        Hash: ProverMessage<[H::U]>,
+    {
+        assert_eq!(
+            leaves.len(),
+            self.num_leaves(),
+            "Expected {} leaf hashes, got {}",
+            self.num_leaves(),
+            leaves.len()
+        );
+
+        // Allocate nodes and fill with leaf layer.
+        let mut nodes = leaves;
+        nodes.resize(self.num_nodes(), Hash::default());
+        let (mut previous, mut remaining) = nodes.split_at_mut(self.num_leaves());
+
+        // Compute merkle tree nodes.
+        for layer in self.layers.iter().rev() {
+            let (current, next_remaining) = remaining.split_at_mut(previous.len() / 2);
+            ENGINES
+                .retrieve(layer.hash_id)
+                .expect("Hash Engine not found")
+                .hash_many(64, previous.as_bytes(), current);
+
+            previous = current;
+            remaining = next_remaining;
+        }
+
+        // Commit to the root hash.
+        prover_state.prover_message(&previous[0]);
+
+        Witness { nodes }
+    }
+
+    pub fn receive_commitment<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+    ) -> VerificationResult<Commitment>
+    where
+        H: DuplexSpongeInterface,
+        Hash: ProverMessage<[H::U]>,
+    {
+        let hash = verifier_state.prover_message()?;
+        Ok(Commitment { hash })
+    }
+
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves)))]
+    pub fn open<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        witness: &Witness,
+        indices: &[usize],
+    ) where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        Hash: ProverMessage<[H::U]>,
+    {
+        assert_eq!(witness.nodes.len(), self.num_nodes());
+        assert!(indices.iter().all(|&i| i < self.num_leaves()));
+
+        // Abstract execution of verify algorithm wrting required hashes.
+        let mut indices = indices.to_vec();
+        indices.sort_unstable();
+        indices.dedup();
+        let (mut layer, mut remaining) = witness.nodes.split_at(self.num_leaves());
+        while layer.len() > 1 {
+            let mut next_indices = Vec::with_capacity(indices.len());
+            let mut iter = indices.iter().copied().peekable();
+            loop {
+                match (iter.next(), iter.peek()) {
+                    (Some(a), Some(&b)) if b == a ^ 1 => {
+                        // Neighboring indices, merging branches.
+                        next_indices.push(a >> 1);
+                        iter.next(); // Skip the next index.
+                    }
+                    (Some(a), _) => {
+                        // Single index, pushing the neighbor hash.
+                        prover_state.prover_hint(&layer[a ^ 1]);
+                        next_indices.push(a >> 1);
+                    }
+                    (None, _) => break,
+                }
+            }
+            indices = next_indices;
+            let (next_layer, next_remaining) = remaining.split_at(layer.len() / 2);
+            layer = next_layer;
+            remaining = next_remaining;
+        }
+    }
+
+    pub fn verify<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+        commitment: Commitment,
+        indices: &[usize],
+        leaf_hashes: &[Hash],
+    ) -> VerificationResult<()>
+    where
+        H: DuplexSpongeInterface,
+        Hash: ProverMessage<[H::U]>,
+    {
+        // Validate indices.
+        ensure!(
+            indices.iter().all(|&i| i < self.num_leaves()),
+            VerificationError
+        );
+
+        // Sort indices and leaf hashes.
+        let mut layer = indices
+            .iter()
+            .copied()
+            .zip(leaf_hashes.iter().copied())
+            .collect::<Vec<(usize, Hash)>>();
+        layer.sort_unstable_by_key(|(i, _)| *i);
+
+        // Check duplicate leaf consistency and deduplicate.
+        for i in 1..layer.len() {
+            if layer[i - 1].0 == layer[i].0 {
+                ensure!(layer[i - 1].1 == layer[i].1, VerificationError);
+            }
+        }
+        layer.dedup_by_key(|(i, _)| *i);
+
+        // Validate the layers
+        let mut indices = layer.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+        let mut hashes = layer.iter().map(|(_, h)| *h).collect::<Vec<_>>();
+        let mut next_indices = Vec::with_capacity(layer.len());
+        let mut input_hashes = Vec::with_capacity(layer.len() * 2);
+        let mut next_hashes = Vec::with_capacity(layer.len());
+        for layer in self.layers.iter().rev() {
+            next_indices.clear();
+            input_hashes.clear();
+            next_hashes.clear();
+
+            // Pair hashes with either hint or neighbor.
+            let mut indices_iter = indices.iter().copied().peekable();
+            let mut hashes_iter = hashes.iter().copied();
+            loop {
+                match (indices_iter.next(), indices_iter.peek()) {
+                    (Some(a), Some(&b)) if b == a ^ 1 => {
+                        // Neighboring indices, merging branches.
+                        input_hashes.push(hashes_iter.next().unwrap());
+                        input_hashes.push(hashes_iter.next().unwrap());
+                        next_indices.push(a >> 1);
+                        indices_iter.next(); // Skip the next index.
+                    }
+                    (Some(a), _) => {
+                        // Single index, receiving the neighbor hash.
+                        let hash = verifier_state.prover_hint()?;
+                        if a & 1 == 0 {
+                            input_hashes.push(hashes_iter.next().unwrap());
+                            input_hashes.push(hash);
+                        } else {
+                            input_hashes.push(hash);
+                            input_hashes.push(hashes_iter.next().unwrap());
+                        }
+                        next_indices.push(a >> 1);
+                    }
+                    (None, _) => break,
+                }
+            }
+
+            // Compute next layer hashes
+            next_hashes.resize(input_hashes.len() / 2, Hash::default());
+            ENGINES
+                .retrieve(layer.hash_id)
+                .ok_or(VerificationError)?
+                .hash_many(64, input_hashes.as_bytes(), &mut next_hashes);
+            swap(&mut indices, &mut next_indices);
+            swap(&mut hashes, &mut next_hashes);
+        }
+
+        // We should be left with a single root hash, matching the commitment.
+        ensure!(indices == [0], VerificationError);
+        ensure!(hashes == [commitment.hash], VerificationError);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use spongefish::{domain_separator, session};
+
+    use super::*;
+    use crate::{hash::BLAKE3, transcript::codecs::Empty};
+
+    #[test]
+    fn test_merkle_tree() {
+        let config = Config {
+            layers: vec![LayerConfig { hash_id: BLAKE3 }; 8],
+        };
+        dbg!(config.num_leaves(), config.num_nodes());
+
+        let leaves = (0..config.num_leaves())
+            .map(|i| Hash([i as u8; 32]))
+            .collect::<Vec<_>>();
+
+        let ds = domain_separator!("whir::protocols::merkle_tree")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        // Prover
+        let mut prover_state = ProverState::from(ds.std_prover());
+        let tree = config.commit(&mut prover_state, leaves);
+        config.open(&mut prover_state, &tree, &[13, 42]);
+        let proof = prover_state.proof();
+
+        // Verifier
+        let mut verifier_state =
+            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let root = config.receive_commitment(&mut verifier_state).unwrap();
+        config
+            .verify(
+                &mut verifier_state,
+                root,
+                &[13, 42],
+                &[Hash([13; 32]), Hash([42; 32])],
+            )
+            .unwrap();
+    }
+}

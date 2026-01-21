@@ -102,6 +102,13 @@ where
         self.inner.prover_message(message);
     }
 
+    pub fn prover_hint<T>(&mut self, hint: &T)
+    where
+        T: NargSerialize,
+    {
+        hint.serialize_into_narg(&mut self.hints);
+    }
+
     pub fn prover_hint_ark<T>(&mut self, value: &T)
     where
         T: CanonicalSerialize + ?Sized,
@@ -201,6 +208,13 @@ where
         T: Encoding<[H::U]> + NargDeserialize,
     {
         self.inner.prover_messages_vec(len)
+    }
+
+    pub fn prover_hint<T>(&mut self) -> VerificationResult<T>
+    where
+        T: NargDeserialize,
+    {
+        T::deserialize_from_narg(&mut self.hints)
     }
 
     pub fn prover_hint_ark<T>(&mut self) -> VerificationResult<T>

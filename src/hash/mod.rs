@@ -9,14 +9,15 @@ use std::{
 
 use const_oid::ObjectIdentifier;
 use serde::{Deserialize, Serialize};
-use static_assertions::assert_obj_safe;
+use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
+use static_assertions::{assert_impl_all, assert_obj_safe};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 pub use self::{
     blake3_engine::{Blake3, BLAKE3},
     digest_engine::{DigestEngine, Keccak, Sha2, Sha3, KECCAK, SHA2, SHA3},
 };
-use crate::transcript::{Engines, Protocol, ProtocolId};
+use crate::transcript::{Engines, Protocol, ProtocolId, ProverMessage};
 
 pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     let engines = Engines::<dyn Engine>::new();
@@ -100,3 +101,19 @@ impl fmt::Debug for Hash {
         Ok(())
     }
 }
+
+impl Encoding<[u8]> for Hash {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.as_bytes()
+    }
+}
+
+impl NargDeserialize for Hash {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
+        let (hash, tail) = Hash::read_from_prefix(buf).map_err(|_| VerificationError)?;
+        *buf = tail;
+        Ok(hash)
+    }
+}
+
+assert_impl_all!(Hash: ProverMessage);

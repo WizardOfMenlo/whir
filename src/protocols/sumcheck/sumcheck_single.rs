@@ -46,9 +46,6 @@ impl<F: Field> Config<F> {
             self.initial_size.ilog2() as usize >= self.rounds.len(),
             "Initial size must be >= 2^{rounds}."
         );
-        for round in &self.rounds {
-            // No per-round PoW validation required
-        }
         Ok(())
     }
 
@@ -431,7 +428,6 @@ mod tests {
     use crate::{
         bits::Bits,
         crypto::fields::Field64 as F,
-        hash,
         poly_utils::{
             coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
             multilinear::MultilinearPoint,
