@@ -31,12 +31,9 @@ mod batching_tests {
     use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::{fields::Field64, merkle_tree::blake3::Blake3MerkleTreeParams},
+        crypto::fields::Field64,
         ntt::RSDefault,
-        parameters::{
-            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
-            ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -50,8 +47,6 @@ mod batching_tests {
         },
     };
 
-    /// Merkle tree configuration type for commitment layers.
-    type MerkleConfig = Blake3MerkleTreeParams<F>;
     /// Field type used in the tests.
     type F = Field64;
 
@@ -137,10 +132,8 @@ mod batching_tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let batched_witness = committer.commit_batch(
-            prover_state.inner_mut(),
-            &poly_list.iter().collect::<Vec<_>>(),
-        );
+        let batched_witness =
+            committer.commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>());
 
         // Get the batched polynomial
         let batched_poly = batched_witness.batched_poly();

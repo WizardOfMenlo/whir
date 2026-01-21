@@ -1,4 +1,3 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
 use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationError, VerificationResult};
 
@@ -8,36 +7,22 @@ use super::{
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
+    ensure,
+    hash::Hash,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    protocols::sumcheck,
+    protocols::{matrix_commit, sumcheck},
     transcript::{codecs::U64, FieldConfig, ProverMessage, VerifierMessage, VerifierState},
     utils::expand_randomness,
-    whir::{merkle, prover::RootPath, utils::get_challenge_stir_queries},
+    whir::utils::get_challenge_stir_queries,
 };
 
-pub struct Verifier<'a, F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config,
-{
-    params: &'a WhirConfig<F, MerkleConfig>,
-    merkle_state: merkle::VerifierMerkleState<'a, MerkleConfig>,
+pub struct Verifier<'a, F: FftField> {
+    params: &'a WhirConfig<F>,
 }
 
-impl<'a, F, MerkleConfig> Verifier<'a, F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config<Leaf = [F]>,
-{
-    pub const fn new(params: &'a WhirConfig<F, MerkleConfig>) -> Self {
-        Self {
-            params,
-            merkle_state: merkle::VerifierMerkleState::new(
-                params.merkle_proof_strategy,
-                &params.leaf_hash_params,
-                &params.two_to_one_params,
-            ),
-        }
+impl<'a, F: FftField> Verifier<'a, F> {
+    pub const fn new(params: &'a WhirConfig<F>) -> Self {
+        Self { params }
     }
 
     /// Verify a WHIR proof.
@@ -48,7 +33,7 @@ where
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
-        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
+        parsed_commitment: &ParsedCommitment<F>,
         statement: &Statement<F>,
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
@@ -57,13 +42,14 @@ where
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
     {
         // During the rounds we collect constraints, combination randomness, folding randomness
         // and we update the claimed sum of constraint evaluation.
         let mut round_constraints = Vec::new();
         let mut round_folding_randomness = Vec::new();
         let mut claimed_sum = F::ZERO;
+        let mut prev_committer = &self.params.initial_matrix_committer;
         let mut prev_commitment = parsed_commitment.clone();
 
         // Optional initial sumcheck round
@@ -114,18 +100,20 @@ where
             let round_params = &self.params.round_parameters[round_index];
 
             // Receive commitment to the folded polynomial (likely encoded at higher expansion)
-            let new_commitment =
-                ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse::<H, MerkleConfig>(
-                    verifier_state.inner_mut(),
-                    round_params.num_variables,
-                    round_params.ood_samples,
-                )?;
+            let new_commitment = ParsedCommitment::receive(
+                verifier_state,
+                &round_params.matrix_committer,
+                round_params.num_variables,
+                round_params.ood_samples,
+                1,
+            )?;
 
             // Verify in-domain challenges on the previous commitment.
             let stir_constraints = self.verify_stir_challenges(
                 round_index,
                 verifier_state,
                 round_params,
+                prev_committer,
                 &prev_commitment,
                 round_folding_randomness.last().unwrap(),
             )?;
@@ -154,6 +142,7 @@ where
             round_folding_randomness.push(folding_randomness);
 
             // Update round parameters
+            prev_committer = &round_params.matrix_committer;
             prev_commitment = new_commitment;
         }
 
@@ -169,6 +158,7 @@ where
             self.params.n_rounds(),
             verifier_state,
             &self.params.final_round_config(),
+            prev_committer,
             &prev_commitment,
             round_folding_randomness.last().unwrap(),
         )?;
@@ -232,7 +222,7 @@ where
     pub fn verify_batch<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
-        parsed_commitments: &[ParsedCommitment<F, MerkleConfig::InnerDigest>],
+        parsed_commitments: &[ParsedCommitment<F>],
         statements: &[Statement<F>],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
@@ -241,7 +231,7 @@ where
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
     {
         assert!(!parsed_commitments.is_empty());
         assert_eq!(parsed_commitments.len(), statements.len());
@@ -361,12 +351,14 @@ where
         let round_params = &self.params.round_parameters[0];
 
         // Receive commitment to the batched folded polynomial
-        let mut prev_commitment =
-            ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse::<H, MerkleConfig>(
-                verifier_state.inner_mut(),
-                round_params.num_variables,
-                round_params.ood_samples,
-            )?;
+        let mut prev_committer = &round_params.matrix_committer;
+        let mut prev_commitment = ParsedCommitment::receive(
+            verifier_state,
+            &round_params.matrix_committer,
+            round_params.num_variables,
+            round_params.ood_samples,
+            1,
+        )?;
 
         // Verify STIR challenges on N original witness trees
         round_params.pow.verify(verifier_state.inner_mut())?;
@@ -376,17 +368,23 @@ where
             round_params.domain_size,
             round_params.folding_factor,
             round_params.num_queries,
-            &self.params.deduplication_strategy,
         );
 
         // Verify Merkle openings in all N original commitment trees
         let mut all_answers = Vec::with_capacity(parsed_commitments.len());
         for commitment in parsed_commitments {
-            let answers = self.verify_merkle_proof(
+            let answers: Vec<F> = verifier_state.prover_hint_ark()?;
+            ensure!(
+                answers.len() == round_params.num_queries * round_params.folding_factor,
+                VerificationError
+            );
+            self.params.initial_matrix_committer.verify(
                 verifier_state,
-                &commitment.root,
+                commitment.matrix_commitment,
                 &stir_challenges_indexes,
+                &answers,
             )?;
+
             all_answers.push(answers);
         }
 
@@ -397,7 +395,8 @@ where
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
                 for (commitment, witness_answers) in parsed_commitments.iter().zip(&all_answers) {
-                    let stacked_answer = &witness_answers[query_idx];
+                    let stacked_answer =
+                        &witness_answers[query_idx * fold_size..(query_idx + 1) * fold_size];
 
                     // First, internally reduce stacked leaf using commitment's batching_randomness
                     let mut internal_pow = F::ONE;
@@ -461,17 +460,19 @@ where
         for round_index in 1..self.params.n_rounds() {
             let round_params = &self.params.round_parameters[round_index];
 
-            let new_commitment =
-                ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse::<H, MerkleConfig>(
-                    verifier_state.inner_mut(),
-                    round_params.num_variables,
-                    round_params.ood_samples,
-                )?;
+            let new_commitment = ParsedCommitment::receive(
+                verifier_state,
+                &round_params.matrix_committer,
+                round_params.num_variables,
+                round_params.ood_samples,
+                1,
+            )?;
 
             let stir_constraints = self.verify_stir_challenges(
                 round_index,
                 verifier_state,
                 round_params,
+                prev_committer,
                 &prev_commitment,
                 round_folding_randomness.last().unwrap(),
             )?;
@@ -498,6 +499,7 @@ where
             let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
+            prev_committer = &round_params.matrix_committer;
             prev_commitment = new_commitment;
         }
 
@@ -512,6 +514,7 @@ where
             self.params.n_rounds(),
             verifier_state,
             &self.params.final_round_config(),
+            prev_committer,
             &prev_commitment,
             round_folding_randomness.last().unwrap(),
         )?;
@@ -574,7 +577,7 @@ where
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
     {
         let combination_randomness_gen = verifier_state.verifier_message();
         let combination_randomness =
@@ -594,7 +597,8 @@ where
         round_index: usize,
         verifier_state: &mut VerifierState<'_, H>,
         params: &RoundConfig<F>,
-        commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
+        committer: &matrix_commit::Config<F>,
+        commitment: &ParsedCommitment<F>,
         folding_randomness: &MultilinearPoint<F>,
     ) -> VerificationResult<Vec<Constraint<F>>>
     where
@@ -603,7 +607,7 @@ where
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
     {
         params.pow.verify(verifier_state.inner_mut())?;
 
@@ -612,12 +616,23 @@ where
             params.domain_size,
             params.folding_factor,
             params.num_queries,
-            &self.params.deduplication_strategy,
         );
 
         // Always open against the single batched commitment
-        let mut answers =
-            self.verify_merkle_proof(verifier_state, &commitment.root, &stir_challenges_indexes)?;
+        let mut answers: Vec<F> = verifier_state.prover_hint_ark()?;
+        assert!(answers.len().is_multiple_of(stir_challenges_indexes.len()));
+
+        assert_eq!(
+            answers.len(),
+            committer.num_cols * stir_challenges_indexes.len()
+        );
+
+        committer.verify(
+            verifier_state,
+            commitment.matrix_commitment,
+            &stir_challenges_indexes,
+            &answers,
+        )?;
 
         // If this is the first round and batching > 1, RLC per leaf to fold_size
         if round_index == 0 && self.params.batch_size > 1 {
@@ -632,8 +647,8 @@ where
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers
-            .into_iter()
-            .map(|answers| CoefficientList::new(answers).evaluate(folding_randomness))
+            .chunks_exact(1 << params.folding_factor)
+            .map(|answers| CoefficientList::new(answers.to_vec()).evaluate(folding_randomness))
             .collect();
 
         let stir_constraints = stir_challenges_indexes
@@ -648,79 +663,6 @@ where
             .collect();
 
         Ok(stir_constraints)
-    }
-
-    pub fn verify_first_round<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        root: &[MerkleConfig::InnerDigest],
-        indices: &[usize],
-    ) -> VerificationResult<Vec<Vec<F>>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
-    {
-        let answers: Vec<Vec<F>> = verifier_state.prover_hint_ark()?;
-
-        let first_round_merkle_proof: Vec<RootPath<F, MerkleConfig>> =
-            verifier_state.prover_hint_ark()?;
-
-        if root.len() != first_round_merkle_proof.len() {
-            return Err(VerificationError);
-        }
-
-        let correct =
-            first_round_merkle_proof
-                .iter()
-                .zip(root.iter())
-                .all(|((path, answers), root_hash)| {
-                    path.verify(
-                        &self.params.leaf_hash_params,
-                        &self.params.two_to_one_params,
-                        root_hash,
-                        answers.iter().map(|a| a.as_ref()),
-                    )
-                    .unwrap()
-                        && path.leaf_indexes == *indices
-                });
-
-        if !correct {
-            return Err(VerificationError);
-        }
-
-        Ok(answers)
-    }
-
-    /// Verify a merkle multi-opening proof for the provided indices.
-    pub fn verify_merkle_proof<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        root: &MerkleConfig::InnerDigest,
-        indices: &[usize],
-    ) -> VerificationResult<Vec<Vec<F>>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
-    {
-        // Receive claimed leafs
-        let answers: Vec<Vec<F>> = verifier_state.prover_hint_ark()?;
-
-        self.merkle_state.read_and_verify_proof(
-            verifier_state,
-            indices,
-            root,
-            answers.iter().map(|a| a.as_slice()),
-        )?;
-
-        Ok(answers)
     }
 
     /// Evaluate the random linear combination of constraints in `point`.

@@ -1,6 +1,7 @@
 mod blake3_engine;
 mod copy_engine;
 mod digest_engine;
+mod hash_counter;
 
 use core::fmt;
 use std::{
@@ -18,6 +19,7 @@ pub use self::{
     blake3_engine::{Blake3, BLAKE3},
     copy_engine::{Copy, COPY},
     digest_engine::{DigestEngine, Keccak, Sha2, Sha3, KECCAK, SHA2, SHA3},
+    hash_counter::HASH_COUNTER,
 };
 use crate::transcript::{Engines, Protocol, ProtocolId, ProverMessage};
 

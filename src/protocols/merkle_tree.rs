@@ -11,7 +11,7 @@ use crate::{
     transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Number of leaves in the Merkle tree.
     pub num_leaves: usize,
@@ -20,19 +20,21 @@ pub struct Config {
     pub layers: Vec<LayerConfig>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Copy, Debug, Serialize, Deserialize)]
 pub struct LayerConfig {
     /// The engine used to hash siblings.
     pub hash_id: ProtocolId,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, PartialEq, Eq, Copy, Debug)]
+#[must_use]
 pub struct Commitment {
     /// The commitment root hash.
     hash: Hash,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[must_use]
 pub struct Witness {
     /// The nodes in the Merkle tree, starting with the leaf hash layer.
     nodes: Vec<Hash>,
@@ -249,6 +251,12 @@ impl Config {
         ensure!(indices == [0], VerificationError);
         ensure!(hashes == [commitment.hash], VerificationError);
         Ok(())
+    }
+}
+
+impl Witness {
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
     }
 }
 

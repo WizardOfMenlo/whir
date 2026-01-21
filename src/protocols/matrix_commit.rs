@@ -11,7 +11,8 @@ use crate::{
 };
 
 /// Commits row-wise to a matrix of field elements using a merkle tree.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(bound = "F: Field")]
 pub struct Config<F: Field> {
     /// Field used for the matrix elements.
     pub field: FieldConfig<F>,
@@ -30,7 +31,7 @@ pub type Witness = merkle_tree::Witness;
 
 pub type Commitment = merkle_tree::Commitment;
 
-impl<F: Field + NargSerialize> Config<F> {
+impl<F: Field> Config<F> {
     pub fn new(num_rows: usize, num_cols: usize) -> Self {
         let field = FieldConfig::new();
 
@@ -64,10 +65,12 @@ impl<F: Field + NargSerialize> Config<F> {
     #[cfg_attr(feature = "tracing", instrument(skip(prover_state, matrix), fields(size = matrix.len(), engine)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, matrix: &[F]) -> Witness
     where
+        F: NargSerialize,
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
         Hash: ProverMessage<[H::U]>,
     {
+        //eprintln!("Commit {}x{}", self.num_rows(), self.num_cols);
         assert_eq!(matrix.len(), self.num_rows() * self.num_cols);
 
         let engine = hash::ENGINES
@@ -93,6 +96,11 @@ impl<F: Field + NargSerialize> Config<F> {
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
     {
+        // eprintln!(
+        //     "Received commitment for {}x{}",
+        //     self.num_rows(),
+        //     self.num_cols
+        // );
         self.merkle_tree.receive_commitment(verifier_state)
     }
 
@@ -111,6 +119,7 @@ impl<F: Field + NargSerialize> Config<F> {
         R: RngCore + CryptoRng,
         Hash: ProverMessage<[H::U]>,
     {
+        // eprintln!("Open {}x{} at {indices:?}", self.num_rows(), self.num_cols,);
         self.merkle_tree.open(prover_state, witness, indices);
     }
 
@@ -127,9 +136,15 @@ impl<F: Field + NargSerialize> Config<F> {
         matrix: &[F],
     ) -> VerificationResult<()>
     where
+        F: NargSerialize,
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
     {
+        // eprintln!(
+        //     "Verify {}x{} at {indices:?}",
+        //     self.num_rows(),
+        //     self.num_cols,
+        // );
         ensure!(
             matrix.len() == self.num_cols * indices.len(),
             VerificationError

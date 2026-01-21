@@ -36,7 +36,6 @@ redundant_closure_for_method_calls = "allow"
 ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
-ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
 ark-poly = "0.5"
 blake3 = { version = "1.5" }
 sha3 = { version = "0.10.7", features = ["asm", "oid"] }
@@ -73,7 +72,6 @@ parallel = [
     "dep:rayon",
     "ark-poly/parallel",
     "ark-ff/parallel",
-    "ark-crypto-primitives/parallel",
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]

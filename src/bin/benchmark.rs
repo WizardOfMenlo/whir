@@ -270,7 +270,7 @@ where
         HashCounter::reset();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(prover_state.inner_mut(), &polynomial);
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         let prover = Prover::new(params.clone());
 
@@ -359,7 +359,7 @@ where
         let whir_prover_time = Instant::now();
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(prover_state.inner_mut(), &polynomial);
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         let prover = Prover::new(params.clone());
 

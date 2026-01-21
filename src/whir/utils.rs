@@ -1,12 +1,12 @@
-use ark_ff::FftField;
+use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use spongefish::{Codec, Decoding, DuplexSpongeInterface, ProverState};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use crate::{
-    crypto::merkle_tree::challenge_indices, parameters::DeduplicationStrategy,
-    poly_utils::multilinear::MultilinearPoint, transcript::VerifierMessage,
+    poly_utils::multilinear::MultilinearPoint, protocols::challenge_indices::challenge_indices,
+    transcript::VerifierMessage,
 };
 
 ///
@@ -85,7 +85,6 @@ pub fn get_challenge_stir_queries<T>(
     domain_size: usize,
     folding_factor: usize,
     num_queries: usize,
-    deduplication_strategy: &DeduplicationStrategy,
 ) -> Vec<usize>
 where
     T: VerifierMessage,
@@ -94,28 +93,20 @@ where
     let folded_domain_size = domain_size >> folding_factor;
 
     let mut indices = challenge_indices(transcript, folded_domain_size, num_queries);
-
-    match deduplication_strategy {
-        DeduplicationStrategy::Enabled => {
-            indices.sort_unstable();
-            indices.dedup();
-        }
-        DeduplicationStrategy::Disabled => {}
-    }
-
+    indices.sort_unstable();
+    indices.dedup();
     indices
 }
 
-pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
-    leaves: Vec<Vec<F>>,
+pub(crate) fn rlc_batched_leaves<F: Field>(
+    leaves: Vec<F>,
     fold_size: usize,
     batch_size: usize,
     batching_randomness: F,
-) -> Vec<Vec<F>> {
+) -> Vec<F> {
     leaves
-        .into_iter()
+        .chunks_exact(batch_size * fold_size)
         .map(|leaf| {
-            assert_eq!(leaf.len(), batch_size * fold_size);
             let mut out = vec![F::ZERO; fold_size];
             let mut pow = F::ONE;
             for block in leaf.chunks_exact(fold_size).take(batch_size) {
@@ -126,6 +117,7 @@ pub(crate) fn rlc_batched_leaves<F: ark_ff::Field>(
             }
             out
         })
+        .flatten()
         .collect()
 }
 
@@ -193,13 +185,8 @@ mod tests {
             .instance(&Empty)
             .to_prover(sponge);
 
-        let result = get_challenge_stir_queries(
-            &mut prover_state,
-            domain_size,
-            folding_factor,
-            num_queries,
-            &DeduplicationStrategy::Enabled,
-        );
+        let result =
+            get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
 
         let folded_domain_size = 128; // domain_size / 2
 
@@ -242,13 +229,8 @@ mod tests {
             .instance(&Empty)
             .to_prover(sponge);
 
-        let result = get_challenge_stir_queries(
-            &mut prover_state,
-            domain_size,
-            folding_factor,
-            num_queries,
-            &DeduplicationStrategy::Enabled,
-        );
+        let result =
+            get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
 
         let folded_domain_size = 8192; // 65536 / 8
 
@@ -290,13 +272,8 @@ mod tests {
             .instance(&Empty)
             .to_prover(sponge);
 
-        let result = get_challenge_stir_queries(
-            &mut prover_state,
-            domain_size,
-            folding_factor,
-            num_queries,
-            &DeduplicationStrategy::Enabled,
-        );
+        let result =
+            get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
 
         let folded_domain_size = 1_048_576; // 2^20
 
@@ -334,13 +311,8 @@ mod tests {
             .instance(&Empty)
             .to_prover(sponge);
 
-        let result = get_challenge_stir_queries(
-            &mut prover_state,
-            domain_size,
-            folding_factor,
-            num_queries,
-            &DeduplicationStrategy::Enabled,
-        );
+        let result =
+            get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
 
         let folded_domain_size = 128;
 

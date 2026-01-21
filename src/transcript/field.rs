@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use ark_ff::{BigInteger, Field, PrimeField};
 use serde::{
@@ -8,7 +8,7 @@ use serde::{
 };
 
 /// Zero-sized type that represents a Galois field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct FieldConfig<F: Field> {
     field: PhantomData<F>,
 }
@@ -80,6 +80,15 @@ impl<'de, F: Field> Deserialize<'de> for FieldConfig<F> {
             return Err(D::Error::custom("Mismatch in field"));
         }
         Ok(Self::default())
+    }
+}
+
+impl<F: Field> fmt::Debug for FieldConfig<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FieldConfig")
+            .field("prime", &F::BasePrimeField::MODULUS)
+            .field("extension_degree", &self.extension_degree())
+            .finish()
     }
 }
 

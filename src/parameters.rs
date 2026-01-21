@@ -4,11 +4,8 @@ use std::{
     str::FromStr,
 };
 
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-
-use crate::utils::ark_eq;
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
@@ -206,24 +203,9 @@ impl FoldingFactor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum MerkleProofStrategy {
-    Compressed,
-    Uncompressed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DeduplicationStrategy {
-    Enabled,  // Sort + dedup indices
-    Disabled, // Preserve order/multiplicity
-}
-
 /// Configuration parameters for WHIR proofs.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ProtocolParameters<MerkleConfig>
-where
-    MerkleConfig: Config,
-{
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolParameters {
     /// Whether the initial statement is included in the proof.
     pub initial_statement: bool,
     /// The logarithmic inverse rate for sampling.
@@ -236,60 +218,12 @@ where
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
     pub pow_bits: usize,
-    /// Parameters for hashing Merkle tree leaves.
-    ///
-    /// These define how individual leaves in the Merkle tree are hashed.
-    #[serde(with = "crate::ark_serde::canonical")]
-    pub leaf_hash_params: LeafParam<MerkleConfig>,
-    /// Parameters for hashing inner nodes in the Merkle tree.
-    ///
-    /// These define the hashing function used when combining two child nodes into a parent node.
-    #[serde(with = "crate::ark_serde::canonical")]
-    pub two_to_one_params: TwoToOneParam<MerkleConfig>,
 
     /// Number of polynomials committed in the batch.
     pub batch_size: usize,
-
-    /// Strategy to decide on the deduplication of challenges
-    /// Standard: Sort + dedup indices
-    /// Recursive: Preserve order/multiplicity
-    pub deduplication_strategy: DeduplicationStrategy,
-
-    /// Strategy to decide on compression of merkle proofs used in proving.
-    /// Standard: Compressed proofs.
-    /// Recursive: Full Proofs.
-    pub merkle_proof_strategy: MerkleProofStrategy,
 }
 
-impl<MerkleConfig> Debug for ProtocolParameters<MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "WhirParameters {self}")
-    }
-}
-
-impl<MerkleConfig> PartialEq for ProtocolParameters<MerkleConfig>
-where
-    MerkleConfig: Config,
-{
-    fn eq(&self, other: &Self) -> bool {
-        ark_eq(&self.leaf_hash_params, &other.leaf_hash_params)
-            && ark_eq(&self.two_to_one_params, &other.two_to_one_params)
-            && self.initial_statement == other.initial_statement
-            && self.starting_log_inv_rate == other.starting_log_inv_rate
-            && self.folding_factor == other.folding_factor
-            && self.soundness_type == other.soundness_type
-            && self.security_level == other.security_level
-            && self.pow_bits == other.pow_bits
-    }
-}
-
-impl<MerkleConfig> Display for ProtocolParameters<MerkleConfig>
-where
-    MerkleConfig: Config,
-{
+impl Display for ProtocolParameters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,

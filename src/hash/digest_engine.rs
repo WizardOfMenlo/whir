@@ -5,7 +5,7 @@ use digest::{const_oid::AssociatedOid, consts::U32, Digest};
 use hex_literal::hex;
 use zerocopy::IntoBytes;
 
-use super::{Engine, Hash};
+use super::{Engine, Hash, HASH_COUNTER};
 use crate::transcript::ProtocolId;
 
 pub const SHA2: ProtocolId = ProtocolId::new(hex!(
@@ -117,6 +117,7 @@ where
                 let hash = D::digest(input);
                 out.as_mut_bytes().copy_from_slice(hash.as_ref());
             }
+            HASH_COUNTER.add(input.len() / size);
         }
     }
 }

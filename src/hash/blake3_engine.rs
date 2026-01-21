@@ -13,7 +13,7 @@ use hex_literal::hex;
 use static_assertions::const_assert_eq;
 use zerocopy::{transmute_mut, FromBytes};
 
-use super::{Engine, Hash};
+use super::{Engine, Hash, HASH_COUNTER};
 use crate::transcript::ProtocolId;
 
 pub const BLAKE3: ProtocolId = ProtocolId::new(hex!(
@@ -155,6 +155,7 @@ fn hash_many_const<const N: usize>(platform: &Platform, inputs: &[u8], output: &
             out,
         );
     }
+    HASH_COUNTER.add(inputs.len());
 }
 
 #[cfg(test)]
