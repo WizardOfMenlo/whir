@@ -7,13 +7,15 @@ use zerocopy::IntoBytes;
 
 use crate::{
     ensure,
-    hash::{Engine, Hash, ENGINES},
-    ntt::workload_size,
+    hash::{self, Engine, Hash, ENGINES},
     transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    /// Number of leaves in the Merkle tree.
+    pub num_leaves: usize,
+
     /// Layer configurations for the Merkle tree, root to bottom.
     pub layers: Vec<LayerConfig>,
 }
@@ -37,8 +39,16 @@ pub struct Witness {
 }
 
 impl Config {
-    pub fn num_leaves(&self) -> usize {
-        1 << self.layers.len()
+    pub fn new(num_leaves: usize) -> Self {
+        Self {
+            num_leaves,
+            layers: vec![
+                LayerConfig {
+                    hash_id: hash::BLAKE3,
+                };
+                layers_for_size(num_leaves)
+            ],
+        }
     }
 
     pub fn num_nodes(&self) -> usize {
@@ -54,16 +64,16 @@ impl Config {
     {
         assert_eq!(
             leaves.len(),
-            self.num_leaves(),
+            self.num_leaves,
             "Expected {} leaf hashes, got {}",
-            self.num_leaves(),
+            self.num_leaves,
             leaves.len()
         );
 
-        // Allocate nodes and fill with leaf layer.
+        // Allocate nodes and fill with leaf layer. This implicitely pads the first layer.
         let mut nodes = leaves;
         nodes.resize(self.num_nodes(), Hash::default());
-        let (mut previous, mut remaining) = nodes.split_at_mut(self.num_leaves());
+        let (mut previous, mut remaining) = nodes.split_at_mut(self.num_leaves.next_power_of_two());
 
         // Compute merkle tree nodes.
         for layer in self.layers.iter().rev() {
@@ -105,6 +115,9 @@ impl Config {
         Ok(Commitment { hash })
     }
 
+    /// Opens the commitment at the provided indices.
+    ///
+    /// Indices can be in any order and may contain duplicates.
     #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves)))]
     pub fn open<H, R>(
         &self,
@@ -117,13 +130,14 @@ impl Config {
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(witness.nodes.len(), self.num_nodes());
-        assert!(indices.iter().all(|&i| i < self.num_leaves()));
+        assert!(indices.iter().all(|&i| i < self.num_leaves));
 
         // Abstract execution of verify algorithm wrting required hashes.
         let mut indices = indices.to_vec();
         indices.sort_unstable();
         indices.dedup();
-        let (mut layer, mut remaining) = witness.nodes.split_at(self.num_leaves());
+        let (mut layer, mut remaining) =
+            witness.nodes.split_at(self.num_leaves.next_power_of_two());
         while layer.len() > 1 {
             let mut next_indices = Vec::with_capacity(indices.len());
             let mut iter = indices.iter().copied().peekable();
@@ -162,7 +176,7 @@ impl Config {
     {
         // Validate indices.
         ensure!(
-            indices.iter().all(|&i| i < self.num_leaves()),
+            indices.iter().all(|&i| i < self.num_leaves),
             VerificationError
         );
 
@@ -238,6 +252,10 @@ impl Config {
     }
 }
 
+pub fn layers_for_size(size: usize) -> usize {
+    size.next_power_of_two().ilog2() as usize
+}
+
 #[cfg(not(feature = "parallel"))]
 fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
     engine.hash_many(size, input, output);
@@ -245,6 +263,7 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 
 #[cfg(feature = "parallel")]
 fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
+    use crate::utils::workload_size;
     if input.len() > workload_size::<u8>() && input.len() / size >= 2 {
         let (input_a, input_b) = input.split_at(input.len() / 2);
         let (output_a, output_b) = output.split_at_mut(output.len() / 2);
@@ -267,11 +286,11 @@ mod tests {
     #[test]
     fn test_merkle_tree() {
         let config = Config {
+            num_leaves: 256,
             layers: vec![LayerConfig { hash_id: BLAKE3 }; 8],
         };
-        dbg!(config.num_leaves(), config.num_nodes());
 
-        let leaves = (0..config.num_leaves())
+        let leaves = (0..config.num_leaves)
             .map(|i| Hash([i as u8; 32]))
             .collect::<Vec<_>>();
 
@@ -297,5 +316,18 @@ mod tests {
                 &[Hash([13; 32]), Hash([42; 32])],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn test_layers_for_size() {
+        assert_eq!(layers_for_size(0), 0);
+        assert_eq!(layers_for_size(1), 0);
+        assert_eq!(layers_for_size(2), 1);
+        assert_eq!(layers_for_size(3), 2);
+        assert_eq!(layers_for_size(4), 2);
+        assert_eq!(layers_for_size(5), 3);
+        assert_eq!(layers_for_size(6), 3);
+        assert_eq!(layers_for_size(7), 3);
+        assert_eq!(layers_for_size(8), 3);
     }
 }

@@ -18,7 +18,6 @@ use self::matrix::MatrixMut;
 pub use self::{
     cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
-    utils::workload_size,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
 

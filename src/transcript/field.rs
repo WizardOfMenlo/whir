@@ -19,6 +19,30 @@ impl<F: Field> FieldConfig<F> {
     }
 }
 
+impl<F: Field> FieldConfig<F> {
+    pub const fn base_field(&self) -> FieldConfig<F::BasePrimeField> {
+        FieldConfig::new()
+    }
+
+    /// Modulus in little endian without trailing zeros
+    // If MODULUS where `static` instead of `const` we could have return a reference.
+    pub fn modulus(&self) -> Vec<u8> {
+        let mut bytes = F::BasePrimeField::MODULUS.to_bytes_le();
+        let trailing = bytes.iter().rev().take_while(|&b| *b == 0).count();
+        bytes.truncate(bytes.len() - trailing);
+        bytes
+    }
+
+    pub fn extension_degree(&self) -> usize {
+        F::extension_degree() as usize
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        let num_modulus_bytes = ((F::BasePrimeField::MODULUS_BIT_SIZE + 7) / 8) as usize;
+        num_modulus_bytes * self.extension_degree()
+    }
+}
+
 /// Internal helper
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename = "FieldConfig")]
@@ -61,6 +85,8 @@ impl<'de, F: Field> Deserialize<'de> for FieldConfig<F> {
 
 #[cfg(test)]
 mod tests {
+    use spongefish::NargSerialize;
+
     use super::*;
     use crate::{
         crypto::fields::{Field256, Field64_3},
@@ -83,5 +109,30 @@ mod tests {
     fn test_roundtrip() {
         test_serde(&FieldConfig::<Field256>::new());
         test_serde(&FieldConfig::<Field64_3>::new());
+    }
+
+    #[test]
+    fn test_size() {
+        fn test<F: Field>() {
+            let config = FieldConfig::<F>::new();
+            assert_eq!(
+                config.modulus().len() * config.extension_degree(),
+                config.size_bytes()
+            );
+        }
+        test::<Field256>();
+        test::<Field64_3>();
+    }
+
+    #[test]
+    fn test_narg_serialize_length() {
+        fn test<F: Field + NargSerialize>() {
+            let config = FieldConfig::<F>::new();
+            let mut buffer = Vec::new();
+            F::ZERO.serialize_into_narg(&mut buffer);
+            assert_eq!(buffer.len(), config.size_bytes());
+        }
+        test::<Field256>();
+        test::<Field64_3>();
     }
 }

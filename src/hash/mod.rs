@@ -1,4 +1,5 @@
 mod blake3_engine;
+mod copy_engine;
 mod digest_engine;
 
 use core::fmt;
@@ -15,12 +16,14 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 pub use self::{
     blake3_engine::{Blake3, BLAKE3},
+    copy_engine::{Copy, COPY},
     digest_engine::{DigestEngine, Keccak, Sha2, Sha3, KECCAK, SHA2, SHA3},
 };
 use crate::transcript::{Engines, Protocol, ProtocolId, ProverMessage};
 
 pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     let engines = Engines::<dyn Engine>::new();
+    engines.register(Arc::new(Copy::new()));
     engines.register(Arc::new(Sha2::new()));
     engines.register(Arc::new(Sha3::new()));
     engines.register(Arc::new(Blake3::detect()));
@@ -58,7 +61,8 @@ pub trait Engine: Send + Sync {
     /// The number of messages that should be hashed together to achieve maximally
     /// utilize single thread parallelism.
     ///
-    /// The caller should attermpt to call `hash_many` with multiples of this size.
+    /// The caller should attermpt to call `hash_many` with multiples of this size for
+    /// optimal performance, e.g. when dividing work over threads.
     ///
     /// Regardless, all batch sizes must be supported.
     fn preferred_batch_size(&self) -> usize {
@@ -67,11 +71,11 @@ pub trait Engine: Send + Sync {
 
     /// Hash many messages of size `size`.
     ///
-    /// Input contains the messages concatenated together.
+    /// Input contains `output.len()` messages concatenated together.
     ///
-    /// Note: Implementation should be single-threaded. Parallelization is taken
-    /// care of by the caller.
-    fn hash_many(&self, size: usize, input: &[u8], out: &mut [Hash]);
+    /// Note: Implementation should be single-threaded. Parallelization should
+    /// be taken care of by the caller.
+    fn hash_many(&self, size: usize, input: &[u8], output: &mut [Hash]);
 }
 
 impl<E: Engine + ?Sized> Protocol for E {

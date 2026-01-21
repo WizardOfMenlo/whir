@@ -54,6 +54,11 @@ impl Blake3 {
     pub fn detect() -> Self {
         Self(Platform::detect())
     }
+
+    pub fn supports_size(size: usize) -> bool {
+        // Padding is not supported, neither is handling messages larger than a chunk.
+        size.is_multiple_of(BLOCK_LEN) && size <= CHUNK_LEN
+    }
 }
 
 impl Engine for Blake3 {
@@ -67,8 +72,7 @@ impl Engine for Blake3 {
     }
 
     fn supports_size(&self, size: usize) -> bool {
-        // Padding is not supported, neither is handling messages larger than a chunk.
-        size.is_multiple_of(BLOCK_LEN) && size <= CHUNK_LEN
+        Self::supports_size(size)
     }
 
     fn preferred_batch_size(&self) -> usize {
@@ -83,20 +87,19 @@ impl Engine for Blake3 {
 fn hash_many(platform: &Platform, size: usize, inputs: &[u8], output: &mut [Hash]) {
     assert!(
         size.is_multiple_of(BLOCK_LEN),
-        "Message size must be a multiple of the block length."
+        "Message size ({size}) must be a multiple of the block length ({BLOCK_LEN} bytes)."
     );
     assert!(
         size <= CHUNK_LEN,
-        "Message size must not exceed a single chunk."
+        "Message size ({size}) must not exceed a single chunk ({CHUNK_LEN} bytes)."
     );
-    assert!(
-        inputs.len().is_multiple_of(size),
-        "Input size must be a multiple of the message size."
+    assert_eq!(
+        inputs.len(),
+        size * output.len(),
+        "Input length should be size * output.len() = {size} * {}",
+        output.len()
     );
-    if let Some(num_inputs) = inputs.len().checked_div(size) {
-        assert_eq!(num_inputs, output.len(), "Output size mismatch.");
-    } else {
-        // size == 0, inputs.len() == 0
+    if size == 0 {
         output.fill(EMPTY_HASH);
         return;
     }

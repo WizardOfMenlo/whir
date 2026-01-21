@@ -11,7 +11,7 @@ use std::{
 
 use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
-use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
+use {crate::utils::workload_size, rayon::prelude::*, std::cmp::max};
 
 use super::{
     transpose,

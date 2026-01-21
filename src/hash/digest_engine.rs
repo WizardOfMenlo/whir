@@ -1,7 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use const_oid::ObjectIdentifier;
-use digest::{const_oid::AssociatedOid, Digest};
+use digest::{const_oid::AssociatedOid, consts::U32, Digest};
 use hex_literal::hex;
 use zerocopy::IntoBytes;
 
@@ -26,6 +26,7 @@ pub type Keccak = DigestEngine<sha3::Keccak256>;
 ///
 /// This allows using any hash in the Rust-Crypto ecosystem,
 /// though performance may vary.
+#[derive(Clone, Copy, Debug)]
 pub struct DigestEngine<D: Digest> {
     name: &'static str,
     oid: Option<ObjectIdentifier>,
@@ -34,7 +35,7 @@ pub struct DigestEngine<D: Digest> {
 
 impl<D> DigestEngine<D>
 where
-    D: Digest + Send + Sync,
+    D: Digest<OutputSize = U32> + Send + Sync,
 {
     pub fn from_name(name: &'static str) -> Self {
         assert_eq!(<D as Digest>::output_size(), size_of::<Hash>());
@@ -82,7 +83,7 @@ impl Keccak {
 
 impl<D> Engine for DigestEngine<D>
 where
-    D: Digest + Send + Sync,
+    D: Digest<OutputSize = U32> + Send + Sync,
 {
     fn name<'a>(&'a self) -> Cow<'a, str> {
         self.name.into()
@@ -100,24 +101,22 @@ where
         1
     }
 
-    fn hash_many(&self, size: usize, input: &[u8], out: &mut [Hash]) {
-        assert!(
-            input.len().is_multiple_of(size),
-            "Input size must be a multiple of the message size."
+    fn hash_many(&self, size: usize, input: &[u8], output: &mut [Hash]) {
+        assert_eq!(
+            input.len(),
+            size * output.len(),
+            "Input length should be size * output.len() = {size} * {}",
+            output.len()
         );
-        if let Some(num_inputs) = input.len().checked_div(size) {
-            assert_eq!(num_inputs, out.len(), "Output size mismatch.");
+
+        if size == 0 {
+            output.fill(Hash(D::digest(&[]).into()));
         } else {
-            let empty_hash = D::digest(input);
-            for out in out.iter_mut() {
-                out.as_mut_bytes().copy_from_slice(empty_hash.as_ref());
+            for (input, out) in input.chunks_exact(size).zip(output.iter_mut()) {
+                let input = input.as_bytes();
+                let hash = D::digest(input);
+                out.as_mut_bytes().copy_from_slice(hash.as_ref());
             }
-            return;
-        }
-        for (input, out) in input.chunks_exact(size).zip(out.iter_mut()) {
-            let input = input.as_bytes();
-            let hash = D::digest(input);
-            out.as_mut_bytes().copy_from_slice(hash.as_ref());
         }
     }
 }
