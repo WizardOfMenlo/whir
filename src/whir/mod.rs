@@ -347,7 +347,7 @@ mod tests {
 
         // Batch prove all polynomials together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(&mut prover_state, statements.clone(), witnesses.clone());
 
         assert!(result.is_ok(), "Batch proving failed: {:?}", result.err());
 
@@ -491,7 +491,7 @@ mod tests {
         // Generate proof with the mismatched polynomial
         // The prover will compute cross-terms using poly_wrong, not poly2
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(&mut prover_state, statements.clone(), witnesses.clone());
 
         // Proof generation succeeds (prover doesn't verify polynomial-commitment consistency)
         assert!(result.is_ok(), "Prover generated proof");
@@ -631,7 +631,7 @@ mod tests {
 
         // Batch prove all witnesses together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(&mut prover_state, statements.clone(), witnesses.clone());
         assert!(
             result.is_ok(),
             "Batch proving with batch_size={} failed: {:?}",

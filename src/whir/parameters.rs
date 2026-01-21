@@ -301,6 +301,18 @@ where
         self.round_parameters.len()
     }
 
+    /// Set the Reed-Solomon encoder for the extension field.
+    /// Use this after deserializing to override the default RSDefault.
+    pub fn set_reed_solomon(&mut self, rs: Arc<dyn ReedSolomon<F>>) {
+        self.reed_solomon = rs;
+    }
+
+    /// Set the Reed-Solomon encoder for the base prime field.
+    /// Use this after deserializing to override the default RSDefault.
+    pub fn set_basefield_reed_solomon(&mut self, rs: Arc<dyn ReedSolomon<F::BasePrimeField>>) {
+        self.basefield_reed_solomon = rs;
+    }
+
     pub fn check_pow_bits(&self) -> bool {
         let max_bits = self.max_pow_bits as f64;
 

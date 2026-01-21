@@ -132,11 +132,15 @@ where
             [F::zero()]
         };
 
+        // Memory optimization: For batch_size=1, we can regenerate leaves from the polynomial.
+        // For batch_size>1, the leaves are interleaved from multiple polynomials and cannot
+        // be regenerated from the batched polynomial, so we must keep them.
         if polynomials.len() == 1 {
+            drop(stacked_leaves);
             return Ok(Witness {
                 polynomial: polynomials[0].clone().to_extension(),
                 merkle_tree,
-                merkle_leaves: stacked_leaves,
+                merkle_leaves: Vec::new(),
                 ood_points,
                 ood_answers: per_poly_ood_answers.remove(0),
                 batching_randomness,
@@ -189,6 +193,68 @@ where
             + BytesToUnitSerialize,
     {
         self.commit_batch(prover_state, &[polynomial])
+    }
+
+    pub fn regenerate_merkle_leaves(
+        &self,
+        polynomials: &[&CoefficientList<F::BasePrimeField>],
+    ) -> Vec<F> {
+        assert!(!polynomials.is_empty());
+        assert_eq!(polynomials.len(), self.config.batch_size);
+
+        let num_coeffs = polynomials.first().unwrap().num_coeffs();
+        let base_domain = self.config.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / num_coeffs;
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+
+        let num_leaves = (num_coeffs * expansion) / fold_size;
+        let stacked_leaf_size = fold_size * polynomials.len();
+        let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
+
+        for (poly_idx, poly) in polynomials.iter().enumerate() {
+            let evals = self.config.basefield_reed_solomon.interleaved_encode(
+                poly.coeffs(),
+                expansion,
+                self.config.folding_factor.at_round(0),
+            );
+
+            for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
+                let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
+                for (j, &eval) in chunk.iter().enumerate() {
+                    stacked_leaves[start_dst + j] = F::from_base_prime_field(eval);
+                }
+            }
+        }
+
+        stacked_leaves
+    }
+
+    /// Regenerates merkle leaves from a batched polynomial (already in extension field).
+    /// Use this to restore leaves after calling `Witness::clear_merkle_leaves()`.
+    pub fn regenerate_merkle_leaves_from_batched(&self, polynomial: &CoefficientList<F>) -> Vec<F> {
+        let num_coeffs = polynomial.num_coeffs();
+        let base_domain = self.config.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / num_coeffs;
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+
+        let num_leaves = (num_coeffs * expansion) / fold_size;
+        let stacked_leaf_size = fold_size * self.config.batch_size;
+        let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
+
+        let evals = self.config.reed_solomon.interleaved_encode(
+            polynomial.coeffs(),
+            expansion,
+            self.config.folding_factor.at_round(0),
+        );
+
+        for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
+            let start_dst = i * stacked_leaf_size;
+            for (j, &eval) in chunk.iter().enumerate() {
+                stacked_leaves[start_dst + j] = eval;
+            }
+        }
+
+        stacked_leaves
     }
 }
 
@@ -291,10 +357,9 @@ mod tests {
         let committer = CommitmentWriter::new(params.clone());
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-        // Ensure Merkle leaves are correctly generated.
         assert!(
-            !witness.merkle_leaves.is_empty(),
-            "Merkle leaves should not be empty"
+            witness.merkle_leaves.is_empty(),
+            "Merkle leaves should be empty (regenerated on-demand for memory optimization)"
         );
 
         // Ensure OOD (out-of-domain) points are generated.
@@ -375,11 +440,9 @@ mod tests {
         let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
 
-        // Expansion factor is 2
-        assert_eq!(
-            witness.merkle_leaves.len(),
-            1024 * 2,
-            "Merkle tree should have expected number of leaves"
+        assert!(
+            witness.merkle_leaves.is_empty(),
+            "Merkle leaves should be empty (regenerated on-demand)"
         );
     }
 

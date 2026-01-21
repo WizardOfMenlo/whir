@@ -42,3 +42,44 @@ where
     /// The batching randomness. If there's no batching, this value is zero.
     pub batching_randomness: F,
 }
+
+impl<F, MerkleConfig> Witness<F, MerkleConfig>
+where
+    MerkleConfig: Config,
+{
+    pub fn merkle_leaves_size(&self) -> usize {
+        self.merkle_leaves.len() * std::mem::size_of::<F>()
+    }
+
+    pub fn polynomial_size(&self) -> usize {
+        self.polynomial.num_coeffs() * std::mem::size_of::<F>()
+    }
+
+    pub fn merkle_tree_estimated_size(&self) -> usize {
+        let height = self.merkle_tree.height();
+        let num_leaves = 1usize << (height - 1);
+        let num_non_leaves = num_leaves - 1;
+        num_leaves * std::mem::size_of::<MerkleConfig::LeafDigest>()
+            + num_non_leaves * std::mem::size_of::<MerkleConfig::InnerDigest>()
+    }
+
+    pub fn ood_size(&self) -> usize {
+        (self.ood_points.len() + self.ood_answers.len()) * std::mem::size_of::<F>()
+    }
+
+    /// Clears the merkle_leaves to free memory. Must call `regenerate_merkle_leaves`
+    /// before using this Witness in prove operations.
+    pub fn clear_merkle_leaves(&mut self) {
+        self.merkle_leaves = Vec::new();
+    }
+
+    /// Returns whether merkle_leaves have been cleared and need regeneration.
+    pub fn needs_merkle_leaves(&self) -> bool {
+        self.merkle_leaves.is_empty()
+    }
+
+    /// Sets the merkle_leaves. Used when regenerating after clearing.
+    pub fn set_merkle_leaves(&mut self, leaves: Vec<F>) {
+        self.merkle_leaves = leaves;
+    }
+}

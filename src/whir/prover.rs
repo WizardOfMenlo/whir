@@ -83,6 +83,34 @@ where
         witness.polynomial.num_variables() == self.config.mv_parameters.num_variables
     }
 
+    /// Regenerates merkle leaves from a batched polynomial (already in extension field).
+    /// Use this to restore leaves after calling `Witness::clear_merkle_leaves()`.
+    fn regenerate_merkle_leaves(&self, polynomial: &CoefficientList<F>) -> Vec<F> {
+        let num_coeffs = polynomial.num_coeffs();
+        let base_domain = self.config.starting_domain.base_domain.unwrap();
+        let expansion = base_domain.size() / num_coeffs;
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+
+        let num_leaves = (num_coeffs * expansion) / fold_size;
+        let stacked_leaf_size = fold_size * self.config.batch_size;
+        let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
+
+        let evals = self.config.reed_solomon.interleaved_encode(
+            polynomial.coeffs(),
+            expansion,
+            self.config.folding_factor.at_round(0),
+        );
+
+        for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
+            let start_dst = i * stacked_leaf_size;
+            for (j, &eval) in chunk.iter().enumerate() {
+                stacked_leaves[start_dst + j] = eval;
+            }
+        }
+
+        stacked_leaves
+    }
+
     /// Proves that the commitment satisfies constraints in `statement`.
     ///
     /// When called without any constraints it only perfoms a low-degree test.
@@ -105,6 +133,8 @@ where
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
+
+        let needs_regeneration = witness.needs_merkle_leaves();
 
         // Convert witness ood_points into constraints
         let new_constraints = witness
@@ -158,6 +188,12 @@ where
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
 
+        let merkle_leaves = if needs_regeneration {
+            self.regenerate_merkle_leaves(&witness.polynomial)
+        } else {
+            witness.merkle_leaves
+        };
+
         let mut round_state = RoundState {
             domain: self.config.starting_domain.clone(),
             round: 0,
@@ -165,7 +201,7 @@ where
             folding_randomness,
             coefficients: witness.polynomial,
             prev_merkle: witness.merkle_tree,
-            prev_merkle_answers: witness.merkle_leaves,
+            prev_merkle_answers: merkle_leaves,
             randomness_vec,
             statement,
             batching_randomness: witness.batching_randomness,
@@ -207,8 +243,8 @@ where
     pub fn prove_batch<ProverState>(
         &self,
         prover_state: &mut ProverState,
-        statements: &[Statement<F>],
-        witnesses: &[Witness<F, MerkleConfig>],
+        statements: Vec<Statement<F>>,
+        witnesses: Vec<Witness<F, MerkleConfig>>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
     where
         ProverState: UnitToField<F>
@@ -236,7 +272,7 @@ where
             "Witness polynomial variables must match config"
         );
 
-        for (idx, (statement, witness)) in statements.iter().zip(witnesses).enumerate() {
+        for (idx, (statement, witness)) in statements.iter().zip(witnesses.iter()).enumerate() {
             assert!(
                 self.validate_statement(statement),
                 "Statement {idx} is invalid"
@@ -266,24 +302,24 @@ where
         let mut all_constraint_weights = Vec::new();
 
         // OOD constraints from each witness
-        for witness in witnesses {
+        for witness in witnesses.iter() {
             for point in &witness.ood_points {
                 let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
                 all_constraint_weights.push(Weights::evaluation(ml_point));
             }
         }
 
-        // Statement constraints
-        for statement in statements {
-            for constraint in &statement.constraints {
-                all_constraint_weights.push(constraint.weights.clone());
+        // Statement constraints - take ownership to avoid cloning large weight vectors
+        for mut statement in statements {
+            for constraint in statement.constraints.drain(..) {
+                all_constraint_weights.push(constraint.weights);
             }
         }
 
         // Evaluate EVERY polynomial at EVERY constraint point
         // This creates an N×M matrix where N = #polynomials, M = #constraints
         let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len());
-        for witness in witnesses {
+        for witness in witnesses.iter() {
             let mut poly_evals = Vec::with_capacity(all_constraint_weights.len());
             for weights in &all_constraint_weights {
                 let eval = weights.evaluate(&witness.polynomial);
@@ -293,11 +329,13 @@ where
         }
 
         // Commit the evaluation matrix to the transcript
-        let all_evals_flat: Vec<F> = constraint_evals_matrix
-            .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
-        prover_state.add_scalars(&all_evals_flat)?;
+        {
+            let all_evals_flat: Vec<F> = constraint_evals_matrix
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect();
+            prover_state.add_scalars(&all_evals_flat)?;
+        }
 
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
         let [batching_randomness] = prover_state.challenge_scalars()?;
@@ -326,6 +364,7 @@ where
             }
             combined_statement.add_constraint(weights, combined_eval);
         }
+        drop(constraint_evals_matrix);
 
         // Run initial sumcheck on batched polynomial with combined statement
         let mut sumcheck_prover = None;
@@ -368,28 +407,34 @@ where
         let round_params = &self.config.round_parameters[0];
         let num_variables_after_fold = num_vars - self.config.folding_factor.at_round(0);
         let batched_folded_poly = batched_poly.fold(&folding_randomness);
+        drop(batched_poly);
 
         // Build Merkle tree for the batched folded polynomial
         let new_domain = self.config.starting_domain.scale(2);
         let expansion = new_domain.size() / batched_folded_poly.num_coeffs();
         let folding_factor_next = self.config.folding_factor.at_round(1);
-        let batched_evals = self.config.reed_solomon.interleaved_encode(
-            batched_folded_poly.coeffs(),
-            expansion,
-            folding_factor_next,
-        );
 
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = batched_evals.chunks_exact(1 << folding_factor_next);
-        #[cfg(feature = "parallel")]
-        let leafs_iter = batched_evals.par_chunks_exact(1 << folding_factor_next);
+        // Create evals, build tree, then drop evals to reduce memory during witness processing.
+        // We'll regenerate evals later before creating round_state.
+        let batched_merkle_tree = {
+            let batched_evals = self.config.reed_solomon.interleaved_encode(
+                batched_folded_poly.coeffs(),
+                expansion,
+                folding_factor_next,
+            );
 
-        let batched_merkle_tree = MerkleTree::new(
-            &self.config.leaf_hash_params,
-            &self.config.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+            #[cfg(not(feature = "parallel"))]
+            let leafs_iter = batched_evals.chunks_exact(1 << folding_factor_next);
+            #[cfg(feature = "parallel")]
+            let leafs_iter = batched_evals.par_chunks_exact(1 << folding_factor_next);
+
+            MerkleTree::new(
+                &self.config.leaf_hash_params,
+                &self.config.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap()
+        };
         prover_state.add_digest(batched_merkle_tree.root())?;
 
         // Handle OOD (Out-Of-Domain) samples
@@ -418,11 +463,17 @@ where
         let leaf_size = fold_size * self.config.batch_size;
         let mut all_witness_answers = Vec::with_capacity(witnesses.len());
 
-        // For each witness, provide Merkle proof opening at the challenge indices
-        for witness in witnesses {
+        // Process each witness one at a time to avoid holding all regenerated leaves in memory
+        for witness in witnesses.iter() {
+            // Regenerate leaves only if needed, use them, then let them drop
+            let leaves: std::borrow::Cow<'_, [F]> = if witness.needs_merkle_leaves() {
+                std::borrow::Cow::Owned(self.regenerate_merkle_leaves(&witness.polynomial))
+            } else {
+                std::borrow::Cow::Borrowed(&witness.merkle_leaves)
+            };
             let answers: Vec<_> = stir_indexes
                 .iter()
-                .map(|&i| witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
+                .map(|&i| leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
                 .collect();
             prover_state.hint::<Vec<Vec<F>>>(&answers)?;
             self.merkle_state.write_proof_hint(
@@ -433,23 +484,28 @@ where
             all_witness_answers.push(answers);
         }
 
+        let witness_batching_randomness: Vec<F> =
+            witnesses.iter().map(|w| w.batching_randomness).collect();
+        drop(witnesses);
+
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·witness_answers[i][j]
         // This produces the expected answers for the batched polynomial
         let rlc_answers: Vec<Vec<F>> = (0..stir_indexes.len())
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
-                for (witness_idx, witness) in witnesses.iter().enumerate() {
+                for (witness_idx, &witness_batch_rand) in
+                    witness_batching_randomness.iter().enumerate()
+                {
                     let answer = &all_witness_answers[witness_idx][query_idx];
 
-                    // First, internally reduce stacked leaf using witness's batching_randomness
                     let mut internal_pow = F::ONE;
                     for poly_idx in 0..self.config.batch_size {
                         let start = poly_idx * fold_size;
                         for j in 0..fold_size {
                             combined[j] += pow * internal_pow * answer[start + j];
                         }
-                        internal_pow *= witness.batching_randomness;
+                        internal_pow *= witness_batch_rand;
                     }
 
                     pow *= batching_randomness;
@@ -457,6 +513,8 @@ where
                 combined
             })
             .collect();
+        drop(all_witness_answers);
+        drop(witness_batching_randomness);
 
         // Compute STIR challenges and evaluations
         let domain_scaled_gen = self
@@ -476,12 +534,13 @@ where
                 MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
             })
             .collect();
+        drop(stir_indexes);
 
         let mut stir_evaluations = ood_answers;
         stir_evaluations.extend(
             rlc_answers
-                .iter()
-                .map(|answer| CoefficientList::new(answer.clone()).evaluate(&folding_randomness)),
+                .into_iter()
+                .map(|answer| CoefficientList::new(answer).evaluate(&folding_randomness)),
         );
 
         // Randomness for combination
@@ -511,6 +570,9 @@ where
                 sumcheck
             },
         );
+        drop(stir_challenges);
+        drop(stir_evaluations);
+        drop(combination_randomness);
 
         let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
             prover_state,
@@ -529,6 +591,11 @@ where
 
         // Transition to Round 1: From here on, the protocol operates on the single batched
         // polynomial. All subsequent rounds use standard WHIR proving with one Merkle tree.
+        let batched_evals = self.config.reed_solomon.interleaved_encode(
+            batched_folded_poly.coeffs(),
+            expansion,
+            folding_factor_next,
+        );
         let mut round_state = RoundState {
             domain: new_domain,
             round: 1,
