@@ -33,6 +33,20 @@ pub trait WhirDomainSeparator<F: FftField, MerkleConfig: Config> {
         num_witnesses: usize,
         num_constraints_total: usize,
     ) -> Self;
+
+    /// Domain separator for pre-folding a single variable
+    /// Used in PreFold approach to fold larger polynomial once before batching
+    #[must_use]
+    fn add_prefold_single_variable(self) -> Self;
+
+    /// Domain separator for PreFold batch proving
+    /// Handles the complete PreFold protocol: matrix commit, fold, batch, and prove
+    #[must_use]
+    fn add_whir_prefold_batch_proof<PowStrategy>(
+        self,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+        num_constraints_total: usize,
+    ) -> Self;
 }
 
 impl<F, MerkleConfig, DomainSeparator> WhirDomainSeparator<F, MerkleConfig> for DomainSeparator
@@ -99,6 +113,76 @@ where
 
         // Step 3: Continue with standard WHIR proof protocol
         add_whir_proof_impl(this, params, Some(num_witnesses))
+    }
+
+    fn add_prefold_single_variable(self) -> Self {
+        // Domain separation for pre-folding phase
+        self.challenge_scalars(1, "prefold_folding_randomness")
+            .add_digest("prefold_folded_commitment")
+    }
+
+    fn add_whir_prefold_batch_proof<PowStrategy>(
+        self,
+        params: &WhirConfig<F, MerkleConfig, PowStrategy>,
+        num_constraints_total: usize,
+    ) -> Self {
+        // PreFold batch protocol structure (simplified, 2 witnesses):
+        // 1. Sample prefold randomness α and commit to folded polynomial g'
+        // 2. Prove consistency of g' with original g via STIR queries on g
+        // 3. Commit the 2×M constraint evaluation matrix for (f, g') BEFORE sampling γ
+        // 4. Sample batching randomness γ and run standard WHIR on h = f + γ·g'
+
+        // Step 1: Prefold phase - sample 1 random value to fold exactly 1 variable
+        let mut this = self.challenge_scalars(1, "prefold_folding_randomness");
+
+        if params.starting_folding_pow_bits > 0. {
+            this = this.pow(params.starting_folding_pow_bits);
+        }
+
+        // Commit folded polynomial g'
+        this = this.add_digest("prefold_folded_commitment");
+
+        // OOD sampling for g'
+        if params.committment_ood_samples > 0 {
+            this = this.add_ood(params.committment_ood_samples, 1);
+        }
+
+        // PoW before STIR queries
+        if params.round_parameters[0].pow_bits > 0. {
+            this = this.pow(params.round_parameters[0].pow_bits);
+        }
+
+        // STIR queries on original g (consistency check)
+        // PreFold requires g to be committed with folding_factor=1
+        let g_domain_size = params.starting_domain.size() * 2;
+        let g_folding_factor = 1; // PreFold requires folding_factor=1 for g
+        let folded_domain_size = g_domain_size >> g_folding_factor;
+        let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
+
+        this = this.challenge_bytes(
+            params.round_parameters[0].num_queries * domain_size_bytes,
+            "stir_queries_original_g",
+        );
+
+        // STIR answers from original g and merkle proof
+        this = this
+            .hint("stir_answers_original_g")
+            .hint("merkle_proof_original_g");
+
+        // Add g' STIR evaluations
+        // Note: Variable length due to deduplication, sent as scalars
+        this = this.hint("g_folded_stir_evals");
+
+        // Step 3: Commit the 2×M constraint evaluation matrix for (f, g') BEFORE sampling γ
+        let matrix_size = 2 * num_constraints_total;
+        this = this.add_scalars(matrix_size, "constraint_evaluation_matrix");
+
+        // Step 4: Sample batching randomness γ
+        this = this.challenge_scalars(1, "batching_randomness");
+
+        // Step 5: Continue with standard *batch* WHIR proof on h = f + γ·g'
+        // (Round 0 includes 2 Merkle openings: one for f and one for g'.)
+        add_whir_proof_impl(this, params, Some(2))
     }
 }
 

@@ -34,6 +34,16 @@ use crate::{
 
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
 
+/// Batching mode for prove_batch
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchingMode {
+    /// Standard batching: all witnesses have same arity
+    Standard,
+
+    /// Pre-fold second witness: exactly 2 witnesses, second has arity+1
+    PreFoldSecond,
+}
+
 pub struct Prover<F, MerkleConfig, PowStrategy>
 where
     F: FftField,
@@ -205,6 +215,34 @@ where
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove_batch<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        statements: &[Statement<F>],
+        witnesses: &[Witness<F, MerkleConfig>],
+        mode: BatchingMode,
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
+    where
+        ProverState: UnitToField<F>
+            + FieldToUnitSerialize<F>
+            + UnitToBytes
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
+    {
+        match mode {
+            BatchingMode::Standard => {
+                self.prove_batch_standard(prover_state, statements, witnesses)
+            }
+            BatchingMode::PreFoldSecond => {
+                self.prove_batch_prefold(prover_state, statements, witnesses)
+            }
+        }
+    }
+
+    /// Standard batch proving: all witnesses have same arity
+    #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    fn prove_batch_standard<ProverState>(
         &self,
         prover_state: &mut ProverState,
         statements: &[Statement<F>],
@@ -563,6 +601,452 @@ where
         Ok((constraint_eval, deferred))
     }
 
+    /// PreFold batch proving: exactly 2 witnesses, one has arity+1.
+    /// Pre-folds the larger polynomial once to match arities before batching.
+    #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    fn prove_batch_prefold<ProverState>(
+        &self,
+        prover_state: &mut ProverState,
+        statements: &[Statement<F>],
+        witnesses: &[Witness<F, MerkleConfig>],
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)>
+    where
+        ProverState: UnitToField<F>
+            + FieldToUnitSerialize<F>
+            + UnitToBytes
+            + PoWChallenge
+            + DigestToUnitSerialize<MerkleConfig>
+            + HintSerialize,
+    {
+        // Validation (simplified PreFold assumes exactly 2 witnesses, arity diff 1)
+        assert!(self.validate_parameters());
+        assert_eq!(
+            witnesses.len(),
+            2,
+            "PreFoldSecond mode requires exactly 2 witnesses"
+        );
+        assert_eq!(
+            statements.len(),
+            2,
+            "PreFoldSecond mode requires exactly 2 statements"
+        );
+        assert_eq!(
+            self.config.batch_size, 1,
+            "PreFoldSecond currently requires batch_size=1 (no internal batching)"
+        );
+
+        let num_vars_0 = witnesses[0].polynomial.num_variables();
+        let num_vars_1 = witnesses[1].polynomial.num_variables();
+
+        // If called with equal arity, just fall back to standard batching.
+        if num_vars_0 == num_vars_1 {
+            return self.prove_batch_standard(prover_state, statements, witnesses);
+        }
+
+        // Determine which witness is larger (has more variables); prefold that one.
+        let (small_idx, big_idx, num_vars_small, num_vars_big) = if num_vars_0 < num_vars_1 {
+            (0usize, 1usize, num_vars_0, num_vars_1)
+        } else {
+            (1usize, 0usize, num_vars_1, num_vars_0)
+        };
+
+        assert_eq!(
+            num_vars_small, self.config.mv_parameters.num_variables,
+            "PreFoldSecond expects prover config to match the smaller arity"
+        );
+        assert_eq!(
+            num_vars_big,
+            num_vars_small + 1,
+            "PreFold requires arity difference of exactly 1"
+        );
+
+        let witness_f = &witnesses[small_idx];
+        let witness_g = &witnesses[big_idx];
+
+        // --- Phase 1: Prefold g -> g' (commit to g' with the SMALL config) ---
+        let [alpha] = prover_state.challenge_scalars()?;
+        let prefold_randomness = MultilinearPoint(vec![alpha]);
+
+        if self.config.starting_folding_pow_bits > 0. {
+            prover_state.challenge_pow::<PowStrategy>(self.config.starting_folding_pow_bits)?;
+        }
+
+        let g_folded = witness_g.polynomial.fold(&prefold_randomness);
+        assert_eq!(g_folded.num_variables(), num_vars_small);
+
+        // Commit to g' under the SMALL config.
+        //
+        // We intentionally implement the commitment inline here to avoid requiring
+        // `WhirConfig: Clone` or additional transcript trait bounds.
+        let base_domain = self
+            .config
+            .starting_domain
+            .base_domain
+            .expect("starting_domain.base_domain must be set");
+        let expansion = base_domain.size() / g_folded.num_coeffs();
+        let commit_fold_size = 1 << self.config.folding_factor.at_round(0);
+
+        let g_folded_evals = self.config.reed_solomon.interleaved_encode(
+            g_folded.coeffs(),
+            expansion,
+            self.config.folding_factor.at_round(0),
+        );
+
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = g_folded_evals.chunks_exact(commit_fold_size);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = g_folded_evals.par_chunks_exact(commit_fold_size);
+
+        let g_folded_merkle = MerkleTree::<MerkleConfig>::new(
+            &self.config.leaf_hash_params,
+            &self.config.two_to_one_params,
+            leafs_iter,
+        )
+        .unwrap();
+
+        prover_state.add_digest(g_folded_merkle.root())?;
+
+        let (g_folded_ood_points, g_folded_ood_answers) = sample_ood_points(
+            prover_state,
+            self.config.committment_ood_samples,
+            num_vars_small,
+            |point| g_folded.evaluate(point),
+        )?;
+
+        let witness_g_folded = Witness {
+            polynomial: g_folded,
+            merkle_tree: g_folded_merkle,
+            merkle_leaves: g_folded_evals,
+            ood_points: g_folded_ood_points,
+            ood_answers: g_folded_ood_answers,
+            batching_randomness: F::ZERO,
+        };
+
+        // PoW before STIR queries on original g (consistency check)
+        if self.config.round_parameters[0].pow_bits > 0. {
+            prover_state.challenge_pow::<PowStrategy>(self.config.round_parameters[0].pow_bits)?;
+        }
+
+        // STIR queries on ORIGINAL g (prove consistency: g'(leaf) = g(α, leaf))
+        // PreFold folds exactly 1 variable => fold_size=2 in the original g commitment tree.
+        let g_domain_size = self
+            .config
+            .starting_domain
+            .size()
+            .checked_shl((num_vars_big - num_vars_small) as u32)
+            .expect("domain size overflow in prefold");
+        let g_folding_factor = num_vars_big - num_vars_small;
+        let stir_indexes = get_challenge_stir_queries(
+            g_domain_size,
+            g_folding_factor,
+            self.config.round_parameters[0].num_queries,
+            prover_state,
+            &self.config.deduplication_strategy,
+        )?;
+
+        let fold_size = 1 << g_folding_factor;
+        let original_g_answers: Vec<Vec<F>> = stir_indexes
+            .iter()
+            .map(|&i| witness_g.merkle_leaves[i * fold_size..(i + 1) * fold_size].to_vec())
+            .collect();
+
+        prover_state.hint::<Vec<Vec<F>>>(&original_g_answers)?;
+        self.merkle_state
+            .write_proof_hint(&witness_g.merkle_tree, &stir_indexes, prover_state)?;
+
+        // Provide g' evaluations at the same queried leaf positions.
+        // We compute them directly from the opened chunk by folding at α; verifier does the same.
+        let g_folded_stir_evals: Vec<F> = original_g_answers
+            .iter()
+            .map(|chunk| CoefficientList::new(chunk.clone()).evaluate(&prefold_randomness))
+            .collect();
+        prover_state.hint::<Vec<F>>(&g_folded_stir_evals)?;
+
+        // --- Phase 2: Commit evaluation matrix for (f, g') BEFORE sampling γ ---
+        //
+        // Matrix columns are:
+        //  - OOD points from f commitment (arity n)
+        //  - OOD points from g' commitment (arity n)
+        //  - All statement constraints (some may be arity n+1; those will be ignored later)
+        let mut all_constraint_weights = Vec::new();
+
+        for point in &witness_f.ood_points {
+            let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
+            all_constraint_weights.push(Weights::evaluation(ml_point));
+        }
+        for point in &witness_g_folded.ood_points {
+            let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
+            all_constraint_weights.push(Weights::evaluation(ml_point));
+        }
+        for statement in statements {
+            for constraint in &statement.constraints {
+                all_constraint_weights.push(constraint.weights.clone());
+            }
+        }
+
+        let mut constraint_evals_matrix = Vec::with_capacity(2);
+        for poly in [&witness_f.polynomial, &witness_g_folded.polynomial] {
+            let mut row = Vec::with_capacity(all_constraint_weights.len());
+            for weights in &all_constraint_weights {
+                if weights.num_variables() == poly.num_variables() {
+                    row.push(weights.evaluate(poly));
+                } else {
+                    // Constraint arity doesn't match this polynomial; treat as non-applicable.
+                    row.push(F::ZERO);
+                }
+            }
+            constraint_evals_matrix.push(row);
+        }
+
+        let all_evals_flat: Vec<F> = constraint_evals_matrix
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect();
+        prover_state.add_scalars(&all_evals_flat)?;
+
+        // --- Phase 3: Sample batching randomness γ ---
+        let [batching_randomness] = prover_state.challenge_scalars()?;
+
+        // --- Phase 4: Materialize batched polynomial h = f + γ·g' ---
+        let mut batched_coeffs = witness_f.polynomial.coeffs().to_vec();
+        for (dst, src) in batched_coeffs
+            .iter_mut()
+            .zip(witness_g_folded.polynomial.coeffs())
+        {
+            *dst += batching_randomness * src;
+        }
+        let batched_poly = CoefficientList::new(batched_coeffs);
+
+        // --- Phase 5: Build combined statement at the common arity (n) ---
+        let mut combined_statement = Statement::new(num_vars_small);
+        for (constraint_idx, weights) in all_constraint_weights.iter().enumerate() {
+            if weights.num_variables() == num_vars_small {
+                let combined_eval = constraint_evals_matrix[0][constraint_idx]
+                    + batching_randomness * constraint_evals_matrix[1][constraint_idx];
+                combined_statement.add_constraint(weights.clone(), combined_eval);
+            }
+        }
+
+        // --- Phase 6: Run batch proving identical to standard batch from here on ---
+        let mut sumcheck_prover = None;
+        let folding_randomness = if self.config.initial_statement {
+            let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+            let mut sumcheck = SumcheckSingle::new(
+                batched_poly.clone(),
+                &combined_statement,
+                combination_randomness_gen,
+            );
+            let folding_randomness = sumcheck.compute_sumcheck_polynomials::<PowStrategy, _>(
+                prover_state,
+                self.config.folding_factor.at_round(0),
+                self.config.starting_folding_pow_bits,
+            )?;
+            sumcheck_prover = Some(sumcheck);
+            folding_randomness
+        } else {
+            let mut folding_randomness = vec![F::ZERO; self.config.folding_factor.at_round(0)];
+            prover_state.fill_challenge_scalars(&mut folding_randomness)?;
+            if self.config.starting_folding_pow_bits > 0. {
+                prover_state.challenge_pow::<PowStrategy>(self.config.starting_folding_pow_bits)?;
+            }
+            MultilinearPoint(folding_randomness)
+        };
+
+        let mut randomness_vec = Vec::with_capacity(self.config.mv_parameters.num_variables);
+        randomness_vec.extend(folding_randomness.0.iter().rev().copied());
+        randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
+
+        // Round 0: batch-specific binding to BOTH original commitment trees (f and g')
+        let round_params = &self.config.round_parameters[0];
+        let num_variables_after_fold = num_vars_0 - self.config.folding_factor.at_round(0);
+        let batched_folded_poly = batched_poly.fold(&folding_randomness);
+
+        // Build Merkle tree for the batched folded polynomial (used from Round 1+)
+        let new_domain = self.config.starting_domain.scale(2);
+        let expansion = new_domain.size() / batched_folded_poly.num_coeffs();
+        let folding_factor_next = self.config.folding_factor.at_round(1);
+        let batched_evals = self.config.reed_solomon.interleaved_encode(
+            batched_folded_poly.coeffs(),
+            expansion,
+            folding_factor_next,
+        );
+
+        #[cfg(not(feature = "parallel"))]
+        let leafs_iter = batched_evals.chunks_exact(1 << folding_factor_next);
+        #[cfg(feature = "parallel")]
+        let leafs_iter = batched_evals.par_chunks_exact(1 << folding_factor_next);
+
+        let batched_merkle_tree = MerkleTree::new(
+            &self.config.leaf_hash_params,
+            &self.config.two_to_one_params,
+            leafs_iter,
+        )
+        .unwrap();
+        prover_state.add_digest(batched_merkle_tree.root())?;
+
+        let (ood_points, ood_answers) = sample_ood_points(
+            prover_state,
+            round_params.ood_samples,
+            num_variables_after_fold,
+            |point| batched_folded_poly.evaluate(point),
+        )?;
+
+        if round_params.pow_bits > 0. {
+            prover_state.challenge_pow::<PowStrategy>(round_params.pow_bits)?;
+        }
+
+        let stir_indexes = get_challenge_stir_queries(
+            self.config.starting_domain.size(),
+            self.config.folding_factor.at_round(0),
+            round_params.num_queries,
+            prover_state,
+            &self.config.deduplication_strategy,
+        )?;
+
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+        let leaf_size = fold_size * self.config.batch_size;
+        let mut all_witness_answers = Vec::with_capacity(2);
+
+        // Provide openings for f and for g' (both committed under the SMALL config)
+        for witness in [witness_f, &witness_g_folded] {
+            let answers: Vec<Vec<F>> = stir_indexes
+                .iter()
+                .map(|&i| witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
+                .collect();
+            prover_state.hint::<Vec<Vec<F>>>(&answers)?;
+            self.merkle_state.write_proof_hint(
+                &witness.merkle_tree,
+                &stir_indexes,
+                prover_state,
+            )?;
+            all_witness_answers.push(answers);
+        }
+
+        // RLC-combine the 2 query answers: combined[j] = answers_f[j] + γ·answers_g'[j]
+        let rlc_answers: Vec<Vec<F>> = (0..stir_indexes.len())
+            .map(|query_idx| {
+                let mut combined = vec![F::ZERO; fold_size];
+                let mut pow = F::ONE;
+                for (witness_idx, witness) in [witness_f, &witness_g_folded].into_iter().enumerate()
+                {
+                    let answer = &all_witness_answers[witness_idx][query_idx];
+
+                    // Internal batching (disabled in this mode by batch_size==1, but kept for symmetry)
+                    let mut internal_pow = F::ONE;
+                    for poly_idx in 0..self.config.batch_size {
+                        let start = poly_idx * fold_size;
+                        for j in 0..fold_size {
+                            combined[j] += pow * internal_pow * answer[start + j];
+                        }
+                        internal_pow *= witness.batching_randomness;
+                    }
+
+                    pow *= batching_randomness;
+                }
+                combined
+            })
+            .collect();
+
+        let domain_scaled_gen = self
+            .config
+            .starting_domain
+            .backing_domain
+            .element(1 << self.config.folding_factor.at_round(0));
+        let stir_challenges: Vec<MultilinearPoint<F>> = ood_points
+            .iter()
+            .copied()
+            .chain(
+                stir_indexes
+                    .iter()
+                    .map(|&i| domain_scaled_gen.pow([i as u64])),
+            )
+            .map(|univariate| {
+                MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
+            })
+            .collect();
+
+        let mut stir_evaluations = ood_answers;
+        stir_evaluations.extend(
+            rlc_answers
+                .iter()
+                .map(|answer| CoefficientList::new(answer.clone()).evaluate(&folding_randomness)),
+        );
+
+        let [combination_randomness_gen] = prover_state.challenge_scalars()?;
+        let combination_randomness =
+            expand_randomness(combination_randomness_gen, stir_challenges.len());
+
+        let mut sumcheck_prover = sumcheck_prover.map_or_else(
+            || {
+                let mut statement = Statement::new(batched_folded_poly.num_variables());
+                for (point, eval) in stir_challenges.iter().zip(stir_evaluations.iter()) {
+                    statement.add_constraint(Weights::evaluation(point.clone()), *eval);
+                }
+                SumcheckSingle::new(
+                    batched_folded_poly.clone(),
+                    &statement,
+                    combination_randomness[1],
+                )
+            },
+            |mut sumcheck| {
+                sumcheck.add_new_equality(
+                    &stir_challenges,
+                    &stir_evaluations,
+                    &combination_randomness,
+                );
+                sumcheck
+            },
+        );
+
+        let folding_randomness = sumcheck_prover.compute_sumcheck_polynomials::<PowStrategy, _>(
+            prover_state,
+            folding_factor_next,
+            round_params.folding_pow_bits,
+        )?;
+
+        let start_idx = self.config.folding_factor.at_round(0);
+        let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
+        for (dst, src) in dst_randomness
+            .iter_mut()
+            .zip(folding_randomness.0.iter().rev())
+        {
+            *dst = *src;
+        }
+
+        // Transition to Round 1+
+        let mut round_state = RoundState {
+            domain: new_domain,
+            round: 1,
+            sumcheck_prover: Some(sumcheck_prover),
+            folding_randomness,
+            coefficients: batched_folded_poly,
+            prev_merkle: batched_merkle_tree,
+            prev_merkle_answers: batched_evals,
+            randomness_vec,
+            statement: combined_statement,
+            batching_randomness,
+        };
+
+        for _round in 1..=self.config.n_rounds() {
+            self.round(prover_state, &mut round_state)?;
+        }
+
+        // Hints for deferred constraints
+        let constraint_eval =
+            MultilinearPoint(round_state.randomness_vec.iter().copied().rev().collect());
+        let deferred: Vec<F> = round_state
+            .statement
+            .constraints
+            .iter()
+            .filter(|constraint| constraint.defer_evaluation)
+            .map(|constraint| constraint.weights.compute(&constraint_eval))
+            .collect();
+        prover_state.hint::<Vec<F>>(&deferred)?;
+
+        Ok((constraint_eval, deferred))
+    }
+
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
     fn round<ProverState>(
@@ -759,6 +1243,19 @@ where
             UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge + HintSerialize,
     {
         // Directly send coefficients of the polynomial to the verifier.
+        println!(
+            "[PROVER] Final round: sending {} coefficients: {:?}",
+            folded_coefficients.coeffs().len(),
+            folded_coefficients.coeffs()
+        );
+        println!(
+            "[PROVER] Final round: num_variables={}",
+            folded_coefficients.num_variables()
+        );
+        println!(
+            "[PROVER] Final round: round_state.statement has {} constraints",
+            round_state.statement.constraints.len()
+        );
         prover_state.add_scalars(folded_coefficients.coeffs())?;
 
         // Precompute the folding factors for later use

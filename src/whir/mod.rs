@@ -37,7 +37,7 @@ mod tests {
             committer::{CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
             parameters::WhirConfig,
-            prover::Prover,
+            prover::{BatchingMode, Prover},
             statement::{Statement, Weights},
             verifier::Verifier,
         },
@@ -347,7 +347,12 @@ mod tests {
 
         // Batch prove all polynomials together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(
+            &mut prover_state,
+            &statements,
+            &witnesses,
+            BatchingMode::Standard,
+        );
 
         assert!(result.is_ok(), "Batch proving failed: {:?}", result.err());
 
@@ -369,7 +374,12 @@ mod tests {
 
         // Verify the batched proof
         verifier
-            .verify_batch(&mut verifier_state, &parsed_commitments, &statements)
+            .verify_batch(
+                &mut verifier_state,
+                &parsed_commitments,
+                &statements,
+                BatchingMode::Standard,
+            )
             .unwrap();
     }
 
@@ -491,7 +501,12 @@ mod tests {
         // Generate proof with the mismatched polynomial
         // The prover will compute cross-terms using poly_wrong, not poly2
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(
+            &mut prover_state,
+            &statements,
+            &witnesses,
+            BatchingMode::Standard,
+        );
 
         // Proof generation succeeds (prover doesn't verify polynomial-commitment consistency)
         assert!(result.is_ok(), "Prover generated proof");
@@ -509,8 +524,12 @@ mod tests {
             parsed_commitments.push(parsed_commitment);
         }
 
-        let verify_result =
-            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        let verify_result = verifier.verify_batch(
+            &mut verifier_state,
+            &parsed_commitments,
+            &statements,
+            BatchingMode::Standard,
+        );
         assert!(
             verify_result.is_err(),
             "Verifier should reject mismatched polynomial"
@@ -631,7 +650,12 @@ mod tests {
 
         // Batch prove all witnesses together
         let prover = Prover::new(params.clone());
-        let result = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let result = prover.prove_batch(
+            &mut prover_state,
+            &statements,
+            &witnesses,
+            BatchingMode::Standard,
+        );
         assert!(
             result.is_ok(),
             "Batch proving with batch_size={} failed: {:?}",
@@ -652,8 +676,12 @@ mod tests {
             parsed_commitments.push(parsed_commitment);
         }
 
-        let verify_result =
-            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        let verify_result = verifier.verify_batch(
+            &mut verifier_state,
+            &parsed_commitments,
+            &statements,
+            BatchingMode::Standard,
+        );
         assert!(
             verify_result.is_ok(),
             "Batch verification with batch_size={} failed: {:?}",
@@ -684,5 +712,281 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Comprehensive test for PreFold batch proving with 2 witnesses of different arities.
+    ///
+    /// Tests the full PreFold workflow:
+    /// 1. Commits to polynomials of different arities (n and n+1)
+    /// 2. Pre-folds the larger polynomial to match the smaller arity
+    /// 3. Batches using RLC and proves with standard WHIR
+    /// 4. Verifies the proof end-to-end
+    ///
+    /// This test includes:
+    /// - Evaluation point constraints on both polynomials
+    /// - Linear combination constraints
+    /// - Full proof generation and verification
+    /// - Security: matrix commitment before folding
+    fn make_whir_prefold(
+        num_vars_small: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let num_vars_large = num_vars_small + 1;
+        let mut rng = ark_std::test_rng();
+
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
+
+        // Config for smaller polynomial (target arity after pre-folding)
+        let mv_params = MultivariateParameters::new(num_vars_small);
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: folding_factor.clone(),
+            leaf_hash_params: leaf_hash_params.clone(),
+            two_to_one_params: two_to_one_params.clone(),
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+
+        // Config for larger polynomial (n+1 variables)
+        // IMPORTANT: For PreFold, the larger polynomial must use folding_factor=1
+        // so that merkle tree chunks have size 2, allowing us to fold 1 variable
+        let mv_params_large = MultivariateParameters::new(num_vars_large);
+        let whir_params_large = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: FoldingFactor::Constant(1), // PreFold requires folding_factor=1
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon_large = Arc::new(RSDefault);
+        let basefield_reed_solomon_large = reed_solomon_large.clone();
+        let params_large = WhirConfig::new(
+            reed_solomon_large,
+            basefield_reed_solomon_large,
+            mv_params_large,
+            whir_params_large,
+        );
+
+        // Create test polynomials with distinct values
+        let num_coeffs_small = 1 << num_vars_small;
+        let num_coeffs_large = 1 << num_vars_large;
+
+        let poly_small = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let poly_large = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+
+        // Create statements with constraints
+        let mut statement_small = Statement::new(num_vars_small);
+        let mut statement_large = Statement::new(num_vars_large);
+
+        // Add random evaluation point constraints
+        for _ in 0..num_points_per_poly {
+            // Constraint on small polynomial
+            let point_small = MultilinearPoint::rand(&mut rng, num_vars_small);
+            let eval_small = poly_small.evaluate_at_extension(&point_small);
+            statement_small.add_constraint(Weights::evaluation(point_small), eval_small);
+
+            // Constraint on large polynomial
+            let point_large = MultilinearPoint::rand(&mut rng, num_vars_large);
+            let eval_large = poly_large.evaluate_at_extension(&point_large);
+            statement_large.add_constraint(Weights::evaluation(point_large), eval_large);
+        }
+
+        // Add linear constraints for both polynomials
+        let input_small = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        let linear_weight_small = Weights::linear(input_small.into());
+        let poly_evals_small = EvaluationsList::from(poly_small.clone().to_extension());
+        let sum_small = linear_weight_small.weighted_sum(&poly_evals_small);
+        statement_small.add_constraint(linear_weight_small, sum_small);
+
+        let input_large = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        let linear_weight_large = Weights::linear(input_large.into());
+        let poly_evals_large = EvaluationsList::from(poly_large.clone().to_extension());
+        let sum_large = linear_weight_large.weighted_sum(&poly_evals_large);
+        statement_large.add_constraint(linear_weight_large, sum_large);
+
+        let statements = vec![statement_small, statement_large];
+
+        // Set up domain separator with PreFold
+        let mut domainsep = DomainSeparator::new("🌪️");
+        domainsep = domainsep.commit_statement(&params); // Small polynomial
+        domainsep = domainsep.commit_statement(&params_large); // Large polynomial
+
+        // Calculate total constraints for the 2×M evaluation matrix
+        let total_constraints = 2 * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+
+        // Add PreFold batch proof domain separator
+        domainsep = domainsep.add_whir_prefold_batch_proof(&params, total_constraints);
+
+        let mut prover_state = domainsep.to_prover_state();
+
+        // Commit to both polynomials
+        let committer_small = CommitmentWriter::new(params.clone());
+        let committer_large = CommitmentWriter::new(params_large.clone());
+
+        let witness_small = committer_small
+            .commit(&mut prover_state, &poly_small)
+            .unwrap();
+        let witness_large = committer_large
+            .commit(&mut prover_state, &poly_large)
+            .unwrap();
+
+        let witnesses = vec![witness_small, witness_large];
+
+        // Generate PreFold proof
+        let prover = Prover::new(params.clone());
+        let result = prover.prove_batch(
+            &mut prover_state,
+            &statements,
+            &witnesses,
+            BatchingMode::PreFoldSecond,
+        );
+
+        assert!(
+            result.is_ok(),
+            "PreFold batch proving failed: {:?}",
+            result.err()
+        );
+
+        // Verify the proof
+        let commitment_reader_small = CommitmentReader::new(&params);
+        let commitment_reader_large = CommitmentReader::new(&params_large);
+        let verifier = Verifier::new(&params);
+
+        // Reconstruct verifier's transcript view
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+
+        // Parse both commitments
+        let parsed_commitment_small = commitment_reader_small
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitment_large = commitment_reader_large
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+
+        let parsed_commitments = vec![parsed_commitment_small, parsed_commitment_large];
+
+        // Verify the PreFold batch proof
+        let verify_result = verifier.verify_batch(
+            &mut verifier_state,
+            &parsed_commitments,
+            &statements,
+            BatchingMode::PreFoldSecond,
+        );
+
+        assert!(
+            verify_result.is_ok(),
+            "PreFold batch verification failed: {:?}",
+            verify_result.err()
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_basic() {
+        // Basic test with minimal configuration
+        make_whir_prefold(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            0,                             // num_points_per_poly (no extra point constraints)
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_with_constraints() {
+        // Test with evaluation point constraints
+        make_whir_prefold(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            2,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_various_configs() {
+        // Test with different folding factors and arities
+        let folding_factors = [2, 3];
+        // Include an additional case to exercise folding_factor=3 safely.
+        let num_vars = [4, 6, 7];
+        let num_points = [0, 1, 2];
+
+        for &ff in &folding_factors {
+            for &nv in &num_vars {
+                for &np in &num_points {
+                    // PreFold batch transcript construction currently assumes there is at least
+                    // one "regular" WHIR round (i.e. `round_parameters[0]` exists).
+                    //
+                    // For `FoldingFactor::Constant(ff)`, `num_rounds == 0` happens when
+                    // `nv < 2*ff` (e.g. nv=4, ff=3), which makes `round_parameters` empty.
+                    // Skip those configurations here.
+                    if nv < 2 * ff {
+                        continue;
+                    }
+                    make_whir_prefold(
+                        nv,
+                        FoldingFactor::Constant(ff),
+                        np,
+                        SoundnessType::ConjectureList,
+                        0,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_whir_prefold_with_pow() {
+        // Test PreFold with proof-of-work challenges
+        make_whir_prefold(
+            4,                             // num_vars_small (smaller for faster test)
+            FoldingFactor::Constant(2),    // folding_factor
+            1,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            5,                             // pow_bits (non-zero PoW)
+        );
     }
 }

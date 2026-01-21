@@ -20,7 +20,7 @@ use crate::{
     utils::expand_randomness,
     whir::{
         merkle,
-        prover::RootPath,
+        prover::{BatchingMode, RootPath},
         utils::{get_challenge_stir_queries, DigestToUnitDeserialize},
     },
 };
@@ -225,6 +225,25 @@ where
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[allow(clippy::too_many_lines)]
     pub fn verify_batch(
+        &self,
+        verifier_state: &mut VerifierState,
+        parsed_commitments: &[ParsedCommitment<F, MerkleConfig::InnerDigest>],
+        statements: &[Statement<F>],
+        mode: BatchingMode,
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
+        match mode {
+            BatchingMode::Standard => {
+                self.verify_batch_standard(verifier_state, parsed_commitments, statements)
+            }
+            BatchingMode::PreFoldSecond => {
+                self.verify_batch_prefold(verifier_state, parsed_commitments, statements)
+            }
+        }
+    }
+
+    /// Standard batch verification: all witnesses have same arity
+    #[allow(clippy::too_many_lines)]
+    fn verify_batch_standard(
         &self,
         verifier_state: &mut VerifierState,
         parsed_commitments: &[ParsedCommitment<F, MerkleConfig::InnerDigest>],
@@ -516,6 +535,341 @@ where
         Ok((folding_randomness, deferred))
     }
 
+    /// PreFold batch verification: exactly 2 witnesses, one has arity+1.
+    /// Verifies pre-folding of the larger polynomial once to match arities before batching.
+    #[allow(clippy::too_many_lines)]
+    fn verify_batch_prefold(
+        &self,
+        verifier_state: &mut VerifierState,
+        parsed_commitments: &[ParsedCommitment<F, MerkleConfig::InnerDigest>],
+        statements: &[Statement<F>],
+    ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
+        // Validation
+        assert_eq!(parsed_commitments.len(), 2);
+        assert_eq!(statements.len(), 2);
+        assert_eq!(
+            self.params.batch_size, 1,
+            "PreFoldSecond currently requires batch_size=1 (no internal batching)"
+        );
+
+        let num_vars_0 = parsed_commitments[0].num_variables;
+        let num_vars_1 = parsed_commitments[1].num_variables;
+
+        // If the two witnesses have the same arity, we can just verify the batch as standard
+        if num_vars_0 == num_vars_1 {
+            return Ok(self.verify_batch_standard(
+                verifier_state,
+                parsed_commitments,
+                statements,
+            )?);
+        }
+
+        // Determine which witness is larger (has more variables); prefold that one.
+        let (small_idx, big_idx, num_vars_small, num_vars_big) = if num_vars_0 < num_vars_1 {
+            (0usize, 1usize, num_vars_0, num_vars_1)
+        } else {
+            (1usize, 0usize, num_vars_1, num_vars_0)
+        };
+
+        assert_eq!(
+            num_vars_big,
+            num_vars_small + 1,
+            "PreFold requires arity difference of exactly 1"
+        );
+
+        // --- Phase 1: Prefold verification (α, commit to g', prove consistency vs original g) ---
+        let [alpha] = verifier_state.challenge_scalars()?;
+        let prefold_randomness = MultilinearPoint(vec![alpha]);
+
+        if self.params.starting_folding_pow_bits > 0. {
+            verifier_state.challenge_pow::<PowStrategy>(self.params.starting_folding_pow_bits)?;
+        }
+
+        // Parse commitment to g' (committed under the SMALL config)
+        let g_folded_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
+            verifier_state,
+            num_vars_small,
+            self.params.committment_ood_samples,
+        )?;
+
+        if self.params.round_parameters[0].pow_bits > 0. {
+            verifier_state
+                .challenge_pow::<PowStrategy>(self.params.round_parameters[0].pow_bits)?;
+        }
+
+        // Verify consistency via STIR queries on ORIGINAL g
+        let g_domain_size = self
+            .params
+            .starting_domain
+            .size()
+            .checked_shl((num_vars_big - num_vars_small) as u32)
+            .expect("domain size overflow in prefold");
+        let g_folding_factor = num_vars_big - num_vars_small;
+        let stir_indexes = get_challenge_stir_queries(
+            g_domain_size,
+            g_folding_factor,
+            self.params.round_parameters[0].num_queries,
+            verifier_state,
+            &self.params.deduplication_strategy,
+        )?;
+
+        let original_g_answers: Vec<Vec<F>> = verifier_state.hint()?;
+        self.merkle_state
+            .read_and_verify_proof::<VerifierState, _>(
+                verifier_state,
+                &stir_indexes,
+                &parsed_commitments[big_idx].root,
+                original_g_answers.iter().map(|v| v.as_slice()),
+            )?;
+
+        let g_folded_stir_evals: Vec<F> = verifier_state.hint()?;
+        for (answer_chunk, &expected_folded) in original_g_answers.iter().zip(&g_folded_stir_evals)
+        {
+            let chunk_poly = CoefficientList::new(answer_chunk.clone());
+            let actual_folded = chunk_poly.evaluate(&prefold_randomness);
+            if actual_folded != expected_folded {
+                return Err(ProofError::InvalidProof);
+            }
+        }
+
+        // --- Phase 2: Read evaluation matrix for (f, g') BEFORE sampling γ ---
+        let mut all_constraints_info: Vec<(Weights<F>, bool)> = Vec::new();
+
+        // OOD constraints from f (arity n)
+        for point in &parsed_commitments[small_idx].ood_points {
+            let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
+            all_constraints_info.push((Weights::evaluation(ml_point), false));
+        }
+
+        // OOD constraints from g' (arity n)
+        for point in &g_folded_commitment.ood_points {
+            let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
+            all_constraints_info.push((Weights::evaluation(ml_point), false));
+        }
+
+        // Statement constraints (some may be arity n+1 and will be ignored later)
+        for statement in statements {
+            for constraint in &statement.constraints {
+                all_constraints_info
+                    .push((constraint.weights.clone(), constraint.defer_evaluation));
+            }
+        }
+
+        let num_constraints = all_constraints_info.len();
+        let mut constraint_evals_matrix = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let mut row = vec![F::ZERO; num_constraints];
+            verifier_state.fill_next_scalars(&mut row)?;
+            constraint_evals_matrix.push(row);
+        }
+
+        // --- Phase 3: Sample batching randomness γ ---
+        let [batching_randomness] = verifier_state.challenge_scalars()?;
+
+        // --- Phase 4: Build combined constraints at common arity (n) using the matrix ---
+        let mut all_constraints = Vec::new();
+        for (constraint_idx, (weights, defer_evaluation)) in
+            all_constraints_info.into_iter().enumerate()
+        {
+            if weights.num_variables() == num_vars_small {
+                let combined_eval = constraint_evals_matrix[0][constraint_idx]
+                    + batching_randomness * constraint_evals_matrix[1][constraint_idx];
+                all_constraints.push(Constraint {
+                    weights,
+                    sum: combined_eval,
+                    defer_evaluation,
+                });
+            }
+        }
+
+        let mut round_constraints = Vec::new();
+        let mut round_folding_randomness = Vec::new();
+        let mut claimed_sum = F::ZERO;
+
+        // Initial sumcheck on the combined constraints (identical to standard batch)
+        let combination_randomness =
+            self.combine_constraints(verifier_state, &mut claimed_sum, &all_constraints)?;
+        round_constraints.push((combination_randomness, all_constraints));
+        let folding_randomness = self.verify_sumcheck_rounds(
+            verifier_state,
+            &mut claimed_sum,
+            self.params.folding_factor.at_round(0),
+            self.params.starting_folding_pow_bits,
+        )?;
+        round_folding_randomness.push(folding_randomness);
+
+        // --- Round 0: batch-specific verification against BOTH original commitment trees (f and g') ---
+        let round_params = &self.params.round_parameters[0];
+
+        // Receive commitment to the batched folded polynomial
+        let mut prev_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
+            verifier_state,
+            round_params.num_variables,
+            round_params.ood_samples,
+        )?;
+
+        self.verify_proof_of_work(verifier_state, round_params.pow_bits)?;
+
+        let stir_challenges_indexes = get_challenge_stir_queries(
+            round_params.domain_size,
+            round_params.folding_factor,
+            round_params.num_queries,
+            verifier_state,
+            &self.params.deduplication_strategy,
+        )?;
+
+        // Verify Merkle openings in f and g' commitment trees
+        let answers_f = self.verify_merkle_proof(
+            verifier_state,
+            &parsed_commitments[small_idx].root,
+            &stir_challenges_indexes,
+        )?;
+        let answers_g = self.verify_merkle_proof(
+            verifier_state,
+            &g_folded_commitment.root,
+            &stir_challenges_indexes,
+        )?;
+
+        let fold_size = 1 << round_params.folding_factor;
+        let rlc_answers: Vec<Vec<F>> = (0..stir_challenges_indexes.len())
+            .map(|query_idx| {
+                let mut combined = vec![F::ZERO; fold_size];
+
+                // f contribution
+                for j in 0..fold_size {
+                    combined[j] += answers_f[query_idx][j];
+                }
+                // g' contribution
+                for j in 0..fold_size {
+                    combined[j] += batching_randomness * answers_g[query_idx][j];
+                }
+                combined
+            })
+            .collect();
+
+        let folds: Vec<F> = rlc_answers
+            .into_iter()
+            .map(|answers| CoefficientList::new(answers).evaluate(&round_folding_randomness[0]))
+            .collect();
+
+        let stir_constraints: Vec<Constraint<F>> = stir_challenges_indexes
+            .iter()
+            .map(|&index| round_params.exp_domain_gen.pow([index as u64]))
+            .zip(&folds)
+            .map(|(point, &value)| Constraint {
+                weights: Weights::univariate(point, round_params.num_variables),
+                sum: value,
+                defer_evaluation: false,
+            })
+            .collect();
+
+        let constraints: Vec<Constraint<F>> = prev_commitment
+            .oods_constraints()
+            .into_iter()
+            .chain(stir_constraints)
+            .collect();
+
+        let combination_randomness =
+            self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
+        round_constraints.push((combination_randomness, constraints));
+
+        let folding_randomness = self.verify_sumcheck_rounds(
+            verifier_state,
+            &mut claimed_sum,
+            self.params.folding_factor.at_round(1),
+            round_params.folding_pow_bits,
+        )?;
+        round_folding_randomness.push(folding_randomness);
+
+        // Rounds 1+: Standard WHIR verification on the single batched polynomial
+        for round_index in 1..self.params.n_rounds() {
+            let round_params = &self.params.round_parameters[round_index];
+
+            let new_commitment = ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse(
+                verifier_state,
+                round_params.num_variables,
+                round_params.ood_samples,
+            )?;
+
+            let stir_constraints = self.verify_stir_challenges(
+                round_index,
+                verifier_state,
+                round_params,
+                &prev_commitment,
+                round_folding_randomness.last().unwrap(),
+            )?;
+
+            let constraints: Vec<Constraint<F>> = new_commitment
+                .oods_constraints()
+                .into_iter()
+                .chain(stir_constraints.into_iter())
+                .collect();
+
+            let combination_randomness =
+                self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
+            round_constraints.push((combination_randomness, constraints));
+
+            let folding_randomness = self.verify_sumcheck_rounds(
+                verifier_state,
+                &mut claimed_sum,
+                self.params.folding_factor.at_round(round_index + 1),
+                round_params.folding_pow_bits,
+            )?;
+            round_folding_randomness.push(folding_randomness);
+
+            prev_commitment = new_commitment;
+        }
+
+        // Final round (same as regular verify)
+        let mut final_coefficients = vec![F::ZERO; 1 << self.params.final_sumcheck_rounds];
+        verifier_state.fill_next_scalars(&mut final_coefficients)?;
+        let final_coefficients = CoefficientList::new(final_coefficients);
+
+        let stir_constraints = self.verify_stir_challenges(
+            self.params.n_rounds(),
+            verifier_state,
+            &self.params.final_round_config(),
+            &prev_commitment,
+            round_folding_randomness.last().unwrap(),
+        )?;
+
+        if !stir_constraints
+            .iter()
+            .all(|c| c.verify(&final_coefficients))
+        {
+            return Err(ProofError::InvalidProof);
+        }
+
+        let final_sumcheck_randomness = self.verify_sumcheck_rounds(
+            verifier_state,
+            &mut claimed_sum,
+            self.params.final_sumcheck_rounds,
+            self.params.final_folding_pow_bits,
+        )?;
+        round_folding_randomness.push(final_sumcheck_randomness.clone());
+
+        // Compute folding randomness across all rounds
+        let folding_randomness = MultilinearPoint(
+            round_folding_randomness
+                .into_iter()
+                .rev()
+                .flat_map(|poly| poly.0.into_iter())
+                .collect(),
+        );
+
+        // Compute evaluation of weights in folding randomness (deferred checks)
+        let deferred: Vec<F> = verifier_state.hint()?;
+        let evaluation_of_weights =
+            self.eval_constraints_poly(&round_constraints, &deferred, folding_randomness.clone());
+
+        let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
+        if claimed_sum != evaluation_of_weights * final_value {
+            return Err(ProofError::InvalidProof);
+        }
+
+        Ok((folding_randomness, deferred))
+    }
+
     /// Create a random linear combination of constraints and add it to the claim.
     /// Returns the randomness used.
     pub fn combine_constraints(
@@ -545,15 +899,29 @@ where
         proof_of_work: f64,
     ) -> ProofResult<MultilinearPoint<F>> {
         let mut randomness = Vec::with_capacity(rounds);
-        for _ in 0..rounds {
+        println!(
+            "[SUMCHECK] Starting verification, rounds={}, initial claimed_sum={:?}",
+            rounds, claimed_sum
+        );
+        if rounds == 0 {
+            println!("[SUMCHECK] No rounds to verify, returning empty randomness");
+            return Ok(MultilinearPoint(randomness));
+        }
+        for round_idx in 0..rounds {
             // Receive this round's sumcheck polynomial
             let sumcheck_poly_evals: [_; 3] = verifier_state.next_scalars()?;
             let sumcheck_poly = SumcheckPolynomial::new(sumcheck_poly_evals.to_vec(), 1);
+            let poly_sum = sumcheck_poly.sum_over_boolean_hypercube();
 
             // Verify claimed sum is consistent with polynomial
-            if sumcheck_poly.sum_over_boolean_hypercube() != *claimed_sum {
+            if poly_sum != *claimed_sum {
+                println!(
+                    "[SUMCHECK] FAILED at round {}: poly_sum={:?}, claimed_sum={:?}",
+                    round_idx, poly_sum, *claimed_sum
+                );
                 return Err(ProofError::InvalidProof);
             }
+            println!("[SUMCHECK] Round {} passed", round_idx);
 
             // Proof of work per round
             self.verify_proof_of_work(verifier_state, proof_of_work)?;
@@ -702,28 +1070,55 @@ where
         mut point: MultilinearPoint<F>,
     ) -> F {
         let mut num_variables = self.params.mv_parameters.num_variables;
-        let mut deferred = deferred.iter().copied();
+        let mut deferred_iter = deferred.iter().copied();
         let mut value = F::ZERO;
 
+        println!(
+            "[EVAL] Starting eval_constraints_poly with {} deferred values",
+            deferred.len()
+        );
         for (round, (randomness, constraints)) in constraints.iter().enumerate() {
             assert_eq!(randomness.len(), constraints.len());
             if round > 0 {
                 num_variables -= self.params.folding_factor.at_round(round - 1);
                 point = MultilinearPoint(point.0[..num_variables].to_vec());
             }
-            value += constraints
+            println!(
+                "[EVAL] Round {}: {} constraints, num_variables={}",
+                round,
+                constraints.len(),
+                num_variables
+            );
+            let mut deferred_count = 0;
+            let mut computed_count = 0;
+            let round_value: F = constraints
                 .iter()
+                .enumerate()
                 .zip(randomness)
-                .map(|(constraint, &randomness)| {
-                    let value = if constraint.defer_evaluation {
-                        deferred.next().unwrap()
+                .map(|((idx, constraint), &rand)| {
+                    let val = if constraint.defer_evaluation {
+                        let deferred_val = deferred_iter.next().unwrap();
+                        println!("[EVAL] Round {} constraint {}: DEFERRED, val={:?}, rand={:?}, contrib={:?}", 
+                            round, idx, deferred_val, rand, deferred_val * rand);
+                        deferred_count += 1;
+                        deferred_val
                     } else {
-                        constraint.weights.compute(&point)
+                        let computed_val = constraint.weights.compute(&point);
+                        println!("[EVAL] Round {} constraint {}: COMPUTED, val={:?}, rand={:?}, contrib={:?}", 
+                            round, idx, computed_val, rand, computed_val * rand);
+                        computed_count += 1;
+                        computed_val
                     };
-                    value * randomness
+                    val * rand
                 })
-                .sum::<F>();
+                .sum();
+            println!(
+                "[EVAL] Round {}: {} deferred, {} computed, round_value={:?}",
+                round, deferred_count, computed_count, round_value
+            );
+            value += round_value;
         }
+        println!("[EVAL] Final value={:?}", value);
         value
     }
 }
