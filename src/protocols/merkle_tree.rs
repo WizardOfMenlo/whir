@@ -7,7 +7,8 @@ use zerocopy::IntoBytes;
 
 use crate::{
     ensure,
-    hash::{Hash, ENGINES},
+    hash::{Engine, Hash, ENGINES},
+    ntt::workload_size,
     transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
 };
 
@@ -67,11 +68,21 @@ impl Config {
         // Compute merkle tree nodes.
         for layer in self.layers.iter().rev() {
             let (current, next_remaining) = remaining.split_at_mut(previous.len() / 2);
-            ENGINES
+            let engine = ENGINES
                 .retrieve(layer.hash_id)
-                .expect("Hash Engine not found")
-                .hash_many(64, previous.as_bytes(), current);
+                .expect("Hash Engine not found");
+            #[cfg(feature = "tracing")]
+            let _span = span!(
+                Level::INFO,
+                "layer",
+                engine = engine.name(),
+                count = current.len()
+            )
+            .entered();
 
+            // TODO: Parallelize over subtrees, not layerwise. This will
+            // increase locality.
+            parallel_hash(&*engine, 64, previous.as_bytes(), current);
             previous = current;
             remaining = next_remaining;
         }
@@ -224,6 +235,25 @@ impl Config {
         ensure!(indices == [0], VerificationError);
         ensure!(hashes == [commitment.hash], VerificationError);
         Ok(())
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
+    engine.hash_many(size, input, output);
+}
+
+#[cfg(feature = "parallel")]
+fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
+    if input.len() > workload_size::<u8>() && input.len() / size >= 2 {
+        let (input_a, input_b) = input.split_at(input.len() / 2);
+        let (output_a, output_b) = output.split_at_mut(output.len() / 2);
+        rayon::join(
+            || parallel_hash(engine, size, input_a, output_a),
+            || parallel_hash(engine, size, input_b, output_b),
+        );
+    } else {
+        engine.hash_many(size, input, output);
     }
 }
 
