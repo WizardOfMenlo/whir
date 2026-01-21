@@ -203,7 +203,7 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .verify(&mut verifier_state, parsed_commitment, statement)
             .unwrap();
     }
 

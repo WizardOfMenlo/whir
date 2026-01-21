@@ -75,15 +75,15 @@ where
     pub fn verify(
         &self,
         verifier_state: &mut VerifierState,
-        parsed_commitment: &ParsedCommitment<F, MerkleConfig::InnerDigest>,
-        statement: &Statement<F>,
+        parsed_commitment: ParsedCommitment<F, MerkleConfig::InnerDigest>,
+        statement: Statement<F>,
     ) -> ProofResult<(MultilinearPoint<F>, Vec<F>)> {
         // During the rounds we collect constraints, combination randomness, folding randomness
         // and we update the claimed sum of constraint evaluation.
         let mut round_constraints = Vec::new();
         let mut round_folding_randomness = Vec::new();
         let mut claimed_sum = F::ZERO;
-        let mut prev_commitment = parsed_commitment.clone();
+        let mut prev_commitment = parsed_commitment;
 
         // Optional initial sumcheck round
         if self.params.initial_statement {
@@ -91,7 +91,7 @@ where
             let constraints: Vec<_> = prev_commitment
                 .oods_constraints()
                 .into_iter()
-                .chain(statement.constraints.iter().cloned())
+                .chain(statement.constraints.into_iter())
                 .collect();
 
             let combination_randomness =

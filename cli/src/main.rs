@@ -307,7 +307,11 @@ fn run_whir_as_ldt<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .verify(
+                &mut verifier_state,
+                parsed_commitment.clone(),
+                statement.clone(),
+            )
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -454,7 +458,11 @@ fn run_whir_pcs<F, MerkleConfig>(
             .parse_commitment(&mut verifier_state)
             .unwrap();
         verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .verify(
+                &mut verifier_state,
+                parsed_commitment.clone(),
+                statement.clone(),
+            )
             .unwrap();
     }
     println!(

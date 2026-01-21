@@ -205,7 +205,7 @@ mod batching_tests {
 
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement,)
+            .verify(&mut verifier_state, parsed_commitment, statement)
             .is_ok());
     }
 
