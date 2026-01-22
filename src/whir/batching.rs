@@ -106,7 +106,12 @@ mod batching_tests {
         let basefield_reed_solomon = reed_solomon.clone();
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 

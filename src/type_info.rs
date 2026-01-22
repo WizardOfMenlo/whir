@@ -34,7 +34,7 @@ pub struct Type<T: TypeInfo>(PhantomData<T>);
 impl<T: TypeInfo> Type<T> {
     /// Creates a new type instance.
     pub const fn new() -> Self {
-        Type(PhantomData)
+        Self(PhantomData)
     }
 }
 
@@ -60,12 +60,12 @@ impl<'de, T: TypeInfo> Deserialize<'de> for Type<T> {
     {
         let expected = T::type_info();
         let got = T::Info::deserialize(deserializer)?;
-        if expected != got {
+        if expected == got {
+            Ok(Self(PhantomData))
+        } else {
             Err(D::Error::custom(format!(
                 "Type mismatch, expected: {expected:?}, got: {got:?}"
             )))
-        } else {
-            Ok(Type(PhantomData))
         }
     }
 }
@@ -103,6 +103,7 @@ mod tests {
     const_assert_eq!(size_of::<Type<Field256>>(), 0);
 
     #[test]
+    #[allow(clippy::unreadable_literal)]
     fn test_type_info_field64_3() {
         let type_info = Field64_3::type_info();
         assert_eq!(

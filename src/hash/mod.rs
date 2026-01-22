@@ -52,7 +52,7 @@ pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
 pub struct Hash(pub [u8; 32]);
 
 pub trait Engine: Send + Sync {
-    fn name<'a>(&'a self) -> Cow<'a, str>;
+    fn name(&self) -> Cow<'_, str>;
 
     fn oid(&self) -> Option<ObjectIdentifier> {
         None
@@ -103,7 +103,7 @@ assert_obj_safe!(Engine);
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }
@@ -117,7 +117,7 @@ impl Encoding<[u8]> for Hash {
 
 impl NargDeserialize for Hash {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        let (hash, tail) = Hash::read_from_prefix(buf).map_err(|_| VerificationError)?;
+        let (hash, tail) = Self::read_from_prefix(buf).map_err(|_| VerificationError)?;
         *buf = tail;
         Ok(hash)
     }

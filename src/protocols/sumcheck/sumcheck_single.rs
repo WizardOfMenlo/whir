@@ -50,11 +50,11 @@ impl<F: Field> Config<F> {
         Ok(())
     }
 
-    pub fn final_size(&self) -> usize {
+    pub const fn final_size(&self) -> usize {
         self.initial_size >> self.num_rounds()
     }
 
-    pub fn num_rounds(&self) -> usize {
+    pub const fn num_rounds(&self) -> usize {
         self.rounds.len()
     }
 

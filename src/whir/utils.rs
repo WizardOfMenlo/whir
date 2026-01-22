@@ -99,14 +99,14 @@ where
 }
 
 pub(crate) fn rlc_batched_leaves<F: Field>(
-    leaves: Vec<F>,
+    leaves: &[F],
     fold_size: usize,
     batch_size: usize,
     batching_randomness: F,
 ) -> Vec<F> {
     leaves
         .chunks_exact(batch_size * fold_size)
-        .map(|leaf| {
+        .flat_map(|leaf| {
             let mut out = vec![F::ZERO; fold_size];
             let mut pow = F::ONE;
             for block in leaf.chunks_exact(fold_size).take(batch_size) {
@@ -117,7 +117,6 @@ pub(crate) fn rlc_batched_leaves<F: Field>(
             }
             out
         })
-        .flatten()
         .collect()
 }
 

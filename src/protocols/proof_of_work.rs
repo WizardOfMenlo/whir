@@ -26,6 +26,7 @@ pub fn threshold(difficulty: Bits) -> u64 {
     assert!((0.0..60.0).contains(&difficulty.into()));
 
     let threshold = (64.0 - f64::from(difficulty)).exp2().ceil();
+    #[allow(clippy::cast_sign_loss)]
     if threshold >= u64::MAX as f64 {
         u64::MAX
     } else {
@@ -134,9 +135,7 @@ impl Config {
 
             // Return the best found nonce, or fallback check on `u64::MAX`.
             let nonce = global_min.load(Ordering::SeqCst);
-            if nonce == u64::MAX {
-                panic!("Proof of Work failed to solve.");
-            }
+            assert!(nonce != u64::MAX, "Proof of Work failed to solve.");
             nonce
         };
 

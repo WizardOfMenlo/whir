@@ -12,6 +12,7 @@ pub use writer::CommitmentWriter;
 /// including the polynomial itself, the Merkle tree used for commitment,
 /// and out-of-domain (OOD) evaluations.
 #[derive(Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct Witness<F> {
     /// The committed polynomial in coefficient form. In case of batching, its
     /// the batched polynomial, i.e., the weighted sum of polynomials in

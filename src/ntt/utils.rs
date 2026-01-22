@@ -21,7 +21,7 @@ pub fn sqrt_factor(n: usize) -> usize {
             } else {
                 // - If `twos` is even: The largest factor is `3 * 2^((twos - 1) / 2)`
                 // - If `twos` is odd: The largest factor is `2^((twos / 2))`
-                if twos % 2 == 0 {
+                if twos.is_multiple_of(2) {
                     3 << ((twos - 1) / 2)
                 } else {
                     2 << (twos / 2)
@@ -37,7 +37,7 @@ pub fn sqrt_factor(n: usize) -> usize {
             } else {
                 // - If `twos` is even: The largest factor is `3 * 2^(twos / 2)`
                 // - If `twos` is odd: The largest factor is `4 * 2^(twos / 2)`
-                if twos % 2 == 0 {
+                if twos.is_multiple_of(2) {
                     3 << (twos / 2)
                 } else {
                     4 << (twos / 2)
@@ -86,7 +86,7 @@ mod tests {
 
         // Iterate from 1 to `isqrt_x` to find the largest factor of `x`.
         for i in 1..=isqrt_x {
-            if x % i == 0 {
+            if x.is_multiple_of(i) {
                 // Update `result` with the largest divisor found.
                 result = i;
             }

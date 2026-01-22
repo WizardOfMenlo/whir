@@ -1,4 +1,4 @@
-//! Protocol for committing to rows of a matrix of some type `T: `[`Encodable`].
+//! Protocol for committing to rows of a matrix of some type <code>T: [Encodable]</code>.
 
 use ark_ff::{Field, PrimeField};
 use ark_std::rand::{CryptoRng, RngCore};
@@ -85,7 +85,10 @@ pub struct ZeroCopyEncoder;
 /// Commits row-wise to a matrix of field elements using a merkle tree.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(bound = "T: TypeInfo")]
-pub struct Config<T: TypeInfo + Encodable + Send + Sync> {
+pub struct Config<T>
+where
+    T: TypeInfo + Encodable + Send + Sync,
+{
     /// Field used for the matrix elements.
     pub element_type: Type<T>,
 
@@ -106,7 +109,7 @@ pub type Commitment = merkle_tree::Commitment;
 /// Encode [`ark_ff::Field`]s using [`ArkFieldEncoder`].
 impl<F: Field> Encodable for F {
     fn encoded_size() -> usize {
-        let base_bytes = (F::BasePrimeField::MODULUS_BIT_SIZE as usize + 7) / 8;
+        let base_bytes = (F::BasePrimeField::MODULUS_BIT_SIZE as usize).div_ceil(8);
         base_bytes * F::extension_degree() as usize
     }
 
@@ -124,7 +127,7 @@ impl<F: Field> Encoder<F> for ArkFieldEncoder {
     where
         'd: 'e,
     {
-        let base_bytes = (F::BasePrimeField::MODULUS_BIT_SIZE as usize + 7) / 8;
+        let base_bytes = (F::BasePrimeField::MODULUS_BIT_SIZE as usize).div_ceil(8);
         self.0.clear();
         for value in values {
             for coeff in value.to_base_prime_field_elements() {
@@ -186,7 +189,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         }
     }
 
-    pub fn num_rows(&self) -> usize {
+    pub const fn num_rows(&self) -> usize {
         self.merkle_tree.num_leaves
     }
 
@@ -333,11 +336,11 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
             .zip(out.chunks_mut(batch_size))
         {
             let bytes = encoder.encode(matrix);
-            engine.hash_many(message_size, &bytes, out);
+            engine.hash_many(message_size, bytes, out);
         }
     } else {
         // Unbuffered, encode everything in one go
         let bytes = encoder.encode(matrix);
-        engine.hash_many(message_size, &bytes, out);
+        engine.hash_many(message_size, bytes, out);
     }
 }

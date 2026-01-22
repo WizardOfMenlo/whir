@@ -77,7 +77,12 @@ mod tests {
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Test that the config is serializable
         test_serde(&params);
@@ -261,7 +266,12 @@ mod tests {
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Create N different polynomials
         let polynomials: Vec<_> = (0..num_polynomials)
@@ -405,7 +415,12 @@ mod tests {
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
@@ -504,7 +519,12 @@ mod tests {
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together

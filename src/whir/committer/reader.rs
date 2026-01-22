@@ -58,7 +58,7 @@ impl<F: FftField> ParsedCommitment<F> {
         num_variables: usize,
         ood_samples: usize,
         batch_size: usize,
-    ) -> VerificationResult<ParsedCommitment<F>>
+    ) -> VerificationResult<Self>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -88,12 +88,12 @@ impl<F: FftField> ParsedCommitment<F> {
             F::zero()
         };
 
-        Ok(ParsedCommitment {
+        Ok(Self {
             matrix_commitment,
-            batching_randomness,
             num_variables,
             ood_points,
             ood_answers,
+            batching_randomness,
         })
     }
 

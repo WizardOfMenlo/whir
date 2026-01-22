@@ -25,6 +25,7 @@ const EMPTY_HASH: Hash = Hash(hex!(
 ));
 
 /// Default Blake3 initialization vector. Copied here because it is not publicly exported.
+#[allow(clippy::unreadable_literal)]
 const BLAKE3_IV: [u32; 8] = [
     0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 ];
@@ -47,7 +48,7 @@ const_assert_eq!(CHUNK_LEN, 16 * BLOCK_LEN);
 pub struct Blake3(Platform);
 
 impl Blake3 {
-    pub fn new(platform: Platform) -> Self {
+    pub const fn new(platform: Platform) -> Self {
         Self(platform)
     }
 
@@ -55,14 +56,14 @@ impl Blake3 {
         Self(Platform::detect())
     }
 
-    pub fn supports_size(size: usize) -> bool {
+    pub const fn supports_size(size: usize) -> bool {
         // Padding is not supported, neither is handling messages larger than a chunk.
         size.is_multiple_of(BLOCK_LEN) && size <= CHUNK_LEN
     }
 }
 
 impl Engine for Blake3 {
-    fn name<'a>(&'a self) -> Cow<'a, str> {
+    fn name(&self) -> Cow<'_, str> {
         "Blake3".into()
     }
 
@@ -80,11 +81,11 @@ impl Engine for Blake3 {
     }
 
     fn hash_many(&self, size: usize, input: &[u8], out: &mut [super::Hash]) {
-        hash_many(&self.0, size, input, out);
+        hash_many(self.0, size, input, out);
     }
 }
 
-fn hash_many(platform: &Platform, size: usize, inputs: &[u8], output: &mut [Hash]) {
+fn hash_many(platform: Platform, size: usize, inputs: &[u8], output: &mut [Hash]) {
     assert!(
         size.is_multiple_of(BLOCK_LEN),
         "Message size ({size}) must be a multiple of the block length ({BLOCK_LEN} bytes)."
@@ -128,7 +129,7 @@ fn hash_many(platform: &Platform, size: usize, inputs: &[u8], output: &mut [Hash
     }
 }
 
-fn hash_many_const<const N: usize>(platform: &Platform, inputs: &[u8], output: &mut [u8]) {
+fn hash_many_const<const N: usize>(platform: Platform, inputs: &[u8], output: &mut [u8]) {
     // Cast the input to a slice of N-sized arrays.
     let inputs: &[[u8; N]] =
         <[[u8; N]]>::ref_from_bytes(inputs).expect("Input length is not a multiple of N");

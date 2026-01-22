@@ -234,8 +234,12 @@ mod tests {
         let mv_params = MultivariateParameters::<F>::new(num_variables);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params =
-            WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::<F>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Generate a random polynomial with 32 coefficients.
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
@@ -307,7 +311,7 @@ mod tests {
             reed_solomon,
             basefield_reed_solomon,
             MultivariateParameters::<F>::new(10),
-            ProtocolParameters {
+            &ProtocolParameters {
                 initial_statement: true,
                 security_level: 100,
                 pow_bits: 20,
@@ -349,7 +353,7 @@ mod tests {
             reed_solomon,
             basefield_reed_solomon,
             MultivariateParameters::<F>::new(5),
-            ProtocolParameters {
+            &ProtocolParameters {
                 initial_statement: true,
                 security_level: 100,
                 pow_bits: 20,

@@ -55,7 +55,7 @@ impl Config {
         }
     }
 
-    pub fn num_nodes(&self) -> usize {
+    pub const fn num_nodes(&self) -> usize {
         (1 << (self.layers.len() + 1)) - 1
     }
 
@@ -257,12 +257,12 @@ impl Config {
 }
 
 impl Witness {
-    pub fn num_nodes(&self) -> usize {
+    pub const fn num_nodes(&self) -> usize {
         self.nodes.len()
     }
 }
 
-pub fn layers_for_size(size: usize) -> usize {
+pub const fn layers_for_size(size: usize) -> usize {
     size.next_power_of_two().ilog2() as usize
 }
 

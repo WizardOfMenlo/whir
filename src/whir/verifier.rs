@@ -634,7 +634,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         if round_index == 0 && self.params.batch_size > 1 {
             let fold_size = 1 << params.folding_factor;
             answers = crate::whir::utils::rlc_batched_leaves(
-                answers,
+                &answers,
                 fold_size,
                 self.params.batch_size,
                 commitment.batching_randomness,

@@ -21,7 +21,10 @@ use crate::{
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(bound = "F: FftField")]
-pub struct WhirConfig<F: FftField> {
+pub struct WhirConfig<F>
+where
+    F: FftField,
+{
     pub mv_parameters: MultivariateParameters<F>,
     pub soundness_type: SoundnessType,
     pub security_level: usize,
@@ -99,7 +102,7 @@ where
         reed_solomon: Arc<dyn ReedSolomon<F>>,
         basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
         mv_parameters: MultivariateParameters<F>,
-        whir_parameters: ProtocolParameters,
+        whir_parameters: &ProtocolParameters,
     ) -> Self {
         whir_parameters
             .folding_factor
@@ -304,7 +307,7 @@ where
         }
     }
 
-    pub fn n_rounds(&self) -> usize {
+    pub const fn n_rounds(&self) -> usize {
         self.round_parameters.len()
     }
 
@@ -783,15 +786,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        bits::Bits,
-        crypto::fields::{Field256, Field64},
-        hash,
-        utils::test_serde,
-    };
+    use crate::{bits::Bits, crypto::fields::Field64, hash, utils::test_serde};
 
     /// Generates default WHIR parameters
-    fn default_whir_params<F: FftField>() -> ProtocolParameters {
+    fn default_whir_params() -> ProtocolParameters {
         ProtocolParameters {
             initial_statement: true,
             security_level: 100,
@@ -806,13 +804,13 @@ mod tests {
 
     #[test]
     fn test_whir_config_creation() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         assert_eq!(config.security_level, 100);
         assert_eq!(config.max_pow_bits, 20);
@@ -822,31 +820,31 @@ mod tests {
 
     #[test]
     fn test_whir_params_serde() {
-        test_serde(&default_whir_params::<Field64>());
-        test_serde(&default_whir_params::<Field256>());
+        test_serde(&default_whir_params());
+        test_serde(&default_whir_params());
     }
 
     #[test]
     fn test_whir_config_serde() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         test_serde(&config);
     }
 
     #[test]
     fn test_n_rounds() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         assert_eq!(config.n_rounds(), config.round_parameters.len());
     }
@@ -955,12 +953,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_within_limits() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         // Set all values within limits
         config.max_pow_bits = 20;
@@ -1008,12 +1006,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0)); // Exceeds max_pow_bits
@@ -1028,12 +1026,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_final_pow_exceeds() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -1048,12 +1046,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_round_pow_exceeds() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -1084,12 +1082,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_round_folding_pow_exceeds() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -1120,12 +1118,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_exactly_at_limit() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
@@ -1155,12 +1153,12 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_all_exceed() {
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, params);
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
         config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(22.0));

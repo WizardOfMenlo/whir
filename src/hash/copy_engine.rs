@@ -23,7 +23,7 @@ impl Copy {
 }
 
 impl Engine for Copy {
-    fn name<'a>(&'a self) -> Cow<'a, str> {
+    fn name(&self) -> Cow<'_, str> {
         "copy".into()
     }
 

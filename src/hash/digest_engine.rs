@@ -63,15 +63,33 @@ where
     }
 }
 
+impl Default for Sha2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha2 {
     pub fn new() -> Self {
         Self::from_name_assoc_oid("sha2")
     }
 }
 
+impl Default for Sha3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha3 {
     pub fn new() -> Self {
         Self::from_name_assoc_oid("sha3")
+    }
+}
+
+impl Default for Keccak {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -85,7 +103,7 @@ impl<D> Engine for DigestEngine<D>
 where
     D: Digest<OutputSize = U32> + Send + Sync,
 {
-    fn name<'a>(&'a self) -> Cow<'a, str> {
+    fn name(&self) -> Cow<'_, str> {
         self.name.into()
     }
 
@@ -110,7 +128,7 @@ where
         );
 
         if size == 0 {
-            output.fill(Hash(D::digest(&[]).into()));
+            output.fill(Hash(D::digest([]).into()));
         } else {
             for (input, out) in input.chunks_exact(size).zip(output.iter_mut()) {
                 let input = input.as_bytes();

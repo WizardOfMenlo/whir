@@ -52,7 +52,7 @@ where
                 + self.config.final_sumcheck_rounds
     }
 
-    pub(crate) fn validate_statement(&self, statement: &Statement<F>) -> bool {
+    pub(crate) const fn validate_statement(&self, statement: &Statement<F>) -> bool {
         statement.num_variables() == self.config.mv_parameters.num_variables
             && (self.config.initial_statement || statement.constraints.is_empty())
     }
@@ -418,12 +418,11 @@ where
         for witness in witnesses {
             let answers: Vec<F> = stir_indexes
                 .iter()
-                .map(|&i| {
+                .flat_map(|&i| {
                     witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size]
                         .iter()
                         .copied()
                 })
-                .flatten()
                 .collect();
             prover_state.prover_hint_ark(&answers);
             all_witness_answers.push(answers);
@@ -657,12 +656,11 @@ where
         };
         let mut answers: Vec<F> = stir_challenges_indexes
             .iter()
-            .map(|i| {
+            .flat_map(|i| {
                 round_state.prev_matrix[i * leaf_size..(i + 1) * leaf_size]
                     .iter()
                     .copied()
             })
-            .flatten()
             .collect();
 
         prover_state.prover_hint_ark(&answers);
@@ -675,7 +673,7 @@ where
 
         if round_state.round == 0 && self.config.batch_size > 1 {
             answers = rlc_batched_leaves(
-                answers,
+                &answers,
                 fold_size,
                 self.config.batch_size,
                 round_state.batching_randomness,
@@ -794,12 +792,11 @@ where
         let fold_size = 1 << folding_factor;
         let answers = final_challenge_indexes
             .iter()
-            .map(|i| {
+            .flat_map(|i| {
                 round_state.prev_matrix[i * fold_size..(i + 1) * fold_size]
                     .iter()
                     .copied()
             })
-            .flatten()
             .collect::<Vec<F>>();
 
         prover_state.prover_hint_ark(&answers);

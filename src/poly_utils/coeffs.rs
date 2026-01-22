@@ -142,7 +142,7 @@ impl<F> CoefficientList<F> {
         self.num_variables
     }
 
-    pub fn num_coeffs(&self) -> usize {
+    pub const fn num_coeffs(&self) -> usize {
         self.coeffs.len()
     }
 

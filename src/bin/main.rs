@@ -76,14 +76,13 @@ fn main() {
 
 fn runner(args: &Args, field: AvailableFields) {
     // Type reflection on field
-    use fields::*;
     match field {
-        AvailableFields::Goldilocks1 => run_whir::<Field64>(args),
-        AvailableFields::Goldilocks2 => run_whir::<Field64_2>(args),
-        AvailableFields::Goldilocks3 => run_whir::<Field64_3>(args),
-        AvailableFields::Field128 => run_whir::<Field128>(args),
-        AvailableFields::Field192 => run_whir::<Field192>(args),
-        AvailableFields::Field256 => run_whir::<Field256>(args),
+        AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(args),
+        AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(args),
+        AvailableFields::Goldilocks3 => run_whir::<fields::Field64_3>(args),
+        AvailableFields::Field128 => run_whir::<fields::Field128>(args),
+        AvailableFields::Field192 => run_whir::<fields::Field192>(args),
+        AvailableFields::Field256 => run_whir::<fields::Field256>(args),
     }
 }
 
@@ -148,13 +147,18 @@ fn run_whir_as_ldt<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+    let params = WhirConfig::<F>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        &whir_params,
+    );
 
     let ds = domain_separator!("🌪️")
         .session(session!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover()).into();
+    let mut prover_state = ProverState::from(ds.std_prover());
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -255,13 +259,18 @@ fn run_whir_pcs<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+    let params = WhirConfig::<F>::new(
+        reed_solomon,
+        basefield_reed_solomon,
+        mv_params,
+        &whir_params,
+    );
 
     let ds = domain_separator!("🌪️")
         .session(session!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover()).into();
+    let mut prover_state = ProverState::from(ds.std_prover());
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");

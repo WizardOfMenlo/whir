@@ -100,14 +100,13 @@ fn main() {
     }
 
     // Type reflection on field
-    use fields::*;
     match field {
-        AvailableFields::Goldilocks1 => run_whir::<Field64>(&args),
-        AvailableFields::Goldilocks2 => run_whir::<Field64_2>(&args),
-        AvailableFields::Goldilocks3 => run_whir::<Field64_3>(&args),
-        AvailableFields::Field128 => run_whir::<Field128>(&args),
-        AvailableFields::Field192 => run_whir::<Field192>(&args),
-        AvailableFields::Field256 => run_whir::<Field256>(&args),
+        AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(&args),
+        AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(&args),
+        AvailableFields::Goldilocks3 => run_whir::<fields::Field64_3>(&args),
+        AvailableFields::Field128 => run_whir::<fields::Field128>(&args),
+        AvailableFields::Field192 => run_whir::<fields::Field192>(&args),
+        AvailableFields::Field256 => run_whir::<fields::Field256>(&args),
     }
 }
 
@@ -165,12 +164,16 @@ where
 
         let whir_params = ProtocolParameters {
             initial_statement: false,
-            ..whir_params.clone()
+            ..whir_params
         };
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params =
-            WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::<F>::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -244,7 +247,7 @@ where
         let reed_solomon = Arc::new(RSDefault);
 
         let params =
-            WhirConfig::<F>::new(reed_solomon.clone(), reed_solomon, mv_params, whir_params);
+            WhirConfig::<F>::new(reed_solomon.clone(), reed_solomon, mv_params, &whir_params);
         if !params.check_pow_bits() {
             println!("WARN: more PoW bits required than what specified.");
         }
