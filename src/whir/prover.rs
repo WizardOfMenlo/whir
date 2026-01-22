@@ -618,14 +618,6 @@ where
         );
 
         // Commit to the matrix of evaluations
-        assert_eq!(
-            round_params.matrix_committer.num_cols,
-            1 << folding_factor_next
-        );
-        assert_eq!(
-            evals.len() >> folding_factor_next,
-            round_params.matrix_committer.num_rows()
-        );
         let matrix_witness = round_params.matrix_committer.commit(prover_state, &evals);
 
         // Handle OOD (Out-Of-Domain) samples

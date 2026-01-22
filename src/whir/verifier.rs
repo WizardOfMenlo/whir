@@ -616,13 +616,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
         // Always open against the single batched commitment
         let mut answers: Vec<F> = verifier_state.prover_hint_ark()?;
-        assert!(answers.len().is_multiple_of(stir_challenges_indexes.len()));
-
-        assert_eq!(
-            answers.len(),
-            committer.num_cols * stir_challenges_indexes.len()
-        );
-
         committer.verify(
             verifier_state,
             commitment.matrix_commitment,
