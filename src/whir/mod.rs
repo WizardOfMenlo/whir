@@ -237,6 +237,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_whir_mixed_folding_factors() {
+        let folding_factors = [1, 2, 3, 4];
+        let num_points = [0, 1, 2];
+
+        for initial_folding_factor in folding_factors {
+            for folding_factor in folding_factors {
+                if initial_folding_factor == folding_factor {
+                    continue;
+                }
+                let num_variables = folding_factor..=3 * folding_factor;
+                for num_variable in num_variables {
+                    for num_points in num_points {
+                        eprintln!();
+                        dbg!(
+                            initial_folding_factor,
+                            folding_factor,
+                            num_variable,
+                            num_points,
+                        );
+
+                        make_whir_things(
+                            num_variable,
+                            FoldingFactor::ConstantFromSecondRound(
+                                initial_folding_factor,
+                                folding_factor,
+                            ),
+                            num_points,
+                            SoundnessType::ProvableList,
+                            5,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Test batch proving with multiple independent polynomials and statements.
     ///
     /// Creates N separate polynomials, commits to each independently, and uses RLC to batch-prove
@@ -358,17 +395,26 @@ mod tests {
         let num_polynomials = [2, 3, 4];
         let num_points = [0, 1, 2];
 
-        for folding_factor in folding_factors {
-            for num_polys in num_polynomials {
-                for num_points_per_poly in num_points {
-                    make_whir_batch_things(
-                        folding_factor * 2, // num_variables
-                        FoldingFactor::Constant(folding_factor),
-                        num_points_per_poly,
-                        num_polys,
-                        SoundnessType::ConjectureList,
-                        0, // pow_bits
-                    );
+        for initial_foldig_factor in folding_factors {
+            for folding_factor in folding_factors {
+                for num_polys in num_polynomials {
+                    for num_points_per_poly in num_points {
+                        make_whir_batch_things(
+                            folding_factor * 2, // num_variables
+                            if initial_foldig_factor == folding_factor {
+                                FoldingFactor::Constant(folding_factor)
+                            } else {
+                                FoldingFactor::ConstantFromSecondRound(
+                                    initial_foldig_factor,
+                                    folding_factor,
+                                )
+                            },
+                            num_points_per_poly,
+                            num_polys,
+                            SoundnessType::ConjectureList,
+                            0, // pow_bits
+                        );
+                    }
                 }
             }
         }
