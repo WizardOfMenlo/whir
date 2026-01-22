@@ -16,7 +16,7 @@ use crate::{
     ntt::{RSDefault, ReedSolomon},
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::{matrix_commit, proof_of_work, sumcheck},
-    transcript::FieldConfig,
+    type_info::Type,
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -270,7 +270,7 @@ where
             ),
             initial_sumcheck: if whir_parameters.initial_statement {
                 Some(sumcheck::Config {
-                    field: FieldConfig::new(),
+                    field: Type::new(),
                     initial_size: starting_domain.size(),
                     rounds: vec![
                         sumcheck::RoundConfig {

@@ -1,4 +1,5 @@
 //! Workaround for `ark_ff` lacking Serde support.
+//!
 //! See <https://github.com/arkworks-rs/algebra/pull/506>
 
 use serde::{de::Error as _, ser::Error as _, Deserialize as _, Deserializer, Serializer};

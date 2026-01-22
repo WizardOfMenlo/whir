@@ -1,3 +1,5 @@
+//! Protocol for committing to a vector of [`Hash`]es.
+
 use std::mem::swap;
 
 use ark_std::rand::{CryptoRng, RngCore};

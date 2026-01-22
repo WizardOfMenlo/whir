@@ -1,3 +1,5 @@
+//! Produce challenge indices from a transcript.
+
 use spongefish::Decoding;
 
 use crate::transcript::VerifierMessage;

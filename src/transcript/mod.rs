@@ -5,7 +5,6 @@
 
 pub mod codecs;
 mod engines;
-mod field;
 mod protocol_id;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -18,7 +17,6 @@ use spongefish::{
 
 pub use self::{
     engines::Engines,
-    field::FieldConfig,
     protocol_id::{Protocol, ProtocolId},
 };
 

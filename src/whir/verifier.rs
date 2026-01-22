@@ -10,7 +10,8 @@ use crate::{
     hash::Hash,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     protocols::{matrix_commit, sumcheck},
-    transcript::{codecs::U64, FieldConfig, ProverMessage, VerifierMessage, VerifierState},
+    transcript::{codecs::U64, ProverMessage, VerifierMessage, VerifierState},
+    type_info::Type,
     utils::expand_randomness,
     whir::utils::get_challenge_stir_queries,
 };
@@ -66,7 +67,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
             // Initial sumcheck
             let config = sumcheck::Config {
-                field: FieldConfig::new(),
+                field: Type::new(),
                 initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -128,7 +129,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             round_constraints.push((combination_randomness.clone(), constraints));
 
             let config = sumcheck::Config {
-                field: FieldConfig::new(),
+                field: Type::new(),
                 initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -171,7 +172,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         }
 
         let config = sumcheck::Config {
-            field: FieldConfig::new(),
+            field: Type::new(),
             initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
             rounds: vec![
                 sumcheck::RoundConfig {
@@ -307,7 +308,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
             // Initial sumcheck on the combined constraints
             let config = sumcheck::Config {
-                field: FieldConfig::new(),
+                field: Type::new(),
                 initial_size: 1 << self.params.folding_factor.at_round(0), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -438,7 +439,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         round_constraints.push((combination_randomness, constraints));
 
         let config = sumcheck::Config {
-            field: FieldConfig::new(),
+            field: Type::new(),
             initial_size: 1 << self.params.folding_factor.at_round(1), // Not used
             rounds: vec![
                 sumcheck::RoundConfig {
@@ -482,7 +483,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             round_constraints.push((combination_randomness.clone(), constraints));
 
             let config = sumcheck::Config {
-                field: FieldConfig::new(),
+                field: Type::new(),
                 initial_size: 1 << self.params.folding_factor.at_round(round_index + 1), // Not used
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -522,7 +523,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         }
 
         let config = sumcheck::Config {
-            field: FieldConfig::new(),
+            field: Type::new(),
             initial_size: 1 << self.params.final_sumcheck_rounds, // Not used
             rounds: vec![
                 sumcheck::RoundConfig {

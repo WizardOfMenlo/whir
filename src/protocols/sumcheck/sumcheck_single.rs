@@ -15,7 +15,8 @@ use crate::{
     ensure,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     protocols::proof_of_work,
-    transcript::{codecs::U64, FieldConfig},
+    transcript::codecs::U64,
+    type_info::Type,
     utils::eval_eq,
     whir::statement::Statement,
 };
@@ -26,7 +27,7 @@ pub struct Config<F>
 where
     F: Field,
 {
-    pub field: FieldConfig<F>,
+    pub field: Type<F>,
     pub initial_size: usize,
     pub rounds: Vec<RoundConfig>,
 }
@@ -1204,7 +1205,7 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_basic_case() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 2,
             rounds: vec![RoundConfig {
                 pow: proof_of_work::Config::from_difficulty(Bits::new(0.0)),
@@ -1251,7 +1252,7 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_with_multiple_folding_factors() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 4,
             rounds: vec![
                 RoundConfig {
@@ -1289,7 +1290,7 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_with_three_variables() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 8,
             rounds: vec![
                 RoundConfig {
@@ -1331,7 +1332,7 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_edge_case_zero_folding() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 4,
             rounds: vec![],
         };

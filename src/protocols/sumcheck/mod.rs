@@ -1,3 +1,5 @@
+//! Degree-1 sumcheck protocol.
+
 mod sumcheck_polynomial;
 mod sumcheck_single;
 

@@ -1,3 +1,5 @@
+//! Protocol for grinding and verifying proof of work.
+
 use core::slice;
 
 use ark_std::rand::{CryptoRng, RngCore};

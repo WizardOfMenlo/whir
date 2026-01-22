@@ -18,7 +18,8 @@ use crate::{
         matrix_commit,
         sumcheck::{self, SumcheckSingle},
     },
-    transcript::{codecs::U64, FieldConfig, ProverMessage, ProverState, VerifierMessage},
+    transcript::{codecs::U64, ProverMessage, ProverState, VerifierMessage},
+    type_info::Type,
     utils::expand_randomness,
     whir::{
         parameters::RoundConfig,
@@ -111,7 +112,7 @@ where
 
             // Create the sumcheck prover
             let sumcheck_config = sumcheck::Config {
-                field: FieldConfig::<F>::new(),
+                field: Type::<F>::new(),
                 initial_size: witness.polynomial.num_coeffs(),
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -326,7 +327,7 @@ where
             let combination_randomness_gen = prover_state.verifier_message();
             let sumcheck_config = sumcheck::Config {
                 // TODO: Make part of parameters
-                field: FieldConfig::<F>::new(),
+                field: Type::<F>::new(),
                 initial_size: batched_poly.num_coeffs(),
                 rounds: vec![
                     sumcheck::RoundConfig {
@@ -517,7 +518,7 @@ where
         );
 
         let sumcheck_config = sumcheck::Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 1 << sumcheck_prover.num_variables(),
             rounds: vec![
                 sumcheck::RoundConfig {
@@ -718,7 +719,7 @@ where
             });
 
         let sumcheck_config = sumcheck::Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 1 << sumcheck_prover.num_variables(),
             rounds: vec![
                 sumcheck::RoundConfig {
@@ -815,7 +816,7 @@ where
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 });
             let sumcheck_config = sumcheck::Config {
-                field: FieldConfig::<F>::new(),
+                field: Type::<F>::new(),
                 initial_size: 1 << final_folding_sumcheck.num_variables(),
                 rounds: vec![
                     sumcheck::RoundConfig {
