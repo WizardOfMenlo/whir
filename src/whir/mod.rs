@@ -311,6 +311,7 @@ mod tests {
             mv_params,
             &whir_params,
         );
+        eprintln!("{params}");
 
         // Create N different polynomials
         let polynomials: Vec<_> = (0..num_polynomials)
@@ -393,29 +394,41 @@ mod tests {
     #[test]
     fn test_whir_batch() {
         // Test with different configurations
-        let folding_factors = [2, 3, 4];
+        let folding_factors = [1, 2, 3, 4];
         let num_polynomials = [2, 3, 4];
         let num_points = [0, 1, 2];
 
-        for initial_foldig_factor in folding_factors {
+        for initial_folding_factor in folding_factors {
             for folding_factor in folding_factors {
-                for num_polys in num_polynomials {
-                    for num_points_per_poly in num_points {
-                        make_whir_batch_things(
-                            folding_factor * 2, // num_variables
-                            if initial_foldig_factor == folding_factor {
-                                FoldingFactor::Constant(folding_factor)
-                            } else {
-                                FoldingFactor::ConstantFromSecondRound(
-                                    initial_foldig_factor,
-                                    folding_factor,
-                                )
-                            },
-                            num_points_per_poly,
-                            num_polys,
-                            SoundnessType::ConjectureList,
-                            0, // pow_bits
-                        );
+                let n = std::cmp::max(initial_folding_factor, folding_factor);
+                // TODO: Batching with small number of variables..
+                for num_variables in (initial_folding_factor + folding_factor)..=3 * n {
+                    for num_polys in num_polynomials {
+                        for num_points_per_poly in num_points {
+                            eprintln!();
+                            dbg!(
+                                initial_folding_factor,
+                                folding_factor,
+                                num_variables,
+                                num_polys,
+                                num_points_per_poly,
+                            );
+                            make_whir_batch_things(
+                                num_variables,
+                                if initial_folding_factor == folding_factor {
+                                    FoldingFactor::Constant(folding_factor)
+                                } else {
+                                    FoldingFactor::ConstantFromSecondRound(
+                                        initial_folding_factor,
+                                        folding_factor,
+                                    )
+                                },
+                                num_points_per_poly,
+                                num_polys,
+                                SoundnessType::ConjectureList,
+                                0, // pow_bits
+                            );
+                        }
                     }
                 }
             }
