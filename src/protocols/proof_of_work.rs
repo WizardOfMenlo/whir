@@ -22,23 +22,25 @@ pub struct Config {
     pub threshold: u64,
 }
 
+pub fn threshold(difficulty: Bits) -> u64 {
+    assert!((0.0..60.0).contains(&difficulty.into()));
+
+    let threshold = (64.0 - f64::from(difficulty)).exp2().ceil();
+    if threshold >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        threshold as u64
+    }
+}
+
 impl Config {
     /// Creates a new configuration from a difficulty.
     ///
     /// Defaults to Blake3 as the hash function.
     pub fn from_difficulty(difficulty: Bits) -> Self {
-        assert!((0.0..60.0).contains(&difficulty.into()));
-
-        let threshold = (64.0 - f64::from(difficulty)).exp2().ceil();
-        let threshold = if threshold >= u64::MAX as f64 {
-            u64::MAX
-        } else {
-            threshold as u64
-        };
-
         Self {
             hash_id: BLAKE3,
-            threshold,
+            threshold: threshold(difficulty),
         }
     }
 

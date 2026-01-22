@@ -5,7 +5,7 @@ use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use spongefish::{domain_separator, session, Codec};
 use whir::{
-    cmdline_utils::{AvailableFields, AvailableMerkle, WhirType},
+    cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     crypto::fields,
     hash::HASH_COUNTER,
     ntt::{RSDefault, ReedSolomon},
@@ -60,22 +60,21 @@ struct Args {
     field: AvailableFields,
 
     #[arg(long = "hash", default_value = "Blake3")]
-    merkle_tree: AvailableMerkle,
+    hash: AvailableHash,
 }
 
 fn main() {
     let mut args = Args::parse();
     let field = args.field;
-    let merkle = args.merkle_tree;
 
     if args.pow_bits.is_none() {
         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
     }
 
-    runner(&args, field, merkle);
+    runner(&args, field);
 }
 
-fn runner(args: &Args, field: AvailableFields, _merkle: AvailableMerkle) {
+fn runner(args: &Args, field: AvailableFields) {
     // Type reflection on field
     use fields::*;
     match field {
@@ -125,6 +124,7 @@ fn run_whir_as_ldt<F>(
     let first_round_folding_factor = args.first_round_folding_factor;
     let folding_factor = args.folding_factor;
     let soundness_type = args.soundness_type;
+    let hash_id = args.hash.hash_id();
 
     if args.num_evaluations > 1 {
         println!("Warning: running as LDT but a number of evaluations to be proven was specified.");
@@ -145,6 +145,7 @@ fn run_whir_as_ldt<F>(
         soundness_type,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        hash_id,
     };
 
     let params = WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
@@ -157,7 +158,7 @@ fn run_whir_as_ldt<F>(
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
-    println!("Field: {:?} and MT: {:?}", args.field, args.merkle_tree);
+    println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
     if !params.check_pow_bits() {
         println!("WARN: more PoW bits required than what specified.");
@@ -230,6 +231,7 @@ fn run_whir_pcs<F>(
     let soundness_type = args.soundness_type;
     let num_evaluations = args.num_evaluations;
     let num_linear_constraints = args.num_linear_constraints;
+    let hash_id = args.hash.hash_id();
 
     if num_evaluations == 0 {
         println!("Warning: running as PCS but no evaluations specified.");
@@ -250,6 +252,7 @@ fn run_whir_pcs<F>(
         soundness_type,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        hash_id,
     };
 
     let params = WhirConfig::<F>::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
@@ -262,7 +265,7 @@ fn run_whir_pcs<F>(
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
-    println!("Field: {:?} and MT: {:?}", args.field, args.merkle_tree);
+    println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
     if !params.check_pow_bits() {
         println!("WARN: more PoW bits required than what specified.");

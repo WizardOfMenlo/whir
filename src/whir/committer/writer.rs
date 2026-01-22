@@ -194,6 +194,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::fields::Field64,
+        hash,
         ntt::RSDefault,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::multilinear::MultilinearPoint,
@@ -226,6 +227,7 @@ mod tests {
             soundness_type: SoundnessType::ConjectureList,
             starting_log_inv_rate: starting_rate,
             batch_size: 1,
+            hash_id: hash::SHA2,
         };
 
         // Define multivariate parameters for the polynomial.
@@ -313,6 +315,7 @@ mod tests {
                 soundness_type: SoundnessType::ConjectureList,
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                hash_id: hash::BLAKE3,
             },
         );
 
@@ -354,6 +357,7 @@ mod tests {
                 soundness_type: SoundnessType::ConjectureList,
                 starting_log_inv_rate: 1,
                 batch_size: 1,
+                hash_id: hash::BLAKE3,
             },
         );
 

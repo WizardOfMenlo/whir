@@ -106,6 +106,12 @@ where
             .check_validity(mv_parameters.num_variables)
             .unwrap();
 
+        // Proof of work constructor with the requested hash function.
+        let pow = |difficulty| proof_of_work::Config {
+            hash_id: whir_parameters.hash_id,
+            threshold: proof_of_work::threshold(Bits::new(difficulty)),
+        };
+
         let protocol_security_level = whir_parameters
             .security_level
             .saturating_sub(whir_parameters.pow_bits);
@@ -212,15 +218,16 @@ where
             );
 
             let folding_factor = whir_parameters.folding_factor.at_round(round);
-            let matrix_committer = matrix_commit::Config::<F>::new(
+            let matrix_committer = matrix_commit::Config::<F>::with_hash(
+                whir_parameters.hash_id,
                 (domain_size / 2) >> folding_factor,
                 1 << folding_factor,
             );
 
             round_parameters.push(RoundConfig {
                 matrix_committer,
-                pow: proof_of_work::Config::from_difficulty(Bits::new(pow_bits)),
-                folding_pow: proof_of_work::Config::from_difficulty(Bits::new(folding_pow_bits)),
+                pow: pow(pow_bits),
+                folding_pow: pow(folding_pow_bits),
                 num_queries,
                 ood_samples,
                 log_inv_rate,
@@ -264,7 +271,8 @@ where
             starting_domain: starting_domain.clone(),
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
-            initial_matrix_committer: matrix_commit::Config::new(
+            initial_matrix_committer: matrix_commit::Config::with_hash(
+                whir_parameters.hash_id,
                 starting_domain.size() >> whir_parameters.folding_factor.at_round(0),
                 whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
             ),
@@ -274,9 +282,7 @@ where
                     initial_size: starting_domain.size(),
                     rounds: vec![
                         sumcheck::RoundConfig {
-                            pow: proof_of_work::Config::from_difficulty(Bits::new(
-                                starting_folding_pow_bits
-                            )),
+                            pow: pow(starting_folding_pow_bits),
                         };
                         whir_parameters.folding_factor.at_round(0)
                     ],
@@ -284,17 +290,13 @@ where
             } else {
                 None
             },
-            starting_folding_pow: proof_of_work::Config::from_difficulty(Bits::new(
-                starting_folding_pow_bits,
-            )),
+            starting_folding_pow: pow(starting_folding_pow_bits),
             folding_factor: whir_parameters.folding_factor,
             round_parameters,
             final_queries,
-            final_pow: proof_of_work::Config::from_difficulty(Bits::new(final_pow_bits)),
+            final_pow: pow(final_pow_bits),
             final_sumcheck_rounds,
-            final_folding_pow: proof_of_work::Config::from_difficulty(Bits::new(
-                final_folding_pow_bits,
-            )),
+            final_folding_pow: pow(final_folding_pow_bits),
             final_log_inv_rate: log_inv_rate,
             batch_size: whir_parameters.batch_size,
             reed_solomon,
@@ -784,6 +786,7 @@ mod tests {
     use crate::{
         bits::Bits,
         crypto::fields::{Field256, Field64},
+        hash,
         utils::test_serde,
     };
 
@@ -797,6 +800,7 @@ mod tests {
             soundness_type: SoundnessType::ConjectureList,
             starting_log_inv_rate: 1,
             batch_size: 1,
+            hash_id: hash::BLAKE3,
         }
     }
 

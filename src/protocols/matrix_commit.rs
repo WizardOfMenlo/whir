@@ -157,6 +157,7 @@ impl<T: Immutable + IntoBytes> Encoder<T> for ZeroCopyEncoder {
 }
 
 impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
+    /// Create a new matrix commit configuration with the recommended hash function.
     pub fn new(num_rows: usize, num_cols: usize) -> Self {
         // Select a leaf hash function.
         let leaf_size = T::encoded_size() * num_cols;
@@ -173,6 +174,15 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             num_cols,
             leaf_hash_id,
             merkle_tree: merkle_tree::Config::new(num_rows),
+        }
+    }
+
+    pub fn with_hash(hash_id: ProtocolId, num_rows: usize, num_cols: usize) -> Self {
+        Self {
+            element_type: Type::new(),
+            num_cols,
+            leaf_hash_id: hash_id,
+            merkle_tree: merkle_tree::Config::with_hash(hash_id, num_rows),
         }
     }
 

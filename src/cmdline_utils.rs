@@ -2,6 +2,8 @@ use std::str::FromStr;
 
 use serde::Serialize;
 
+use crate::{hash, transcript::ProtocolId};
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum WhirType {
     LDT,
@@ -47,19 +49,36 @@ impl FromStr for AvailableFields {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-pub enum AvailableMerkle {
-    Keccak256,
+pub enum AvailableHash {
+    Sha2,
+    Sha3,
+    Keccak,
     Blake3,
 }
 
-impl FromStr for AvailableMerkle {
+impl AvailableHash {
+    pub const fn hash_id(&self) -> ProtocolId {
+        match self {
+            Self::Sha2 => hash::SHA2,
+            Self::Sha3 => hash::SHA3,
+            Self::Keccak => hash::KECCAK,
+            Self::Blake3 => hash::BLAKE3,
+        }
+    }
+}
+
+impl FromStr for AvailableHash {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Keccak" => Ok(Self::Keccak256),
+            "Sha2" => Ok(Self::Sha2),
+            "Sha3" => Ok(Self::Sha3),
+            "Keccak" => Ok(Self::Keccak),
             "Blake3" => Ok(Self::Blake3),
-            _ => Err(format!("Invalid hash: {s}")),
+            _ => Err(format!(
+                "Invalid hash: {s}, options are: Sha2, Sha3, Keccak, Blake3"
+            )),
         }
     }
 }

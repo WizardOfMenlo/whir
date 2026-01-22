@@ -43,15 +43,15 @@ pub struct Witness {
 }
 
 impl Config {
+    /// Create a new Merkle tree configuration with the recommended hash function.
     pub fn new(num_leaves: usize) -> Self {
+        Self::with_hash(hash::BLAKE3, num_leaves)
+    }
+
+    pub fn with_hash(hash_id: ProtocolId, num_leaves: usize) -> Self {
         Self {
             num_leaves,
-            layers: vec![
-                LayerConfig {
-                    hash_id: hash::BLAKE3,
-                };
-                layers_for_size(num_leaves)
-            ],
+            layers: vec![LayerConfig { hash_id }; layers_for_size(num_leaves)],
         }
     }
 

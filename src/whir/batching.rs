@@ -32,6 +32,7 @@ mod batching_tests {
 
     use crate::{
         crypto::fields::Field64,
+        hash,
         ntt::RSDefault,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
@@ -99,6 +100,7 @@ mod batching_tests {
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size,
+            hash_id: hash::SHA2,
         };
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();

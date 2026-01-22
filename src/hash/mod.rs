@@ -27,6 +27,7 @@ pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     let engines = Engines::<dyn Engine>::new();
     engines.register(Arc::new(Copy::new()));
     engines.register(Arc::new(Sha2::new()));
+    engines.register(Arc::new(Keccak::new()));
     engines.register(Arc::new(Sha3::new()));
     engines.register(Arc::new(Blake3::detect()));
     engines

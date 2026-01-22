@@ -7,6 +7,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::transcript::ProtocolId;
+
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
 /// This function determines the PoW security level based on the number of variables
@@ -218,9 +220,10 @@ pub struct ProtocolParameters {
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
     pub pow_bits: usize,
-
     /// Number of polynomials committed in the batch.
     pub batch_size: usize,
+    /// Hash function identifier.
+    pub hash_id: ProtocolId,
 }
 
 impl Display for ProtocolParameters {

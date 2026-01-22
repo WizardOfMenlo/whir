@@ -11,7 +11,7 @@ use clap::Parser;
 use serde::Serialize;
 use spongefish::{domain_separator, session, Codec};
 use whir::{
-    cmdline_utils::{AvailableFields, AvailableMerkle},
+    cmdline_utils::{AvailableFields, AvailableHash},
     crypto::fields,
     hash::HASH_COUNTER,
     ntt::RSDefault,
@@ -60,7 +60,7 @@ struct Args {
     field: AvailableFields,
 
     #[arg(long = "hash", default_value = "Blake3")]
-    merkle_tree: AvailableMerkle,
+    hash: AvailableHash,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,7 +73,7 @@ struct BenchmarkOutput {
     folding_factor: usize,
     soundness_type: SoundnessType,
     field: AvailableFields,
-    merkle_tree: AvailableMerkle,
+    hash: AvailableHash,
 
     // Whir
     whir_evaluations: usize,
@@ -94,7 +94,6 @@ struct BenchmarkOutput {
 fn main() {
     let mut args = Args::parse();
     let field = args.field;
-    let _merkle = args.merkle_tree;
 
     if args.pow_bits.is_none() {
         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
@@ -143,6 +142,7 @@ where
         soundness_type,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
+        hash_id: args.hash.hash_id(),
     };
 
     let polynomial = CoefficientList::new(
@@ -321,7 +321,7 @@ where
         folding_factor,
         soundness_type,
         field: args.field,
-        merkle_tree: args.merkle_tree,
+        hash: args.hash,
 
         // Whir
         whir_evaluations: args.num_evaluations,

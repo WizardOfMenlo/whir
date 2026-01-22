@@ -15,6 +15,7 @@ mod tests {
 
     use crate::{
         crypto::fields::{Field64, Field64_2},
+        hash,
         ntt::RSDefault,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
@@ -70,6 +71,7 @@ mod tests {
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size: 1,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
@@ -254,6 +256,7 @@ mod tests {
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size: 1,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
@@ -397,6 +400,7 @@ mod tests {
             soundness_type: SoundnessType::ConjectureList,
             starting_log_inv_rate: 1,
             batch_size: 1,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
@@ -495,6 +499,7 @@ mod tests {
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size, // KEY: batch_size > 1
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
