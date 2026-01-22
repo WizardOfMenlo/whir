@@ -1,4 +1,4 @@
-// pub mod batching;
+pub mod batching;
 pub mod committer;
 pub mod parameters;
 pub mod prover;

@@ -265,8 +265,7 @@ where
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
             initial_matrix_committer: matrix_commit::Config::new(
-                whir_parameters.batch_size * starting_domain.size()
-                    >> whir_parameters.folding_factor.at_round(0),
+                starting_domain.size() >> whir_parameters.folding_factor.at_round(0),
                 whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
             ),
             initial_sumcheck: if whir_parameters.initial_statement {

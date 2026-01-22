@@ -91,18 +91,14 @@ mod batching_tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
         };
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
@@ -180,7 +176,7 @@ mod batching_tests {
         let commitment_reader = CommitmentReader::new(&params);
 
         let parsed_commitment = commitment_reader
-            .parse_commitment(verifier_state.inner_mut())
+            .parse_commitment(&mut verifier_state)
             .unwrap();
 
         // Verify that the generated proof satisfies the statement

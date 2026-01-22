@@ -7,7 +7,6 @@ use super::{
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
-    ensure,
     hash::Hash,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     protocols::{matrix_commit, sumcheck},
@@ -371,32 +370,28 @@ impl<'a, F: FftField> Verifier<'a, F> {
         );
 
         // Verify Merkle openings in all N original commitment trees
-        let mut all_answers = Vec::with_capacity(parsed_commitments.len());
+        let mut all_answers: Vec<Vec<F>> = Vec::with_capacity(parsed_commitments.len());
         for commitment in parsed_commitments {
             let answers: Vec<F> = verifier_state.prover_hint_ark()?;
-            ensure!(
-                answers.len() == round_params.num_queries * round_params.folding_factor,
-                VerificationError
-            );
             self.params.initial_matrix_committer.verify(
                 verifier_state,
                 commitment.matrix_commitment,
                 &stir_challenges_indexes,
                 &answers,
             )?;
-
             all_answers.push(answers);
         }
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let fold_size = 1 << round_params.folding_factor;
+        let leaf_size = fold_size * self.params.batch_size;
         let rlc_answers: Vec<Vec<F>> = (0..stir_challenges_indexes.len())
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
                 for (commitment, witness_answers) in parsed_commitments.iter().zip(&all_answers) {
                     let stacked_answer =
-                        &witness_answers[query_idx * fold_size..(query_idx + 1) * fold_size];
+                        &witness_answers[query_idx * leaf_size..(query_idx + 1) * leaf_size];
 
                     // First, internally reduce stacked leaf using commitment's batching_randomness
                     let mut internal_pow = F::ONE;

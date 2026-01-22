@@ -415,9 +415,14 @@ where
 
         // For each witness, provide Merkle proof opening at the challenge indices
         for witness in witnesses {
-            let answers: Vec<_> = stir_indexes
+            let answers: Vec<F> = stir_indexes
                 .iter()
-                .map(|&i| witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
+                .map(|&i| {
+                    witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size]
+                        .iter()
+                        .copied()
+                })
+                .flatten()
                 .collect();
             prover_state.prover_hint_ark(&answers);
             all_witness_answers.push(answers);
@@ -437,7 +442,9 @@ where
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
                 for (witness_idx, witness) in witnesses.iter().enumerate() {
-                    let answer = &all_witness_answers[witness_idx][query_idx];
+                    let leaf_size = fold_size * self.config.batch_size;
+                    let answer = &all_witness_answers[witness_idx]
+                        [query_idx * leaf_size..(query_idx + 1) * leaf_size];
 
                     // First, internally reduce stacked leaf using witness's batching_randomness
                     let mut internal_pow = F::ONE;

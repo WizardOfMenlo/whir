@@ -70,7 +70,6 @@ impl<F: Field> Config<F> {
         R: RngCore + CryptoRng,
         Hash: ProverMessage<[H::U]>,
     {
-        //eprintln!("Commit {}x{}", self.num_rows(), self.num_cols);
         assert_eq!(matrix.len(), self.num_rows() * self.num_cols);
 
         let engine = hash::ENGINES
@@ -96,11 +95,6 @@ impl<F: Field> Config<F> {
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
     {
-        // eprintln!(
-        //     "Received commitment for {}x{}",
-        //     self.num_rows(),
-        //     self.num_cols
-        // );
         self.merkle_tree.receive_commitment(verifier_state)
     }
 
@@ -119,7 +113,6 @@ impl<F: Field> Config<F> {
         R: RngCore + CryptoRng,
         Hash: ProverMessage<[H::U]>,
     {
-        // eprintln!("Open {}x{} at {indices:?}", self.num_rows(), self.num_cols,);
         self.merkle_tree.open(prover_state, witness, indices);
     }
 
@@ -140,11 +133,6 @@ impl<F: Field> Config<F> {
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
     {
-        // eprintln!(
-        //     "Verify {}x{} at {indices:?}",
-        //     self.num_rows(),
-        //     self.num_cols,
-        // );
         ensure!(
             matrix.len() == self.num_cols * indices.len(),
             VerificationError
@@ -163,6 +151,7 @@ impl<F: Field> Config<F> {
     }
 }
 
+#[cfg(not(feature = "parallel"))]
 fn hash_rows<F: Field + NargSerialize>(
     engine: &dyn hash::Engine,
     matrix: &[F],
@@ -182,5 +171,53 @@ fn hash_rows<F: Field + NargSerialize>(
         let count = chunk.len() / cols;
         engine.hash_many(message_size, &buffer, &mut out[..count]);
         out = &mut out[count..];
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn hash_rows<F: Field + NargSerialize>(
+    engine: &dyn hash::Engine,
+    matrix: &[F],
+    mut out: &mut [Hash],
+) {
+    use crate::utils::workload_size;
+
+    if matrix.len() > workload_size::<F>() && out.len() > engine.preferred_batch_size() {
+        let split = (out.len() / 2).next_multiple_of(engine.preferred_batch_size());
+        let m_split = (matrix.len() / out.len()) * split;
+        let (mat_a, mat_b) = matrix.split_at(m_split);
+        let (out_a, out_b) = out.split_at_mut(split);
+        rayon::join(
+            || hash_rows(engine, mat_a, out_a),
+            || hash_rows(engine, mat_b, out_b),
+        );
+    } else {
+        let cols = matrix.len() / out.len();
+        let encoded_size = FieldConfig::<F>::new().size_bytes();
+        let message_size = encoded_size * cols;
+        let batch_size = engine.preferred_batch_size();
+
+        use ark_ff::PrimeField;
+        let modulus_bytes = (F::BasePrimeField::MODULUS_BIT_SIZE as usize + 7) / 8;
+
+        let mut buffer = Vec::with_capacity(batch_size * cols * encoded_size);
+        for chunk in matrix.chunks(batch_size * cols) {
+            buffer.clear();
+            for value in chunk {
+                for coeff in value.to_base_prime_field_elements() {
+                    use zerocopy::IntoBytes;
+
+                    let bigint = coeff.into_bigint();
+                    let limbs = bigint.as_ref();
+                    let bytes = &limbs.as_bytes()[..modulus_bytes];
+                    buffer.extend_from_slice(bytes);
+                }
+
+                // value.serialize_into_narg(&mut buffer);
+            }
+            let count = chunk.len() / cols;
+            engine.hash_many(message_size, &buffer, &mut out[..count]);
+            out = &mut out[count..];
+        }
     }
 }
