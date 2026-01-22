@@ -86,14 +86,13 @@ impl Engine for Blake3 {
 }
 
 fn hash_many(platform: Platform, size: usize, inputs: &[u8], output: &mut [Hash]) {
-    assert!(
-        size.is_multiple_of(BLOCK_LEN),
-        "Message size ({size}) must be a multiple of the block length ({BLOCK_LEN} bytes)."
-    );
-    assert!(
-        size <= CHUNK_LEN,
-        "Message size ({size}) must not exceed a single chunk ({CHUNK_LEN} bytes)."
-    );
+    if !size.is_multiple_of(BLOCK_LEN) || size > CHUNK_LEN {
+        // Fall back to slow path
+        use super::DigestEngine;
+        let fallback = DigestEngine::<blake3::Hasher>::from_name("blake3");
+        fallback.hash_many(size, inputs, output);
+        return;
+    }
     assert_eq!(
         inputs.len(),
         size * output.len(),
