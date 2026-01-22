@@ -221,10 +221,11 @@ where
             );
 
             let folding_factor = whir_parameters.folding_factor.at_round(round);
+            let next_folding_factor = whir_parameters.folding_factor.at_round(round + 1);
             let matrix_committer = matrix_commit::Config::<F>::with_hash(
                 whir_parameters.hash_id,
-                (domain_size / 2) >> folding_factor,
-                1 << folding_factor,
+                (domain_size / 2) >> next_folding_factor,
+                1 << next_folding_factor,
             );
 
             round_parameters.push(RoundConfig {
@@ -242,13 +243,12 @@ where
                 exp_domain_gen,
             });
 
-            num_variables -= whir_parameters.folding_factor.at_round(round + 1);
+            num_variables -= next_folding_factor;
             log_inv_rate = next_rate;
             domain_size /= 2;
             domain_gen = domain_gen.square();
             domain_gen_inv = domain_gen_inv.square();
-            exp_domain_gen =
-                domain_gen.pow([1 << whir_parameters.folding_factor.at_round(round + 1)]);
+            exp_domain_gen = domain_gen.pow([1 << next_folding_factor]);
         }
 
         let final_queries = Self::queries(
@@ -609,8 +609,9 @@ impl<F: FftField> Display for WhirConfig<F> {
             "initial_folding_pow_bits: {}",
             self.starting_folding_pow.difficulty()
         )?;
-        for r in &self.round_parameters {
-            write!(f, "{r}")?;
+        writeln!(f, "Initial rate: 2^-{}", self.starting_log_inv_rate)?;
+        for (i, r) in self.round_parameters.iter().enumerate() {
+            write!(f, "Round {i}: {r}")?;
         }
 
         writeln!(
@@ -773,12 +774,14 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Num_queries: {}, rate: 2^-{}, pow_bits: {}, ood_samples: {}, folding_pow: {}",
+            "Num_queries: {}, rate: 2^-{}, pow_bits: {}, ood_samples: {}, folding_factor: {} folding_pow: {}, initial_domain_size: {}",
             self.num_queries,
             self.log_inv_rate,
             self.pow.difficulty(),
             self.ood_samples,
+            self.folding_factor,
             self.folding_pow.difficulty(),
+            self.domain_size,
         )
     }
 }

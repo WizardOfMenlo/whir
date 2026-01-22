@@ -83,6 +83,7 @@ mod tests {
             mv_params,
             &whir_params,
         );
+        eprintln!("{params}");
 
         // Test that the config is serializable
         test_serde(&params);
@@ -247,7 +248,8 @@ mod tests {
                 if initial_folding_factor == folding_factor {
                     continue;
                 }
-                let num_variables = folding_factor..=3 * folding_factor;
+                let n = std::cmp::max(initial_folding_factor, folding_factor);
+                let num_variables = n..=3 * n;
                 for num_variable in num_variables {
                     for num_points in num_points {
                         eprintln!();
