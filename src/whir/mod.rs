@@ -13,6 +13,7 @@ mod tests {
     use std::sync::Arc;
 
     use ark_ff::Field;
+    use ark_ff::Zero;
     use spongefish::DomainSeparator;
     use spongefish_pow::blake3::Blake3PoW;
 
@@ -922,6 +923,189 @@ mod tests {
         );
     }
 
+    /// PreFold batch proving with internal batching enabled (batch_size = 2).
+    ///
+    /// Shape:
+    /// - exactly 2 witnesses total (required by PreFoldSecond),
+    /// - each witness commitment stacks 2 polynomials internally (e.g. witness + blinding),
+    /// - arities differ by 1 (n and n+1), so we PreFold the larger witness once.
+    fn make_whir_prefold_with_internal_batching(
+        num_vars_small: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let batch_size = 2;
+        let num_vars_large = num_vars_small + 1;
+        let mut rng = ark_std::test_rng();
+
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, Blake3LeafHash<EF>, Blake3Compress>(&mut rng);
+
+        // Config for smaller witness (target arity after pre-folding)
+        let mv_params = MultivariateParameters::new(num_vars_small);
+        let whir_params = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: folding_factor.clone(),
+            leaf_hash_params: leaf_hash_params.clone(),
+            two_to_one_params: two_to_one_params.clone(),
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+
+        // Config for larger witness (n+1 variables)
+        // IMPORTANT: PreFold requires folding_factor=1 for the larger witness.
+        let mv_params_large = MultivariateParameters::new(num_vars_large);
+        let whir_params_large = ProtocolParameters::<MerkleConfig, PowStrategy> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: FoldingFactor::Constant(1),
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type,
+            _pow_parameters: Default::default(),
+            starting_log_inv_rate: 1,
+            batch_size,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+
+        let reed_solomon_large = Arc::new(RSDefault);
+        let basefield_reed_solomon_large = reed_solomon_large.clone();
+        let params_large = WhirConfig::new(
+            reed_solomon_large,
+            basefield_reed_solomon_large,
+            mv_params_large,
+            whir_params_large,
+        );
+
+        // Two polynomials per witness (internal batching)
+        let num_coeffs_small = 1 << num_vars_small;
+        let num_coeffs_large = 1 << num_vars_large;
+
+        let f0 = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let f1 = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i * 3 + 7) as u64))
+                .collect(),
+        );
+        let g0 = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+        let g1 = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 5 + 11) as u64))
+                .collect(),
+        );
+
+        // Create statements (weights are public; values are derived from the batched witnesses below)
+        let mut statement_small = Statement::new(num_vars_small);
+        let mut statement_large = Statement::new(num_vars_large);
+
+        // Add random evaluation point constraints
+        for _ in 0..num_points_per_poly {
+            let point_small: MultilinearPoint<F> = MultilinearPoint::rand(&mut rng, num_vars_small);
+            // placeholder value; we overwrite with actual batched evaluation after committing
+            statement_small.add_constraint(Weights::evaluation(point_small), F::zero());
+        }
+        for _ in 0..num_points_per_poly {
+            let point_large: MultilinearPoint<F> = MultilinearPoint::rand(&mut rng, num_vars_large);
+            statement_large.add_constraint(Weights::evaluation(point_large), F::zero());
+        }
+
+        let mut statements = vec![statement_small, statement_large];
+
+        // Set up domain separator with PreFold
+        let mut domainsep = DomainSeparator::new("🌪️");
+        domainsep = domainsep.commit_statement(&params); // Small witness
+        domainsep = domainsep.commit_statement(&params_large); // Large witness
+
+        let total_constraints = 2 * params.committment_ood_samples
+            + statements.iter().map(|s| s.constraints.len()).sum::<usize>();
+        domainsep = domainsep.add_whir_prefold_batch_proof(&params, total_constraints);
+
+        let mut prover_state = domainsep.to_prover_state();
+
+        // Commit to both witnesses using internal batching (batch_size = 2)
+        let committer_small = CommitmentWriter::new(params.clone());
+        let committer_large = CommitmentWriter::new(params_large.clone());
+
+        let witness_small = committer_small
+            .commit_batch(&mut prover_state, &[&f0, &f1])
+            .unwrap();
+        let witness_large = committer_large
+            .commit_batch(&mut prover_state, &[&g0, &g1])
+            .unwrap();
+
+        // Fill in the correct statement sums using the *internally-batched* witnesses.
+        for constraint in &mut statements[0].constraints {
+            constraint.sum = constraint.weights.evaluate(&witness_small.polynomial);
+        }
+        for constraint in &mut statements[1].constraints {
+            constraint.sum = constraint.weights.evaluate(&witness_large.polynomial);
+        }
+
+        let witnesses = vec![witness_small, witness_large];
+
+        // Generate PreFold proof
+        let prover = Prover::new(params.clone());
+        let result = prover.prove_batch(
+            &mut prover_state,
+            &statements,
+            &witnesses,
+            BatchingMode::PreFoldSecond,
+        );
+        assert!(
+            result.is_ok(),
+            "PreFold (internal batching) proving failed: {:?}",
+            result.err()
+        );
+
+        // Verify
+        let commitment_reader_small = CommitmentReader::new(&params);
+        let commitment_reader_large = CommitmentReader::new(&params_large);
+        let verifier = Verifier::new(&params);
+
+        let mut verifier_state = domainsep.to_verifier_state(prover_state.narg_string());
+        let parsed_commitment_small = commitment_reader_small
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitment_large = commitment_reader_large
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitments = vec![parsed_commitment_small, parsed_commitment_large];
+
+        let verify_result = verifier.verify_batch(
+            &mut verifier_state,
+            &parsed_commitments,
+            &statements,
+            BatchingMode::PreFoldSecond,
+        );
+        assert!(
+            verify_result.is_ok(),
+            "PreFold (internal batching) verification failed: {:?}",
+            verify_result.err()
+        );
+    }
+
     #[test]
     fn test_whir_prefold_basic() {
         // Basic test with minimal configuration
@@ -987,6 +1171,17 @@ mod tests {
             1,                             // num_points_per_poly
             SoundnessType::ConjectureList, // soundness_type
             5,                             // pow_bits (non-zero PoW)
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_internal_batching_2() {
+        make_whir_prefold_with_internal_batching(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            2,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
         );
     }
 }

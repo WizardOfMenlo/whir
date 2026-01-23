@@ -631,10 +631,6 @@ where
             2,
             "PreFoldSecond mode requires exactly 2 statements"
         );
-        assert_eq!(
-            self.config.batch_size, 1,
-            "PreFoldSecond currently requires batch_size=1 (no internal batching)"
-        );
 
         let num_vars_0 = witnesses[0].polynomial.num_variables();
         let num_vars_1 = witnesses[1].polynomial.num_variables();
@@ -693,17 +689,54 @@ where
             self.config.folding_factor.at_round(0),
         );
 
-        #[cfg(not(feature = "parallel"))]
-        let leafs_iter = g_folded_evals.chunks_exact(commit_fold_size);
-        #[cfg(feature = "parallel")]
-        let leafs_iter = g_folded_evals.par_chunks_exact(commit_fold_size);
+        // If internal batching is enabled (batch_size > 1), we commit to g' using a
+        // *stacked-leaf* Merkle tree shape so that the later "Round 0" batching code can
+        // reuse the standard internal-leaf reduction logic.
+        //
+        // Concretely, each leaf is laid out as:
+        //   [ g'(chunk), 0(chunk), 0(chunk), ... ]
+        // with length = commit_fold_size * batch_size, and we set witness_g_folded.batching_randomness = 0.
+        //
+        // This keeps the folded witness as a single polynomial (g'), while keeping the leaf layout
+        // compatible with the batch proof "internal batching" reduction code.
+        let (g_folded_merkle, g_folded_merkle_leaves) = if self.config.batch_size == 1 {
+            #[cfg(not(feature = "parallel"))]
+            let leafs_iter = g_folded_evals.chunks_exact(commit_fold_size);
+            #[cfg(feature = "parallel")]
+            let leafs_iter = g_folded_evals.par_chunks_exact(commit_fold_size);
 
-        let g_folded_merkle = MerkleTree::<MerkleConfig>::new(
-            &self.config.leaf_hash_params,
-            &self.config.two_to_one_params,
-            leafs_iter,
-        )
-        .unwrap();
+            let merkle = MerkleTree::<MerkleConfig>::new(
+                &self.config.leaf_hash_params,
+                &self.config.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap();
+            (merkle, g_folded_evals)
+        } else {
+            let stacked_leaf_size = commit_fold_size * self.config.batch_size;
+            let num_leaves = g_folded_evals.len() / commit_fold_size;
+            let mut stacked_leaves = vec![F::ZERO; num_leaves * stacked_leaf_size];
+
+            for leaf_idx in 0..num_leaves {
+                let src_start = leaf_idx * commit_fold_size;
+                let dst_start = leaf_idx * stacked_leaf_size;
+                stacked_leaves[dst_start..dst_start + commit_fold_size]
+                    .copy_from_slice(&g_folded_evals[src_start..src_start + commit_fold_size]);
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            let leafs_iter = stacked_leaves.chunks_exact(stacked_leaf_size);
+            #[cfg(feature = "parallel")]
+            let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
+
+            let merkle = MerkleTree::<MerkleConfig>::new(
+                &self.config.leaf_hash_params,
+                &self.config.two_to_one_params,
+                leafs_iter,
+            )
+            .unwrap();
+            (merkle, stacked_leaves)
+        };
 
         prover_state.add_digest(g_folded_merkle.root())?;
 
@@ -717,7 +750,7 @@ where
         let witness_g_folded = Witness {
             polynomial: g_folded,
             merkle_tree: g_folded_merkle,
-            merkle_leaves: g_folded_evals,
+            merkle_leaves: g_folded_merkle_leaves,
             ood_points: g_folded_ood_points,
             ood_answers: g_folded_ood_answers,
             batching_randomness: F::ZERO,
@@ -746,9 +779,10 @@ where
         )?;
 
         let fold_size = 1 << g_folding_factor;
+        let leaf_size = fold_size * self.config.batch_size;
         let original_g_answers: Vec<Vec<F>> = stir_indexes
             .iter()
-            .map(|&i| witness_g.merkle_leaves[i * fold_size..(i + 1) * fold_size].to_vec())
+            .map(|&i| witness_g.merkle_leaves[i * leaf_size..(i + 1) * leaf_size].to_vec())
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&original_g_answers)?;
@@ -756,10 +790,24 @@ where
             .write_proof_hint(&witness_g.merkle_tree, &stir_indexes, prover_state)?;
 
         // Provide g' evaluations at the same queried leaf positions.
-        // We compute them directly from the opened chunk by folding at α; verifier does the same.
+        // We compute them directly from the opened chunk by:
+        //   1) internally reducing the stacked leaf using g's batching_randomness (if batch_size>1),
+        //   2) folding the 2-point chunk at α (since PreFold folds exactly one variable).
+        // The verifier performs the same computation.
         let g_folded_stir_evals: Vec<F> = original_g_answers
             .iter()
-            .map(|chunk| CoefficientList::new(chunk.clone()).evaluate(&prefold_randomness))
+            .map(|chunk| {
+                let mut reduced = vec![F::ZERO; fold_size];
+                let mut internal_pow = F::ONE;
+                for poly_idx in 0..self.config.batch_size {
+                    let start = poly_idx * fold_size;
+                    for j in 0..fold_size {
+                        reduced[j] += internal_pow * chunk[start + j];
+                    }
+                    internal_pow *= witness_g.batching_randomness;
+                }
+                CoefficientList::new(reduced).evaluate(&prefold_randomness)
+            })
             .collect();
         prover_state.hint::<Vec<F>>(&g_folded_stir_evals)?;
 

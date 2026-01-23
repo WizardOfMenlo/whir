@@ -547,10 +547,6 @@ where
         // Validation
         assert_eq!(parsed_commitments.len(), 2);
         assert_eq!(statements.len(), 2);
-        assert_eq!(
-            self.params.batch_size, 1,
-            "PreFoldSecond currently requires batch_size=1 (no internal batching)"
-        );
 
         let num_vars_0 = parsed_commitments[0].num_variables;
         let num_vars_1 = parsed_commitments[1].num_variables;
@@ -625,8 +621,20 @@ where
         let g_folded_stir_evals: Vec<F> = verifier_state.hint()?;
         for (answer_chunk, &expected_folded) in original_g_answers.iter().zip(&g_folded_stir_evals)
         {
-            let chunk_poly = CoefficientList::new(answer_chunk.clone());
-            let actual_folded = chunk_poly.evaluate(&prefold_randomness);
+            // `answer_chunk` is a stacked leaf when internal batching is enabled.
+            // Reduce it using g's batching randomness, then fold the 2-point chunk at α.
+            let fold_size = 1 << g_folding_factor;
+            let mut reduced = vec![F::ZERO; fold_size];
+            let mut internal_pow = F::ONE;
+            for poly_idx in 0..self.params.batch_size {
+                let start = poly_idx * fold_size;
+                for j in 0..fold_size {
+                    reduced[j] += internal_pow * answer_chunk[start + j];
+                }
+                internal_pow *= parsed_commitments[big_idx].batching_randomness;
+            }
+
+            let actual_folded = CoefficientList::new(reduced).evaluate(&prefold_randomness);
             if actual_folded != expected_folded {
                 return Err(ProofError::InvalidProof);
             }
@@ -735,13 +743,27 @@ where
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
 
-                // f contribution
-                for j in 0..fold_size {
-                    combined[j] += answers_f[query_idx][j];
+                // f contribution (internally reduce stacked leaf using η_f if batch_size>1)
+                let mut internal_pow = F::ONE;
+                for poly_idx in 0..self.params.batch_size {
+                    let start = poly_idx * fold_size;
+                    for j in 0..fold_size {
+                        combined[j] += internal_pow * answers_f[query_idx][start + j];
+                    }
+                    internal_pow *= parsed_commitments[small_idx].batching_randomness;
                 }
-                // g' contribution
-                for j in 0..fold_size {
-                    combined[j] += batching_randomness * answers_g[query_idx][j];
+
+                // g' contribution:
+                // - prover commits to g' with a stacked-leaf layout of size fold_size * batch_size,
+                //   where only the first chunk is non-zero.
+                // - g_folded_commitment.batching_randomness is 0, so the same reduction logic works.
+                let mut internal_pow = F::ONE;
+                for poly_idx in 0..self.params.batch_size {
+                    let start = poly_idx * fold_size;
+                    for j in 0..fold_size {
+                        combined[j] += batching_randomness * internal_pow * answers_g[query_idx][start + j];
+                    }
+                    internal_pow *= g_folded_commitment.batching_randomness;
                 }
                 combined
             })
