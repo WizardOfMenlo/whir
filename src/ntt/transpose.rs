@@ -20,8 +20,8 @@ pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: us
         let mut buffer = vec![matrix[0]; rows * cols];
         for matrix in matrix.chunks_exact_mut(rows * cols) {
             transpose_copy(
-                MatrixMut::from_mut_slice(buffer.as_mut_slice(), rows, cols),
-                MatrixMut::from_mut_slice(matrix, cols, rows),
+                MatrixMut::from_mut_slice(matrix, rows, cols),
+                MatrixMut::from_mut_slice(buffer.as_mut_slice(), cols, rows),
             );
             matrix.copy_from_slice(&buffer);
         }

@@ -95,9 +95,10 @@ impl<F: FftField> Config<F> {
         assert_eq!(polynomials.len(), self.num_polynomials);
         assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
 
+        // TODO: If only one polynomial, we can skip the copying.
         let mut matrix = vec![F::ZERO; self.size()];
         for (i, polynomial) in polynomials.iter().enumerate() {
-            // RS encode
+            // Interleaved RS encode
             let evals = interleaved_rs_encode(polynomial, self.expansion, self.interleaving_depth);
 
             // Stack evaluations leaf-wise
@@ -404,7 +405,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let weights: Vec<F> = (0..interleaving_depth).map(|_| rng.gen::<F>()).collect();
-        let weights = vec![F::ONE; interleaving_depth];
 
         // Prover
         let mut prover_state = ProverState::from(ds.std_prover());
@@ -430,23 +430,11 @@ mod tests {
         assert_eq!(witness.out_of_domain(), commitment.out_of_domain());
         assert_eq!(&in_domain_evals, &verifier_in_domain_evals);
 
-        let out_domain_evals = commitment.out_of_domain();
-        dbg!(&in_domain_evals);
-        dbg!(out_domain_evals);
-        dbg!(&polynomials);
-        dbg!(&weights);
-
         // Check out-domain evaluations
-        for (x, evals) in out_domain_evals {
+        let out_domain_evals = commitment.out_of_domain();
+        for (point, evals) in out_domain_evals {
             for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
-                // Univariate evaluation
-                let mut actual = F::ZERO;
-                let mut xp = F::ONE;
-                for &coeff in polynomial {
-                    actual += coeff * xp;
-                    xp *= x;
-                }
-                assert_eq!(actual, *expected);
+                assert_eq!(univariate_evaluate(polynomial, *point), *expected);
             }
         }
         // Fold polynomials
@@ -460,16 +448,9 @@ mod tests {
             })
             .collect();
         // Check in-domain evaluations
-        for (x, evals) in &in_domain_evals {
+        for (point, evals) in &in_domain_evals {
             for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
-                // Univariate evaluation
-                let mut actual = F::ZERO;
-                let mut xp = F::ONE;
-                for &coeff in polynomial {
-                    actual += coeff * xp;
-                    xp *= x;
-                }
-                assert_eq!(actual, *expected);
+                assert_eq!(univariate_evaluate(polynomial, *point), *expected);
             }
         }
     }
@@ -479,6 +460,11 @@ mod tests {
         F: FftField + Codec,
         Standard: Distribution<F>,
     {
+        let valid_domains = (0..100)
+            .filter(|&n| ntt::generator::<F>(n).is_some())
+            .collect::<Vec<_>>();
+        dbg!(valid_domains);
+
         proptest!(|(
             seed: u64,
             num_polynomials in 0_usize..4,
@@ -490,7 +476,6 @@ mod tests {
         )| {
             // Polynomial size must be multiple of interleaving depth.
             let polynomial_size = polynomial_size * interleaving_depth;
-            dbg!(polynomial_size);
 
             // F^* must have a subgroup of correct size.
             let domain_size = polynomial_size * expansion / interleaving_depth;
@@ -502,7 +487,6 @@ mod tests {
 
     #[test]
     fn test_field64_1() {
-        test::<fields::Field64>(0, 1, 3, 3, 1, 1, 0);
         proptest::<fields::Field64>();
     }
 
