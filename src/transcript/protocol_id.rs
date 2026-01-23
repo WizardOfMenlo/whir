@@ -5,7 +5,9 @@ use std::fmt::{Debug, Display};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub const NONE: ProtocolId = ProtocolId([0u8; 32]);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub struct ProtocolId([u8; 32]);
 
 pub trait Protocol {

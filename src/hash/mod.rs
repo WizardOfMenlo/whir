@@ -38,6 +38,8 @@ pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Hash,
     Default,
     Serialize,

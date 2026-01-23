@@ -1,14 +1,17 @@
 //! Interleaved Reed-Solomon Commitment Protocol
 
+use std::fmt;
+
 use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationError, VerificationResult};
+use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationResult};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use crate::{
     hash::Hash,
     ntt::{self, interleaved_rs_encode},
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     protocols::matrix_commit,
     transcript::{ProverMessage, ProverState, VerifierMessage, VerifierState},
     verify,
@@ -41,12 +44,16 @@ pub struct Config<F: FftField> {
     pub out_domain_samples: usize,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
+#[must_use]
 pub struct Witness<F: FftField> {
     matrix: Vec<F>,
     matrix_witness: matrix_commit::Witness,
     out_of_domain: Evaluations<F>,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
+#[must_use]
 pub struct Commitment<F: FftField> {
     matrix_commitment: matrix_commit::Commitment,
     out_of_domain: Evaluations<F>,
@@ -70,11 +77,13 @@ impl<F: FftField> Config<F> {
     }
 
     /// Commit to one or more polynomials.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, polynomials)))]
+    ///
+    /// Polynomials are given in coefficient form.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&CoefficientList<F>],
+        polynomials: &[&[F]],
     ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
@@ -82,19 +91,14 @@ impl<F: FftField> Config<F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        assert!((self.polynomial_size * self.expansion).is_multiple_of(self.interleaving_depth));
         assert_eq!(polynomials.len(), self.num_polynomials);
-        assert!(polynomials
-            .iter()
-            .all(|p| p.num_coeffs() == self.polynomial_size));
-        if self.num_polynomials == 0 {
-            todo!();
-        }
+        assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
 
         let mut matrix = vec![F::ZERO; self.size()];
         for (i, polynomial) in polynomials.iter().enumerate() {
             // RS encode
-            let evals =
-                interleaved_rs_encode(polynomial.coeffs(), self.expansion, self.interleaving_depth);
+            let evals = interleaved_rs_encode(polynomial, self.expansion, self.interleaving_depth);
 
             // Stack evaluations leaf-wise
             let dst = matrix.chunks_exact_mut(self.num_cols()).map(|leave| {
@@ -115,11 +119,10 @@ impl<F: FftField> Config<F> {
         let oods_points = prover_state.verifier_message_vec(self.out_domain_samples);
         let mut out_of_domain = Vec::with_capacity(self.out_domain_samples);
         for &point in &oods_points {
+            dbg!(point);
             let mut values = Vec::with_capacity(self.num_polynomials);
-            for polynomial in polynomials {
-                let point =
-                    MultilinearPoint::expand_from_univariate(point, polynomial.num_variables());
-                let value = polynomial.evaluate(&point);
+            for &polynomial in polynomials {
+                let value = univariate_evaluate(polynomial, point);
                 prover_state.prover_message(&value);
                 values.push(value);
             }
@@ -134,6 +137,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Receive a commitment to one or more polynomials.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
@@ -145,17 +149,14 @@ impl<F: FftField> Config<F> {
     {
         let matrix_commitment = self.matrix_commit.receive_commitment(verifier_state)?;
         let oods_points: Vec<F> = verifier_state.verifier_message_vec(self.out_domain_samples);
-        let out_of_domain = oods_points
-            .into_iter()
-            .map(|point| {
-                (
-                    point,
-                    (0..self.num_polynomials)
-                        .map(|_| verifier_state.verifier_message())
-                        .collect::<Vec<F>>(),
-                )
-            })
-            .collect();
+        let mut out_of_domain = Vec::with_capacity(self.out_domain_samples);
+        for point in oods_points {
+            let mut answers = Vec::with_capacity(self.num_polynomials);
+            for _ in 0..self.num_polynomials {
+                answers.push(verifier_state.prover_message()?);
+            }
+            out_of_domain.push((point, answers));
+        }
         Ok(Commitment {
             matrix_commitment,
             out_of_domain,
@@ -165,10 +166,7 @@ impl<F: FftField> Config<F> {
     /// Opens the commitment and returns the evaluations of the polynomials.
     ///
     /// Constraints are returned as a pairs of evaluation point and values for each polynomial.
-    #[cfg_attr(
-        feature = "tracing",
-        instrument(skip(prover_state, witness, folding_randomess))
-    )]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -189,20 +187,13 @@ impl<F: FftField> Config<F> {
             .all(|o| o.1.len() == self.num_polynomials));
         assert_eq!(weights.len(), self.interleaving_depth);
 
-        // Add out-of-domain evaluations
-        let mut evaluations = Vec::with_capacity(self.out_domain_samples + self.in_domain_samples);
-        evaluations.extend_from_slice(&witness.out_of_domain);
-
         // Generate in-domain evaluations
+        let mut evaluations = Vec::with_capacity(self.in_domain_samples);
         let generator = self.generator();
         let indices = challenge_indices(prover_state, self.num_rows(), self.in_domain_samples);
         let mut submatrix = Vec::with_capacity(self.in_domain_samples * self.num_cols());
         for &index in &indices {
-            let row = witness
-                .matrix
-                .chunks_exact(self.num_cols())
-                .nth(index)
-                .expect("Challenge index out of range");
+            let row = &witness.matrix[index * self.num_cols()..(index + 1) * self.num_cols()];
             submatrix.extend_from_slice(row);
 
             // Linearly combine coefficients with weights
@@ -220,15 +211,15 @@ impl<F: FftField> Config<F> {
         evaluations
     }
 
-    /// Verifies an opening and returns the evaluations.
+    /// Verifies an opening and returns the folded in-domain evaluations.
     ///
-    /// Indices can be in any order and may contain duplicates. The row values are not provided by
-    /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(feature = "tracing", instrument(skip(verifier_state, commitment, indices, matrix), fields(engine, num_indices = indices.len())))]
+    /// **Note.** The verifier needs to separately verify the out-of-domain evaluations
+    /// from [`Witness::out_of_domain()`]!
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: Commitment<F>,
+        commitment: &Commitment<F>,
         weights: &[F],
     ) -> VerificationResult<Evaluations<F>>
     where
@@ -242,10 +233,6 @@ impl<F: FftField> Config<F> {
             .iter()
             .all(|o| o.1.len() == self.num_polynomials));
 
-        // Out-of-domain evaluations
-        let mut evaluations = Vec::with_capacity(self.in_domain_samples + self.out_domain_samples);
-        evaluations.extend_from_slice(&commitment.out_of_domain);
-
         // Get in-domain openings
         let indices = challenge_indices(verifier_state, self.num_rows(), self.in_domain_samples);
         let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
@@ -257,20 +244,56 @@ impl<F: FftField> Config<F> {
         )?;
 
         // Compute in-domain evaluations
+        let mut evaluations = Vec::with_capacity(self.in_domain_samples);
         let generator = self.generator();
-        for (index, row) in indices
+        let points = indices
             .into_iter()
-            .zip(submatrix.chunks_exact(self.num_cols()))
-        {
-            evaluations.push((
-                generator.pow([index as u64]),
-                row.chunks_exact(self.interleaving_depth)
-                    .map(|coeffs| dot(coeffs, weights))
-                    .collect(),
-            ));
+            .map(|index| generator.pow([index as u64]));
+        if self.num_cols() > 0 {
+            for (point, row) in points.zip(submatrix.chunks_exact(self.num_cols())) {
+                evaluations.push((
+                    point,
+                    row.chunks_exact(self.interleaving_depth)
+                        .map(|coeffs| dot(coeffs, weights))
+                        .collect(),
+                ));
+            }
+        } else {
+            // Degenerate cases
+            verify!(self.num_polynomials == 0);
+            evaluations.extend(points.map(|point| (point, Vec::new())));
         }
+        dbg!(&evaluations);
 
         Ok(evaluations)
+    }
+}
+
+impl<F: FftField> Witness<F> {
+    /// Returns the out-of-domain evaluations.
+    pub fn out_of_domain(&self) -> &Evaluations<F> {
+        &self.out_of_domain
+    }
+}
+
+impl<F: FftField> Commitment<F> {
+    /// Returns the out-of-domain evaluations.
+    pub fn out_of_domain(&self) -> &Evaluations<F> {
+        &self.out_of_domain
+    }
+}
+
+impl<F: FftField> fmt::Display for Config<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "IRSCommit(count: {}, size: {}, interleaving: {}, samples: ({}, {}))",
+            self.num_polynomials,
+            self.polynomial_size,
+            self.interleaving_depth,
+            self.in_domain_samples,
+            self.out_domain_samples
+        )
     }
 }
 
@@ -280,10 +303,16 @@ where
     T: VerifierMessage,
     u8: Decoding<[T::U]>,
 {
+    if count == 0 {
+        return Vec::new();
+    }
     assert!(
         num_leaves.is_power_of_two(),
         "Number of leaves must be a power of two for unbiased results."
     );
+    if num_leaves == 1 {
+        return vec![0; count];
+    }
 
     // Calculate the required bytes of entropy
     // TODO: Only round final result to bytes.
@@ -301,26 +330,52 @@ where
         .collect::<Vec<usize>>()
 }
 
+pub fn univariate_evaluate<F: Field>(coefficients: &[F], point: F) -> F {
+    coefficients
+        .iter()
+        .rev()
+        .fold(F::ZERO, |acc, &coeff| acc * point + coeff)
+}
+
 pub fn dot<F: Field>(a: &[F], b: &[F]) -> F {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_std::rand::{
+        distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
+    };
     use proptest::{prop_assume, proptest};
     use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{crypto::fields, transcript::codecs::Empty};
 
-    fn test<F: FftField + Codec>(
+    fn test<F>(
+        seed: u64,
         num_polynomials: usize,
         polynomial_size: usize,
         interleaving_depth: usize,
         expansion: usize,
         in_domain_samples: usize,
         out_domain_samples: usize,
-    ) {
+    ) where
+        F: FftField + Codec,
+        Standard: Distribution<F>,
+    {
+        dbg!((
+            seed,
+            num_polynomials,
+            polynomial_size,
+            interleaving_depth,
+            expansion,
+            in_domain_samples,
+            out_domain_samples
+        ));
+        crate::tests::init();
+        let mut rng = StdRng::seed_from_u64(seed);
+
         assert!(interleaving_depth >= 1);
 
         // Config
@@ -342,44 +397,70 @@ mod tests {
 
         // Instance
         let polynomials = (0..num_polynomials)
-            .map(|i| {
-                CoefficientList::new(
-                    (0..polynomial_size)
-                        .map(|j| F::from((i + j) as u64))
-                        .collect(),
-                )
+            .map(|_| {
+                (0..polynomial_size)
+                    .map(|_| rng.gen::<F>())
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let weights: Vec<F> = (0..interleaving_depth).map(|i| F::from(i as u64)).collect();
+        let weights: Vec<F> = (0..interleaving_depth).map(|_| rng.gen::<F>()).collect();
+        let weights = vec![F::ONE; interleaving_depth];
 
         // Prover
         let mut prover_state = ProverState::from(ds.std_prover());
-        let tree = config.commit(&mut prover_state, &polynomials.iter().collect::<Vec<_>>());
-        let evals = config.open(&mut prover_state, &tree, &weights);
+        let witness = config.commit(
+            &mut prover_state,
+            &polynomials.iter().map(|p| p.as_slice()).collect::<Vec<_>>(),
+        );
+        let in_domain_evals = config.open(&mut prover_state, &witness, &weights);
         let proof = prover_state.proof();
+        assert_eq!(witness.out_of_domain().len(), out_domain_samples);
+        assert_eq!(in_domain_evals.len(), in_domain_samples);
 
         // Verifier
         let mut verifier_state =
             VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
-        let verifier_evals = config
-            .verify(&mut verifier_state, commitment, &weights)
+        let verifier_in_domain_evals = config
+            .verify(&mut verifier_state, &commitment, &weights)
             .unwrap();
         verifier_state.check_eof().unwrap();
-        assert_eq!(&evals, &verifier_evals);
+        assert_eq!(commitment.out_of_domain().len(), out_domain_samples);
+        assert_eq!(verifier_in_domain_evals.len(), in_domain_samples);
+        assert_eq!(witness.out_of_domain(), commitment.out_of_domain());
+        assert_eq!(&in_domain_evals, &verifier_in_domain_evals);
 
-        // Fold polynomials and check evaluations
+        let out_domain_evals = commitment.out_of_domain();
+        dbg!(&in_domain_evals);
+        dbg!(out_domain_evals);
+        dbg!(&polynomials);
+        dbg!(&weights);
+
+        // Check out-domain evaluations
+        for (x, evals) in out_domain_evals {
+            for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
+                // Univariate evaluation
+                let mut actual = F::ZERO;
+                let mut xp = F::ONE;
+                for &coeff in polynomial {
+                    actual += coeff * xp;
+                    xp *= x;
+                }
+                assert_eq!(actual, *expected);
+            }
+        }
+        // Fold polynomials
         let polynomials: Vec<Vec<F>> = polynomials
             .into_iter()
             .map(|polynomial| {
                 polynomial
-                    .coeffs()
                     .chunks_exact(interleaving_depth)
                     .map(|coeffs| dot(coeffs, &weights))
                     .collect()
             })
             .collect();
-        for (x, evals) in evals {
+        // Check in-domain evaluations
+        for (x, evals) in &in_domain_evals {
             for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
                 // Univariate evaluation
                 let mut actual = F::ZERO;
@@ -393,27 +474,35 @@ mod tests {
         }
     }
 
-    fn proptest<F: FftField + Codec>() {
+    fn proptest<F>()
+    where
+        F: FftField + Codec,
+        Standard: Distribution<F>,
+    {
         proptest!(|(
+            seed: u64,
             num_polynomials in 0_usize..4,
             polynomial_size in 0_usize..10,
             interleaving_depth in 1_usize..10,
             expansion in 1_usize..10,
-            in_domain_samples in 0_usize..200,
+            in_domain_samples in 0_usize..10,
             out_domain_samples in 0_usize..10
         )| {
-            prop_assume!(polynomial_size.is_multiple_of(interleaving_depth));
+            // Polynomial size must be multiple of interleaving depth.
+            let polynomial_size = polynomial_size * interleaving_depth;
+            dbg!(polynomial_size);
+
+            // F^* must have a subgroup of correct size.
             let domain_size = polynomial_size * expansion / interleaving_depth;
             prop_assume!(ntt::generator::<F>(domain_size).is_some());
 
-            test::<F>(num_polynomials, polynomial_size, interleaving_depth, expansion, in_domain_samples, out_domain_samples);
+            test::<F>(seed, num_polynomials, polynomial_size, interleaving_depth, expansion, in_domain_samples, out_domain_samples);
         });
     }
 
     #[test]
-    fn test_field64() {
-        // test::<fields::Field64>(0, 0, 0, 1, 0, 0);
-
+    fn test_field64_1() {
+        test::<fields::Field64>(0, 1, 3, 3, 1, 1, 0);
         proptest::<fields::Field64>();
     }
 

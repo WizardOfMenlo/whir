@@ -63,7 +63,7 @@ assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
-#[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
+#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
     coeffs: &[F],
     expansion: usize,

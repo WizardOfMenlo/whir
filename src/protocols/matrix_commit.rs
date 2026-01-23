@@ -1,10 +1,15 @@
 //! Protocol for committing to rows of a matrix of some type <code>T: [Encodable]</code>.
 
+use std::fmt;
+
 use ark_ff::{Field, PrimeField};
 use ark_std::rand::{CryptoRng, RngCore};
+use derive_where::derive_where;
 use serde::{Deserialize, Serialize};
 use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 use static_assertions::assert_obj_safe;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 use zerocopy::{Immutable, IntoBytes};
 
 use crate::{
@@ -83,7 +88,8 @@ pub struct ZeroCopyEncoder;
 /// Configuration for the matrix commit protocol.
 ///
 /// Commits row-wise to a matrix of field elements using a merkle tree.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive_where(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(Serialize, Deserialize)]
 #[serde(bound = "T: TypeInfo")]
 pub struct Config<T>
 where
@@ -198,7 +204,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     }
 
     /// Commit the matrix (in row-major order).
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, matrix), fields(size = matrix.len(), engine)))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self, size = matrix.len(), engine)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, matrix: &[T]) -> Witness
     where
         H: DuplexSpongeInterface,
@@ -211,7 +217,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             .retrieve(self.leaf_hash_id)
             .expect("Failed to retrieve hash engine");
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &engine.name());
+        tracing::Span::current().record("engine", engine.name().as_ref());
 
         // Compute leaf hashes
         let mut leaves = Vec::with_capacity(self.merkle_tree.num_nodes());
@@ -222,6 +228,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         self.merkle_tree.commit(prover_state, leaves)
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
@@ -237,7 +244,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves), fields(num_indices = indices.len())))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, indices), fields(self = %self, num_indices = indices.len())))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -255,7 +262,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(feature = "tracing", instrument(skip(verifier_state, commitment, indices, matrix), fields(engine, num_indices = indices.len())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self, engine, num_indices = indices.len())))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
@@ -273,12 +280,18 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             .retrieve(self.leaf_hash_id)
             .ok_or(VerificationError)?;
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &engine.name());
+        tracing::Span::current().record("engine", engine.name().as_ref());
 
         let mut leaf_hashes = vec![Hash::default(); indices.len()];
         hash_rows(&*engine, matrix, &mut leaf_hashes);
         self.merkle_tree
             .verify(verifier_state, commitment, indices, &leaf_hashes)
+    }
+}
+
+impl<T: TypeInfo + Encodable + Send + Sync> fmt::Display for Config<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MatrixCommit({} x {})", self.num_rows(), self.num_cols)
     }
 }
 
@@ -376,6 +389,7 @@ mod test {
         T: Clone + TypeInfo + Encodable + Send + Sync,
         Standard: Distribution<T>,
     {
+        crate::tests::init();
         assert!(layers >= merkle_tree::layers_for_size(num_rows));
         assert!(indices.iter().all(|&index| index < num_rows));
 

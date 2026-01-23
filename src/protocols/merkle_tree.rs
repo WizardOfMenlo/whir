@@ -1,10 +1,12 @@
 //! Protocol for committing to a vector of [`Hash`]es.
 
-use std::mem::swap;
+use std::{fmt, mem::swap};
 
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
+#[cfg(feature = "tracing")]
+use tracing::{instrument, span, Level};
 use zerocopy::IntoBytes;
 
 use crate::{
@@ -13,7 +15,7 @@ use crate::{
     verify,
 };
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 pub struct Config {
     /// Number of leaves in the Merkle tree.
     pub num_leaves: usize,
@@ -22,20 +24,30 @@ pub struct Config {
     pub layers: Vec<LayerConfig>,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Debug, Serialize, Deserialize)]
+#[derive(
+    Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Debug, Hash, Default, Serialize, Deserialize,
+)]
 pub struct LayerConfig {
     /// The engine used to hash siblings.
     pub hash_id: ProtocolId,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Debug)]
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MerkleTree(num_leaves: {})", self.num_leaves)
+    }
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize,
+)]
 #[must_use]
 pub struct Commitment {
     /// The commitment root hash.
     hash: Hash,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 #[must_use]
 pub struct Witness {
     /// The nodes in the Merkle tree, starting with the leaf hash layer.
@@ -59,7 +71,7 @@ impl Config {
         (1 << (self.layers.len() + 1)) - 1
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves)))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves), fields(self = %self)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, leaves: Vec<Hash>) -> Witness
     where
         H: DuplexSpongeInterface,
@@ -89,7 +101,7 @@ impl Config {
             let _span = span!(
                 Level::INFO,
                 "layer",
-                engine = engine.name(),
+                engine = engine.name().as_ref(),
                 count = current.len()
             )
             .entered();
@@ -122,7 +134,7 @@ impl Config {
     /// Opens the commitment at the provided indices.
     ///
     /// Indices can be in any order and may contain duplicates.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves)))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, indices), fields( num_indices = indices.len())))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -296,6 +308,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree() {
+        crate::tests::init();
         let config = Config {
             num_leaves: 256,
             layers: vec![LayerConfig { hash_id: BLAKE3 }; 8],

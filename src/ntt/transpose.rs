@@ -11,7 +11,23 @@ use crate::utils::workload_size;
 /// This function processes a batch of matrices if the slice length is a multiple of `rows * cols`.
 /// Assumes that both `rows` and `cols` are powers of two.
 pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: usize) {
-    debug_assert_eq!(matrix.len() % (rows * cols), 0);
+    assert!(matrix.len().is_multiple_of(rows * cols));
+    if !rows.is_power_of_two() || !cols.is_power_of_two() {
+        // Fall back to non-recursive.
+        if matrix.is_empty() {
+            return;
+        }
+        let mut buffer = vec![matrix[0]; rows * cols];
+        for matrix in matrix.chunks_exact_mut(rows * cols) {
+            transpose_copy(
+                MatrixMut::from_mut_slice(buffer.as_mut_slice(), rows, cols),
+                MatrixMut::from_mut_slice(matrix, cols, rows),
+            );
+            matrix.copy_from_slice(&buffer);
+        }
+        return;
+    }
+
     debug_assert!(rows.is_power_of_two());
     debug_assert!(cols.is_power_of_two());
     if rows == cols {

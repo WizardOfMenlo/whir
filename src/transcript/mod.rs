@@ -29,7 +29,7 @@ macro_rules! verify {
             panic!("Verification failed: {}", stringify!($cond));
 
             #[cfg(not(feature = "verifier_panics"))]
-            return Err(VerificationError);
+            return Err(spongefish::VerificationError);
         };
     };
 }
@@ -216,7 +216,7 @@ where
     }
 
     pub fn check_eof(self) -> VerificationResult<()> {
-        self.inner.check_eof()?;
+        verify!(self.inner.check_eof().is_ok());
         verify!(self.hints.is_empty());
         Ok(())
     }

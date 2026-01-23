@@ -6,6 +6,7 @@ use std::{
 };
 
 use ark_ff::{Field, PrimeField};
+use derive_where::derive_where;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use zerocopy::IntoBytes;
 
@@ -28,7 +29,7 @@ pub struct FieldInfo {
 }
 
 /// Zero-sized type that serializes into [`TypeInfo::type_info`].
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive_where(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Type<T: TypeInfo>(PhantomData<T>);
 
 impl<T: TypeInfo> Type<T> {
