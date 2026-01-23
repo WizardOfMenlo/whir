@@ -19,7 +19,7 @@ use tracing::instrument;
 
 use self::matrix::MatrixMut;
 pub use self::{
-    cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
+    cooley_tukey::{generator, intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
@@ -65,25 +65,20 @@ assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[F],
+    coeffs: &[F],
     expansion: usize,
-    fold_factor: usize,
+    interleaving_depth: usize,
 ) -> Vec<F> {
-    let fold_factor = u32::try_from(fold_factor).unwrap();
-    debug_assert!(expansion > 0);
-    debug_assert!(interleaved_coeffs.len().is_power_of_two());
-
-    let fold_factor_exp = 2usize.pow(fold_factor);
-    let expanded_size = interleaved_coeffs.len() * expansion;
-
-    debug_assert_eq!(expanded_size % fold_factor_exp, 0);
+    assert!(expansion > 0);
+    assert!(coeffs.len().is_multiple_of(interleaving_depth));
+    let expanded_size = coeffs.len() * expansion;
 
     // 1. Create zero-padded message of appropriate size
     let mut result = vec![F::zero(); expanded_size];
-    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+    result[..coeffs.len()].copy_from_slice(coeffs);
 
-    let rows = expanded_size / fold_factor_exp;
-    let columns = fold_factor_exp;
+    let rows = expanded_size / interleaving_depth;
+    let columns = interleaving_depth;
     //
     // 2. Convert from column-major (interleaved form) to row-major
     //    representation.
@@ -107,7 +102,7 @@ impl<F: FftField> ReedSolomon<F> for RSDefault {
         expansion: usize,
         fold_factor: usize,
     ) -> Vec<F> {
-        interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
+        interleaved_rs_encode(interleaved_coeffs, expansion, 1 << fold_factor)
     }
 }
 

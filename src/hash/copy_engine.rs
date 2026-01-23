@@ -40,14 +40,17 @@ impl Engine for Copy {
     }
 
     fn hash_many(&self, size: usize, input: &[u8], output: &mut [Hash]) {
-        assert!(size <= 32);
+        assert!(size <= 32, "Copy engine only supports sizes up to 32 bytes");
         assert_eq!(
             input.len(),
             size * output.len(),
             "Input length should be size * output.len() = {size} * {}",
             output.len()
         );
-
+        if size == 0 {
+            output.fill(Hash([0; 32]));
+            return;
+        }
         for (input, out) in input.chunks_exact(size).zip(output.iter_mut()) {
             let mut bytes = [0; 32];
             bytes[..size].copy_from_slice(input);

@@ -123,7 +123,8 @@ where
         assert_eq!(
             input.len(),
             size * output.len(),
-            "Input length should be size * output.len() = {size} * {}",
+            "Input length ({}) should be size * output.len() = {size} * {}",
+            input.len(),
             output.len()
         );
 

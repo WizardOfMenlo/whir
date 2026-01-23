@@ -8,9 +8,9 @@ use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 use zerocopy::IntoBytes;
 
 use crate::{
-    ensure,
     hash::{self, Engine, Hash, ENGINES},
     transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+    verify,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -77,7 +77,7 @@ impl Config {
         // Allocate nodes and fill with leaf layer. This implicitely pads the first layer.
         let mut nodes = leaves;
         nodes.resize(self.num_nodes(), Hash::default());
-        let (mut previous, mut remaining) = nodes.split_at_mut(self.num_leaves.next_power_of_two());
+        let (mut previous, mut remaining) = nodes.split_at_mut(1 << self.layers.len());
 
         // Compute merkle tree nodes.
         for layer in self.layers.iter().rev() {
@@ -140,8 +140,7 @@ impl Config {
         let mut indices = indices.to_vec();
         indices.sort_unstable();
         indices.dedup();
-        let (mut layer, mut remaining) =
-            witness.nodes.split_at(self.num_leaves.next_power_of_two());
+        let (mut layer, mut remaining) = witness.nodes.split_at(1 << self.layers.len());
         while layer.len() > 1 {
             let mut next_indices = Vec::with_capacity(indices.len());
             let mut iter = indices.iter().copied().peekable();
@@ -179,10 +178,11 @@ impl Config {
         Hash: ProverMessage<[H::U]>,
     {
         // Validate indices.
-        ensure!(
-            indices.iter().all(|&i| i < self.num_leaves),
-            VerificationError
-        );
+        verify!(indices.len() == leaf_hashes.len());
+        verify!(indices.iter().all(|&i| i < self.num_leaves));
+        if indices.is_empty() {
+            return Ok(());
+        }
 
         // Sort indices and leaf hashes.
         let mut layer = indices
@@ -195,7 +195,7 @@ impl Config {
         // Check duplicate leaf consistency and deduplicate.
         for i in 1..layer.len() {
             if layer[i - 1].0 == layer[i].0 {
-                ensure!(layer[i - 1].1 == layer[i].1, VerificationError);
+                verify!(layer[i - 1].1 == layer[i].1);
             }
         }
         layer.dedup_by_key(|(i, _)| *i);
@@ -250,8 +250,8 @@ impl Config {
         }
 
         // We should be left with a single root hash, matching the commitment.
-        ensure!(indices == [0], VerificationError);
-        ensure!(hashes == [commitment.hash], VerificationError);
+        verify!(indices == [0]);
+        verify!(hashes == [commitment.hash]);
         Ok(())
     }
 }
@@ -274,6 +274,7 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 #[cfg(feature = "parallel")]
 fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
     use crate::utils::workload_size;
+    assert_eq!(input.len(), size * output.len());
     if input.len() > workload_size::<u8>() && input.len() / size >= 2 {
         let (input_a, input_b) = input.split_at(input.len() / 2);
         let (output_a, output_b) = output.split_at_mut(output.len() / 2);

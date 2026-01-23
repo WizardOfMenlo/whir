@@ -67,6 +67,8 @@ debug = true
 
 [features]
 default = ["parallel"]
+# Verifier panics instead of returning errors. Useful for debuging.
+verifier_panics = []
 parallel = [
     "dep:rayon",
     "ark-poly/parallel",
