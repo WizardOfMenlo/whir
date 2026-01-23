@@ -10,7 +10,7 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::LazyLock};
 
 use ark_ff::FftField;
 use static_assertions::assert_obj_safe;
@@ -23,6 +23,37 @@ pub use self::{
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
+use crate::type_map::{self, TypeMap};
+
+pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(|| TypeMap::default());
+
+#[derive(Default)]
+pub struct NttFamily;
+
+impl type_map::Family for NttFamily {
+    type Dyn<F: 'static> = dyn ReedSolomon<F>;
+}
+
+/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
+pub trait ReedSolomon<F>: Debug + Send + Sync {
+    fn interleaved_encode(
+        &self,
+        interleaved_coeffs: &[F],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F>;
+}
+
+assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
+
+// pub fn interleaved_rs_encode<F>(
+//     interleaved_coeffs: &[F],
+//     expansion: usize,
+//     fold_factor: usize,
+// ) -> Vec<F> {
+//     let engine = NTT.get::<F>().expect("Unsupported field");
+//     engine.interleaved_encode(interleaved_coeffs, expansion, fold_factor)
+// }
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
@@ -64,18 +95,6 @@ pub fn interleaved_rs_encode<F: FftField>(
     transpose(&mut result, columns, rows);
     result
 }
-
-/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
-pub trait ReedSolomon<F: FftField>: Debug + Send + Sync {
-    fn interleaved_encode(
-        &self,
-        interleaved_coeffs: &[F],
-        expansion: usize,
-        fold_factor: usize,
-    ) -> Vec<F>;
-}
-
-assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
 
 /// Tag to select the built-in Reed Solomon Encoding
 #[derive(Clone, Copy, Debug)]

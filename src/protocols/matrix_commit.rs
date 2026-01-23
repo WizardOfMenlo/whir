@@ -193,6 +193,10 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         self.merkle_tree.num_leaves
     }
 
+    pub const fn size(&self) -> usize {
+        self.num_rows() * self.num_cols
+    }
+
     /// Commit the matrix (in row-major order).
     #[cfg_attr(feature = "tracing", instrument(skip(prover_state, matrix), fields(size = matrix.len(), engine)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, matrix: &[T]) -> Witness

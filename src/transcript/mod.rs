@@ -65,6 +65,13 @@ pub trait VerifierMessage {
     fn verifier_message<T>(&mut self) -> T
     where
         T: Decoding<[Self::U]>;
+
+    fn verifier_message_vec<T>(&mut self, count: usize) -> Vec<T>
+    where
+        T: Decoding<[Self::U]>,
+    {
+        (0..count).map(|_| self.verifier_message()).collect()
+    }
 }
 
 impl<H, R> From<spongefish::ProverState<H, R>> for ProverState<H, R>
