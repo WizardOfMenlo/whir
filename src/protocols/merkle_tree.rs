@@ -300,11 +300,24 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use proptest::{collection::vec, prelude::Strategy};
     use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::{hash::BLAKE3, transcript::codecs::Empty};
+    use crate::{
+        hash::{tests::hash_for_size, BLAKE3},
+        transcript::codecs::Empty,
+    };
+
+    pub fn config(num_leaves: usize) -> impl Strategy<Value = Config> {
+        let min_layers = layers_for_size(num_leaves);
+        // Add up to three unnecessary layers
+        let num_layers = min_layers..=min_layers + 3;
+        // Each layer gets its own choice of hash function
+        let layer = hash_for_size(64).prop_map(|hash_id| LayerConfig { hash_id });
+        vec(layer, num_layers).prop_map(move |layers| Config { num_leaves, layers })
+    }
 
     #[test]
     fn test_merkle_tree() {

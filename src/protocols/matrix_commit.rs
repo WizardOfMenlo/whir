@@ -365,17 +365,35 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod tests {
     use ark_std::rand::{
         distributions::{Distribution, Standard},
         rngs::StdRng,
         Rng, SeedableRng,
     };
-    use proptest::{prop_assume, proptest};
+    use proptest::{prop_assume, proptest, strategy::Strategy};
     use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::{crypto::fields, hash, transcript::codecs::Empty};
+    use crate::{
+        crypto::fields,
+        hash::{self, tests::hash_for_size},
+        transcript::codecs::Empty,
+    };
+
+    pub fn config<T>(num_rows: usize, num_cols: usize) -> impl Strategy<Value = Config<T>>
+    where
+        T: TypeInfo + Encodable + Send + Sync,
+    {
+        let leaf_hash = hash_for_size(T::encoded_size() * num_cols);
+        let merkle_tree = merkle_tree::tests::config(num_rows);
+        (leaf_hash, merkle_tree).prop_map(move |(leaf_hash_id, merkle_tree)| Config {
+            element_type: Type::new(),
+            num_cols,
+            leaf_hash_id,
+            merkle_tree,
+        })
+    }
 
     fn test<T>(
         mut rng: impl RngCore,

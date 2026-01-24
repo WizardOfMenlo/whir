@@ -126,3 +126,25 @@ impl NargDeserialize for Hash {
 }
 
 assert_impl_all!(Hash: ProverMessage);
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use proptest::{sample::select, strategy::Strategy};
+
+    use super::*;
+    use crate::{
+        hash::{BLAKE3, KECCAK},
+        transcript::ProtocolId,
+    };
+
+    const HASHES: [ProtocolId; 5] = [COPY, SHA2, SHA3, KECCAK, BLAKE3];
+
+    pub fn hash_for_size(size: usize) -> impl Strategy<Value = ProtocolId> {
+        let suitable = HASHES
+            .iter()
+            .copied()
+            .filter(|h| ENGINES.retrieve(*h).is_some_and(|h| h.supports_size(size)))
+            .collect::<Vec<_>>();
+        select(suitable)
+    }
+}
