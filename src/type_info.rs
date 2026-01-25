@@ -1,11 +1,14 @@
-//! Types that can provide serializable type information for identification.
+//! Serializable type information so data contains type information and deserialization checks it.
+//!
+//! This makes sure `Config` objects can e.g. only be deserialized to instances for the same field.
 
 use std::{
     fmt::{self, Debug, Formatter},
     marker::PhantomData,
+    ops::{Deref, DerefMut},
 };
 
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use derive_where::derive_where;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use zerocopy::IntoBytes;
@@ -17,20 +20,14 @@ pub trait TypeInfo {
     fn type_info() -> Self::Info;
 }
 
-/// Type information for a finite field.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct FieldInfo {
-    /// Field characteristic (aka prime or modulus) in big-endian without leading zeros.
-    #[serde(with = "crate::ark_serde::bytes")]
-    characteristic: Vec<u8>,
-
-    /// Extension degree of the field.
-    degree: usize,
-}
-
 /// Zero-sized type that serializes into [`TypeInfo::type_info`].
 #[derive_where(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Type<T: TypeInfo>(PhantomData<T>);
+
+/// Wrapper that adds typeinfo when serializing.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct Typed<T: TypeInfo>(pub T);
 
 impl<T: TypeInfo> Type<T> {
     /// Creates a new type instance.
@@ -71,14 +68,92 @@ impl<'de, T: TypeInfo> Deserialize<'de> for Type<T> {
     }
 }
 
+impl<T: TypeInfo> Typed<T> {
+    /// Creates a new type instance.
+    pub const fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: TypeInfo + Debug> Debug for Typed<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<T: TypeInfo> Deref for Typed<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: TypeInfo> DerefMut for Typed<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: TypeInfo + Serialize> Serialize for Typed<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct TypedValue<'s, T: TypeInfo> {
+            #[serde(rename = "type")]
+            type_: Type<T>,
+            value: &'s T,
+        }
+        TypedValue {
+            type_: Type::new(),
+            value: &self.0,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de, T: TypeInfo + Deserialize<'de>> Deserialize<'de> for Typed<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedValue<T: TypeInfo> {
+            #[serde(rename = "type")]
+            #[allow(unused)]
+            type_: Type<T>,
+            value: T,
+        }
+        let read = TypedValue::deserialize(deserializer)?;
+        Ok(Self(read.value))
+    }
+}
+
+/// Type information for a finite field.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldInfo {
+    /// Field characteristic (aka prime or modulus) in big-endian without leading zeros.
+    #[serde(with = "crate::ark_serde::bytes")]
+    characteristic: Vec<u8>,
+
+    /// Extension degree of the field.
+    degree: usize,
+}
+
 impl<F: Field> TypeInfo for F {
     type Info = FieldInfo;
 
     fn type_info() -> Self::Info {
-        let modulus = F::BasePrimeField::MODULUS;
-        let limbs = modulus.as_ref(); // Little-endian
-        let bytes = limbs.as_bytes();
-        let characteristic = bytes
+        // Get the bytes of the characteristic in little-endian order.
+        #[cfg(not(target_endian = "little"))]
+        compile_error!("This crate requires a little-endian target.");
+        let characteristic = F::characteristic().as_bytes();
+        // Convert to big-endian vec without leading zeros.
+        let characteristic = characteristic
             .iter()
             .copied()
             .rev()

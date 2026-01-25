@@ -17,7 +17,7 @@ use spongefish::{
 
 pub use self::{
     engines::Engines,
-    protocol_id::{Protocol, ProtocolId},
+    protocol_id::{Protocol, ProtocolId, NONE},
 };
 
 #[macro_export]
