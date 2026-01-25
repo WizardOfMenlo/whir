@@ -89,7 +89,7 @@ impl<E: Engine + ?Sized> Protocol for E {
         use sha3::Sha3_256;
 
         let mut hasher = Sha3_256::new();
-        hasher.update(b"whir::crypto::hash");
+        hasher.update(b"whir::hash");
         if let Some(oid) = self.oid() {
             hasher.update(oid.as_bytes());
         } else {

@@ -1,4 +1,4 @@
-use crate::{poly_utils::coeffs::CoefficientList, protocols::matrix_commit};
+use crate::{algebra::poly_utils::coeffs::CoefficientList, protocols::matrix_commit};
 
 pub mod reader;
 pub mod writer;

@@ -7,7 +7,7 @@ use super::{Engine, Hash};
 use crate::transcript::ProtocolId;
 
 pub const COPY: ProtocolId = ProtocolId::new(hex!(
-    "f6e915700df8e5d547ec84b28183c1f74a8cc351adb6e9c4dae727782554ed7c"
+    "09459020f451874a1b399819d079632cc0f9263b1486c423173c6e15d8e2d61d"
 ));
 
 /// No-op hash engine that copies the input data without hashing it.

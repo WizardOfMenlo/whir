@@ -5,14 +5,18 @@ use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use spongefish::{domain_separator, session, Codec};
 use whir::{
+    algebra::{
+        fields,
+        ntt::{RSDefault, ReedSolomon},
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
+    },
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
-    crypto::fields,
     hash::HASH_COUNTER,
-    ntt::{RSDefault, ReedSolomon},
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     transcript::{codecs::Empty, ProverState, VerifierState},
     whir::{
         committer::CommitmentReader,

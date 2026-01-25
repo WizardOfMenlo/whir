@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::poly_utils::{
+use crate::algebra::poly_utils::{
     coeffs::CoefficientList,
     evals::{geometric_till, EvaluationsList},
     multilinear::MultilinearPoint,
@@ -363,7 +363,7 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::{crypto::fields::Field64, utils::eval_eq};
+    use crate::{algebra::fields::Field64, utils::eval_eq};
 
     #[test]
     fn test_weights_evaluation() {

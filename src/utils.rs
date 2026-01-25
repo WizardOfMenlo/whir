@@ -177,8 +177,8 @@ mod tests {
     use ark_ff::{AdditiveGroup, Field};
 
     use super::*;
-    use crate::{
-        crypto::fields::Field64,
+    use crate::algebra::{
+        fields::Field64,
         poly_utils::{
             lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
         },

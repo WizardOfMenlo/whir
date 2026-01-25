@@ -196,7 +196,7 @@ mod tests {
     use ark_std::rand::thread_rng;
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_n_variables() {

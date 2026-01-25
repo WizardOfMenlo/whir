@@ -130,7 +130,7 @@ pub fn wavelet_transform_batch<F: Field>(values: &mut [F], size: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_wavelet_transform_single_element() {

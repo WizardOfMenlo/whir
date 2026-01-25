@@ -109,10 +109,10 @@ where
         self.num_variables
     }
 
-    pub fn to_coeffs(&self) -> crate::poly_utils::coeffs::CoefficientList<F> {
+    pub fn to_coeffs(&self) -> crate::algebra::poly_utils::coeffs::CoefficientList<F> {
         let mut coeffs = self.evals.clone();
-        crate::ntt::inverse_wavelet_transform(&mut coeffs);
-        crate::poly_utils::coeffs::CoefficientList::new(coeffs)
+        crate::algebra::ntt::inverse_wavelet_transform(&mut coeffs);
+        crate::algebra::poly_utils::coeffs::CoefficientList::new(coeffs)
     }
 }
 
@@ -208,7 +208,7 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::{crypto::fields::Field64, poly_utils::hypercube::BinaryHypercube};
+    use crate::algebra::{fields::Field64, poly_utils::hypercube::BinaryHypercube};
 
     #[test]
     fn test_new_evaluations_list() {

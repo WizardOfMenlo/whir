@@ -376,7 +376,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        crypto::fields,
+        algebra::fields,
         hash::{self, tests::hash_for_size},
         transcript::codecs::Empty,
     };

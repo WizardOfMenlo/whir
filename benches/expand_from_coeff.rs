@@ -1,5 +1,5 @@
 use divan::{black_box, AllocProfiler, Bencher};
-use whir::{crypto::fields::Field64, ntt};
+use whir::algebra::{fields::Field64, ntt};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();

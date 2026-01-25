@@ -44,7 +44,7 @@ pub trait ReedSolomon<F>: Debug + Send + Sync {
     ) -> Vec<F>;
 }
 
-assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
+assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
 
 // pub fn interleaved_rs_encode<F>(
 //     interleaved_coeffs: &[F],
@@ -111,7 +111,7 @@ mod tests {
     use ark_ff::Field;
 
     use super::*;
-    use crate::{crypto::fields::Field64, ntt::cooley_tukey::NttEngine};
+    use crate::algebra::{fields::Field64, ntt::cooley_tukey::NttEngine};
 
     #[test]
     fn test_expand_from_coeff_size_2() {

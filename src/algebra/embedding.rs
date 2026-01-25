@@ -210,7 +210,7 @@ pub(crate) mod tests {
     };
 
     use super::*;
-    use crate::crypto::{embedding::Embedding, fields};
+    use crate::algebra::{embedding::Embedding, fields};
 
     pub fn arb_prime_field<F: PrimeField>() -> impl Strategy<Value = F> {
         let nbytes = F::MODULUS_BIT_SIZE.div_ceil(8) as usize;

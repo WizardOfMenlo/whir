@@ -455,10 +455,10 @@ pub fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols
 #[cfg(test)]
 #[allow(clippy::significant_drop_tightening)]
 mod tests {
-    use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
+    use ark_ff::{AdditiveGroup as _, BigInteger, PrimeField};
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_new_from_fftfield_basic() {

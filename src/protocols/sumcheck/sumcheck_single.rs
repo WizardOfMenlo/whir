@@ -12,8 +12,10 @@ use tracing::instrument;
 
 use super::SumcheckPolynomial;
 use crate::{
+    algebra::poly_utils::{
+        coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+    },
     ensure,
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     protocols::proof_of_work,
     transcript::codecs::U64,
     type_info::Type,
@@ -427,12 +429,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        bits::Bits,
-        crypto::fields::Field64 as F,
-        poly_utils::{
-            coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
-            multilinear::MultilinearPoint,
+        algebra::{
+            fields::Field64 as F,
+            poly_utils::{
+                coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
+                multilinear::MultilinearPoint,
+            },
         },
+        bits::Bits,
         whir::statement::Weights,
     };
 

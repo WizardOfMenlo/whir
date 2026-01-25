@@ -10,9 +10,11 @@ use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationResult};
 use tracing::instrument;
 
 use crate::{
-    crypto::embedding::{Basefield, Embedding, Identity},
+    algebra::{
+        embedding::{Basefield, Embedding, Identity},
+        ntt::{self, interleaved_rs_encode},
+    },
     hash::Hash,
-    ntt::{self, interleaved_rs_encode},
     protocols::matrix_commit,
     transcript::{ProverMessage, ProverState, VerifierMessage, VerifierState},
     type_info::{TypeInfo, Typed},
@@ -388,7 +390,7 @@ mod tests {
     use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::{crypto::fields, transcript::codecs::U64};
+    use crate::{algebra::fields, transcript::codecs::U64};
 
     fn config<M: Embedding + Clone>(
         embedding: M,

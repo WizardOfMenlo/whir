@@ -10,10 +10,12 @@ use ark_poly::EvaluationDomain;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    algebra::{
+        domain::Domain,
+        fields::FieldWithSize,
+        ntt::{RSDefault, ReedSolomon},
+    },
     bits::Bits,
-    crypto::fields::FieldWithSize,
-    domain::Domain,
-    ntt::{RSDefault, ReedSolomon},
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::{matrix_commit, proof_of_work, sumcheck},
     type_info::Type,
@@ -789,7 +791,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bits::Bits, crypto::fields::Field64, hash, utils::test_serde};
+    use crate::{algebra::fields::Field64, bits::Bits, hash, utils::test_serde};
 
     /// Generates default WHIR parameters
     fn default_whir_params() -> ProtocolParameters {

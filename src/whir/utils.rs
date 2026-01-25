@@ -5,8 +5,8 @@ use spongefish::{Codec, Decoding, DuplexSpongeInterface, ProverState};
 use tracing::instrument;
 
 use crate::{
-    poly_utils::multilinear::MultilinearPoint, protocols::challenge_indices::challenge_indices,
-    transcript::VerifierMessage,
+    algebra::poly_utils::multilinear::MultilinearPoint,
+    protocols::challenge_indices::challenge_indices, transcript::VerifierMessage,
 };
 
 ///

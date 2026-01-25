@@ -8,10 +8,8 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use ark_ff::Field;
 use derive_where::derive_where;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-use zerocopy::IntoBytes;
 
 /// Types that can provide serializable type information for identification.
 pub trait TypeInfo {
@@ -133,75 +131,31 @@ impl<'de, T: TypeInfo + Deserialize<'de>> Deserialize<'de> for Typed<T> {
     }
 }
 
-/// Type information for a finite field.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct FieldInfo {
-    /// Field characteristic (aka prime or modulus) in big-endian without leading zeros.
-    #[serde(with = "crate::ark_serde::bytes")]
-    characteristic: Vec<u8>,
-
-    /// Extension degree of the field.
-    degree: usize,
-}
-
-impl<F: Field> TypeInfo for F {
-    type Info = FieldInfo;
-
-    fn type_info() -> Self::Info {
-        // Get the bytes of the characteristic in little-endian order.
-        #[cfg(not(target_endian = "little"))]
-        compile_error!("This crate requires a little-endian target.");
-        let characteristic = F::characteristic().as_bytes();
-        // Convert to big-endian vec without leading zeros.
-        let characteristic = characteristic
-            .iter()
-            .copied()
-            .rev()
-            .skip_while(|&b| b == 0)
-            .collect();
-        FieldInfo {
-            characteristic,
-            degree: F::extension_degree() as usize,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use static_assertions::const_assert_eq;
 
     use super::*;
     use crate::{
-        crypto::fields::{Field256, Field64_3},
+        algebra::fields::{Field128, Field256, Field64_2, Field64_3},
         utils::test_serde,
     };
 
     const_assert_eq!(size_of::<Type<Field256>>(), 0);
 
     #[test]
-    #[allow(clippy::unreadable_literal)]
-    fn test_type_info_field64_3() {
-        let type_info = Field64_3::type_info();
-        assert_eq!(
-            type_info.characteristic,
-            18446744069414584321_u64.to_be_bytes().as_slice()
-        );
-        assert_eq!(type_info.degree, 3);
-    }
-
-    #[test]
-    fn test_json_goldilocks_3() {
-        let field_config = Type::<Field64_3>::new();
-        let json = serde_json::to_string(&field_config).unwrap();
-        assert_eq!(
-            json,
-            "{\"characteristic\":\"ffffffff00000001\",\"degree\":3}"
-        );
-    }
-
-    #[test]
     fn test_roundtrip() {
         test_serde(&Type::<Field256>::new());
         test_serde(&Type::<Field64_3>::new());
+    }
+
+    #[test]
+    fn test_type_mismatch() {
+        let value = Type::<Field128>::new();
+        assert_eq!(size_of_val(&value), 0);
+        let json = serde_json::to_string_pretty(&value).expect("json serialization failed");
+
+        let result: Result<Type<Field64_2>, _> = serde_json::from_str(&json);
+        assert!(result.is_err());
     }
 }

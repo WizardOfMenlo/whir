@@ -2,6 +2,10 @@ use ark_ff::{
     Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig,
     MontFp, PrimeField,
 };
+use serde::{Deserialize, Serialize};
+use zerocopy::IntoBytes;
+
+use crate::type_info::TypeInfo;
 
 pub trait FieldWithSize {
     fn field_size_in_bits() -> usize;
@@ -13,6 +17,39 @@ where
 {
     fn field_size_in_bits() -> usize {
         F::BasePrimeField::MODULUS_BIT_SIZE as usize * F::extension_degree() as usize
+    }
+}
+
+/// Type information for a finite field.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldInfo {
+    /// Field characteristic (aka prime or modulus) in big-endian without leading zeros.
+    #[serde(with = "crate::ark_serde::bytes")]
+    characteristic: Vec<u8>,
+
+    /// Extension degree of the field.
+    degree: usize,
+}
+
+impl<F: Field> TypeInfo for F {
+    type Info = FieldInfo;
+
+    fn type_info() -> Self::Info {
+        // Get the bytes of the characteristic in little-endian order.
+        #[cfg(not(target_endian = "little"))]
+        compile_error!("This crate requires a little-endian target.");
+        let characteristic = F::characteristic().as_bytes();
+        // Convert to big-endian vec without leading zeros.
+        let characteristic = characteristic
+            .iter()
+            .copied()
+            .rev()
+            .skip_while(|&b| b == 0)
+            .collect();
+        FieldInfo {
+            characteristic,
+            degree: F::extension_degree() as usize,
+        }
     }
 }
 
@@ -90,4 +127,38 @@ impl Fp3Config for F3Config64 {
     #[allow(clippy::unreadable_literal)]
     const TRACE_MINUS_ONE_DIV_TWO: &'static [u64] =
         &[0x80000002fffffffe, 0x80000002fffffffc, 0x7ffffffe];
+}
+
+#[cfg(test)]
+mod tests {
+    use static_assertions::const_assert_eq;
+
+    use super::*;
+    use crate::{
+        algebra::fields::{Field256, Field64_3},
+        type_info::Type,
+    };
+
+    const_assert_eq!(size_of::<Type<Field256>>(), 0);
+
+    #[test]
+    #[allow(clippy::unreadable_literal)]
+    fn test_type_info_field64_3() {
+        let type_info = Field64_3::type_info();
+        assert_eq!(
+            type_info.characteristic,
+            18446744069414584321_u64.to_be_bytes().as_slice()
+        );
+        assert_eq!(type_info.degree, 3);
+    }
+
+    #[test]
+    fn test_json_goldilocks_3() {
+        let field_config = Type::<Field64_3>::new();
+        let json = serde_json::to_string(&field_config).unwrap();
+        assert_eq!(
+            json,
+            "{\"characteristic\":\"ffffffff00000001\",\"degree\":3}"
+        );
+    }
 }

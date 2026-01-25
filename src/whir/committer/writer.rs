@@ -7,8 +7,8 @@ use tracing::instrument;
 
 use super::Witness;
 use crate::{
+    algebra::poly_utils::coeffs::CoefficientList,
     hash::Hash,
-    poly_utils::coeffs::CoefficientList,
     transcript::{ProverMessage, ProverState, VerifierMessage},
     whir::{
         parameters::WhirConfig,
@@ -193,11 +193,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        crypto::fields::Field64,
+        algebra::{fields::Field64, ntt::RSDefault, poly_utils::multilinear::MultilinearPoint},
         hash,
-        ntt::RSDefault,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        poly_utils::multilinear::MultilinearPoint,
         transcript::codecs::Empty,
     };
 

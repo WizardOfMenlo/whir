@@ -11,9 +11,11 @@ use super::{
     statement::{Statement, Weights},
 };
 use crate::{
-    domain::Domain,
+    algebra::{
+        domain::Domain,
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    },
     hash::Hash,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     protocols::{
         matrix_commit,
         sumcheck::{self, SumcheckSingle},

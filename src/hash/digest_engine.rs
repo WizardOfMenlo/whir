@@ -9,13 +9,13 @@ use super::{Engine, Hash, HASH_COUNTER};
 use crate::transcript::ProtocolId;
 
 pub const SHA2: ProtocolId = ProtocolId::new(hex!(
-    "49051031d2991bfe411ad7106a2c0091f8a7418946e504319c61dc930318466e"
+    "018eaa247cb8957ab1e9fdac885450403c5e7bda1acaaa504e4cc8f2f76bb076"
 ));
 pub const SHA3: ProtocolId = ProtocolId::new(hex!(
-    "cfb9d8382a29dea8aa73d88d45c0b6fca9661b420b83fe93c327b07292f3c132"
+    "aa802dcdabad8ea8a1430919893b96c30e31ff5734b385999108aa202d27dc12"
 ));
 pub const KECCAK: ProtocolId = ProtocolId::new(hex!(
-    "5cd80d7df185bbef439921edc0d97c18170939b22f08a958d364e3f9bc01236c"
+    "ddd248964e320312a66775aee8e16c88c927734be59aca09b7af6deb0ad00e8c"
 ));
 
 pub type Sha2 = DigestEngine<sha2::Sha256>;

@@ -1,8 +1,10 @@
 use ark_ff::fields::Field;
 use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
-    crypto::fields::Field64 as F,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    algebra::{
+        fields::Field64 as F,
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    },
     protocols::sumcheck::SumcheckSingle,
     whir::statement::{Statement, Weights},
 };

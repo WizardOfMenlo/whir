@@ -245,7 +245,7 @@ impl Display for ProtocolParameters {
 mod tests {
 
     use super::*;
-    use crate::{crypto::fields::Field256, utils::test_serde};
+    use crate::{algebra::fields::Field256, utils::test_serde};
 
     #[test]
     fn test_default_max_pow() {

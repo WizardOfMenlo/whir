@@ -31,13 +31,15 @@ mod batching_tests {
     use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::fields::Field64,
-        hash,
-        ntt::RSDefault,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        algebra::{
+            fields::Field64,
+            ntt::RSDefault,
+            poly_utils::{
+                coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+            },
         },
+        hash,
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, ProverState, VerifierState},
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
