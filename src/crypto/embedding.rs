@@ -202,29 +202,59 @@ impl<A: Embedding, B: Embedding<Source = A::Target>> TypeInfo for Compose<A, B> 
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use ark_ff::{AdditiveGroup, Field};
-    use proptest::{prelude::Strategy, proptest};
+    use ark_ff::{AdditiveGroup, Field, PrimeField};
+    use proptest::{
+        collection,
+        prelude::{any, Just, Strategy},
+        proptest, strategy,
+    };
 
-    use crate::crypto::embedding::Embedding;
+    use super::*;
+    use crate::crypto::{embedding::Embedding, fields};
 
-    pub fn test_embedding<E: Embedding>(
-        e: E,
-        source: &impl Strategy<Value = E::Source>,
-        target: &impl Strategy<Value = E::Target>,
-    ) {
+    pub fn arb_prime_field<F: PrimeField>() -> impl Strategy<Value = F> {
+        let nbytes = F::MODULUS_BIT_SIZE.div_ceil(8) as usize;
+        let rand = collection::vec(any::<u8>(), nbytes)
+            .prop_map(|bytes| F::from_le_bytes_mod_order(&bytes));
+        strategy::Union::new_weighted(vec![
+            (1, Just(F::ZERO).boxed()),
+            (1, Just(F::ONE).boxed()),
+            (1, Just(-F::ONE).boxed()),
+            (3, rand.boxed()),
+        ])
+    }
+
+    pub fn arb_field<F: Field>() -> impl Strategy<Value = F> {
+        collection::vec(
+            arb_prime_field::<F::BasePrimeField>(),
+            F::extension_degree() as usize,
+        )
+        .prop_map(|elements| F::from_base_prime_field_elems(elements).unwrap())
+    }
+
+    pub fn test_embedding<E: Embedding>(e: E) {
         assert_eq!(e.map(E::Source::ZERO), E::Target::ZERO);
         assert_eq!(e.map(E::Source::ONE), E::Target::ONE);
-        proptest!(|(a in source, b in source)| {
+        proptest!(|(a in arb_field(), b in arb_field())| {
             assert_eq!(e.map(a) + e.map(b), e.map(a + b));
         });
-        proptest!(|(a in source, b in source)| {
+        proptest!(|(a in arb_field(), b in arb_field())| {
             assert_eq!(e.map(a) * e.map(b), e.map(a * b));
         });
-        proptest!(|(a in target, b in source)| {
+        proptest!(|(a in arb_field(), b in arb_field())| {
             assert_eq!(e.mixed_add(a, b), a + e.map(b));
         });
-        proptest!(|(a in target, b in source)| {
+        proptest!(|(a in arb_field(), b in arb_field())| {
             assert_eq!(e.mixed_mul(a, b), a * e.map(b));
         });
+    }
+
+    #[test]
+    fn test_field64_3() {
+        test_embedding(Identity::<fields::Field64_3>::new());
+        test_embedding(Basefield::<fields::Field64_3>::new());
+        test_embedding(Frobenius::<fields::Field64_3>::new(0));
+        test_embedding(Frobenius::<fields::Field64_3>::new(1));
+        test_embedding(Frobenius::<fields::Field64_3>::new(2));
     }
 }
