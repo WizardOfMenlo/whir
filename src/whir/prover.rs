@@ -623,18 +623,72 @@ where
 
         let witness_f = &witnesses[small_idx];
         let witness_g = &witnesses[big_idx];
+        let statement_g = &statements[big_idx];
 
-        // --- Phase 1: Prefold g -> g' (commit to g' with the SMALL config) ---
-        let alpha = prover_state.verifier_message();
-        let prefold_randomness = MultilinearPoint(vec![alpha]);
+        // --- Phase 0: Run sumcheck on g's constraints to derive prefold randomness ---
+        //
+        // If g has constraints, we run sumcheck on them. The sumcheck produces randomness
+        // (r_0, ..., r_n) where n = num_vars_big - 1. We use r_n (the last coordinate,
+        // corresponding to the high-indexed variable) as the prefold randomness α.
+        //
+        // The sumcheck claim g(r_0, ..., r_n) = v becomes g'(r_0, ..., r_{n-1}) = v
+        // after folding at α = r_n. This is added as a constraint on g'.
+        //
+        // If g has no constraints, we just sample α directly.
+        let (prefold_randomness, _g_sumcheck_claim, g_sumcheck_point) =
+            if !statement_g.constraints.is_empty() {
+                // Run sumcheck on g's constraints
+                let combination_randomness_gen: F = prover_state.verifier_message();
 
-        // TODO : check this implementation
-        if !self.config.starting_folding_pow.difficulty.is_zero() {
-            self.config
-                .starting_folding_pow
-                .prove(prover_state.inner_mut());
-        }
+                let sumcheck_config = sumcheck::Config {
+                    field: FieldConfig::<F>::new(),
+                    initial_size: witness_g.polynomial.num_coeffs(),
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: self.config.starting_folding_pow
+                        };
+                        num_vars_big // One round per variable of g
+                    ],
+                };
 
+                let mut g_sumcheck = SumcheckSingle::new(
+                    witness_g.polynomial.clone(),
+                    statement_g,
+                    combination_randomness_gen,
+                );
+
+                // Run sumcheck, getting randomness (r_0, ..., r_n)
+                let sumcheck_randomness =
+                    sumcheck_config.prove(prover_state.inner_mut(), &mut g_sumcheck);
+
+                // The last coordinate r_n becomes the prefold randomness α
+                // (fold() folds the high-indexed/last variable)
+                let alpha = *sumcheck_randomness.0.last().unwrap();
+                let prefold_randomness = MultilinearPoint(vec![alpha]);
+
+                // The remaining coordinates (r_0, ..., r_{n-1}) form the evaluation point for g'
+                let g_prime_point =
+                    MultilinearPoint(sumcheck_randomness.0[..num_vars_small].to_vec());
+
+                // Compute the claimed value: g(r) = g'(r_0, ..., r_{n-1})
+                // (after folding, this is what we need to verify)
+                let claimed_value = witness_g.polynomial.evaluate(&sumcheck_randomness);
+
+                (prefold_randomness, Some(claimed_value), Some(g_prime_point))
+            } else {
+                // No constraints on g, just sample α directly
+                let alpha: F = prover_state.verifier_message();
+
+                if !self.config.starting_folding_pow.difficulty.is_zero() {
+                    self.config
+                        .starting_folding_pow
+                        .prove(prover_state.inner_mut());
+                }
+
+                (MultilinearPoint(vec![alpha]), None, None)
+            };
+
+        // --- Phase 1: Fold g at α to get g' ---
         let g_folded = witness_g.polynomial.fold(&prefold_randomness);
         assert_eq!(g_folded.num_variables(), num_vars_small);
 
@@ -785,36 +839,48 @@ where
         // Matrix columns are:
         //  - OOD points from f commitment (arity n)
         //  - OOD points from g' commitment (arity n)
-        //  - All statement constraints (some may be arity n+1; those will be ignored later)
-        let mut all_constraint_weights = Vec::new();
+        //  - Statement constraints on f (arity n)
+        //  - Sumcheck-derived constraint on g' (if g had constraints)
+        //
+        // Note: g's original constraints (arity n+1) were handled by sumcheck in Phase 0.
+        // The sumcheck claim becomes a single evaluation constraint on g' at arity n.
+        let mut all_constraint_weights: Vec<Weights<F>> = Vec::new();
 
+        // OOD constraints from f
         for point in &witness_f.ood_points {
             let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
             all_constraint_weights.push(Weights::evaluation(ml_point));
         }
+        // OOD constraints from g'
         for point in &witness_g_folded.ood_points {
             let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars_small);
             all_constraint_weights.push(Weights::evaluation(ml_point));
         }
-        for statement in statements {
-            for constraint in &statement.constraints {
-                all_constraint_weights.push(constraint.weights.clone());
-            }
+        // Statement constraints on f (the smaller polynomial)
+        for constraint in &statements[small_idx].constraints {
+            all_constraint_weights.push(constraint.weights.clone());
+        }
+        // Sumcheck-derived constraint on g' (from g's original constraints)
+        if let Some(ref point) = g_sumcheck_point {
+            all_constraint_weights.push(Weights::evaluation(point.clone()));
         }
 
+        // Build evaluation matrix: both f and g' evaluated at all arity-n constraint points
         let mut constraint_evals_matrix = Vec::with_capacity(2);
-        for poly in [&witness_f.polynomial, &witness_g_folded.polynomial] {
-            let mut row = Vec::with_capacity(all_constraint_weights.len());
-            for weights in &all_constraint_weights {
-                if weights.num_variables() == poly.num_variables() {
-                    row.push(weights.evaluate(poly));
-                } else {
-                    // Constraint arity doesn't match this polynomial; treat as non-applicable.
-                    row.push(F::ZERO);
-                }
-            }
-            constraint_evals_matrix.push(row);
+
+        // Row for f
+        let mut row_f = Vec::with_capacity(all_constraint_weights.len());
+        for weights in all_constraint_weights.iter() {
+            row_f.push(weights.evaluate(&witness_f.polynomial));
         }
+        constraint_evals_matrix.push(row_f);
+
+        // Row for g'
+        let mut row_g = Vec::with_capacity(all_constraint_weights.len());
+        for weights in all_constraint_weights.iter() {
+            row_g.push(weights.evaluate(&witness_g_folded.polynomial));
+        }
+        constraint_evals_matrix.push(row_g);
 
         let all_evals_flat: Vec<F> = constraint_evals_matrix
             .iter()
@@ -825,7 +891,7 @@ where
         }
 
         // --- Phase 3: Sample batching randomness γ ---
-        let batching_randomness = prover_state.verifier_message();
+        let batching_randomness: F = prover_state.verifier_message();
 
         // --- Phase 4: Materialize batched polynomial h = f + γ·g' ---
         let mut batched_coeffs = witness_f.polynomial.coeffs().to_vec();
@@ -840,11 +906,9 @@ where
         // --- Phase 5: Build combined statement at the common arity (n) ---
         let mut combined_statement = Statement::new(num_vars_small);
         for (constraint_idx, weights) in all_constraint_weights.iter().enumerate() {
-            if weights.num_variables() == num_vars_small {
-                let combined_eval = constraint_evals_matrix[0][constraint_idx]
-                    + batching_randomness * constraint_evals_matrix[1][constraint_idx];
-                combined_statement.add_constraint(weights.clone(), combined_eval);
-            }
+            let combined_eval = constraint_evals_matrix[0][constraint_idx]
+                + batching_randomness * constraint_evals_matrix[1][constraint_idx];
+            combined_statement.add_constraint(weights.clone(), combined_eval);
         }
 
         // --- Phase 6: Run batch proving identical to standard batch from here on ---

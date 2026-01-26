@@ -599,17 +599,97 @@ where
             "PreFold requires arity difference of exactly 1"
         );
 
-        // --- Phase 1: Prefold verification (α, commit to g', prove consistency vs original g) ---
-        let alpha = verifier_state.verifier_message();
-        let prefold_randomness = MultilinearPoint(vec![alpha]);
+        let statement_g = &statements[big_idx];
 
-        if !self.params.starting_folding_pow.difficulty.is_zero() {
-            self.params
-                .starting_folding_pow
-                .verify(verifier_state.inner_mut())?;
-        }
+        // --- Phase 0: Run sumcheck on g's constraints to derive prefold randomness ---
+        //
+        // If g has constraints, verify the sumcheck on them. The sumcheck produces randomness
+        // (r_0, ..., r_n) where n = num_vars_big - 1. We use r_n (the last coordinate,
+        // corresponding to the high-indexed variable) as the prefold randomness α.
+        //
+        // The sumcheck claim g(r_0, ..., r_n) = v becomes g'(r_0, ..., r_{n-1}) = v
+        // after folding at α = r_n. This is added as a constraint on g'.
+        //
+        // If g has no constraints, we just sample α directly.
+        let (prefold_randomness, g_sumcheck_claim, g_sumcheck_point) =
+            if !statement_g.constraints.is_empty() {
+                // Verify sumcheck on g's constraints
+                let combination_randomness_gen: F = verifier_state.verifier_message();
 
-        // Parse commitment to g' (committed under the SMALL config)
+                // Compute the initial claimed sum from g's constraints
+                let mut claimed_sum = F::ZERO;
+                let mut pow = F::ONE;
+                for constraint in &statement_g.constraints {
+                    claimed_sum += pow * constraint.sum;
+                    pow *= combination_randomness_gen;
+                }
+
+                let sumcheck_config = sumcheck::Config {
+                    field: FieldConfig::new(),
+                    initial_size: 1 << num_vars_big, // Not used
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: self.params.starting_folding_pow
+                        };
+                        num_vars_big // One round per variable of g
+                    ],
+                };
+
+                // Run sumcheck verification, getting randomness (r_0, ..., r_n)
+                let sumcheck_randomness =
+                    sumcheck_config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+
+                // The last coordinate r_n becomes the prefold randomness α
+                // (fold() folds the high-indexed/last variable)
+                let alpha = *sumcheck_randomness.0.last().unwrap();
+                let prefold_randomness = MultilinearPoint(vec![alpha]);
+
+                // The remaining coordinates (r_0, ..., r_{n-1}) form the evaluation point for g'
+                let g_prime_point =
+                    MultilinearPoint(sumcheck_randomness.0[..num_vars_small].to_vec());
+
+                // After sumcheck, claimed_sum should be W(r) * g(r)
+                // We store the expected g'(r_0, ..., r_{n-1}) value, which will be verified later
+                // through the combined constraint on h = f + γ*g'
+
+                // Compute the weight evaluation at the sumcheck point
+                // For Evaluation constraints, W(r) = eq(z, r)
+                let mut weight_eval = F::ZERO;
+                let mut pow = F::ONE;
+                for constraint in &statement_g.constraints {
+                    let w_eval = match &constraint.weights {
+                        Weights::Evaluation { point } => point.eq_poly_outside(&sumcheck_randomness),
+                        Weights::Linear { weight } | Weights::Geometric { weight, .. } => {
+                            weight.evaluate(&sumcheck_randomness)
+                        }
+                    };
+                    weight_eval += pow * w_eval;
+                    pow *= combination_randomness_gen;
+                }
+
+                // claimed_sum = W(r) * g(r) => g(r) = claimed_sum / W(r)
+                // g(r) = g'(r_0, ..., r_{n-1}) after folding
+                let g_prime_value = claimed_sum * weight_eval.inverse().unwrap();
+
+                (
+                    prefold_randomness,
+                    Some(g_prime_value),
+                    Some(g_prime_point),
+                )
+            } else {
+                // No constraints on g, just sample α directly
+                let alpha: F = verifier_state.verifier_message();
+
+                if !self.params.starting_folding_pow.difficulty.is_zero() {
+                    self.params
+                        .starting_folding_pow
+                        .verify(verifier_state.inner_mut())?;
+                }
+
+                (MultilinearPoint(vec![alpha]), None, None)
+            };
+
+        // --- Phase 1: Parse commitment to g' (committed under the SMALL config) ---
         let g_folded_commitment =
             ParsedCommitment::<F, MerkleConfig::InnerDigest>::parse::<H, MerkleConfig>(
                 verifier_state.inner_mut(),
@@ -670,6 +750,15 @@ where
         }
 
         // --- Phase 2: Read evaluation matrix for (f, g') BEFORE sampling γ ---
+        //
+        // Matrix columns are:
+        //  - OOD points from f commitment (arity n)
+        //  - OOD points from g' commitment (arity n)
+        //  - Statement constraints on f (arity n)
+        //  - Sumcheck-derived constraint on g' (if g had constraints)
+        //
+        // Note: g's original constraints (arity n+1) were handled by sumcheck in Phase 0.
+        // The sumcheck claim becomes a single evaluation constraint on g' at arity n.
         let mut all_constraints_info: Vec<(Weights<F>, bool)> = Vec::new();
 
         // OOD constraints from f (arity n)
@@ -684,12 +773,15 @@ where
             all_constraints_info.push((Weights::evaluation(ml_point), false));
         }
 
-        // Statement constraints (some may be arity n+1 and will be ignored later)
-        for statement in statements {
-            for constraint in &statement.constraints {
-                all_constraints_info
-                    .push((constraint.weights.clone(), constraint.defer_evaluation));
-            }
+        // Statement constraints on f (the smaller polynomial)
+        for constraint in &statements[small_idx].constraints {
+            all_constraints_info
+                .push((constraint.weights.clone(), constraint.defer_evaluation));
+        }
+
+        // Sumcheck-derived constraint on g' (from g's original constraints)
+        if let Some(ref point) = g_sumcheck_point {
+            all_constraints_info.push((Weights::evaluation(point.clone()), false));
         }
 
         let num_constraints = all_constraints_info.len();
@@ -710,14 +802,25 @@ where
         for (constraint_idx, (weights, defer_evaluation)) in
             all_constraints_info.into_iter().enumerate()
         {
-            if weights.num_variables() == num_vars_small {
-                let combined_eval = constraint_evals_matrix[0][constraint_idx]
-                    + batching_randomness.clone() * constraint_evals_matrix[1][constraint_idx];
-                all_constraints.push(Constraint {
-                    weights,
-                    sum: combined_eval,
-                    defer_evaluation,
-                });
+            let combined_eval = constraint_evals_matrix[0][constraint_idx]
+                + batching_randomness * constraint_evals_matrix[1][constraint_idx];
+            all_constraints.push(Constraint {
+                weights,
+                sum: combined_eval,
+                defer_evaluation,
+            });
+        }
+
+        // Verify the sumcheck-derived constraint on g'
+        // The combined sum for the g' constraint should be:
+        //   f(point) + γ * g'(point) = matrix[0][idx] + γ * matrix[1][idx]
+        // where matrix[1][idx] = g'(point) should equal the claimed sumcheck value
+        if let Some(g_prime_value) = g_sumcheck_claim {
+            // The last constraint is the sumcheck-derived one
+            let idx = num_constraints - 1;
+            let reported_g_prime_eval = constraint_evals_matrix[1][idx];
+            if reported_g_prime_eval != g_prime_value {
+                return Err(VerificationError);
             }
         }
 
@@ -947,6 +1050,7 @@ where
 
         Ok((folding_randomness, deferred))
     }
+
     /// Create a random linear combination of constraints and add it to the claim.
     /// Returns the randomness used.
     pub fn combine_constraints<H>(

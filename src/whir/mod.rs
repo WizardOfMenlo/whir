@@ -10,6 +10,7 @@ pub mod verifier;
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Instant;
 
     use ark_ff::{AdditiveGroup, Field};
     use spongefish::{domain_separator, session};
@@ -50,6 +51,20 @@ mod tests {
 
     /// Extension field type used in the tests.
     type EF = Field64_2;
+
+    /// Lift a multilinear polynomial in `n` variables to `n+1` variables by adding a new
+    /// highest-indexed variable that the polynomial does *not* depend on.
+    ///
+    /// In coefficient form (monomial basis), this sets all coefficients involving the new
+    /// variable to 0, and keeps the rest unchanged.
+    fn lift_add_high_var(poly: &CoefficientList<F>) -> CoefficientList<F> {
+        let mut coeffs = Vec::with_capacity(poly.num_coeffs() * 2);
+        for &c in poly.coeffs() {
+            coeffs.push(c);
+            coeffs.push(F::ZERO);
+        }
+        CoefficientList::new(coeffs)
+    }
 
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
     ///
@@ -1057,6 +1072,186 @@ mod tests {
             2,                             // num_points_per_poly
             SoundnessType::ConjectureList, // soundness_type
             0,                             // pow_bits
+        );
+    }
+
+    /// Benchmark-style comparison (ignored by default): standard lift-and-batch vs prefold batch,
+    /// for two polynomials whose arities differ by exactly 1.
+    ///
+    /// Run with:
+    /// `cargo test -q bench_batching_standard_vs_prefold_arity_diff_1 -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_batching_standard_vs_prefold_arity_diff_1() {
+        let num_vars_small = 20usize;
+        let num_vars_big = num_vars_small + 1;
+
+        let mut rng = ark_std::test_rng();
+        let (leaf_hash_params, two_to_one_params) =
+            default_config::<EF, KeccakLeafHash<EF>, KeccakCompress>(&mut rng);
+
+        // Small params (used by prefold main proof)
+        let mv_params_small = MultivariateParameters::new(num_vars_small);
+        let whir_params_small = ProtocolParameters::<MerkleConfig> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(2),
+            leaf_hash_params: leaf_hash_params.clone(),
+            two_to_one_params: two_to_one_params.clone(),
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+        let rs = Arc::new(RSDefault);
+        let params_small =
+            WhirConfig::new(rs.clone(), rs.clone(), mv_params_small, whir_params_small);
+
+        // Big params (used by standard lift-and-batch). We keep folding_factor=1 like the existing prefold harness.
+        let mv_params_big = MultivariateParameters::new(num_vars_big);
+        let whir_params_big = ProtocolParameters::<MerkleConfig> {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(1),
+            leaf_hash_params,
+            two_to_one_params,
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            deduplication_strategy: DeduplicationStrategy::Enabled,
+            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+        };
+        let params_big = WhirConfig::new(rs.clone(), rs.clone(), mv_params_big, whir_params_big);
+
+        // Large deterministic polynomials
+        let poly_small = CoefficientList::new(
+            (0..(1 << num_vars_small))
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let poly_big = CoefficientList::new(
+            (0..(1 << num_vars_big))
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+        let poly_small_lifted = lift_add_high_var(&poly_small);
+
+        // Empty statements (LD/binding only)
+        let stmt_small = Statement::new(num_vars_small);
+        let stmt_big = Statement::new(num_vars_big);
+        let stmt_small_lifted = Statement::new(num_vars_big);
+        let stmt_big_for_standard = Statement::new(num_vars_big);
+
+        // Domain separator shared across runs (separate transcripts per proof)
+        let domainsep = domain_separator!("🌪️")
+            .session(session!("Bench batching standard vs prefold"))
+            .instance(&Empty);
+
+        // --- Standard lift-and-batch ---
+        let mut prover_state_std: ProverState = ProverState::from(domainsep.std_prover());
+        let committer_big = CommitmentWriter::new(params_big.clone());
+        let t0 = Instant::now();
+        let witness_lifted = committer_big.commit(prover_state_std.inner_mut(), &poly_small_lifted);
+        let witness_big = committer_big.commit(prover_state_std.inner_mut(), &poly_big);
+        let commit_std = t0.elapsed();
+
+        let prover_big = Prover::new(params_big.clone());
+        let t1 = Instant::now();
+        let _ = prover_big.prove_batch(
+            &mut prover_state_std,
+            &[stmt_small_lifted, stmt_big_for_standard],
+            &[witness_lifted, witness_big],
+        );
+        let prove_std = t1.elapsed();
+        let proof_std = prover_state_std.proof();
+
+        let mut verifier_state_std = VerifierState::from(
+            domainsep.std_verifier(&proof_std.narg_string),
+            &proof_std.hints,
+        );
+        let reader_big = CommitmentReader::new(&params_big);
+        let parsed_lifted = reader_big
+            .parse_commitment(verifier_state_std.inner_mut())
+            .unwrap();
+        let parsed_big = reader_big
+            .parse_commitment(verifier_state_std.inner_mut())
+            .unwrap();
+        let verifier_big = Verifier::new(&params_big);
+        let t2 = Instant::now();
+        let ok_std = verifier_big
+            .verify_batch(
+                &mut verifier_state_std,
+                &[parsed_lifted, parsed_big],
+                &[Statement::new(num_vars_big), Statement::new(num_vars_big)],
+            )
+            .is_ok();
+        let verify_std = t2.elapsed();
+        assert!(ok_std, "standard batching verification failed");
+
+        // --- Prefold batch ---
+        let mut prover_state_pf: ProverState = ProverState::from(domainsep.std_prover());
+        let committer_small = CommitmentWriter::new(params_small.clone());
+        let committer_big2 = CommitmentWriter::new(params_big.clone());
+        let t3 = Instant::now();
+        let witness_small = committer_small.commit(prover_state_pf.inner_mut(), &poly_small);
+        let witness_big2 = committer_big2.commit(prover_state_pf.inner_mut(), &poly_big);
+        let commit_pf = t3.elapsed();
+
+        let prover_small = Prover::new(params_small.clone());
+        let t4 = Instant::now();
+        let _ = prover_small.prove_batch_prefold(
+            &mut prover_state_pf,
+            &[stmt_small, stmt_big],
+            &[witness_small, witness_big2],
+        );
+        let prove_pf = t4.elapsed();
+        let proof_pf = prover_state_pf.proof();
+
+        let mut verifier_state_pf = VerifierState::from(
+            domainsep.std_verifier(&proof_pf.narg_string),
+            &proof_pf.hints,
+        );
+        let reader_small = CommitmentReader::new(&params_small);
+        let reader_big2 = CommitmentReader::new(&params_big);
+        let parsed_small = reader_small
+            .parse_commitment(verifier_state_pf.inner_mut())
+            .unwrap();
+        let parsed_big2 = reader_big2
+            .parse_commitment(verifier_state_pf.inner_mut())
+            .unwrap();
+        let verifier_small = Verifier::new(&params_small);
+        let t5 = Instant::now();
+        let ok_pf = verifier_small
+            .verify_batch_prefold(
+                &mut verifier_state_pf,
+                &[parsed_small, parsed_big2],
+                &[Statement::new(num_vars_small), Statement::new(num_vars_big)],
+            )
+            .is_ok();
+        let verify_pf = t5.elapsed();
+        assert!(ok_pf, "prefold batching verification failed");
+
+        println!("=== bench_batching_standard_vs_prefold_arity_diff_1 ===");
+        println!(
+            "standard: commit={:?}, prove={:?}, verify={:?}, proof_bytes={} (narg={}, hints={})",
+            commit_std,
+            prove_std,
+            verify_std,
+            proof_std.narg_string.len() + proof_std.hints.len(),
+            proof_std.narg_string.len(),
+            proof_std.hints.len()
+        );
+        println!(
+            "prefold:   commit={:?}, prove={:?}, verify={:?}, proof_bytes={} (narg={}, hints={})",
+            commit_pf,
+            prove_pf,
+            verify_pf,
+            proof_pf.narg_string.len() + proof_pf.hints.len(),
+            proof_pf.narg_string.len(),
+            proof_pf.hints.len()
         );
     }
 }
