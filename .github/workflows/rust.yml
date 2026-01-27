@@ -11,11 +11,8 @@ env:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        features: ["--features parallel", "--no-default-features"]
     runs-on: ubuntu-latest
-    name: Build & Test (${{ matrix.features }})
+    name: Build & Test (all features)
 
     steps:
       - uses: actions/checkout@v4
@@ -24,16 +21,13 @@ jobs:
         with:
           toolchain: nightly
       - name: Build
-        run: cargo build --release --verbose ${{ matrix.features }}
+        run: cargo build --release --verbose --all-features --all-targets
       - name: Run tests
-        run: cargo test --release --verbose ${{ matrix.features }}
+        run: cargo test --release --verbose --all-features --all-targets
 
   cargo-clippy:
-    strategy:
-      matrix:
-        features: ["--features parallel", "--no-default-features"]
     runs-on: ubuntu-latest
-    name: Clippy (${{ matrix.features }})
+    name: Clippy (all features)
 
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +37,7 @@ jobs:
           toolchain: nightly
           components: clippy
       - name: Clippy Check
-        run: cargo clippy --workspace --all-targets ${{ matrix.features }} -- -Dwarnings
+        run: cargo clippy --workspace --all-targets --all-features -- -Dwarnings
 
   cargo-fmt:
     name: Cargo fmt

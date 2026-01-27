@@ -5,6 +5,8 @@ use std::mem::swap;
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
+#[cfg(feature = "tracing")]
+use tracing::{instrument, span, Level};
 use zerocopy::IntoBytes;
 
 use crate::{
@@ -89,7 +91,7 @@ impl Config {
             let _span = span!(
                 Level::INFO,
                 "layer",
-                engine = engine.name(),
+                engine = &*engine.name(),
                 count = current.len()
             )
             .entered();
@@ -122,7 +124,7 @@ impl Config {
     /// Opens the commitment at the provided indices.
     ///
     /// Indices can be in any order and may contain duplicates.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves)))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness)))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,

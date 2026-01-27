@@ -8,6 +8,8 @@ use spongefish::{
     Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
     VerifierState,
 };
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 use zerocopy::IntoBytes;
 
 use crate::{
@@ -71,7 +73,7 @@ impl Config {
             .retrieve(self.hash_id)
             .expect("Hash Engine not found");
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &engine.name());
+        tracing::Span::current().record("engine", &*engine.name());
         let batch_size = engine.preferred_batch_size();
 
         let challenge: [u8; 32] = prover_state.verifier_message();
@@ -231,7 +233,7 @@ mod tests {
     fn test_difficulty_monotonic() {
         proptest!(|(threshold in 16_u64.., delta: u64)| {
             let high = difficulty(threshold);
-            let low = difficulty(threshold.checked_add(delta).unwrap_or(u64::MAX));
+            let low = difficulty(threshold.saturating_add(delta));
             assert!(low <= high);
         });
     }

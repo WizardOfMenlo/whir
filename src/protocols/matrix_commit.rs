@@ -5,6 +5,8 @@ use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 use static_assertions::assert_obj_safe;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 use zerocopy::{Immutable, IntoBytes};
 
 use crate::{
@@ -194,7 +196,10 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     }
 
     /// Commit the matrix (in row-major order).
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, matrix), fields(size = matrix.len(), engine)))]
+    #[cfg_attr(
+        feature = "tracing",
+        instrument(skip(self, prover_state, matrix), fields(size = matrix.len(), engine))
+    )]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, matrix: &[T]) -> Witness
     where
         H: DuplexSpongeInterface,
@@ -207,7 +212,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             .retrieve(self.leaf_hash_id)
             .expect("Failed to retrieve hash engine");
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &engine.name());
+        tracing::Span::current().record("engine", &*engine.name());
 
         // Compute leaf hashes
         let mut leaves = Vec::with_capacity(self.merkle_tree.num_nodes());
@@ -233,7 +238,10 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, leaves), fields(num_indices = indices.len())))]
+    #[cfg_attr(
+        feature = "tracing",
+        instrument(skip(self, prover_state, witness), fields(num_indices = indices.len()))
+    )]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -251,7 +259,13 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(feature = "tracing", instrument(skip(verifier_state, commitment, indices, matrix), fields(engine, num_indices = indices.len())))]
+    #[cfg_attr(
+        feature = "tracing",
+        instrument(
+            skip(self, verifier_state, commitment, indices, matrix),
+            fields(engine, num_indices = indices.len())
+        )
+    )]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
@@ -272,7 +286,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             .retrieve(self.leaf_hash_id)
             .ok_or(VerificationError)?;
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &engine.name());
+        tracing::Span::current().record("engine", &*engine.name());
 
         let mut leaf_hashes = vec![Hash::default(); indices.len()];
         hash_rows(&*engine, matrix, &mut leaf_hashes);
