@@ -1,4 +1,7 @@
 //! Protocol for committing to a vector of [`Hash`]es.
+//!
+//! See <https://eprint.iacr.org/2026/089> for analysis when used with truncated permutation
+//! node hashes.
 
 use std::{fmt, mem::swap};
 

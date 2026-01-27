@@ -117,6 +117,14 @@ where
         acc
     }
 
+    /// Computes eq(c, p) on the hypercube for all p.
+    pub fn eq_weights(&self) -> Vec<F> {
+        (0..1 << self.0.len())
+            .map(BinaryHypercubePoint)
+            .map(|point| self.eq_poly(point))
+            .collect()
+    }
+
     /// Computes `eq(c, p)`, where `p` is a general `MultilinearPoint` (not necessarily binary).
     ///
     /// The **equality polynomial** for two `MultilinearPoint`s `c` and `p` is:

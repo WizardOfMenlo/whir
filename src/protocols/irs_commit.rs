@@ -1,5 +1,10 @@
 //! Interleaved Reed-Solomon Commitment Protocol
 
+// COMMIT NOTES:
+// Changes compared to previous version:
+// - OODS answer are (poly,point) order, not (point,poly). This is for consistency with the in-domain samples.
+// - Matrix commitment is over the subfield. This performs better when the subfield is smaller.
+
 use std::fmt;
 
 use ark_ff::{FftField, Field};
@@ -12,6 +17,7 @@ use tracing::instrument;
 use crate::{
     algebra::{
         embedding::{Basefield, Embedding, Identity},
+        mixed_dot, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
     },
     hash::Hash,
@@ -21,8 +27,13 @@ use crate::{
     verify,
 };
 
+/// Specialization of [`Config`] for commiting with identity embedding.
 #[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
-pub type ExtensionConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
+pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
+
+/// Specialization of [`Config`] for commiting over base fields
+#[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
+pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
 
 pub type Evaluations<F> = Vec<(F, Vec<F>)>;
 
@@ -63,9 +74,9 @@ where
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 #[must_use]
 pub struct Witness<F: FftField, G: Field> {
-    matrix: Vec<F>,
-    matrix_witness: matrix_commit::Witness,
-    out_of_domain: Evaluations<G>,
+    pub matrix: Vec<F>,
+    pub matrix_witness: matrix_commit::Witness,
+    pub out_of_domain: Evaluations<G>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
@@ -147,7 +158,7 @@ where
         for &point in &oods_points {
             let mut values = Vec::with_capacity(self.num_polynomials);
             for &polynomial in polynomials {
-                let value = univariate_evaluate(&*self.embedding, polynomial, point);
+                let value = mixed_univariate_evaluate(&*self.embedding, polynomial, point);
                 prover_state.prover_message(&value);
                 values.push(value);
             }
@@ -225,7 +236,7 @@ where
             evaluations.push((
                 self.embedding.map(generator.pow([index as u64])),
                 row.chunks_exact(self.interleaving_depth)
-                    .map(|coeffs| dot(&*self.embedding, weights, coeffs))
+                    .map(|coeffs| mixed_dot(&*self.embedding, weights, coeffs))
                     .collect(),
             ));
         }
@@ -279,7 +290,7 @@ where
                 evaluations.push((
                     self.embedding.map(point),
                     row.chunks_exact(self.interleaving_depth)
-                        .map(|coeffs| dot(&*self.embedding, weights, coeffs))
+                        .map(|coeffs| mixed_dot(&*self.embedding, weights, coeffs))
                         .collect(),
                 ));
             }
@@ -357,28 +368,6 @@ where
         .chunks_exact(size_bytes)
         .map(|chunk| chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % num_leaves)
         .collect::<Vec<usize>>()
-}
-
-/// Mixed field univariate Horner evaluation.
-pub fn univariate_evaluate<F: Field, G: Field>(
-    embedding: &impl Embedding<Source = F, Target = G>,
-    coefficients: &[F],
-    point: G,
-) -> G {
-    coefficients.iter().rev().fold(G::ZERO, |acc, &coeff| {
-        embedding.mixed_add(acc * point, coeff)
-    })
-}
-
-pub fn dot<F: Field, G: Field>(
-    embedding: &impl Embedding<Source = F, Target = G>,
-    a: &[G],
-    b: &[F],
-) -> G {
-    a.iter()
-        .zip(b.iter())
-        .map(|(a, b)| embedding.mixed_mul(*a, *b))
-        .sum()
 }
 
 #[cfg(test)]
@@ -464,7 +453,7 @@ mod tests {
             .map(|polynomial| {
                 polynomial
                     .chunks_exact(config.interleaving_depth)
-                    .map(|coeffs| dot(config.embedding(), &weights, coeffs))
+                    .map(|coeffs| mixed_dot(config.embedding(), &weights, coeffs))
                     .collect()
             })
             .collect();
@@ -479,7 +468,7 @@ mod tests {
         for (point, evals) in witness.out_of_domain() {
             for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
                 assert_eq!(
-                    univariate_evaluate(config.embedding(), polynomial, *point),
+                    mixed_univariate_evaluate(config.embedding(), polynomial, *point),
                     *expected
                 );
             }
@@ -489,7 +478,7 @@ mod tests {
         for (point, evals) in &in_domain_evals {
             for (polynomial, expected) in folded_polynomials.iter().zip(evals.iter()) {
                 assert_eq!(
-                    univariate_evaluate(&Identity::new(), polynomial, *point),
+                    mixed_univariate_evaluate(&Identity::new(), polynomial, *point),
                     *expected
                 );
             }
