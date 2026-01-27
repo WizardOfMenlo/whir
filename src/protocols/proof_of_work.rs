@@ -23,7 +23,7 @@ pub struct Config {
 }
 
 pub fn threshold(difficulty: Bits) -> u64 {
-    assert!((0.0..60.0).contains(&difficulty.into()));
+    assert!((0.0..=60.0).contains(&difficulty.into()));
 
     let threshold = (64.0 - f64::from(difficulty)).exp2().ceil();
     #[allow(clippy::cast_sign_loss)]
@@ -32,6 +32,10 @@ pub fn threshold(difficulty: Bits) -> u64 {
     } else {
         threshold as u64
     }
+}
+
+pub fn difficulty(threshold: u64) -> Bits {
+    Bits::from(64.0 - (threshold as f64).log2())
 }
 
 impl Config {
@@ -46,7 +50,7 @@ impl Config {
     }
 
     pub fn difficulty(&self) -> Bits {
-        Bits::from(64.0 - (self.threshold as f64).log2())
+        difficulty(self.threshold)
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip(prover_state), fields(engine)))]
@@ -58,7 +62,7 @@ impl Config {
         U64: Codec<[H::U]>,
     {
         if self.threshold == u64::MAX {
-            // If the difficulti is zero, do nothing (also produce no transcript)
+            // If the difficulty is zero, do nothing (also produce no transcript)
             return;
         }
 
@@ -161,9 +165,74 @@ impl Config {
         let mut output = Hash::default();
         engine.hash_many(64, &input, slice::from_mut(&mut output));
         let value = u64::from_le_bytes(output.0[..8].try_into().unwrap());
-        if value >= self.threshold {
+        if value > self.threshold {
             return Err(VerificationError);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::proptest;
+
+    use super::*;
+
+    #[test]
+    fn test_threshold_integer() {
+        assert_eq!(threshold(Bits::new(0.0)), u64::MAX);
+        assert_eq!(threshold(Bits::new(60.0)), 1 << 4);
+        proptest!(|(bits in 1_u64..=60)| {
+            assert_eq!(threshold(Bits::new(bits as f64)), 1 << (64 - bits));
+        });
+    }
+
+    #[test]
+    fn test_threshold_fractional() {
+        proptest!(|(bits in 0.0..=60.0)| {
+            dbg!(bits);
+            let t = threshold(Bits::new(bits));
+            let min = threshold(Bits::new(bits.ceil()));
+            let max = threshold(Bits::new(bits.floor()));
+            dbg!(t, min, max);
+            assert!((min..=max).contains(&t));
+        });
+    }
+
+    #[test]
+    fn test_threshold_monotonic() {
+        proptest!(|(bits in 0.0..=59.0, delta in 0.0..=1.0)| {
+            let low = threshold(Bits::new(bits + delta));
+            let high = threshold(Bits::new(bits));
+            assert!(low <= high);
+        });
+    }
+
+    #[test]
+    fn test_difficulty_integer() {
+        assert_eq!(difficulty(u64::MAX), Bits::new(0.0));
+        assert_eq!(difficulty(1 << 4), Bits::new(60.0));
+        proptest!(|(bits in 1_u64..=60)| {
+            assert_eq!(difficulty(1 << (64 - bits)), Bits::new(bits as f64));
+        });
+    }
+
+    #[test]
+    fn test_difficulty_fractional() {
+        proptest!(|(threshold in 16_u64..)| {
+            let d = difficulty(threshold);
+            let min = difficulty(threshold.checked_next_power_of_two().unwrap_or(u64::MAX));
+            let max = Bits::new(f64::from(min) + 1.0);
+            assert!((min..=max).contains(&d));
+        });
+    }
+
+    #[test]
+    fn test_difficulty_monotonic() {
+        proptest!(|(threshold in 16_u64.., delta: u64)| {
+            let high = difficulty(threshold);
+            let low = difficulty(threshold.checked_add(delta).unwrap_or(u64::MAX));
+            assert!(low <= high);
+        });
     }
 }
