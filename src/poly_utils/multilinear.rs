@@ -18,7 +18,7 @@ where
 {
     /// Returns the number of variables (dimension `n`).
     #[inline]
-    pub fn num_variables(&self) -> usize {
+    pub const fn num_variables(&self) -> usize {
         self.0.len()
     }
 

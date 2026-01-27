@@ -5,37 +5,25 @@ use std::{
     sync::Arc,
 };
 
-use ark_crypto_primitives::merkle_tree::{Config, LeafParam, TwoToOneParam};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     bits::Bits,
-    crypto::{
-        fields::FieldWithSize,
-        proof_of_work::{self, BLAKE3},
-    },
+    crypto::fields::FieldWithSize,
     domain::Domain,
     ntt::{RSDefault, ReedSolomon},
-    parameters::{
-        DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
-        ProtocolParameters, SoundnessType,
-    },
-    sumcheck,
-    transcript::FieldConfig,
-    utils::{ark_eq, f64_eq_abs},
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+    protocols::{matrix_commit, proof_of_work, sumcheck},
+    type_info::Type,
 };
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(bound = r#"
-    LeafParam<MerkleConfig>: CanonicalSerialize + CanonicalDeserialize,
-    TwoToOneParam<MerkleConfig>: CanonicalSerialize + CanonicalDeserialize
-"#)]
-pub struct WhirConfig<F, MerkleConfig>
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(bound = "F: FftField")]
+pub struct WhirConfig<F>
 where
     F: FftField,
-    MerkleConfig: Config,
 {
     pub mv_parameters: MultivariateParameters<F>,
     pub soundness_type: SoundnessType,
@@ -65,17 +53,8 @@ where
     pub final_sumcheck_rounds: usize,
     pub final_folding_pow: proof_of_work::Config,
 
-    // Strategy to decide on the deduplication of challenges
-    // (Used for recursive proving where constant length transcript is needed)
-    pub deduplication_strategy: DeduplicationStrategy,
-
     // Merkle tree parameters
-    #[serde(with = "crate::ark_serde::canonical")]
-    pub leaf_hash_params: LeafParam<MerkleConfig>,
-    #[serde(with = "crate::ark_serde::canonical")]
-    pub two_to_one_params: TwoToOneParam<MerkleConfig>,
-
-    pub merkle_proof_strategy: MerkleProofStrategy,
+    pub initial_matrix_committer: matrix_commit::Config<F>,
 
     // Batch size
     pub batch_size: usize,
@@ -91,12 +70,13 @@ fn default_rs<F: FftField>() -> Arc<dyn ReedSolomon<F>> {
     Arc::new(RSDefault)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: FftField")]
 pub struct RoundConfig<F>
 where
     F: FftField,
 {
+    pub matrix_committer: matrix_commit::Config<F>,
     pub pow: proof_of_work::Config,
     pub folding_pow: proof_of_work::Config,
     pub num_queries: usize,
@@ -113,22 +93,27 @@ where
     pub exp_domain_gen: F,
 }
 
-impl<F, MerkleConfig> WhirConfig<F, MerkleConfig>
+impl<F> WhirConfig<F>
 where
     F: FftField + FieldWithSize,
-    MerkleConfig: Config,
 {
     #[allow(clippy::too_many_lines)]
     pub fn new(
         reed_solomon: Arc<dyn ReedSolomon<F>>,
         basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
         mv_parameters: MultivariateParameters<F>,
-        whir_parameters: ProtocolParameters<MerkleConfig>,
+        whir_parameters: &ProtocolParameters,
     ) -> Self {
         whir_parameters
             .folding_factor
             .check_validity(mv_parameters.num_variables)
             .unwrap();
+
+        // Proof of work constructor with the requested hash function.
+        let pow = |difficulty| proof_of_work::Config {
+            hash_id: whir_parameters.hash_id,
+            threshold: proof_of_work::threshold(Bits::new(difficulty)),
+        };
 
         let protocol_security_level = whir_parameters
             .security_level
@@ -235,33 +220,35 @@ where
                 log_next_eta,
             );
 
+            let folding_factor = whir_parameters.folding_factor.at_round(round);
+            let next_folding_factor = whir_parameters.folding_factor.at_round(round + 1);
+            let matrix_committer = matrix_commit::Config::<F>::with_hash(
+                whir_parameters.hash_id,
+                (domain_size / 2) >> next_folding_factor,
+                1 << next_folding_factor,
+            );
+
             round_parameters.push(RoundConfig {
-                pow: proof_of_work::Config {
-                    engine_id: BLAKE3,
-                    difficulty: Bits::new(pow_bits),
-                },
-                folding_pow: proof_of_work::Config {
-                    engine_id: BLAKE3,
-                    difficulty: Bits::new(folding_pow_bits),
-                },
+                matrix_committer,
+                pow: pow(pow_bits),
+                folding_pow: pow(folding_pow_bits),
                 num_queries,
                 ood_samples,
                 log_inv_rate,
                 num_variables,
-                folding_factor: whir_parameters.folding_factor.at_round(round),
+                folding_factor,
                 domain_size,
                 domain_gen,
                 domain_gen_inv,
                 exp_domain_gen,
             });
 
-            num_variables -= whir_parameters.folding_factor.at_round(round + 1);
+            num_variables -= next_folding_factor;
             log_inv_rate = next_rate;
             domain_size /= 2;
             domain_gen = domain_gen.square();
             domain_gen_inv = domain_gen_inv.square();
-            exp_domain_gen =
-                domain_gen.pow([1 << whir_parameters.folding_factor.at_round(round + 1)]);
+            exp_domain_gen = domain_gen.pow([1 << next_folding_factor]);
         }
 
         let final_queries = Self::queries(
@@ -287,47 +274,40 @@ where
             starting_domain: starting_domain.clone(),
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
-            initial_sumcheck: Some(sumcheck::Config {
-                field: FieldConfig::new(),
-                initial_size: starting_domain.size(),
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: proof_of_work::Config {
-                            engine_id: proof_of_work::BLAKE3,
-                            difficulty: Bits::new(starting_folding_pow_bits),
-                        }
-                    };
-                    whir_parameters.folding_factor.at_round(0)
-                ],
-            }),
-            starting_folding_pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(starting_folding_pow_bits),
+            initial_matrix_committer: matrix_commit::Config::with_hash(
+                whir_parameters.hash_id,
+                starting_domain.size() >> whir_parameters.folding_factor.at_round(0),
+                whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
+            ),
+            initial_sumcheck: if whir_parameters.initial_statement {
+                Some(sumcheck::Config {
+                    field: Type::new(),
+                    initial_size: starting_domain.size(),
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: pow(starting_folding_pow_bits),
+                        };
+                        whir_parameters.folding_factor.at_round(0)
+                    ],
+                })
+            } else {
+                None
             },
+            starting_folding_pow: pow(starting_folding_pow_bits),
             folding_factor: whir_parameters.folding_factor,
             round_parameters,
             final_queries,
-            final_pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(final_pow_bits),
-            },
+            final_pow: pow(final_pow_bits),
             final_sumcheck_rounds,
-            final_folding_pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(final_folding_pow_bits),
-            },
-            deduplication_strategy: whir_parameters.deduplication_strategy,
+            final_folding_pow: pow(final_folding_pow_bits),
             final_log_inv_rate: log_inv_rate,
-            leaf_hash_params: whir_parameters.leaf_hash_params,
-            two_to_one_params: whir_parameters.two_to_one_params,
-            merkle_proof_strategy: whir_parameters.merkle_proof_strategy,
             batch_size: whir_parameters.batch_size,
             reed_solomon,
             basefield_reed_solomon,
         }
     }
 
-    pub fn n_rounds(&self) -> usize {
+    pub const fn n_rounds(&self) -> usize {
         self.round_parameters.len()
     }
 
@@ -335,9 +315,9 @@ where
         let max_bits = Bits::new(self.max_pow_bits as f64);
 
         // Check the main pow bits values
-        if self.starting_folding_pow.difficulty > max_bits
-            || self.final_pow.difficulty > max_bits
-            || self.final_folding_pow.difficulty > max_bits
+        if self.starting_folding_pow.difficulty() > max_bits
+            || self.final_pow.difficulty() > max_bits
+            || self.final_folding_pow.difficulty() > max_bits
         {
             return false;
         }
@@ -345,7 +325,7 @@ where
         // Check all round parameters
         self.round_parameters
             .iter()
-            .all(|r| r.pow.difficulty <= max_bits && r.folding_pow.difficulty <= max_bits)
+            .all(|r| r.pow.difficulty() <= max_bits && r.folding_pow.difficulty() <= max_bits)
     }
 
     pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: usize) -> f64 {
@@ -553,6 +533,7 @@ where
         if self.round_parameters.is_empty() {
             // Fallback: no folding rounds, use initial domain setup
             RoundConfig {
+                matrix_committer: self.initial_matrix_committer.clone(),
                 num_variables: self.mv_parameters.num_variables - self.folding_factor.at_round(0),
                 folding_factor: self.folding_factor.at_round(self.n_rounds()),
                 num_queries: self.final_queries,
@@ -573,6 +554,7 @@ where
             // Derive final round config from last round, adjusted for next fold
             let last = self.round_parameters.last().unwrap();
             RoundConfig {
+                matrix_committer: last.matrix_committer.clone(),
                 num_variables: last.num_variables - self.folding_factor.at_round(self.n_rounds()),
                 folding_factor: self.folding_factor.at_round(self.n_rounds()),
                 num_queries: self.final_queries,
@@ -593,102 +575,25 @@ where
 }
 
 /// Manual implementation to allow error in `f64` and handle ark types missing `PartialEq`.
-impl<F, MerkleConfig> PartialEq for WhirConfig<F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config,
-{
+impl<F: FftField> PartialEq for WhirConfig<F> {
     fn eq(&self, other: &Self) -> bool {
         self.mv_parameters == other.mv_parameters
             && self.soundness_type == other.soundness_type
             && self.security_level == other.security_level
             && self.max_pow_bits == other.max_pow_bits
-            && f64_eq_abs(
-                self.starting_folding_pow.difficulty.into(),
-                other.starting_folding_pow.difficulty.into(),
-                0.001,
-            )
+            && self.starting_folding_pow == other.starting_folding_pow
             && self.round_parameters == other.round_parameters
             && self.final_queries == other.final_queries
             && self.final_log_inv_rate == other.final_log_inv_rate
-            && f64_eq_abs(
-                self.final_pow.difficulty.into(),
-                other.final_pow.difficulty.into(),
-                0.001,
-            )
-            && f64_eq_abs(
-                self.final_folding_pow.difficulty.into(),
-                other.final_folding_pow.difficulty.into(),
-                0.001,
-            )
+            && self.final_pow == other.final_pow
+            && self.final_folding_pow == other.final_folding_pow
             && self.committment_ood_samples == other.committment_ood_samples
-            && ark_eq(&self.leaf_hash_params, &other.leaf_hash_params)
-            && ark_eq(&self.two_to_one_params, &other.two_to_one_params)
             && self.folding_factor == other.folding_factor
             && self.initial_statement == other.initial_statement
     }
 }
 
-impl<F> PartialEq for RoundConfig<F>
-where
-    F: FftField,
-{
-    fn eq(&self, other: &Self) -> bool {
-        f64_eq_abs(
-            self.pow.difficulty.into(),
-            other.pow.difficulty.into(),
-            0.001,
-        ) && f64_eq_abs(
-            self.folding_pow.difficulty.into(),
-            other.folding_pow.difficulty.into(),
-            0.001,
-        ) && self.num_queries == other.num_queries
-            && self.ood_samples == other.ood_samples
-            && self.log_inv_rate == other.log_inv_rate
-    }
-}
-
-/// Workaround for `PowStrategy` not implementing `Debug`.
-/// TODO: Add Debug in spongefish (and other common traits).
-impl<F, MerkleConfig> Debug for WhirConfig<F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config,
-    LeafParam<MerkleConfig>: Debug,
-    TwoToOneParam<MerkleConfig>: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WhirConfig")
-            .field("mv_parameters", &self.mv_parameters)
-            .field("soundness_type", &self.soundness_type)
-            .field("security_level", &self.security_level)
-            .field("max_pow_bits", &self.max_pow_bits)
-            .field("committment_ood_samples", &self.committment_ood_samples)
-            .field("initial_statement", &self.initial_statement)
-            .field("starting_domain", &self.starting_domain)
-            .field("starting_log_inv_rate", &self.starting_log_inv_rate)
-            .field("starting_folding_pow_bits", &self.starting_folding_pow)
-            .field("round_parameters", &self.round_parameters)
-            .field("final_queries", &self.final_queries)
-            .field("final_pow_bits", &self.final_pow)
-            .field("final_log_inv_rate", &self.final_log_inv_rate)
-            .field("final_sumcheck_rounds", &self.final_sumcheck_rounds)
-            .field("final_folding_pow_bits", &self.final_folding_pow)
-            .field("folding_factor", &self.folding_factor)
-            .field("leaf_hash_params", &self.leaf_hash_params)
-            .field("two_to_one_params", &self.two_to_one_params)
-            .field("batch_size", &self.batch_size)
-            .field("deduplication_strategy", &self.deduplication_strategy)
-            .field("merkle_proof_strategy", &self.merkle_proof_strategy)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<F, MerkleConfig> Display for WhirConfig<F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config,
-{
+impl<F: FftField> Display for WhirConfig<F> {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", &self.mv_parameters)?;
@@ -702,10 +607,11 @@ where
         writeln!(
             f,
             "initial_folding_pow_bits: {}",
-            self.starting_folding_pow.difficulty
+            self.starting_folding_pow.difficulty()
         )?;
-        for r in &self.round_parameters {
-            write!(f, "{r}")?;
+        writeln!(f, "Initial rate: 2^-{}", self.starting_log_inv_rate)?;
+        for (i, r) in self.round_parameters.iter().enumerate() {
+            write!(f, "Round {i}: {r}")?;
         }
 
         writeln!(
@@ -713,8 +619,8 @@ where
             "final_queries: {}, final_rate: 2^-{}, final_pow_bits: {}, final_folding_pow_bits: {}",
             self.final_queries,
             self.final_log_inv_rate,
-            self.final_pow.difficulty,
-            self.final_folding_pow.difficulty,
+            self.final_pow.difficulty(),
+            self.final_folding_pow.difficulty(),
         )?;
 
         writeln!(f, "------------------------------------")?;
@@ -757,11 +663,11 @@ where
         writeln!(
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-            prox_gaps_error.min(sumcheck_error) + f64::from(self.starting_folding_pow.difficulty),
+            prox_gaps_error.min(sumcheck_error) + f64::from(self.starting_folding_pow.difficulty()),
             self.folding_factor.at_round(0),
             prox_gaps_error,
             sumcheck_error,
-            self.starting_folding_pow.difficulty,
+            self.starting_folding_pow.difficulty(),
         )?;
 
         num_variables -= self.folding_factor.at_round(0);
@@ -798,10 +704,10 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, combination: {:.1}, pow: {:.1}",
-                query_error.min(combination_error) + f64::from(r.pow.difficulty),
+                query_error.min(combination_error) + f64::from(r.pow.difficulty()),
                 query_error,
                 combination_error,
-                r.pow.difficulty,
+                r.pow.difficulty(),
             )?;
 
             let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
@@ -822,11 +728,11 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error) + f64::from(r.folding_pow.difficulty),
+                prox_gaps_error.min(sumcheck_error) + f64::from(r.folding_pow.difficulty()),
                 self.folding_factor.at_round(round + 1),
                 prox_gaps_error,
                 sumcheck_error,
-                r.folding_pow.difficulty,
+                r.folding_pow.difficulty(),
             )?;
 
             num_variables -= self.folding_factor.at_round(round + 1);
@@ -840,9 +746,9 @@ where
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
-            query_error + f64::from(self.final_pow.difficulty),
+            query_error + f64::from(self.final_pow.difficulty()),
             query_error,
-            self.final_pow.difficulty,
+            self.final_pow.difficulty(),
         )?;
 
         if self.final_sumcheck_rounds > 0 {
@@ -850,10 +756,10 @@ where
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + f64::from(self.final_pow.difficulty),
+                combination_error + f64::from(self.final_pow.difficulty()),
                 self.final_sumcheck_rounds,
                 combination_error,
-                self.final_folding_pow.difficulty,
+                self.final_folding_pow.difficulty(),
             )?;
         }
 
@@ -868,12 +774,14 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Num_queries: {}, rate: 2^-{}, pow_bits: {}, ood_samples: {}, folding_pow: {}",
+            "Num_queries: {}, rate: 2^-{}, pow_bits: {}, ood_samples: {}, folding_factor: {} folding_pow: {}, initial_domain_size: {}",
             self.num_queries,
             self.log_inv_rate,
-            self.pow.difficulty,
+            self.pow.difficulty(),
             self.ood_samples,
-            self.folding_pow.difficulty,
+            self.folding_factor,
+            self.folding_pow.difficulty(),
+            self.domain_size,
         )
     }
 }
@@ -881,49 +789,31 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        bits::Bits,
-        crypto::{
-            fields::{Field256, Field64},
-            merkle_tree::keccak::KeccakMerkleTreeParams,
-            proof_of_work::BLAKE3,
-        },
-        parameters::{DeduplicationStrategy, MerkleProofStrategy},
-        utils::test_serde,
-    };
+    use crate::{bits::Bits, crypto::fields::Field64, hash, utils::test_serde};
 
     /// Generates default WHIR parameters
-    fn default_whir_params<F: FftField>() -> ProtocolParameters<KeccakMerkleTreeParams<F>> {
+    fn default_whir_params() -> ProtocolParameters {
         ProtocolParameters {
             initial_statement: true,
             security_level: 100,
             pow_bits: 20,
             folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
             starting_log_inv_rate: 1,
             batch_size: 1,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::BLAKE3,
         }
     }
 
     #[test]
     fn test_whir_config_creation() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         assert_eq!(config.security_level, 100);
         assert_eq!(config.max_pow_bits, 20);
@@ -933,43 +823,31 @@ mod tests {
 
     #[test]
     fn test_whir_params_serde() {
-        test_serde(&default_whir_params::<Field64>());
-        test_serde(&default_whir_params::<Field256>());
+        test_serde(&default_whir_params());
+        test_serde(&default_whir_params());
     }
 
     #[test]
     fn test_whir_config_serde() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         test_serde(&config);
     }
 
     #[test]
     fn test_n_rounds() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         assert_eq!(config.n_rounds(), config.round_parameters.len());
     }
@@ -979,7 +857,7 @@ mod tests {
         let field_size_bits = 64;
         let soundness = SoundnessType::ConjectureList;
 
-        let pow_bits = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::folding_pow_bits(
+        let pow_bits = WhirConfig::<Field64>::folding_pow_bits(
             100, // Security level
             soundness,
             field_size_bits,
@@ -997,7 +875,7 @@ mod tests {
         let security_level = 100;
         let log_inv_rate = 5;
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::queries(
+        let result = WhirConfig::<Field64>::queries(
             SoundnessType::UniqueDecoding,
             security_level,
             log_inv_rate,
@@ -1011,7 +889,7 @@ mod tests {
         let security_level = 128;
         let log_inv_rate = 8;
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::queries(
+        let result = WhirConfig::<Field64>::queries(
             SoundnessType::ProvableList,
             security_level,
             log_inv_rate,
@@ -1025,7 +903,7 @@ mod tests {
         let security_level = 256;
         let log_inv_rate = 16;
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::queries(
+        let result = WhirConfig::<Field64>::queries(
             SoundnessType::ConjectureList,
             security_level,
             log_inv_rate,
@@ -1039,7 +917,7 @@ mod tests {
         let log_inv_rate = 5; // log_inv_rate = 5
         let num_queries = 10; // Number of queries
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::rbr_queries(
+        let result = WhirConfig::<Field64>::rbr_queries(
             SoundnessType::UniqueDecoding,
             log_inv_rate,
             num_queries,
@@ -1053,7 +931,7 @@ mod tests {
         let log_inv_rate = 8; // log_inv_rate = 8
         let num_queries = 16; // Number of queries
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::rbr_queries(
+        let result = WhirConfig::<Field64>::rbr_queries(
             SoundnessType::ProvableList,
             log_inv_rate,
             num_queries,
@@ -1067,7 +945,7 @@ mod tests {
         let log_inv_rate = 4; // log_inv_rate = 4
         let num_queries = 20; // Number of queries
 
-        let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::rbr_queries(
+        let result = WhirConfig::<Field64>::rbr_queries(
             SoundnessType::ConjectureList,
             log_inv_rate,
             num_queries,
@@ -1078,45 +956,25 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_within_limits() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         // Set all values within limits
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(15.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(18.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(19.5),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // Ensure all rounds are within limits
         config.round_parameters = vec![
             RoundConfig {
-                pow: proof_of_work::Config {
-                    engine_id: proof_of_work::BLAKE3,
-                    difficulty: Bits::new(17.0),
-                },
-                folding_pow: proof_of_work::Config {
-                    engine_id: proof_of_work::BLAKE3,
-                    difficulty: Bits::new(19.0),
-                },
+                matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+                pow: proof_of_work::Config::from_difficulty(Bits::new(17.0)),
+                folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
                 num_queries: 5,
                 ood_samples: 2,
                 log_inv_rate: 3,
@@ -1128,14 +986,9 @@ mod tests {
                 exp_domain_gen: Field64::from(2),
             },
             RoundConfig {
-                pow: proof_of_work::Config {
-                    engine_id: proof_of_work::BLAKE3,
-                    difficulty: Bits::new(18.0),
-                },
-                folding_pow: proof_of_work::Config {
-                    engine_id: proof_of_work::BLAKE3,
-                    difficulty: Bits::new(19.5),
-                },
+                matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+                pow: proof_of_work::Config::from_difficulty(Bits::new(18.0)),
+                folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
                 num_queries: 6,
                 ood_samples: 2,
                 log_inv_rate: 4,
@@ -1156,32 +1009,17 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(21.0),
-        }; // Exceeds max_pow_bits
-        config.final_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(18.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(19.5),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0)); // Exceeds max_pow_bits
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         assert!(
             !config.check_pow_bits(),
@@ -1191,32 +1029,17 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_final_pow_exceeds() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(15.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(21.0),
-        }; // Exceeds max_pow_bits
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(19.5),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0)); // Exceeds max_pow_bits
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         assert!(
             !config.check_pow_bits(),
@@ -1226,43 +1049,23 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_round_pow_exceeds() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(15.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(18.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(19.5),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // One round's pow_bits exceeds limit
         config.round_parameters = vec![RoundConfig {
-            pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(21.0),
-            }, // Exceeds max_pow_bits
-            folding_pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(19.0),
-            },
+            matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
+            folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1282,43 +1085,23 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_round_folding_pow_exceeds() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(15.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(18.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: proof_of_work::BLAKE3,
-            difficulty: Bits::new(19.5),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // One round's folding_pow_bits exceeds limit
         config.round_parameters = vec![RoundConfig {
-            pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(19.0),
-            },
-            folding_pow: proof_of_work::Config {
-                engine_id: proof_of_work::BLAKE3,
-                difficulty: Bits::new(21.0),
-            }, // Exceeds max_pow_bits
+            matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
+            folding_pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1338,42 +1121,22 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_exactly_at_limit() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(20.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(20.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(20.0),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
 
         config.round_parameters = vec![RoundConfig {
-            pow: proof_of_work::Config {
-                engine_id: BLAKE3,
-                difficulty: Bits::new(20.0),
-            },
-            folding_pow: proof_of_work::Config {
-                engine_id: BLAKE3,
-                difficulty: Bits::new(20.0),
-            },
+            matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
+            folding_pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1393,42 +1156,22 @@ mod tests {
 
     #[test]
     fn test_check_pow_bits_all_exceed() {
-        type MerkleConfig = KeccakMerkleTreeParams<Field64>;
-
-        let params = default_whir_params::<Field64>();
+        let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let mut config = WhirConfig::<Field64, MerkleConfig>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            params,
-        );
+        let mut config =
+            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        config.starting_folding_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(22.0),
-        };
-        config.final_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(23.0),
-        };
-        config.final_folding_pow = proof_of_work::Config {
-            engine_id: BLAKE3,
-            difficulty: Bits::new(24.0),
-        };
+        config.starting_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(22.0));
+        config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(23.0));
+        config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(24.0));
 
         config.round_parameters = vec![RoundConfig {
-            pow: proof_of_work::Config {
-                engine_id: BLAKE3,
-                difficulty: Bits::new(25.0),
-            },
-            folding_pow: proof_of_work::Config {
-                engine_id: BLAKE3,
-                difficulty: Bits::new(26.0),
-            },
+            matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            pow: proof_of_work::Config::from_difficulty(Bits::new(25.0)),
+            folding_pow: proof_of_work::Config::from_difficulty(Bits::new(26.0)),
             num_queries: 5,
             ood_samples: 2,
             log_inv_rate: 3,
@@ -1459,7 +1202,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::list_size_bits(
+            let result = WhirConfig::<Field64>::list_size_bits(
                 SoundnessType::ConjectureList,
                 num_variables,
                 log_inv_rate,
@@ -1485,7 +1228,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::list_size_bits(
+            let result = WhirConfig::<Field64>::list_size_bits(
                 SoundnessType::ProvableList,
                 num_variables,
                 log_inv_rate,
@@ -1512,7 +1255,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta) in cases {
-            let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::list_size_bits(
+            let result = WhirConfig::<Field64>::list_size_bits(
                 SoundnessType::UniqueDecoding,
                 num_variables,
                 log_inv_rate,
@@ -1575,7 +1318,7 @@ mod tests {
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
-            let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::rbr_ood_sample(
+            let result = WhirConfig::<Field64>::rbr_ood_sample(
                 SoundnessType::ConjectureList,
                 num_variables,
                 log_inv_rate,
@@ -1638,7 +1381,7 @@ mod tests {
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
-            let result = WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::rbr_ood_sample(
+            let result = WhirConfig::<Field64>::rbr_ood_sample(
                 SoundnessType::ProvableList,
                 num_variables,
                 log_inv_rate,
@@ -1664,14 +1407,7 @@ mod tests {
     fn test_ood_samples_unique_decoding() {
         // UniqueDecoding should always return 0 regardless of parameters
         assert_eq!(
-            WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::ood_samples(
-                100,
-                SoundnessType::UniqueDecoding,
-                10,
-                3,
-                1.5,
-                256
-            ),
+            WhirConfig::<Field64>::ood_samples(100, SoundnessType::UniqueDecoding, 10, 3, 1.5, 256),
             0
         );
     }
@@ -1680,7 +1416,7 @@ mod tests {
     fn test_ood_samples_valid_case() {
         // Testing a valid case where the function finds an appropriate `ood_samples`
         assert_eq!(
-            WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::ood_samples(
+            WhirConfig::<Field64>::ood_samples(
                 50, // security level
                 SoundnessType::ProvableList,
                 15,  // num_variables
@@ -1696,7 +1432,7 @@ mod tests {
     fn test_ood_samples_low_security_level() {
         // Lower security level should require fewer OOD samples
         assert_eq!(
-            WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::ood_samples(
+            WhirConfig::<Field64>::ood_samples(
                 30, // Lower security level
                 SoundnessType::ConjectureList,
                 20,  // num_variables
@@ -1712,7 +1448,7 @@ mod tests {
     fn test_ood_samples_high_security_level() {
         // Higher security level should require more OOD samples
         assert_eq!(
-            WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::ood_samples(
+            WhirConfig::<Field64>::ood_samples(
                 100, // High security level
                 SoundnessType::ProvableList,
                 25,   // num_variables
@@ -1727,7 +1463,7 @@ mod tests {
     #[test]
     fn test_ood_extremely_high_security_level() {
         assert_eq!(
-            WhirConfig::<Field64, KeccakMerkleTreeParams<Field64>>::ood_samples(
+            WhirConfig::<Field64>::ood_samples(
                 1000, // Extremely high security level
                 SoundnessType::ConjectureList,
                 10,  // num_variables

@@ -12,10 +12,11 @@ use tracing::{instrument, span, Level};
 
 use super::SumcheckPolynomial;
 use crate::{
-    crypto::proof_of_work,
     ensure,
     poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    transcript::{codecs::U64, FieldConfig},
+    protocols::proof_of_work,
+    transcript::codecs::U64,
+    type_info::Type,
     utils::eval_eq,
     whir::statement::Statement,
 };
@@ -26,7 +27,7 @@ pub struct Config<F>
 where
     F: Field,
 {
-    pub field: FieldConfig<F>,
+    pub field: Type<F>,
     pub initial_size: usize,
     pub rounds: Vec<RoundConfig>,
 }
@@ -46,17 +47,14 @@ impl<F: Field> Config<F> {
             self.initial_size.ilog2() as usize >= self.rounds.len(),
             "Initial size must be >= 2^{rounds}."
         );
-        for round in &self.rounds {
-            round.pow.validate()?;
-        }
         Ok(())
     }
 
-    pub fn final_size(&self) -> usize {
+    pub const fn final_size(&self) -> usize {
         self.initial_size >> self.num_rounds()
     }
 
-    pub fn num_rounds(&self) -> usize {
+    pub const fn num_rounds(&self) -> usize {
         self.rounds.len()
     }
 
@@ -1207,10 +1205,10 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_basic_case() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 2,
             rounds: vec![RoundConfig {
-                pow: proof_of_work::Config::none(),
+                pow: proof_of_work::Config::from_difficulty(Bits::new(0.0)),
             }],
         };
         let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
@@ -1254,14 +1252,11 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_with_multiple_folding_factors() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 4,
             rounds: vec![
                 RoundConfig {
-                    pow: proof_of_work::Config {
-                        engine_id: proof_of_work::SHA2,
-                        difficulty: Bits::new(2.0),
-                    }
+                    pow: proof_of_work::Config::from_difficulty(Bits::new(2.0))
                 };
                 2
             ],
@@ -1295,14 +1290,11 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_with_three_variables() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 8,
             rounds: vec![
                 RoundConfig {
-                    pow: proof_of_work::Config {
-                        engine_id: proof_of_work::SHA2,
-                        difficulty: Bits::new(2.0),
-                    }
+                    pow: proof_of_work::Config::from_difficulty(Bits::new(2.0)),
                 };
                 3
             ],
@@ -1340,7 +1332,7 @@ mod tests {
     #[test]
     fn test_compute_sumcheck_polynomials_edge_case_zero_folding() {
         let config = Config {
-            field: FieldConfig::<F>::new(),
+            field: Type::<F>::new(),
             initial_size: 4,
             rounds: vec![],
         };

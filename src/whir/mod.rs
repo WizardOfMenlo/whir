@@ -1,6 +1,5 @@
 pub mod batching;
 pub mod committer;
-pub mod merkle;
 pub mod parameters;
 pub mod prover;
 pub mod statement;
@@ -15,15 +14,10 @@ mod tests {
     use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::{
-            fields::{Field64, Field64_2},
-            merkle_tree::blake3::Blake3MerkleTreeParams,
-        },
+        crypto::fields::{Field64, Field64_2},
+        hash,
         ntt::RSDefault,
-        parameters::{
-            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
-            ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -37,9 +31,6 @@ mod tests {
             verifier::Verifier,
         },
     };
-
-    /// Merkle tree configuration type for commitment layers.
-    type MerkleConfig = Blake3MerkleTreeParams<F>;
 
     /// Field type used in the tests.
     type F = Field64;
@@ -72,27 +63,29 @@ mod tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size: 1,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
+        eprintln!("{params}");
 
         // Test that the config is serializable
-        eprintln!("{params:?}");
         test_serde(&params);
 
         // Define the multilinear polynomial: constant 1 across all inputs
@@ -175,7 +168,7 @@ mod tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(prover_state.inner_mut(), &polynomial);
+        let witness = committer.commit(&mut prover_state, &polynomial);
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());
@@ -196,7 +189,7 @@ mod tests {
 
         // Parse the commitment
         let parsed_commitment = commitment_reader
-            .parse_commitment(verifier_state.inner_mut())
+            .parse_commitment(&mut verifier_state)
             .unwrap();
 
         // Verify that the generated proof satisfies the statement
@@ -206,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn test_whir() {
+    fn test_whir_1() {
         let folding_factors = [1, 2, 3, 4];
         let soundness_type = [
             SoundnessType::ConjectureList,
@@ -222,6 +215,15 @@ mod tests {
                 for num_points in num_points {
                     for soundness_type in soundness_type {
                         for pow_bits in pow_bits {
+                            eprintln!();
+                            dbg!(
+                                folding_factor,
+                                num_variable,
+                                num_points,
+                                soundness_type,
+                                pow_bits
+                            );
+
                             make_whir_things(
                                 num_variable,
                                 FoldingFactor::Constant(folding_factor),
@@ -230,6 +232,44 @@ mod tests {
                                 pow_bits,
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_whir_mixed_folding_factors() {
+        let folding_factors = [1, 2, 3, 4];
+        let num_points = [0, 1, 2];
+
+        for initial_folding_factor in folding_factors {
+            for folding_factor in folding_factors {
+                if initial_folding_factor == folding_factor {
+                    continue;
+                }
+                let n = std::cmp::max(initial_folding_factor, folding_factor);
+                let num_variables = n..=3 * n;
+                for num_variable in num_variables {
+                    for num_points in num_points {
+                        eprintln!();
+                        dbg!(
+                            initial_folding_factor,
+                            folding_factor,
+                            num_variable,
+                            num_points,
+                        );
+
+                        make_whir_things(
+                            num_variable,
+                            FoldingFactor::ConstantFromSecondRound(
+                                initial_folding_factor,
+                                folding_factor,
+                            ),
+                            num_points,
+                            SoundnessType::ProvableList,
+                            5,
+                        );
                     }
                 }
             }
@@ -252,23 +292,26 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size: 1,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
+        eprintln!("{params}");
 
         // Create N different polynomials
         let polynomials: Vec<_> = (0..num_polynomials)
@@ -316,7 +359,7 @@ mod tests {
         let mut witnesses = Vec::new();
 
         for poly in &polynomials {
-            let witness = committer.commit(prover_state.inner_mut(), poly);
+            let witness = committer.commit(&mut prover_state, poly);
             witnesses.push(witness);
         }
 
@@ -337,7 +380,7 @@ mod tests {
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_polynomials {
             let parsed_commitment = commitment_reader
-                .parse_commitment(verifier_state.inner_mut())
+                .parse_commitment(&mut verifier_state)
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }
@@ -351,21 +394,42 @@ mod tests {
     #[test]
     fn test_whir_batch() {
         // Test with different configurations
-        let folding_factors = [2, 3, 4];
+        let folding_factors = [1, 2, 3, 4];
         let num_polynomials = [2, 3, 4];
         let num_points = [0, 1, 2];
 
-        for folding_factor in folding_factors {
-            for num_polys in num_polynomials {
-                for num_points_per_poly in num_points {
-                    make_whir_batch_things(
-                        folding_factor * 2, // num_variables
-                        FoldingFactor::Constant(folding_factor),
-                        num_points_per_poly,
-                        num_polys,
-                        SoundnessType::ConjectureList,
-                        0, // pow_bits
-                    );
+        for initial_folding_factor in folding_factors {
+            for folding_factor in folding_factors {
+                let n = std::cmp::max(initial_folding_factor, folding_factor);
+                // TODO: Batching with small number of variables..
+                for num_variables in (initial_folding_factor + folding_factor)..=3 * n {
+                    for num_polys in num_polynomials {
+                        for num_points_per_poly in num_points {
+                            eprintln!();
+                            dbg!(
+                                initial_folding_factor,
+                                folding_factor,
+                                num_variables,
+                                num_polys,
+                                num_points_per_poly,
+                            );
+                            make_whir_batch_things(
+                                num_variables,
+                                if initial_folding_factor == folding_factor {
+                                    FoldingFactor::Constant(folding_factor)
+                                } else {
+                                    FoldingFactor::ConstantFromSecondRound(
+                                        initial_folding_factor,
+                                        folding_factor,
+                                    )
+                                },
+                                num_points_per_poly,
+                                num_polys,
+                                SoundnessType::ConjectureList,
+                                0, // pow_bits
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -399,23 +463,25 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits: 0,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type: SoundnessType::ConjectureList,
             starting_log_inv_rate: 1,
             batch_size: 1,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
@@ -442,8 +508,8 @@ mod tests {
         let mut prover_state = ProverState::from(ds.std_prover());
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness1 = committer.commit(prover_state.inner_mut(), &poly1);
-        let witness2_committed = committer.commit(prover_state.inner_mut(), &poly2);
+        let witness1 = committer.commit(&mut prover_state, &poly1);
+        let witness2_committed = committer.commit(&mut prover_state, &poly2);
 
         // ATTACK: Create a fake witness using poly_wrong instead of poly2
         // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
@@ -467,7 +533,7 @@ mod tests {
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_polynomials {
             let parsed_commitment = commitment_reader
-                .parse_commitment(verifier_state.inner_mut())
+                .parse_commitment(&mut verifier_state)
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }
@@ -501,23 +567,25 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size, // KEY: batch_size > 1
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::SHA2,
         };
 
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together
@@ -574,7 +642,7 @@ mod tests {
 
         for witness_polys in &all_polynomials {
             let poly_refs: Vec<_> = witness_polys.iter().collect();
-            let witness = committer.commit_batch(prover_state.inner_mut(), &poly_refs);
+            let witness = committer.commit_batch(&mut prover_state, &poly_refs);
             witnesses.push(witness);
         }
 
@@ -592,7 +660,7 @@ mod tests {
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_witnesses {
             let parsed_commitment = commitment_reader
-                .parse_commitment(verifier_state.inner_mut())
+                .parse_commitment(&mut verifier_state)
                 .unwrap();
             parsed_commitments.push(parsed_commitment);
         }

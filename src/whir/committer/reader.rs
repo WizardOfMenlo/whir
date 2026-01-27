@@ -1,9 +1,10 @@
-use ark_crypto_primitives::merkle_tree::Config;
 use ark_ff::FftField;
-use spongefish::{Codec, DuplexSpongeInterface, VerificationResult, VerifierState};
+use spongefish::{Codec, DuplexSpongeInterface, VerificationResult};
 
 use crate::{
-    transcript::ProverMessage,
+    hash::Hash,
+    protocols::matrix_commit,
+    transcript::{ProverMessage, VerifierMessage, VerifierState},
     whir::{
         parameters::WhirConfig,
         statement::{Constraint, Weights},
@@ -16,48 +17,64 @@ use crate::{
 ///
 
 #[derive(Clone)]
-pub struct ParsedCommitment<F, D> {
-    pub root: D,
+pub struct ParsedCommitment<F> {
+    pub matrix_commitment: matrix_commit::Commitment,
     pub num_variables: usize,
     pub ood_points: Vec<F>,
     pub ood_answers: Vec<Vec<F>>,
     pub batching_randomness: F,
 }
 
-pub struct CommitmentReader<'a, F, MerkleConfig>(&'a WhirConfig<F, MerkleConfig>)
-where
-    F: FftField,
-    MerkleConfig: Config;
+pub struct CommitmentReader<'a, F: FftField>(&'a WhirConfig<F>);
 
-impl<'a, F, MerkleConfig> CommitmentReader<'a, F, MerkleConfig>
-where
-    F: FftField,
-    MerkleConfig: Config<Leaf = [F]>,
-{
-    pub const fn new(params: &'a WhirConfig<F, MerkleConfig>) -> Self {
+impl<'a, F: FftField> CommitmentReader<'a, F> {
+    pub const fn new(params: &'a WhirConfig<F>) -> Self {
         Self(params)
     }
 
     pub fn parse_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-    ) -> VerificationResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
+    ) -> VerificationResult<ParsedCommitment<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
     {
-        let root = verifier_state.prover_message()?;
+        ParsedCommitment::receive(
+            verifier_state,
+            &self.0.initial_matrix_committer,
+            self.0.mv_parameters.num_variables,
+            self.0.committment_ood_samples,
+            self.0.batch_size,
+        )
+    }
+}
 
-        let mut ood_points = vec![F::ZERO; self.0.committment_ood_samples];
-        let mut ood_answers = Vec::with_capacity(self.0.batch_size);
+impl<F: FftField> ParsedCommitment<F> {
+    pub fn receive<H>(
+        verifier_state: &mut VerifierState<H>,
+        matrix_commit: &matrix_commit::Config<F>,
+        num_variables: usize,
+        ood_samples: usize,
+        batch_size: usize,
+    ) -> VerificationResult<Self>
+    where
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        let matrix_commitment = matrix_commit.receive_commitment(verifier_state)?;
 
-        if self.0.committment_ood_samples > 0 {
+        let mut ood_points = vec![F::ZERO; ood_samples];
+        let mut ood_answers = Vec::with_capacity(batch_size);
+
+        if ood_samples > 0 {
             for oods_point in &mut ood_points {
                 *oods_point = verifier_state.verifier_message();
             }
-            for _ in 0..self.0.batch_size {
-                let mut virt_answers = vec![F::ZERO; self.0.committment_ood_samples];
+            for _ in 0..batch_size {
+                let mut virt_answers = vec![F::ZERO; ood_samples];
                 for answer in &mut virt_answers {
                     *answer = verifier_state.prover_message()?;
                 }
@@ -65,56 +82,18 @@ where
             }
         }
 
-        let batching_randomness = if self.0.batch_size > 1 {
+        let batching_randomness = if batch_size > 1 {
             verifier_state.verifier_message()
         } else {
             F::zero()
         };
 
-        Ok(ParsedCommitment {
-            root,
-            batching_randomness,
-            num_variables: self.0.mv_parameters.num_variables,
+        Ok(Self {
+            matrix_commitment,
+            num_variables,
             ood_points,
             ood_answers,
-        })
-    }
-}
-
-impl<F, D> ParsedCommitment<F, D>
-where
-    F: ark_ff::Field,
-{
-    pub fn parse<H, MerkleConfig>(
-        verifier_state: &mut VerifierState<H>,
-        num_variables: usize,
-        ood_samples: usize,
-    ) -> VerificationResult<ParsedCommitment<F, MerkleConfig::InnerDigest>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        MerkleConfig: Config<Leaf = [F]>,
-        MerkleConfig::InnerDigest: ProverMessage<[H::U]>,
-    {
-        let root = verifier_state.prover_message()?;
-
-        let mut ood_points = vec![F::ZERO; ood_samples];
-        let mut ood_answers = vec![F::ZERO; ood_samples];
-        if ood_samples > 0 {
-            for oods_point in &mut ood_points {
-                *oods_point = verifier_state.verifier_message();
-            }
-            for oods_answer in &mut ood_answers {
-                *oods_answer = verifier_state.prover_message()?;
-            }
-        }
-
-        Ok(ParsedCommitment {
-            num_variables,
-            root,
-            ood_points,
-            ood_answers: vec![ood_answers],
-            batching_randomness: F::ZERO,
+            batching_randomness,
         })
     }
 

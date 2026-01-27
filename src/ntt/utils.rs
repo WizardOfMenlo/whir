@@ -1,26 +1,3 @@
-/// Target single-thread workload size for `T`.
-/// Should ideally be a multiple of a cache line (64 bytes)
-/// and close to the L1 cache size.
-pub const fn workload_size<T: Sized>() -> usize {
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    const CACHE_SIZE: usize = 1 << 17; // 128KB for Apple Silicon
-
-    #[cfg(all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")))]
-    const CACHE_SIZE: usize = 1 << 16; // 64KB for mobile ARM
-
-    #[cfg(target_arch = "x86_64")]
-    const CACHE_SIZE: usize = 1 << 15; // 32KB for x86-64
-
-    #[cfg(not(any(
-        all(target_arch = "aarch64", target_os = "macos"),
-        all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")),
-        target_arch = "x86_64"
-    )))]
-    const CACHE_SIZE: usize = 1 << 15; // 32KB default
-
-    CACHE_SIZE / size_of::<T>()
-}
-
 /// Compute the largest factor of `n` that is ≤ sqrt(n).
 /// Assumes `n` is of the form `2^k * {1,3,9}`.
 pub fn sqrt_factor(n: usize) -> usize {
@@ -44,7 +21,7 @@ pub fn sqrt_factor(n: usize) -> usize {
             } else {
                 // - If `twos` is even: The largest factor is `3 * 2^((twos - 1) / 2)`
                 // - If `twos` is odd: The largest factor is `2^((twos / 2))`
-                if twos % 2 == 0 {
+                if twos.is_multiple_of(2) {
                     3 << ((twos - 1) / 2)
                 } else {
                     2 << (twos / 2)
@@ -60,7 +37,7 @@ pub fn sqrt_factor(n: usize) -> usize {
             } else {
                 // - If `twos` is even: The largest factor is `3 * 2^(twos / 2)`
                 // - If `twos` is odd: The largest factor is `4 * 2^(twos / 2)`
-                if twos % 2 == 0 {
+                if twos.is_multiple_of(2) {
                     3 << (twos / 2)
                 } else {
                     4 << (twos / 2)
@@ -109,7 +86,7 @@ mod tests {
 
         // Iterate from 1 to `isqrt_x` to find the largest factor of `x`.
         for i in 1..=isqrt_x {
-            if x % i == 0 {
+            if x.is_multiple_of(i) {
                 // Update `result` with the largest divisor found.
                 result = i;
             }

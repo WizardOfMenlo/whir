@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This domain is constructed over a multiplicative subgroup of a finite field, enabling
 /// efficient Fast Fourier Transforms (FFTs).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: CanonicalSerialize + CanonicalDeserialize")]
 pub struct Domain<F>
 where

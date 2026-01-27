@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 default-run = "main"
-rust-version = "1.83.0"
+rust-version = "1.87.0"
 
 [lints.clippy]
 # all lints that are on by default (correctness, suspicious, style, complexity, perf)
@@ -36,9 +36,8 @@ redundant_closure_for_method_calls = "allow"
 ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
-ark-crypto-primitives = { version = "0.5", features = ["merkle_tree"] }
 ark-poly = "0.5"
-blake3 = { version = "1.5", features = ["digest"] }
+blake3 = { version = "1.5", features = ["digest", "traits-preview"] }
 sha3 = { version = "0.10.7", features = ["asm", "oid"] }
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -55,6 +54,8 @@ digest = { version = "0.10.7", features = ["oid"] }
 sha2 = { version = "0.10.9", features = ["oid", "asm"] }
 zerocopy = "0.8.33"
 hex-literal = "0.4.1"
+const-oid = "0.9.6"
+arrayvec = "0.7.6"
 
 [dev-dependencies]
 proptest = "1.0"
@@ -70,7 +71,6 @@ parallel = [
     "dep:rayon",
     "ark-poly/parallel",
     "ark-ff/parallel",
-    "ark-crypto-primitives/parallel",
 ]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
