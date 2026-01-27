@@ -72,8 +72,8 @@ mod tests {
     use ark_ff::{AdditiveGroup, FftField, Field};
 
     use super::compute_fold;
-    use crate::{
-        crypto::fields::Field64,
+    use crate::algebra::{
+        fields::Field64,
         ntt::{test_utils::transform_evaluations, transpose},
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };

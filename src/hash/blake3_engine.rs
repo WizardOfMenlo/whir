@@ -17,7 +17,7 @@ use super::{Engine, Hash, HASH_COUNTER};
 use crate::transcript::ProtocolId;
 
 pub const BLAKE3: ProtocolId = ProtocolId::new(hex!(
-    "22d025f72260571abf51e1f9b3ed6f0d27da1c765e1511ae778cea025d6345fd"
+    "03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c"
 ));
 
 const EMPTY_HASH: Hash = Hash(hex!(

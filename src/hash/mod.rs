@@ -38,6 +38,8 @@ pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Hash,
     Default,
     Serialize,
@@ -87,7 +89,7 @@ impl<E: Engine + ?Sized> Protocol for E {
         use sha3::Sha3_256;
 
         let mut hasher = Sha3_256::new();
-        hasher.update(b"whir::crypto::hash");
+        hasher.update(b"whir::hash");
         if let Some(oid) = self.oid() {
             hasher.update(oid.as_bytes());
         } else {
@@ -124,3 +126,25 @@ impl NargDeserialize for Hash {
 }
 
 assert_impl_all!(Hash: ProverMessage);
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use proptest::{sample::select, strategy::Strategy};
+
+    use super::*;
+    use crate::{
+        hash::{BLAKE3, KECCAK},
+        transcript::ProtocolId,
+    };
+
+    const HASHES: [ProtocolId; 5] = [COPY, SHA2, SHA3, KECCAK, BLAKE3];
+
+    pub fn hash_for_size(size: usize) -> impl Strategy<Value = ProtocolId> {
+        let suitable = HASHES
+            .iter()
+            .copied()
+            .filter(|h| ENGINES.retrieve(*h).is_some_and(|h| h.supports_size(size)))
+            .collect::<Vec<_>>();
+        select(suitable)
+    }
+}

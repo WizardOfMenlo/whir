@@ -186,7 +186,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use crate::{
-        crypto::fields::{Field256, Field64, Field64_3},
+        algebra::fields::{Field256, Field64, Field64_3},
         utils::test_serde,
     };
 

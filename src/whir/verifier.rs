@@ -2,13 +2,13 @@ use ark_ff::FftField;
 use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationError, VerificationResult};
 
 use super::{
-    committer::reader::ParsedCommitment,
+    committer::ParsedCommitment,
     parameters::{RoundConfig, WhirConfig},
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
+    algebra::poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     hash::Hash,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     protocols::{matrix_commit, sumcheck},
     transcript::{codecs::U64, ProverMessage, VerifierMessage, VerifierState},
     type_info::Type,

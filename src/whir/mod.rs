@@ -14,13 +14,15 @@ mod tests {
     use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::fields::{Field64, Field64_2},
-        hash,
-        ntt::RSDefault,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        algebra::{
+            fields::{Field64, Field64_2},
+            ntt::RSDefault,
+            poly_utils::{
+                coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+            },
         },
+        hash,
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, ProverState, VerifierState},
         utils::test_serde,
         whir::{

@@ -11,14 +11,16 @@ use clap::Parser;
 use serde::Serialize;
 use spongefish::{domain_separator, session, Codec};
 use whir::{
+    algebra::{
+        fields,
+        ntt::RSDefault,
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    },
     cmdline_utils::{AvailableFields, AvailableHash},
-    crypto::fields,
     hash::HASH_COUNTER,
-    ntt::RSDefault,
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     transcript::{codecs::Empty, ProverState, VerifierState},
     whir::{
         committer::CommitmentReader,

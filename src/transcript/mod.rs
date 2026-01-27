@@ -17,8 +17,22 @@ use spongefish::{
 
 pub use self::{
     engines::Engines,
-    protocol_id::{Protocol, ProtocolId},
+    protocol_id::{Protocol, ProtocolId, NONE},
 };
+
+#[macro_export]
+macro_rules! verify {
+    ($cond:expr) => {
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !$cond {
+            #[cfg(feature = "verifier_panics")]
+            panic!("Verification failed: {}", stringify!($cond));
+
+            #[cfg(not(feature = "verifier_panics"))]
+            return Err(spongefish::VerificationError);
+        };
+    };
+}
 
 /// Marker trait for types that can be used as prover messages.
 ///
@@ -65,6 +79,13 @@ pub trait VerifierMessage {
     fn verifier_message<T>(&mut self) -> T
     where
         T: Decoding<[Self::U]>;
+
+    fn verifier_message_vec<T>(&mut self, count: usize) -> Vec<T>
+    where
+        T: Decoding<[Self::U]>,
+    {
+        (0..count).map(|_| self.verifier_message()).collect()
+    }
 }
 
 impl<H, R> From<spongefish::ProverState<H, R>> for ProverState<H, R>
@@ -192,6 +213,12 @@ where
                 .to_verifier(sponge, &proof.narg_string),
             hints: &proof.hints,
         }
+    }
+
+    pub fn check_eof(self) -> VerificationResult<()> {
+        verify!(self.inner.check_eof().is_ok());
+        verify!(self.hints.is_empty());
+        Ok(())
     }
 
     pub fn prover_message<T>(&mut self) -> VerificationResult<T>

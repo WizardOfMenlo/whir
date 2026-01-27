@@ -44,6 +44,11 @@ pub struct NttEngine<F: Field> {
     roots: RwLock<Vec<F>>,
 }
 
+/// Returns the root-of-unity used for a domain of size `size`.
+pub fn generator<F: FftField>(size: usize) -> Option<F> {
+    NttEngine::<F>::new_from_cache().checked_root(size)
+}
+
 /// Compute the NTT of a slice of field elements using a cached engine.
 pub fn ntt<F: FftField>(values: &mut [F]) {
     NttEngine::<F>::new_from_cache().ntt(values);
@@ -169,12 +174,15 @@ impl<F: Field> NttEngine<F> {
         self.ntt_batch(values, size);
     }
 
+    pub fn checked_root(&self, order: usize) -> Option<F> {
+        self.order
+            .is_multiple_of(order)
+            .then(|| self.omega_order.pow([(self.order / order) as u64]))
+    }
+
     pub fn root(&self, order: usize) -> F {
-        assert!(
-            self.order.is_multiple_of(order),
-            "Subgroup of requested order does not exist."
-        );
-        self.omega_order.pow([(self.order / order) as u64])
+        self.checked_root(order)
+            .expect("Subgroup of requested order does not exist.")
     }
 
     /// Returns a cached table of roots of unity of the given order.
@@ -447,10 +455,10 @@ pub fn apply_twiddles<F: Field>(values: &mut [F], roots: &[F], rows: usize, cols
 #[cfg(test)]
 #[allow(clippy::significant_drop_tightening)]
 mod tests {
-    use ark_ff::{AdditiveGroup, BigInteger, PrimeField};
+    use ark_ff::{AdditiveGroup as _, BigInteger, PrimeField};
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_new_from_fftfield_basic() {

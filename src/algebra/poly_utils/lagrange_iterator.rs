@@ -133,8 +133,8 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::{
-        crypto::fields::Field64,
+    use crate::algebra::{
+        fields::Field64,
         poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
 

@@ -8,7 +8,7 @@ use {
 };
 
 use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
-use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
+use crate::algebra::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -286,7 +286,7 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::crypto::fields::{Field64, Field64_2};
+    use crate::algebra::fields::{Field64, Field64_2};
 
     type F = Field64;
     type E = Field64_2;

@@ -63,7 +63,7 @@ mod tests {
     use ark_ff::{AdditiveGroup, Zero};
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_zero_polynomial() {
