@@ -8,7 +8,7 @@ use spongefish::{
     VerifierState,
 };
 #[cfg(feature = "tracing")]
-use tracing::{instrument, span, Level};
+use tracing::instrument;
 
 use super::SumcheckPolynomial;
 use crate::{

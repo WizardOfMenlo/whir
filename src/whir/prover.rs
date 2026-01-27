@@ -3,7 +3,7 @@ use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
 use spongefish::{Codec, Decoding, DuplexSpongeInterface};
 #[cfg(feature = "tracing")]
-use tracing::{instrument, span, Level};
+use tracing::instrument;
 
 use super::{
     committer::Witness,
