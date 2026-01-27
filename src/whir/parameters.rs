@@ -17,7 +17,7 @@ use crate::{
     },
     bits::Bits,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-    protocols::{matrix_commit, proof_of_work, sumcheck},
+    protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
     type_info::Type,
 };
 
@@ -56,7 +56,8 @@ where
     pub final_folding_pow: proof_of_work::Config,
 
     // Merkle tree parameters
-    pub initial_matrix_committer: matrix_commit::Config<F>,
+    // TODO: This has redundant parameters with starting_log_inv_rate and others.
+    pub initial_committer: irs_commit::Config<F>,
 
     // Batch size
     pub batch_size: usize,

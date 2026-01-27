@@ -60,9 +60,8 @@ where
     }
 
     pub(crate) fn validate_witness(&self, witness: &Witness<F>) -> bool {
-        assert_eq!(witness.ood_points.len(), witness.ood_answers.len());
         if !self.config.initial_statement {
-            assert!(witness.ood_points.is_empty());
+            assert!(witness.witness.out_of_domain().is_empty());
         }
         witness.polynomial.num_variables() == self.config.mv_parameters.num_variables
     }
@@ -92,20 +91,8 @@ where
         assert!(self.validate_witness(&witness));
 
         // Convert witness ood_points into constraints
-        let new_constraints = witness
-            .ood_points
-            .into_iter()
-            .zip(witness.ood_answers)
-            .map(|(point, evaluation)| {
-                let weights = Weights::evaluation(MultilinearPoint::expand_from_univariate(
-                    point,
-                    self.config.mv_parameters.num_variables,
-                ));
-                (weights, evaluation)
-            })
-            .collect();
 
-        statement.add_constraints_in_front(new_constraints);
+        statement.add_constraints_in_front(witness.oods_constraints());
         let mut sumcheck_prover = None;
         let folding_randomness = if self.config.initial_statement {
             // If there is initial statement, then we run the sum-check for
@@ -151,15 +138,16 @@ where
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
 
+        let matrix = witness.matrix();
         let mut round_state = RoundState {
             domain: self.config.starting_domain.clone(),
             round: 0,
             sumcheck_prover,
             folding_randomness,
             coefficients: witness.polynomial,
-            prev_matrix_committer: self.config.initial_matrix_committer.clone(),
-            prev_matrix_witness: witness.matrix_witness,
-            prev_matrix: witness.merkle_leaves,
+            prev_matrix_committer: self.config.initial_committer.matrix_commit.clone(),
+            prev_matrix_witness: witness.witness.matrix_witness,
+            prev_matrix: matrix,
             randomness_vec,
             statement,
             batching_randomness: witness.batching_randomness,
@@ -262,7 +250,13 @@ where
 
         // OOD constraints from each witness
         for witness in witnesses {
-            for point in &witness.ood_points {
+            all_constraint_weights.extend(
+                witness
+                    .oods_constraints()
+                    .into_iter()
+                    .map(|(weight, _)| weight),
+            );
+            for point in &witness.ood_points() {
                 let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
                 all_constraint_weights.push(Weights::evaluation(ml_point));
             }
@@ -413,10 +407,10 @@ where
 
         // For each witness, provide Merkle proof opening at the challenge indices
         for witness in witnesses {
-            let answers: Vec<F> = stir_indexes
+            let answers: Vec<F::BasePrimeField> = stir_indexes
                 .iter()
                 .flat_map(|&i| {
-                    witness.merkle_leaves[i * leaf_size..(i + 1) * leaf_size]
+                    witness.witness.matrix[i * leaf_size..(i + 1) * leaf_size]
                         .iter()
                         .copied()
                 })
@@ -425,9 +419,9 @@ where
             all_witness_answers.push(answers);
 
             // Prove the answers using the matrix witness
-            self.config.initial_matrix_committer.open(
+            self.config.initial_committer.matrix_commit.open(
                 prover_state,
-                &witness.matrix_witness,
+                &witness.witness.matrix_witness,
                 &stir_indexes,
             );
         }

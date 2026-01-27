@@ -1,9 +1,13 @@
 //! Interleaved Reed-Solomon Commitment Protocol
+//!
+//! *To do:*:
+//! - Reframe as vector commitment protocol (or, with batching, a matrix commitment protocol).
 
 // COMMIT NOTES:
 // Changes compared to previous version:
 // - OODS answer are (poly,point) order, not (point,poly). This is for consistency with the in-domain samples.
 // - Matrix commitment is over the subfield. This performs better when the subfield is smaller.
+// - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
 
 use std::fmt;
 
@@ -16,6 +20,7 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
+        dot,
         embedding::{Basefield, Embedding, Identity},
         mixed_dot, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
@@ -25,6 +30,7 @@ use crate::{
     transcript::{ProverMessage, ProverState, VerifierMessage, VerifierState},
     type_info::{TypeInfo, Typed},
     verify,
+    whir::statement::Weights,
 };
 
 /// Specialization of [`Config`] for commiting with identity embedding.
@@ -35,7 +41,9 @@ pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
 #[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
 pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
 
-pub type Evaluations<F> = Vec<(F, Vec<F>)>;
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize, Default)]
+#[repr(transparent)]
+pub struct Evaluations<F>(pub Vec<(F, Vec<F>)>);
 
 /// Commit to polynomials over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -164,6 +172,7 @@ where
             }
             out_of_domain.push((point, values));
         }
+        let out_of_domain = Evaluations(out_of_domain);
 
         Witness {
             matrix,
@@ -193,6 +202,7 @@ where
             }
             out_of_domain.push((point, answers));
         }
+        let out_of_domain = Evaluations(out_of_domain);
         Ok(Commitment {
             matrix_commitment,
             out_of_domain,
@@ -334,6 +344,28 @@ where
             self.in_domain_samples,
             self.out_domain_samples
         )
+    }
+}
+
+impl<F: Field> Evaluations<F> {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    // TODO: Should not have to pass `size`.
+    pub fn constraints<'s>(
+        &'s self,
+        batch_weights: &'s [F],
+        size: usize,
+    ) -> impl 's + Iterator<Item = (Weights<F>, F)> {
+        assert!(size.is_power_of_two());
+        let num_variables = size.trailing_zeros() as usize;
+        self.0.iter().map(move |(point, answers)| {
+            (
+                Weights::univariate(*point, num_variables),
+                dot(batch_weights, &answers),
+            )
+        })
     }
 }
 

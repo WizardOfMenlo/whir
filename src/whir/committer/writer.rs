@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::{FftField, Field};
 use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
 use spongefish::{Codec, DuplexSpongeInterface};
@@ -10,10 +10,7 @@ use crate::{
     algebra::poly_utils::coeffs::CoefficientList,
     hash::Hash,
     transcript::{ProverMessage, ProverState, VerifierMessage},
-    whir::{
-        parameters::WhirConfig,
-        utils::{compute_ood_response, sample_ood_points},
-    },
+    whir::parameters::WhirConfig,
 };
 
 /// Responsible for committing polynomials using a Merkle-based scheme.
@@ -37,6 +34,20 @@ where
         Self { config }
     }
 
+    pub fn commit<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        polynomial: &CoefficientList<F::BasePrimeField>,
+    ) -> Witness<F>
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        self.commit_batch(prover_state, &[polynomial])
+    }
+
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit_batch<H, R>(
@@ -50,62 +61,20 @@ where
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert!(!polynomials.is_empty());
-        assert_eq!(polynomials.len(), self.config.batch_size);
-
-        let num_vars = polynomials.first().unwrap().num_variables();
-        let num_coeffs = polynomials.first().unwrap().num_coeffs();
-
-        for poly in polynomials {
-            assert_eq!(poly.num_variables(), num_vars);
-            assert_eq!(poly.num_coeffs(), num_coeffs);
-        }
-
-        let base_domain = self.config.starting_domain.base_domain.unwrap();
-        let expansion = base_domain.size() / num_coeffs;
-        let fold_size = 1 << self.config.folding_factor.at_round(0);
-
-        let num_leaves = (polynomials[0].num_coeffs() * expansion) / fold_size;
-        let stacked_leaf_size = fold_size * polynomials.len();
-        let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
-
-        for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals = self.config.basefield_reed_solomon.interleaved_encode(
-                poly.coeffs(),
-                expansion,
-                self.config.folding_factor.at_round(0),
-            );
-
-            for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
-                let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
-                for (j, &eval) in chunk.iter().enumerate() {
-                    stacked_leaves[start_dst + j] = F::from_base_prime_field(eval);
-                }
-            }
-        }
-
-        // Commit to the matrix.
-        let matrix_witness = self
+        let poly_refs = polynomials
+            .iter()
+            .map(|poly| poly.coeffs())
+            .collect::<Vec<_>>();
+        let witness = self
             .config
-            .initial_matrix_committer
-            .commit(prover_state, &stacked_leaves);
+            .initial_committer
+            .commit(prover_state, &poly_refs);
 
-        let (ood_points, first_answers) = sample_ood_points(
-            prover_state.inner_mut(),
-            self.config.committment_ood_samples,
-            self.config.mv_parameters.num_variables,
-            |point| polynomials[0].evaluate_at_extension(point),
-        );
-        let mut per_poly_ood_answers: Vec<Vec<F>> = Vec::with_capacity(polynomials.len());
-        per_poly_ood_answers.push(first_answers);
-        for poly in polynomials.iter().skip(1) {
-            let answers = compute_ood_response(
-                prover_state.inner_mut(),
-                &ood_points,
-                self.config.mv_parameters.num_variables,
-                |point| poly.evaluate_at_extension(point),
-            );
-            per_poly_ood_answers.push(answers);
+        let mut per_poly_ood_answers = vec![Vec::new(); polynomials.len()];
+        for oods in witness.out_of_domain() {
+            for (answer, answers) in oods.1.iter().zip(per_poly_ood_answers.iter_mut()) {
+                answers.push(*answer);
+            }
         }
 
         let batching_randomness = if polynomials.len() > 1 {
@@ -117,10 +86,7 @@ where
         if polynomials.len() == 1 {
             return Witness {
                 polynomial: polynomials[0].clone().to_extension(),
-                matrix_witness,
-                merkle_leaves: stacked_leaves,
-                ood_points,
-                ood_answers: per_poly_ood_answers.remove(0),
+                witness,
                 batching_randomness,
             };
         }
@@ -150,27 +116,9 @@ where
 
         Witness {
             polynomial,
-            matrix_witness,
-            merkle_leaves: stacked_leaves,
-            ood_points,
-            ood_answers: batched_ood_resp,
+            witness,
             batching_randomness,
         }
-    }
-
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<H, R>(
-        &self,
-        prover_state: &mut ProverState<H, R>,
-        polynomial: &CoefficientList<F::BasePrimeField>,
-    ) -> Witness<F>
-    where
-        H: DuplexSpongeInterface,
-        R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
-    {
-        self.commit_batch(prover_state, &[polynomial])
     }
 }
 
@@ -363,7 +311,7 @@ mod tests {
             },
         );
 
-        params.committment_ood_samples = 0; // No OOD samples
+        params.initial_committer.out_domain_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
         let mut prover_state = ProverState::from(
