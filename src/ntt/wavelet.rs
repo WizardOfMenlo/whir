@@ -1,6 +1,6 @@
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
-use {super::utils::workload_size, rayon::prelude::*};
+use {crate::utils::workload_size, rayon::prelude::*};
 
 use super::transpose;
 

@@ -1,6 +1,7 @@
 use std::mem::swap;
 
-use super::{utils::workload_size, MatrixMut};
+use super::MatrixMut;
+use crate::utils::workload_size;
 
 // NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
 // (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).

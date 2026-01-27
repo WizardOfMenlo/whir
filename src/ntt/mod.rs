@@ -10,7 +10,10 @@ mod transpose;
 mod utils;
 mod wavelet;
 
+use std::fmt::Debug;
+
 use ark_ff::FftField;
+use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -63,7 +66,7 @@ pub fn interleaved_rs_encode<F: FftField>(
 }
 
 /// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
-pub trait ReedSolomon<F: FftField>: Send + Sync {
+pub trait ReedSolomon<F: FftField>: Debug + Send + Sync {
     fn interleaved_encode(
         &self,
         interleaved_coeffs: &[F],
@@ -72,7 +75,10 @@ pub trait ReedSolomon<F: FftField>: Send + Sync {
     ) -> Vec<F>;
 }
 
+assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
+
 /// Tag to select the built-in Reed Solomon Encoding
+#[derive(Clone, Copy, Debug)]
 pub struct RSDefault;
 
 impl<F: FftField> ReedSolomon<F> for RSDefault {

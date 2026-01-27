@@ -31,12 +31,10 @@ mod batching_tests {
     use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::{fields::Field64, merkle_tree::blake3::Blake3MerkleTreeParams},
+        crypto::fields::Field64,
+        hash,
         ntt::RSDefault,
-        parameters::{
-            DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
-            ProtocolParameters, SoundnessType,
-        },
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -50,8 +48,6 @@ mod batching_tests {
         },
     };
 
-    /// Merkle tree configuration type for commitment layers.
-    type MerkleConfig = Blake3MerkleTreeParams<F>;
     /// Field type used in the tests.
     type F = Field64;
 
@@ -96,24 +92,26 @@ mod batching_tests {
         let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
-        let whir_params = ProtocolParameters::<MerkleConfig> {
+        let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
             pow_bits,
             folding_factor,
-            leaf_hash_params: (),
-            two_to_one_params: (),
             soundness_type,
             starting_log_inv_rate: 1,
             batch_size,
-            deduplication_strategy: DeduplicationStrategy::Enabled,
-            merkle_proof_strategy: MerkleProofStrategy::Compressed,
+            hash_id: hash::SHA2,
         };
         let reed_solomon = Arc::new(RSDefault);
         let basefield_reed_solomon = reed_solomon.clone();
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, whir_params);
+        let params = WhirConfig::new(
+            reed_solomon,
+            basefield_reed_solomon,
+            mv_params,
+            &whir_params,
+        );
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 
@@ -137,10 +135,8 @@ mod batching_tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let batched_witness = committer.commit_batch(
-            prover_state.inner_mut(),
-            &poly_list.iter().collect::<Vec<_>>(),
-        );
+        let batched_witness =
+            committer.commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>());
 
         // Get the batched polynomial
         let batched_poly = batched_witness.batched_poly();
@@ -187,7 +183,7 @@ mod batching_tests {
         let commitment_reader = CommitmentReader::new(&params);
 
         let parsed_commitment = commitment_reader
-            .parse_commitment(verifier_state.inner_mut())
+            .parse_commitment(&mut verifier_state)
             .unwrap();
 
         // Verify that the generated proof satisfies the statement

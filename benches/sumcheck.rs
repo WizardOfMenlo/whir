@@ -3,7 +3,7 @@ use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     crypto::fields::Field64 as F,
     poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-    sumcheck::SumcheckSingle,
+    protocols::sumcheck::SumcheckSingle,
     whir::statement::{Statement, Weights},
 };
 

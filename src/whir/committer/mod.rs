@@ -1,6 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
-
-use crate::poly_utils::coeffs::CoefficientList;
+use crate::{poly_utils::coeffs::CoefficientList, protocols::matrix_commit};
 
 pub mod reader;
 pub mod writer;
@@ -14,18 +12,16 @@ pub use writer::CommitmentWriter;
 /// including the polynomial itself, the Merkle tree used for commitment,
 /// and out-of-domain (OOD) evaluations.
 #[derive(Clone)]
-pub struct Witness<F, MerkleConfig>
-where
-    MerkleConfig: Config,
-{
+#[allow(clippy::struct_field_names)]
+pub struct Witness<F> {
     /// The committed polynomial in coefficient form. In case of batching, its
     /// the batched polynomial, i.e., the weighted sum of polynomials in
     /// batching data.
     pub(crate) polynomial: CoefficientList<F>,
 
-    /// The Merkle tree constructed from the polynomial evaluations. In case of
-    /// batching, it's the merkle tree of the batched polynomial.
-    pub(crate) merkle_tree: MerkleTree<MerkleConfig>,
+    /// The witness to matrix commitment of the matrix containing the polynomial
+    /// evaluations.
+    pub(crate) matrix_witness: matrix_commit::Witness,
 
     /// The leaves of the Merkle tree, derived from folded polynomial
     /// evaluations. In case of batching, its the merkle leaves of the batched

@@ -101,7 +101,7 @@ where
     /// Evaluates the polynomial at an arbitrary point in the domain `F^n`.
     ///
     /// Given an interpolation point `point ∈ F^n`, this computes:
-    /// ```ignore
+    /// ```text
     /// f(point) = ∑ evaluations[i] * eq_poly3(i)
     /// ```
     /// where `eq_poly3(i)` is the Lagrange basis polynomial at index `i` in `{0,1,2}^n`.

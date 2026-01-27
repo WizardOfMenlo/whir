@@ -77,7 +77,7 @@ pub fn transform_evaluations<F: FftField>(
     let folding_factor_exp = 1 << folding_factor;
 
     // Ensure input is divisible by folding factor
-    assert!(evals.len() % folding_factor_exp == 0);
+    assert!(evals.len().is_multiple_of(folding_factor_exp));
 
     // Number of rows (one per subdomain)
     let size_of_new_domain = evals.len() / folding_factor_exp;

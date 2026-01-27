@@ -30,6 +30,29 @@ pub fn f64_eq_abs(a: f64, b: f64, abs_err: f64) -> bool {
     (a - b).abs() <= abs_err
 }
 
+/// Target single-thread workload size for `T`.
+/// Should ideally be a multiple of a cache line (64 bytes)
+/// and close to the L1 cache size.
+pub const fn workload_size<T: Sized>() -> usize {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    const CACHE_SIZE: usize = 1 << 17; // 128KB for Apple Silicon
+
+    #[cfg(all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")))]
+    const CACHE_SIZE: usize = 1 << 16; // 64KB for mobile ARM
+
+    #[cfg(target_arch = "x86_64")]
+    const CACHE_SIZE: usize = 1 << 15; // 32KB for x86-64
+
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "macos"),
+        all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")),
+        target_arch = "x86_64"
+    )))]
+    const CACHE_SIZE: usize = 1 << 15; // 32KB default
+
+    CACHE_SIZE / size_of::<T>()
+}
+
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.
 // Also, should the behaviour for value >= base^n_bits be specified as part of the API or asserted not to happen?
 // Currently, we compute the decomposition of value % (base^n_bits).

@@ -80,7 +80,7 @@ impl<F: Field> Weights<F> {
     }
 
     /// Returns the number of variables involved in the weight function.
-    pub fn num_variables(&self) -> usize {
+    pub const fn num_variables(&self) -> usize {
         match self {
             Self::Evaluation { point } => point.num_variables(),
             Self::Linear { weight } | Self::Geometric { weight, .. } => weight.num_variables(),

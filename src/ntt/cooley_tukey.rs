@@ -11,7 +11,7 @@ use std::{
 
 use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
-use {super::utils::workload_size, rayon::prelude::*, std::cmp::max};
+use {crate::utils::workload_size, rayon::prelude::*, std::cmp::max};
 
 use super::{
     transpose,
@@ -114,21 +114,21 @@ impl<F: Field> NttEngine<F> {
             omega_16_9: F::ZERO,
             roots: RwLock::new(Vec::new()),
         };
-        if order % 3 == 0 {
+        if order.is_multiple_of(3) {
             let omega_3_1 = res.root(3);
             let omega_3_2 = omega_3_1 * omega_3_1;
             // Note: char F cannot be 2 and so division by 2 works, because primitive roots of unity with even order exist.
             res.half_omega_3_1_min_2 = (omega_3_1 - omega_3_2) / F::from(2u64);
             res.half_omega_3_1_plus_2 = (omega_3_1 + omega_3_2) / F::from(2u64);
         }
-        if order % 4 == 0 {
+        if order.is_multiple_of(4) {
             res.omega_4_1 = res.root(4);
         }
-        if order % 8 == 0 {
+        if order.is_multiple_of(8) {
             res.omega_8_1 = res.root(8);
             res.omega_8_3 = res.omega_8_1.pow([3]);
         }
-        if order % 16 == 0 {
+        if order.is_multiple_of(16) {
             res.omega_16_1 = res.root(16);
             res.omega_16_3 = res.omega_16_1.pow([3]);
             res.omega_16_9 = res.omega_16_1.pow([9]);
@@ -141,7 +141,7 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
-        assert!(values.len() % size == 0);
+        assert!(values.len().is_multiple_of(size));
         let roots = self.roots_table(size);
         self.ntt_dispatch(values, &roots, size);
     }
@@ -154,7 +154,7 @@ impl<F: Field> NttEngine<F> {
 
     /// Inverse batch NTT. Does not aply 1/n scaling factor.
     pub fn intt_batch(&self, values: &mut [F], size: usize) {
-        assert!(values.len() % size == 0);
+        assert!(values.len().is_multiple_of(size));
 
         #[cfg(not(feature = "parallel"))]
         values.chunks_exact_mut(size).for_each(|values| {
@@ -171,7 +171,7 @@ impl<F: Field> NttEngine<F> {
 
     pub fn root(&self, order: usize) -> F {
         assert!(
-            self.order % order == 0,
+            self.order.is_multiple_of(order),
             "Subgroup of requested order does not exist."
         );
         self.omega_order.pow([(self.order / order) as u64])
@@ -181,12 +181,12 @@ impl<F: Field> NttEngine<F> {
     fn roots_table(&self, order: usize) -> RwLockReadGuard<'_, Vec<F>> {
         // Precompute more roots of unity if requested.
         let roots = self.roots.read().unwrap();
-        if roots.is_empty() || roots.len() % order != 0 {
+        if roots.is_empty() || !roots.len().is_multiple_of(order) {
             // Obtain write lock to update the cache.
             drop(roots);
             let mut roots = self.roots.write().unwrap();
             // Race condition: check if another thread updated the cache.
-            if roots.is_empty() || roots.len() % order != 0 {
+            if roots.is_empty() || !roots.len().is_multiple_of(order) {
                 // Compute minimal size to support all sizes seen so far.
                 // TODO: Do we really need all of these? Can we leverage omege_2 = -1?
                 let size = if roots.is_empty() {
