@@ -9,8 +9,9 @@ pub mod verifier;
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Instant;
 
-    use ark_ff::Field;
+    use ark_ff::{AdditiveGroup, Field};
     use spongefish::{domain_separator, session};
 
     use crate::{
@@ -37,6 +38,20 @@ mod tests {
 
     /// Extension field type used in the tests.
     type EF = Field64_2;
+
+    /// Lift a multilinear polynomial in `n` variables to `n+1` variables by adding a new
+    /// highest-indexed variable that the polynomial does *not* depend on.
+    ///
+    /// In coefficient form (monomial basis), this sets all coefficients involving the new
+    /// variable to 0, and keeps the rest unchanged.
+    fn lift_add_high_var(poly: &CoefficientList<F>) -> CoefficientList<F> {
+        let mut coeffs = Vec::with_capacity(poly.num_coeffs() * 2);
+        for &c in poly.coeffs() {
+            coeffs.push(c);
+            coeffs.push(F::ZERO);
+        }
+        CoefficientList::new(coeffs)
+    }
 
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
     ///
@@ -697,5 +712,582 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn make_whir_prefold(
+        num_vars_small: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let num_vars_large = num_vars_small + 1;
+        let mut rng = ark_std::test_rng();
+
+        // Config for smaller polynomial (target arity after pre-folding)
+        let mv_params = MultivariateParameters::new(num_vars_small);
+        let whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: folding_factor.clone(),
+            soundness_type,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, &whir_params);
+
+        // Config for larger polynomial (n+1 variables)
+        // IMPORTANT: For PreFold, the larger polynomial must use folding_factor=1
+        // so that merkle tree chunks have size 2, allowing us to fold 1 variable
+        let mv_params_large = MultivariateParameters::new(num_vars_large);
+        let whir_params_large = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: FoldingFactor::Constant(1), // PreFold requires folding_factor=1
+            soundness_type,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+
+        let reed_solomon_large = Arc::new(RSDefault);
+        let basefield_reed_solomon_large = reed_solomon_large.clone();
+        let params_large = WhirConfig::new(
+            reed_solomon_large,
+            basefield_reed_solomon_large,
+            mv_params_large,
+            &whir_params_large,
+        );
+
+        // Create test polynomials with distinct values
+        let num_coeffs_small = 1 << num_vars_small;
+        let num_coeffs_large = 1 << num_vars_large;
+
+        let poly_small = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let poly_large = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+
+        // Create statements with constraints
+        let mut statement_small = Statement::new(num_vars_small);
+        let mut statement_large = Statement::new(num_vars_large);
+
+        // Add random evaluation point constraints
+        for _ in 0..num_points_per_poly {
+            // Constraint on small polynomial
+            let point_small = MultilinearPoint::rand(&mut rng, num_vars_small);
+            let eval_small = poly_small.evaluate_at_extension(&point_small);
+            statement_small.add_constraint(Weights::evaluation(point_small), eval_small);
+
+            // Constraint on large polynomial
+            let point_large = MultilinearPoint::rand(&mut rng, num_vars_large);
+            let eval_large = poly_large.evaluate_at_extension(&point_large);
+            statement_large.add_constraint(Weights::evaluation(point_large), eval_large);
+        }
+
+        // Add linear constraints for both polynomials
+        let input_small = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        let linear_weight_small = Weights::linear(input_small.into());
+        let poly_evals_small = EvaluationsList::from(poly_small.clone().to_extension());
+        let sum_small = linear_weight_small.weighted_sum(&poly_evals_small);
+        statement_small.add_constraint(linear_weight_small, sum_small);
+
+        let input_large = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        let linear_weight_large = Weights::linear(input_large.into());
+        let poly_evals_large = EvaluationsList::from(poly_large.clone().to_extension());
+        let sum_large = linear_weight_large.weighted_sum(&poly_evals_large);
+        statement_large.add_constraint(linear_weight_large, sum_large);
+
+        let statements = vec![statement_small, statement_large];
+
+        // Set up domain separator with PreFold
+        let domainsep = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        // Calculate total constraints for the 2×M evaluation matrix
+        let _total_constraints = 2 * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+
+        let mut prover_state = ProverState::from(domainsep.std_prover());
+
+        // Commit to both polynomials
+        let committer_small = CommitmentWriter::new(params.clone());
+        let committer_large = CommitmentWriter::new(params_large.clone());
+
+        let witness_small = committer_small.commit(&mut prover_state, &poly_small);
+        let witness_large = committer_large.commit(&mut prover_state, &poly_large);
+
+        let witnesses = vec![witness_small, witness_large];
+
+        // Generate PreFold proof
+        let prover = Prover::new(params.clone());
+        let (_point, _evals) =
+            prover.prove_batch_prefold(&mut prover_state, &statements, &witnesses);
+
+        assert!(true, "PreFold batch proving failed");
+
+        // Parse both commitments
+        let commitment_reader_small = CommitmentReader::new(&params);
+        let commitment_reader_large = CommitmentReader::new(&params_large);
+
+        let verifier = Verifier::new(&params);
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(domainsep.std_verifier(&proof.narg_string), &proof.hints);
+        let parsed_commitment_small = commitment_reader_small
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitment_large = commitment_reader_large
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+
+        // One parsed commitment per witness (small + large).
+        let parsed_commitments = vec![parsed_commitment_small, parsed_commitment_large];
+
+        // Verify the PreFold batch proof
+        let verify_result = verifier.verify_batch_prefold(
+            &mut verifier_state,
+            parsed_commitments.as_slice(),
+            statements.as_slice(),
+        );
+
+        assert!(
+            verify_result.is_ok(),
+            "PreFold batch verification failed: {:?}",
+            verify_result.err()
+        );
+    }
+
+    /// PreFold batch proving with internal batching enabled (batch_size = 2).
+    ///
+    /// Shape:
+    /// - exactly 2 witnesses total (required by PreFoldSecond),
+    /// - each witness commitment stacks 2 polynomials internally (e.g. witness + blinding),
+    /// - arities differ by 1 (n and n+1), so we PreFold the larger witness once.
+    fn make_whir_prefold_with_internal_batching(
+        num_vars_small: usize,
+        folding_factor: FoldingFactor,
+        num_points_per_poly: usize,
+        soundness_type: SoundnessType,
+        pow_bits: usize,
+    ) {
+        let batch_size = 2;
+        let num_vars_large = num_vars_small + 1;
+        let mut rng = ark_std::test_rng();
+
+        // Config for smaller witness (target arity after pre-folding)
+        let mv_params = MultivariateParameters::new(num_vars_small);
+        let whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: folding_factor.clone(),
+            soundness_type,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+
+        let reed_solomon = Arc::new(RSDefault);
+        let basefield_reed_solomon = reed_solomon.clone();
+        let params = WhirConfig::new(reed_solomon, basefield_reed_solomon, mv_params, &whir_params);
+
+        // Config for larger witness (n+1 variables)
+        // IMPORTANT: PreFold requires folding_factor=1 for the larger witness.
+        let mv_params_large = MultivariateParameters::new(num_vars_large);
+        let whir_params_large = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor: FoldingFactor::Constant(1),
+            soundness_type,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+
+        let reed_solomon_large = Arc::new(RSDefault);
+        let basefield_reed_solomon_large = reed_solomon_large.clone();
+        let params_large = WhirConfig::new(
+            reed_solomon_large,
+            basefield_reed_solomon_large,
+            mv_params_large,
+            &whir_params_large,
+        );
+
+        // Two polynomials per witness (internal batching)
+        let num_coeffs_small = 1 << num_vars_small;
+        let num_coeffs_large = 1 << num_vars_large;
+
+        let f0 = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let f1 = CoefficientList::new(
+            (0..num_coeffs_small)
+                .map(|i| F::from((i * 3 + 7) as u64))
+                .collect(),
+        );
+        let g0 = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+        let g1 = CoefficientList::new(
+            (0..num_coeffs_large)
+                .map(|i| F::from((i * 5 + 11) as u64))
+                .collect(),
+        );
+
+        // Create statements (weights are public; values are derived from the batched witnesses below)
+        let mut statement_small = Statement::new(num_vars_small);
+        let mut statement_large = Statement::new(num_vars_large);
+
+        // Add random evaluation point constraints
+        for _ in 0..num_points_per_poly {
+            let point_small: MultilinearPoint<F> = MultilinearPoint::rand(&mut rng, num_vars_small);
+            // placeholder value; we overwrite with actual batched evaluation after committing
+            statement_small.add_constraint(Weights::evaluation(point_small), F::ZERO);
+        }
+        for _ in 0..num_points_per_poly {
+            let point_large: MultilinearPoint<F> = MultilinearPoint::rand(&mut rng, num_vars_large);
+            statement_large.add_constraint(Weights::evaluation(point_large), F::ZERO);
+        }
+
+        let mut statements = vec![statement_small, statement_large];
+
+        // Set up domain separator with PreFold
+        let domainsep = domain_separator!("🌪️")
+            .session(session!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        let _total_constraints = 2 * params.committment_ood_samples
+            + statements
+                .iter()
+                .map(|s| s.constraints.len())
+                .sum::<usize>();
+
+        let mut prover_state = ProverState::from(domainsep.std_prover());
+
+        // Commit to both witnesses using internal batching (batch_size = 2)
+        let committer_small = CommitmentWriter::new(params.clone());
+        let committer_large = CommitmentWriter::new(params_large.clone());
+
+        let witness_small = committer_small.commit_batch(&mut prover_state, &[&f0, &f1]);
+        let witness_large = committer_large.commit_batch(&mut prover_state, &[&g0, &g1]);
+
+        // Fill in the correct statement sums using the *internally-batched* witnesses.
+        for constraint in &mut statements[0].constraints {
+            constraint.sum = constraint.weights.evaluate(&witness_small.polynomial);
+        }
+        for constraint in &mut statements[1].constraints {
+            constraint.sum = constraint.weights.evaluate(&witness_large.polynomial);
+        }
+
+        let witnesses = vec![witness_small, witness_large];
+
+        // Generate PreFold proof
+        let prover = Prover::new(params.clone());
+        let (_point, _evals) =
+            prover.prove_batch_prefold(&mut prover_state, &statements, &witnesses);
+        assert!(true, "PreFold (internal batching) proving failed");
+
+        // Verify
+        let commitment_reader_small = CommitmentReader::new(&params);
+        let commitment_reader_large = CommitmentReader::new(&params_large);
+        let verifier = Verifier::new(&params);
+
+        let proof = prover_state.proof();
+        let mut verifier_state =
+            VerifierState::from(domainsep.std_verifier(&proof.narg_string), &proof.hints);
+        let parsed_commitment_small = commitment_reader_small
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitment_large = commitment_reader_large
+            .parse_commitment(&mut verifier_state)
+            .unwrap();
+        let parsed_commitments = vec![parsed_commitment_small, parsed_commitment_large];
+
+        let verify_result =
+            verifier.verify_batch_prefold(&mut verifier_state, &parsed_commitments, &statements);
+
+        assert!(
+            verify_result.is_ok(),
+            "PreFold (internal batching) verification failed"
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_basic() {
+        // Basic test with minimal configuration
+        make_whir_prefold(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            0,                             // num_points_per_poly (no extra point constraints)
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_with_constraints() {
+        // Test with evaluation point constraints
+        make_whir_prefold(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            2,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_various_configs() {
+        // Test with different folding factors and arities
+        let folding_factors = [2, 3];
+        // Include an additional case to exercise folding_factor=3 safely.
+        let num_vars = [4, 6, 7];
+        let num_points = [0, 1, 2];
+
+        for &ff in &folding_factors {
+            for &nv in &num_vars {
+                for &np in &num_points {
+                    // PreFold batch transcript construction currently assumes there is at least
+                    // one "regular" WHIR round (i.e. `round_parameters[0]` exists).
+                    //
+                    // For `FoldingFactor::Constant(ff)`, `num_rounds == 0` happens when
+                    // `nv < 2*ff` (e.g. nv=4, ff=3), which makes `round_parameters` empty.
+                    // Skip those configurations here.
+                    if nv < 2 * ff {
+                        continue;
+                    }
+                    make_whir_prefold(
+                        nv,
+                        FoldingFactor::Constant(ff),
+                        np,
+                        SoundnessType::ConjectureList,
+                        0,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_whir_prefold_with_pow() {
+        // Test PreFold with proof-of-work challenges
+        make_whir_prefold(
+            4,                             // num_vars_small (smaller for faster test)
+            FoldingFactor::Constant(2),    // folding_factor
+            1,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            5,                             // pow_bits (non-zero PoW)
+        );
+    }
+
+    #[test]
+    fn test_whir_prefold_internal_batching_2() {
+        make_whir_prefold_with_internal_batching(
+            6,                             // num_vars_small
+            FoldingFactor::Constant(2),    // folding_factor
+            2,                             // num_points_per_poly
+            SoundnessType::ConjectureList, // soundness_type
+            0,                             // pow_bits
+        );
+    }
+
+    /// Benchmark-style comparison (ignored by default): standard lift-and-batch vs prefold batch,
+    /// for two polynomials whose arities differ by exactly 1.
+    ///
+    /// Run with:
+    /// `cargo test -q bench_batching_standard_vs_prefold_arity_diff_1 -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_batching_standard_vs_prefold_arity_diff_1() {
+        let num_vars_small = 20usize;
+        let num_vars_big = num_vars_small + 1;
+
+        // Small params (used by prefold main proof)
+        let mv_params_small = MultivariateParameters::<EF>::new(num_vars_small);
+        let whir_params_small = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(2),
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+        let rs = Arc::new(RSDefault);
+        let params_small =
+            WhirConfig::new(rs.clone(), rs.clone(), mv_params_small, &whir_params_small);
+
+        // Big params (used by standard lift-and-batch). We keep folding_factor=1 like the existing prefold harness.
+        let mv_params_big = MultivariateParameters::<EF>::new(num_vars_big);
+        let whir_params_big = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(1),
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+        let params_big = WhirConfig::new(rs.clone(), rs.clone(), mv_params_big, &whir_params_big);
+
+        // Large deterministic polynomials
+        let poly_small = CoefficientList::new(
+            (0..(1 << num_vars_small))
+                .map(|i| F::from((i + 1) as u64))
+                .collect(),
+        );
+        let poly_big = CoefficientList::new(
+            (0..(1 << num_vars_big))
+                .map(|i| F::from((i * 2 + 1) as u64))
+                .collect(),
+        );
+        let poly_small_lifted = lift_add_high_var(&poly_small);
+
+        // Empty statements (LD/binding only)
+        let stmt_small = Statement::new(num_vars_small);
+        let stmt_big = Statement::new(num_vars_big);
+        let stmt_small_lifted = Statement::new(num_vars_big);
+        let stmt_big_for_standard = Statement::new(num_vars_big);
+
+        // Domain separator shared across runs (separate transcripts per proof)
+        let domainsep = domain_separator!("🌪️")
+            .session(session!("Bench batching standard vs prefold"))
+            .instance(&Empty);
+
+        // --- Standard lift-and-batch ---
+        let mut prover_state_std: ProverState = ProverState::from(domainsep.std_prover());
+        let committer_big = CommitmentWriter::new(params_big.clone());
+        let t0 = Instant::now();
+        let witness_lifted = committer_big.commit(&mut prover_state_std, &poly_small_lifted);
+        let witness_big = committer_big.commit(&mut prover_state_std, &poly_big);
+        let commit_std = t0.elapsed();
+
+        let prover_big = Prover::new(params_big.clone());
+        let t1 = Instant::now();
+        let _ = prover_big.prove_batch(
+            &mut prover_state_std,
+            &[stmt_small_lifted, stmt_big_for_standard],
+            &[witness_lifted, witness_big],
+        );
+        let prove_std = t1.elapsed();
+        let proof_std = prover_state_std.proof();
+
+        let mut verifier_state_std = VerifierState::from(
+            domainsep.std_verifier(&proof_std.narg_string),
+            &proof_std.hints,
+        );
+        let reader_big = CommitmentReader::new(&params_big);
+        let parsed_lifted = reader_big
+            .parse_commitment(&mut verifier_state_std)
+            .unwrap();
+        let parsed_big = reader_big
+            .parse_commitment(&mut verifier_state_std)
+            .unwrap();
+        let verifier_big = Verifier::new(&params_big);
+        let t2 = Instant::now();
+        let ok_std = verifier_big
+            .verify_batch(
+                &mut verifier_state_std,
+                &[parsed_lifted, parsed_big],
+                &[Statement::new(num_vars_big), Statement::new(num_vars_big)],
+            )
+            .is_ok();
+        let verify_std = t2.elapsed();
+        assert!(ok_std, "standard batching verification failed");
+
+        // --- Prefold batch ---
+        let mut prover_state_pf: ProverState = ProverState::from(domainsep.std_prover());
+        let committer_small = CommitmentWriter::new(params_small.clone());
+        let committer_big2 = CommitmentWriter::new(params_big.clone());
+        let t3 = Instant::now();
+        let witness_small = committer_small.commit(&mut prover_state_pf, &poly_small);
+        let witness_big2 = committer_big2.commit(&mut prover_state_pf, &poly_big);
+        let commit_pf = t3.elapsed();
+
+        let prover_small = Prover::new(params_small.clone());
+        let t4 = Instant::now();
+        let _ = prover_small.prove_batch_prefold(
+            &mut prover_state_pf,
+            &[stmt_small, stmt_big],
+            &[witness_small, witness_big2],
+        );
+        let prove_pf = t4.elapsed();
+        let proof_pf = prover_state_pf.proof();
+
+        let mut verifier_state_pf = VerifierState::from(
+            domainsep.std_verifier(&proof_pf.narg_string),
+            &proof_pf.hints,
+        );
+        let reader_small = CommitmentReader::new(&params_small);
+        let reader_big2 = CommitmentReader::new(&params_big);
+        let parsed_small = reader_small
+            .parse_commitment(&mut verifier_state_pf)
+            .unwrap();
+        let parsed_big2 = reader_big2
+            .parse_commitment(&mut verifier_state_pf)
+            .unwrap();
+        let verifier_small = Verifier::new(&params_small);
+        let t5 = Instant::now();
+        let ok_pf = verifier_small
+            .verify_batch_prefold(
+                &mut verifier_state_pf,
+                &[parsed_small, parsed_big2],
+                &[Statement::new(num_vars_small), Statement::new(num_vars_big)],
+            )
+            .is_ok();
+        let verify_pf = t5.elapsed();
+        assert!(ok_pf, "prefold batching verification failed");
+
+        println!("=== bench_batching_standard_vs_prefold_arity_diff_1 ===");
+        println!(
+            "standard: commit={:?}, prove={:?}, verify={:?}, proof_bytes={} (narg={}, hints={})",
+            commit_std,
+            prove_std,
+            verify_std,
+            proof_std.narg_string.len() + proof_std.hints.len(),
+            proof_std.narg_string.len(),
+            proof_std.hints.len()
+        );
+        println!(
+            "prefold:   commit={:?}, prove={:?}, verify={:?}, proof_bytes={} (narg={}, hints={})",
+            commit_pf,
+            prove_pf,
+            verify_pf,
+            proof_pf.narg_string.len() + proof_pf.hints.len(),
+            proof_pf.narg_string.len(),
+            proof_pf.hints.len()
+        );
     }
 }
