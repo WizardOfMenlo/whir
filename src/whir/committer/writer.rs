@@ -1,5 +1,4 @@
-use ark_ff::{FftField, Field};
-use ark_poly::EvaluationDomain;
+use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
 use spongefish::{Codec, DuplexSpongeInterface};
 #[cfg(feature = "tracing")]
@@ -7,7 +6,7 @@ use tracing::instrument;
 
 use super::Witness;
 use crate::{
-    algebra::poly_utils::coeffs::CoefficientList,
+    algebra::{embedding::Embedding, geometric_sequence, poly_utils::coeffs::CoefficientList},
     hash::Hash,
     transcript::{ProverMessage, ProverState, VerifierMessage},
     whir::parameters::WhirConfig,
@@ -61,64 +60,32 @@ where
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let config = &self.config.initial_committer;
         let poly_refs = polynomials
             .iter()
             .map(|poly| poly.coeffs())
             .collect::<Vec<_>>();
-        let witness = self
-            .config
-            .initial_committer
-            .commit(prover_state, &poly_refs);
+        let witness = config.commit(prover_state, poly_refs.as_slice());
 
-        let mut per_poly_ood_answers = vec![Vec::new(); polynomials.len()];
-        for oods in witness.out_of_domain() {
-            for (answer, answers) in oods.1.iter().zip(per_poly_ood_answers.iter_mut()) {
-                answers.push(*answer);
-            }
-        }
-
+        // Computed batched extended polynomial
         let batching_randomness = if polynomials.len() > 1 {
             prover_state.verifier_message()
         } else {
-            F::zero()
+            F::ZERO
         };
-
-        if polynomials.len() == 1 {
-            return Witness {
-                polynomial: polynomials[0].clone().to_extension(),
-                witness,
-                batching_randomness,
-            };
-        }
-
-        let mut batched_poly = polynomials[0].clone().to_extension().into_coeffs();
-
-        let mut multiplier = batching_randomness;
-        for poly in polynomials.iter().skip(1) {
-            for (dst, src) in batched_poly.iter_mut().zip(poly.coeffs()) {
-                *dst += multiplier * F::from_base_prime_field(*src);
+        let weights = geometric_sequence(batching_randomness, config.num_polynomials);
+        let mut batched = vec![F::ZERO; config.polynomial_size];
+        for (polynomial, weight) in polynomials.iter().zip(weights.iter()) {
+            for (dst, src) in batched.iter_mut().zip(polynomial.coeffs()) {
+                *dst += config.embedding.mixed_mul(*weight, *src);
             }
-            multiplier *= batching_randomness;
         }
 
-        let polynomial = CoefficientList::new(batched_poly);
-
-        let mut per_poly_ood_iter = per_poly_ood_answers.into_iter();
-        let mut batched_ood_resp = per_poly_ood_iter.next().unwrap();
-
-        let mut multiplier = batching_randomness;
-        for answers in per_poly_ood_iter {
-            for (dst, src) in batched_ood_resp.iter_mut().zip(&answers) {
-                *dst += multiplier * src;
-            }
-            multiplier *= batching_randomness;
-        }
-
-        Witness {
-            polynomial,
+        return Witness {
+            polynomial: CoefficientList::new(batched),
             witness,
             batching_randomness,
-        }
+        };
     }
 }
 
@@ -203,27 +170,31 @@ mod tests {
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
-            !witness.merkle_leaves.is_empty(),
+            !witness.witness.matrix.is_empty(),
             "Merkle leaves should not be empty"
         );
 
         // Ensure OOD (out-of-domain) points are generated.
         assert!(
-            !witness.ood_points.is_empty(),
+            !witness.witness.out_of_domain.points.is_empty(),
             "OOD points should be generated"
         );
 
         // Validate the number of generated OOD points.
         assert_eq!(
-            witness.ood_points.len(),
+            witness.witness.out_of_domain.points.len(),
             params.committment_ood_samples,
             "OOD points count should match expected samples"
         );
 
         // Check that the matrix commitment is valid
         assert_eq!(
-            witness.matrix_witness.num_nodes(),
-            params.initial_matrix_committer.merkle_tree.num_nodes()
+            witness.witness.matrix_witness.num_nodes(),
+            params
+                .initial_committer
+                .matrix_commit
+                .merkle_tree
+                .num_nodes()
         );
 
         // Ensure polynomial data is correctly stored
@@ -234,12 +205,12 @@ mod tests {
         );
 
         // Check that OOD answers match expected evaluations
-        for (i, ood_point) in witness.ood_points.iter().enumerate() {
+        for (i, ood_point) in witness.witness.out_of_domain.points.iter().enumerate() {
             let expected_eval = polynomial.evaluate_at_extension(
                 &MultilinearPoint::expand_from_univariate(*ood_point, num_variables),
             );
             assert_eq!(
-                witness.ood_answers[i], expected_eval,
+                witness.witness.out_of_domain.matrix[i], expected_eval,
                 "OOD answer at index {i} should match expected evaluation"
             );
         }
@@ -282,7 +253,7 @@ mod tests {
 
         // Expansion factor is 2
         assert_eq!(
-            witness.merkle_leaves.len(),
+            witness.witness.matrix.len(),
             1024 * 2,
             "Merkle tree should have expected number of leaves"
         );
@@ -325,7 +296,7 @@ mod tests {
         let witness = committer.commit(&mut prover_state, &polynomial);
 
         assert!(
-            witness.ood_points.is_empty(),
+            witness.witness.out_of_domain.points.is_empty(),
             "There should be no OOD points when committment_ood_samples is 0"
         );
     }

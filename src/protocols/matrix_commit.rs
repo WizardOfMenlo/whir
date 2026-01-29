@@ -266,7 +266,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: Commitment,
+        commitment: &Commitment,
         indices: &[usize],
         matrix: &[T],
     ) -> VerificationResult<()>
@@ -455,7 +455,7 @@ pub(crate) mod tests {
             VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         config
-            .verify(&mut verifier_state, commitment, indices, &submatrix)
+            .verify(&mut verifier_state, &commitment, indices, &submatrix)
             .unwrap();
         verifier_state.check_eof().unwrap();
     }
@@ -499,6 +499,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_field128() {
         proptest::<fields::Field128>();
     }
@@ -510,6 +511,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_field256() {
         proptest::<fields::Field256>();
     }

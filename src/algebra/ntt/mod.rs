@@ -57,7 +57,7 @@ assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
-/// 1/`expansion`, where 2^`fold_factor` elements are interleaved
+/// 1/`expansion`, where `interleaving_depth` elements are interleaved
 /// together.
 ///
 /// This function computes the RS-code for each interleaved message and

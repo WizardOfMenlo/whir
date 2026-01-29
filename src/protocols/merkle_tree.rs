@@ -184,7 +184,7 @@ impl Config {
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: Commitment,
+        commitment: &Commitment,
         indices: &[usize],
         leaf_hashes: &[Hash],
     ) -> VerificationResult<()>
@@ -351,7 +351,7 @@ pub(crate) mod tests {
         config
             .verify(
                 &mut verifier_state,
-                root,
+                &root,
                 &[13, 42],
                 &[Hash([13; 32]), Hash([42; 32])],
             )

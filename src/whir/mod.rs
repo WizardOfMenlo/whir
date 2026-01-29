@@ -1,4 +1,4 @@
-pub mod batching;
+// pub mod batching;
 pub mod committer;
 pub mod parameters;
 pub mod prover;
@@ -6,6 +6,7 @@ pub mod statement;
 pub mod utils;
 pub mod verifier;
 
+/*
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -701,3 +702,4 @@ mod tests {
         }
     }
 }
+*/

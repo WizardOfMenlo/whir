@@ -24,18 +24,14 @@ impl<'a, F: FftField> CommitmentReader<'a, F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let commitment = self
-            .0
-            .initial_committer
-            .receive_commitment(verifier_state)?;
-        let batching_randomness = if self.0.initial_committer.num_polynomials > 1 {
+        let config = &self.0.initial_committer;
+        let commitment = config.receive_commitment(verifier_state)?;
+        let batching_randomness = if config.num_polynomials > 1 {
             verifier_state.verifier_message()
         } else {
             F::zero()
         };
         Ok(ParsedCommitment {
-            polynomial_size: self.0.initial_committer.polynomial_size,
-            num_polynomials: self.0.initial_committer.num_polynomials,
             commitment,
             batching_randomness,
         })

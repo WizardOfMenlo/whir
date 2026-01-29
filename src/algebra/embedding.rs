@@ -54,7 +54,8 @@ pub struct Basefield<F: Field> {
 
 /// The Frobenius automorphism.
 ///
-/// Mostly for fun, it serves no purpose in whir.
+/// It demonstrates that embeddings are not uniquely defined by their source
+/// and target fields alone. Hence they need to be objects in their own right.
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default, Serialize, Deserialize,
 )]
