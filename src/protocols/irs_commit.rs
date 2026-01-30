@@ -56,18 +56,6 @@ pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
 #[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
 pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
 
-/// Interleaved Reed-Solomon code.
-///
-/// Used for out- and in-domain samples.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize, Default)]
-pub struct Evaluations<F> {
-    /// Evaluation points for the RS code.
-    pub points: Vec<F>,
-
-    /// Matrix of codewords for each row.
-    pub matrix: Vec<F>,
-}
-
 /// Commit to polynomials over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(bound = "F: FftField, G: Field, M: Embedding<Source = F, Target = G>")]
@@ -100,6 +88,13 @@ where
 
     /// The number of out-of-domain samples.
     pub out_domain_samples: usize,
+
+    /// Whether to sort and deduplicate the in-domain samples.
+    ///
+    /// Deduplication can slightly reduce proof size and prover/verifier
+    /// complexity, but it makes transcript pattern and control flow
+    /// non-deterministic.
+    pub deduplicate_in_domain: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
@@ -115,6 +110,18 @@ pub struct Witness<F: FftField, G: Field> {
 pub struct Commitment<G: Field> {
     matrix_commitment: matrix_commit::Commitment,
     out_of_domain: Evaluations<G>,
+}
+
+/// Interleaved Reed-Solomon code.
+///
+/// Used for out- and in-domain samples.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize, Default)]
+pub struct Evaluations<F> {
+    /// Evaluation points for the RS code.
+    pub points: Vec<F>,
+
+    /// Matrix of codewords for each row.
+    pub matrix: Vec<F>,
 }
 
 impl<F, G, M> Config<F, G, M>
@@ -158,7 +165,18 @@ where
         G: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert!((self.polynomial_size * self.expansion).is_multiple_of(self.interleaving_depth));
+        // Validate config
+        assert!((self.polynomial_size).is_multiple_of(self.interleaving_depth));
+        assert_eq!(
+            self.matrix_commit.num_rows(),
+            (self.polynomial_size / self.interleaving_depth) * self.expansion
+        );
+        assert_eq!(
+            self.matrix_commit.num_cols,
+            self.num_polynomials * self.interleaving_depth
+        );
+
+        // Validate input
         assert_eq!(polynomials.len(), self.num_polynomials);
         assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
 
@@ -252,7 +270,12 @@ where
         );
 
         // Generate in-domain evaluations
-        let indices = challenge_indices(prover_state, self.num_rows(), self.in_domain_samples);
+        let indices = challenge_indices(
+            prover_state,
+            self.num_rows(),
+            self.in_domain_samples,
+            self.deduplicate_in_domain,
+        );
         let mut submatrix = Vec::with_capacity(self.in_domain_samples * self.num_cols());
         for &index in &indices {
             let row = &witness.matrix[index * self.num_cols()..(index + 1) * self.num_cols()];
@@ -296,7 +319,12 @@ where
         );
 
         // Get in-domain openings
-        let indices = challenge_indices(verifier_state, self.num_rows(), self.in_domain_samples);
+        let indices = challenge_indices(
+            verifier_state,
+            self.num_rows(),
+            self.in_domain_samples,
+            self.deduplicate_in_domain,
+        );
         let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
         self.matrix_commit.verify(
             verifier_state,
@@ -353,7 +381,12 @@ where
 }
 
 /// Generate a set of indices for challenges.
-pub fn challenge_indices<T>(transcript: &mut T, num_leaves: usize, count: usize) -> Vec<usize>
+pub fn challenge_indices<T>(
+    transcript: &mut T,
+    num_leaves: usize,
+    count: usize,
+    deduplicate: bool,
+) -> Vec<usize>
 where
     T: VerifierMessage,
     u8: Decoding<[T::U]>,
@@ -366,11 +399,12 @@ where
         "Number of leaves must be a power of two for unbiased results."
     );
     if num_leaves == 1 {
-        return vec![0; count];
+        // `size_bytes` would be zero, making `chunks_exact` panic.
+        return if deduplicate { vec![0] } else { vec![0; count] };
     }
 
     // Calculate the required bytes of entropy
-    // TODO: Only round final result to bytes.
+    // TODO: Round total to bytes, instead of per index.
     let size_bytes = (num_leaves.ilog2() as usize).div_ceil(8);
 
     // Get required entropy bits.
@@ -379,10 +413,17 @@ where
         .collect();
 
     // Convert bytes into indices
-    entropy
+    let mut indices = entropy
         .chunks_exact(size_bytes)
         .map(|chunk| chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % num_leaves)
-        .collect::<Vec<usize>>()
+        .collect::<Vec<usize>>();
+
+    // Sort and deduplicate indices if requested
+    if deduplicate {
+        indices.sort_unstable();
+        indices.dedup();
+    }
+    indices
 }
 
 #[cfg(test)]
@@ -390,7 +431,7 @@ mod tests {
     use ark_std::rand::{
         distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
     };
-    use proptest::{prelude::Strategy, proptest, sample::select, strategy::Just};
+    use proptest::{bool, prelude::Strategy, proptest, sample::select, strategy::Just};
     use spongefish::{domain_separator, session};
 
     use super::*;
@@ -402,7 +443,8 @@ mod tests {
         transcript::codecs::U64,
     };
 
-    fn config<M: Embedding + Clone>(
+    // Create a [`Strategy`] for generating [`irs_commit`] configurations.
+    pub fn config<M: Embedding + Clone>(
         embedding: M,
         num_polynomials: usize,
         polynomial_size: usize,
@@ -432,8 +474,13 @@ mod tests {
             )
         });
 
-        (expansion_matrix, 0_usize..=10, 0_usize..=10).prop_map(
-            move |((expansion, matrix_commit), in_domain_samples, out_domain_samples)| Config {
+        (expansion_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
+            move |(
+                (expansion, matrix_commit),
+                in_domain_samples,
+                out_domain_samples,
+                deduplicate_in_domain,
+            )| Config {
                 embedding: Typed::new(embedding.clone()),
                 num_polynomials,
                 polynomial_size,
@@ -442,6 +489,7 @@ mod tests {
                 matrix_commit,
                 in_domain_samples,
                 out_domain_samples,
+                deduplicate_in_domain,
             },
         )
     }
@@ -468,7 +516,6 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        dbg!(&polynomials);
 
         // Prover
         let mut prover_state = ProverState::from(ds.std_prover());
@@ -500,10 +547,21 @@ mod tests {
             }
         }
         let in_domain_evals = config.open(&mut prover_state, &witness);
-        assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
+        if config.deduplicate_in_domain {
+            // Sorting is over index order, not points
+            assert!(in_domain_evals.points.len() <= config.in_domain_samples);
+            assert!({
+                let mut unique = in_domain_evals.points.clone();
+                unique.sort_unstable();
+                unique.dedup();
+                unique.len() == in_domain_evals.points.len()
+            });
+        } else {
+            assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
+        }
         assert_eq!(
             in_domain_evals.matrix.len(),
-            config.in_domain_samples * config.num_polynomials * config.interleaving_depth
+            in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
         );
         if config.num_polynomials > 0 {
             for (point, evals) in in_domain_evals.points.iter().zip(

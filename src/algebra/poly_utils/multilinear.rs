@@ -125,6 +125,20 @@ where
             .collect()
     }
 
+    pub fn coeff_weights(&self) -> Vec<F> {
+        (0..1 << self.0.len())
+            .map(|point| {
+                let mut value = F::ONE;
+                for (i, coeff) in self.0.iter().enumerate() {
+                    if point & (1 << i) != 0 {
+                        value *= *coeff;
+                    }
+                }
+                value
+            })
+            .collect()
+    }
+
     /// Computes `eq(c, p)`, where `p` is a general `MultilinearPoint` (not necessarily binary).
     ///
     /// The **equality polynomial** for two `MultilinearPoint`s `c` and `p` is:

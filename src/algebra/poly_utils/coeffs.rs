@@ -26,7 +26,7 @@ use crate::algebra::{ntt::wavelet_transform, poly_utils::multilinear::Multilinea
 /// - `coeffs[1]` → Coefficient of `X₂`
 /// - `coeffs[2]` → Coefficient of `X₁`
 /// - `coeffs[3]` → Coefficient of `X₀`
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct CoefficientList<F> {
     /// List of coefficients, stored in **lexicographic order**.
     /// For `n` variables, `coeffs.len() == 2^n`.

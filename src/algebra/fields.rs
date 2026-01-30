@@ -28,7 +28,7 @@ pub struct FieldInfo {
     characteristic: Vec<u8>,
 
     /// Extension degree of the field.
-    degree: usize,
+    extension_degree: usize,
 }
 
 impl<F: Field> TypeInfo for F {
@@ -48,7 +48,7 @@ impl<F: Field> TypeInfo for F {
             .collect();
         FieldInfo {
             characteristic,
-            degree: F::extension_degree() as usize,
+            extension_degree: F::extension_degree() as usize,
         }
     }
 }
@@ -149,7 +149,7 @@ mod tests {
             type_info.characteristic,
             18446744069414584321_u64.to_be_bytes().as_slice()
         );
-        assert_eq!(type_info.degree, 3);
+        assert_eq!(type_info.extension_degree, 3);
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
         let json = serde_json::to_string(&field_config).unwrap();
         assert_eq!(
             json,
-            "{\"characteristic\":\"ffffffff00000001\",\"degree\":3}"
+            "{\"characteristic\":\"ffffffff00000001\",\"extension_degree\":3}"
         );
     }
 }
