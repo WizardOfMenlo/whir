@@ -1,6 +1,5 @@
 use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
-use spongefish::{Codec, DuplexSpongeInterface};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -8,7 +7,7 @@ use super::Witness;
 use crate::{
     algebra::{embedding::Embedding, geometric_sequence, poly_utils::coeffs::CoefficientList},
     hash::Hash,
-    transcript::{ProverMessage, ProverState, VerifierMessage},
+    transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerifierMessage},
     whir::parameters::WhirConfig,
 };
 
@@ -104,14 +103,13 @@ mod tests {
     use std::sync::Arc;
 
     use ark_ff::UniformRand;
-    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
         algebra::{fields::Field64, ntt::RSDefault, poly_utils::multilinear::MultilinearPoint},
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        transcript::codecs::Empty,
+        transcript::{codecs::Empty, DomainSeparator},
     };
 
     #[test]
@@ -158,11 +156,10 @@ mod tests {
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
 
         // Set up the DomainSeparator and initialize a ProverState narg_string.
-        let mut prover_state = domain_separator!("whir::comitter::writer")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty)
-            .std_prover()
-            .into();
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
@@ -241,12 +238,10 @@ mod tests {
         );
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 1024]); // Large polynomial
-        let mut prover_state = ProverState::from(
-            domain_separator!("🌪️")
-                .session(session!("Test at {}:{}", file!(), line!()))
-                .instance(&Empty)
-                .std_prover(),
-        );
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, &polynomial);
@@ -285,12 +280,10 @@ mod tests {
         params.initial_committer.out_domain_samples = 0; // No OOD samples
 
         let polynomial = CoefficientList::new(vec![F::rand(&mut rng); 32]);
-        let mut prover_state = ProverState::from(
-            domain_separator!("🌪️")
-                .session(session!("Test at {}:{}", file!(), line!()))
-                .instance(&Empty)
-                .std_prover(),
-        );
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params);
         let witness = committer.commit(&mut prover_state, &polynomial);

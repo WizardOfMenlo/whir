@@ -1,6 +1,12 @@
 //! Interactive (sub)protocols for WHIR.
 //!
-//! These interact through the [`spongefish`] Fiat–Shamir transformation
+//! These interact through the [`spongefish`] Fiat–Shamir transformation.
+//!
+//! Protocols are parameterized through `Config` structs. These implement serde `Serialize` and
+//! `Deserialize` and importantly all generics are *also* serialized so the serialization captures
+//! all necessary information to uniquely identify a concrete protocol. The intention is for the
+//! hash of the Config serialization to serve as protocol domain separator for Spongefish.
+//!
 
 pub mod challenge_indices;
 pub mod irs_commit;

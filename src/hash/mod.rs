@@ -11,7 +11,6 @@ use std::{
 
 use const_oid::ObjectIdentifier;
 use serde::{Deserialize, Serialize};
-use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
 use static_assertions::{assert_impl_all, assert_obj_safe};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
@@ -21,7 +20,10 @@ pub use self::{
     digest_engine::{DigestEngine, Keccak, Sha2, Sha3, KECCAK, SHA2, SHA3},
     hash_counter::HASH_COUNTER,
 };
-use crate::transcript::{Engines, Protocol, ProtocolId, ProverMessage};
+use crate::transcript::{
+    Encoding, Engines, NargDeserialize, Protocol, ProtocolId, ProverMessage, VerificationError,
+    VerificationResult,
+};
 
 pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
     let engines = Engines::<dyn Engine>::new();

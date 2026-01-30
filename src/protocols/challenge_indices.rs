@@ -1,8 +1,6 @@
 //! Produce challenge indices from a transcript.
 
-use spongefish::Decoding;
-
-use crate::transcript::VerifierMessage;
+use crate::transcript::{Decoding, VerifierMessage};
 
 pub fn challenge_indices<T>(transcript: &mut T, num_leaves: usize, count: usize) -> Vec<usize>
 where

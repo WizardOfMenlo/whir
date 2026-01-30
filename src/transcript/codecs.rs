@@ -1,5 +1,7 @@
-use spongefish::{Codec, Decoding, Encoding, NargDeserialize};
 use static_assertions::assert_impl_all;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout};
+
+use super::{Codec, Decoding, Encoding, NargDeserialize, VerificationResult};
 
 /// An empty object. Like `()` with a `Codec`.
 pub struct Empty;
@@ -19,7 +21,7 @@ impl<T> Decoding<[T]> for Empty {
 }
 
 impl NargDeserialize for Empty {
-    fn deserialize_from_narg(_buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+    fn deserialize_from_narg(_buf: &mut &[u8]) -> VerificationResult<Self> {
         Ok(Self)
     }
 }
@@ -27,6 +29,8 @@ impl NargDeserialize for Empty {
 assert_impl_all!(Empty: Codec);
 
 /// Wrapper because spongefish is missing NargDeserialize for `u64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, FromBytes, KnownLayout, IntoBytes)]
+#[repr(transparent)]
 pub struct U64(pub u64);
 
 impl Encoding<[u8]> for U64 {
@@ -44,7 +48,7 @@ impl Decoding<[u8]> for U64 {
 }
 
 impl NargDeserialize for U64 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         NargDeserialize::deserialize_from_narg(buf)
             .map(u64::from_le_bytes)
             .map(Self)

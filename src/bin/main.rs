@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Instant};
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{domain_separator, session, Codec};
 use whir::{
     algebra::{
         fields,
@@ -17,7 +16,7 @@ use whir::{
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
-    transcript::{codecs::Empty, ProverState, VerifierState},
+    transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
     whir::{
         committer::CommitmentReader,
         statement::{Statement, Weights},
@@ -158,11 +157,11 @@ fn run_whir_as_ldt<F>(
         &whir_params,
     );
 
-    let ds = domain_separator!("🌪️")
-        .session(session!("Example at {}:{}", file!(), line!()))
+    let ds = DomainSeparator::protocol(&params)
+        .session(&format!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover());
+    let mut prover_state = ProverState::new_std(&ds);
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -201,8 +200,7 @@ fn run_whir_as_ldt<F>(
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let parsed_commitment = commitment_reader
             .parse_commitment(&mut verifier_state)
@@ -270,11 +268,11 @@ fn run_whir_pcs<F>(
         &whir_params,
     );
 
-    let ds = domain_separator!("🌪️")
-        .session(session!("Example at {}:{}", file!(), line!()))
+    let ds = DomainSeparator::protocol(&params)
+        .session(&format!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover());
+    let mut prover_state = ProverState::new_std(&ds);
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
@@ -337,8 +335,7 @@ fn run_whir_pcs<F>(
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let parsed_commitment = commitment_reader
             .parse_commitment(&mut verifier_state)

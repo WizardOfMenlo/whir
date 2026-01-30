@@ -1,10 +1,12 @@
 use ark_ff::FftField;
-use spongefish::{Codec, DuplexSpongeInterface, VerificationResult};
 
 use super::ParsedCommitment;
 use crate::{
     hash::Hash,
-    transcript::{ProverMessage, VerifierMessage, VerifierState},
+    transcript::{
+        Codec, DuplexSpongeInterface, ProverMessage, VerificationResult, VerifierMessage,
+        VerifierState,
+    },
     whir::parameters::WhirConfig,
 };
 

@@ -28,7 +28,6 @@ mod batching_tests {
     use std::sync::Arc;
 
     use ark_std::UniformRand;
-    use spongefish::{domain_separator, session};
 
     use crate::{
         algebra::{
@@ -40,7 +39,7 @@ mod batching_tests {
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        transcript::{codecs::Empty, ProverState, VerifierState},
+        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
             parameters::WhirConfig,
@@ -128,12 +127,12 @@ mod batching_tests {
             .collect();
 
         // Define the Fiat-Shamir IOPattern for committing and proving
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
         // Initialize the Merlin transcript from the domain separator
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
@@ -178,8 +177,7 @@ mod batching_tests {
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // Create a commitment reader
         let commitment_reader = CommitmentReader::new(&params);

@@ -31,7 +31,6 @@ use std::fmt;
 use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationResult};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -43,7 +42,10 @@ use crate::{
     },
     hash::Hash,
     protocols::matrix_commit,
-    transcript::{ProverMessage, ProverState, VerifierMessage, VerifierState},
+    transcript::{
+        Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
+        VerifierMessage, VerifierState,
+    },
     type_info::{TypeInfo, Typed},
     verify,
 };
@@ -432,7 +434,6 @@ mod tests {
         distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
     };
     use proptest::{bool, prelude::Strategy, proptest, sample::select, strategy::Just};
-    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
@@ -440,7 +441,10 @@ mod tests {
             embedding::{Compose, Frobenius},
             fields, univariate_evaluate,
         },
-        transcript::codecs::U64,
+        transcript::{
+            codecs::{Empty, U64},
+            DomainSeparator,
+        },
     };
 
     // Create a [`Strategy`] for generating [`irs_commit`] configurations.
@@ -505,9 +509,9 @@ mod tests {
 
         // Pseudo-random Instance
         let instance = U64(seed);
-        let ds = domain_separator!("whir::protocols::irs_commit")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&instance);
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         let mut rng = StdRng::seed_from_u64(seed);
         let polynomials = (0..config.num_polynomials)
             .map(|_| {
@@ -518,7 +522,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Prover
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit(
             &mut prover_state,
             &polynomials.iter().map(|p| p.as_slice()).collect::<Vec<_>>(),
@@ -589,8 +593,7 @@ mod tests {
         let proof = prover_state.proof();
 
         // Verifier
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         assert_eq!(commitment.out_of_domain(), witness.out_of_domain());
         let verifier_in_domain_evals = config.verify(&mut verifier_state, &commitment).unwrap();

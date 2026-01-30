@@ -281,17 +281,19 @@ where
                 embedding: Default::default(),
                 num_polynomials: whir_parameters.batch_size,
                 polynomial_size: 1 << mv_parameters.num_variables,
-                expansion: whir_parameters.starting_log_inv_rate,
+                expansion: 1 << whir_parameters.starting_log_inv_rate,
                 interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
                 matrix_commit: matrix_commit::Config::with_hash(
                     whir_parameters.hash_id,
-                    starting_domain.size() >> whir_parameters.folding_factor.at_round(0),
+                    1 << (mv_parameters.num_variables + whir_parameters.starting_log_inv_rate
+                        - whir_parameters.folding_factor.at_round(0)),
                     whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
                 ),
                 in_domain_samples: round_parameters
                     .get(0)
                     .map_or(final_queries, |r| r.num_queries),
                 out_domain_samples: commitment_ood_samples,
+                deduplicate_in_domain: true,
             },
             initial_sumcheck: if whir_parameters.initial_statement {
                 Some(sumcheck::Config {

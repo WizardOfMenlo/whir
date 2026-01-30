@@ -1,7 +1,6 @@
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
-use spongefish::{Codec, Decoding, DuplexSpongeInterface};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -13,7 +12,6 @@ use super::{
 use crate::{
     algebra::{
         domain::Domain,
-        dot,
         embedding::Embedding,
         geometric_sequence, mixed_dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
@@ -24,7 +22,10 @@ use crate::{
         irs_commit, matrix_commit,
         sumcheck::{self, SumcheckSingle},
     },
-    transcript::{codecs::U64, ProverMessage, ProverState, VerifierMessage},
+    transcript::{
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
+        VerifierMessage,
+    },
     type_info::Type,
     utils::expand_randomness,
     whir::{
@@ -124,7 +125,21 @@ where
                 &statement,
                 combination_randomness_gen,
             );
-            let folding_randomness = sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck);
+            dbg!(sumcheck.sum());
+
+            // Check invariants
+            sumcheck.assert_sum_invariant();
+            assert_eq!(witness.polynomial, sumcheck.evaluations().to_coeffs());
+
+            let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck);
+
+            // Check invariants
+            sumcheck.assert_sum_invariant();
+            assert_eq!(
+                witness.polynomial.fold(&folding_randomness),
+                sumcheck.evaluations().to_coeffs()
+            );
+            dbg!(sumcheck.sum());
 
             sumcheck_prover = Some(sumcheck);
             folding_randomness
@@ -137,9 +152,7 @@ where
                 *randomness = prover_state.verifier_message();
             }
 
-            self.config
-                .starting_folding_pow
-                .prove(prover_state.inner_mut());
+            self.config.starting_folding_pow.prove(prover_state);
 
             MultilinearPoint(folding_randomness)
         };
@@ -164,7 +177,22 @@ where
 
         // Run WHIR rounds
         for _round in 0..=self.config.n_rounds() {
+            dbg!(_round);
+            if let Some(sumcheck_instance) = &round_state.sumcheck_prover {
+                sumcheck_instance.assert_sum_invariant();
+            }
             self.round(prover_state, &mut round_state);
+
+            // Invariant check
+            if let Some(sumcheck_instance) = &round_state.sumcheck_prover {
+                sumcheck_instance.assert_sum_invariant();
+                assert_eq!(
+                    round_state
+                        .coefficients
+                        .fold(&round_state.folding_randomness),
+                    sumcheck_instance.evaluations().to_coeffs()
+                );
+            }
         }
 
         // Hints for deferred constraints
@@ -347,7 +375,7 @@ where
                 &combined_statement,
                 combination_randomness_gen,
             );
-            let folding_randomness = sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck);
+            let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck);
             sumcheck_prover = Some(sumcheck);
             folding_randomness
         } else {
@@ -357,7 +385,7 @@ where
             }
             self.config
                 .starting_folding_pow
-                .prove(prover_state.inner_mut());
+                .prove(prover_state);
             MultilinearPoint(folding_randomness)
         };
 
@@ -394,14 +422,14 @@ where
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
-            prover_state.inner_mut(),
+            prover_state,
             round_params.ood_samples,
             num_variables_after_fold,
             |point| batched_folded_poly.evaluate(point),
         );
 
         // PoW
-        round_params.pow.prove(prover_state.inner_mut());
+        round_params.pow.prove(prover_state);
 
         // STIR Queries: Open all N original witness trees at challenge positions
         let stir_indexes = get_challenge_stir_queries(
@@ -528,7 +556,7 @@ where
             ],
         };
         let folding_randomness =
-            sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck_prover);
+            sumcheck_config.prove(prover_state, &mut sumcheck_prover);
 
         let start_idx = self.config.folding_factor.at_round(0);
         let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
@@ -627,14 +655,14 @@ where
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
-            prover_state.inner_mut(),
+            prover_state,
             round_params.ood_samples,
             num_variables,
             |point| folded_coefficients.evaluate(point),
         );
 
         // PoW
-        round_params.pow.prove(prover_state.inner_mut());
+        round_params.pow.prove(prover_state);
 
         // Open the previous round's commitment, producing in-domain evaluations.
         // We prepend these with the OOD points and answers to produce a new
@@ -644,6 +672,7 @@ where
                 witness,
                 batching_randomness,
             } => {
+                eprintln!("RoundWitness Intial");
                 let config = &self.config.initial_committer;
                 let in_domain = config.open(prover_state, &witness);
 
@@ -660,10 +689,12 @@ where
                     .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
                     .collect::<Vec<_>>();
 
+                // TODO: Check if equalities hold.
+
                 // Combine rows using batching randomness and combination randomness.
                 let weights = tensor_product(
                     &geometric_sequence(*batching_randomness, config.num_polynomials),
-                    &round_state.folding_randomness.eq_weights(),
+                    &round_state.folding_randomness.coeff_weights(),
                 );
                 let evals = ood_answers
                     .into_iter()
@@ -683,6 +714,7 @@ where
                 prev_matrix_committer,
                 prev_matrix_witness,
             } => {
+                eprintln!("RoundWitness Round");
                 // STIR Queries
                 let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
                     prover_state,
@@ -727,19 +759,26 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
+        dbg!(&stir_challenges, &stir_evaluations);
+        dbg!(&combination_randomness);
+
         #[allow(clippy::map_unwrap_or)]
         let mut sumcheck_prover = round_state
             .sumcheck_prover
             .take()
             .map(|mut sumcheck_prover| {
+                eprintln!("Unwrap!");
+                sumcheck_prover.assert_sum_invariant();
                 sumcheck_prover.add_new_equality(
                     &stir_challenges,
                     &stir_evaluations,
                     &combination_randomness,
                 );
+                sumcheck_prover.assert_sum_invariant();
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
+                eprintln!("Else!");
                 let mut statement = Statement::new(folded_coefficients.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
@@ -752,6 +791,8 @@ where
                     combination_randomness[1],
                 )
             });
+        sumcheck_prover.assert_sum_invariant();
+        dbg!(sumcheck_prover.sum());
 
         let sumcheck_config = sumcheck::Config {
             field: Type::<F>::new(),
@@ -763,8 +804,10 @@ where
                 folding_factor_next
             ],
         };
-        let folding_randomness =
-            sumcheck_config.prove(prover_state.inner_mut(), &mut sumcheck_prover);
+        sumcheck_prover.assert_sum_invariant();
+        let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
+        sumcheck_prover.assert_sum_invariant();
+        dbg!(sumcheck_prover.sum());
 
         let start_idx = self.config.folding_factor.total_number(round_state.round);
         let dst_randomness =
@@ -806,22 +849,48 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         // Directly send coefficients of the polynomial to the verifier.
+        dbg!(folded_coefficients.coeffs());
+        dbg!(&round_state.folding_randomness);
         for coeff in folded_coefficients.coeffs() {
             prover_state.prover_message(coeff);
         }
+
+        assert_eq!(
+            &round_state
+                .coefficients
+                .fold(&round_state.folding_randomness),
+            folded_coefficients,
+        );
+        round_state
+            .sumcheck_prover
+            .as_ref()
+            .unwrap()
+            .assert_sum_invariant();
+        assert_eq!(
+            round_state
+                .coefficients
+                .fold(&round_state.folding_randomness),
+            round_state
+                .sumcheck_prover
+                .as_ref()
+                .unwrap()
+                .evaluations()
+                .to_coeffs()
+        );
 
         // Precompute the folding factors for later use
         let folding_factor = self.config.folding_factor.at_round(round_state.round);
 
         // PoW
-        self.config.final_pow.prove(prover_state.inner_mut());
+        self.config.final_pow.prove(prover_state);
 
         match &round_state.prev_commitment {
             RoundWitness::Initial {
                 witness,
                 batching_randomness,
             } => {
-                let in_domain = self.config.initial_committer.open(prover_state, witness);
+                let _in_domain = self.config.initial_committer.open(prover_state, witness);
+                // TODO: Why are these unchecked?
             }
             RoundWitness::Round {
                 prev_matrix,
@@ -869,6 +938,13 @@ where
                 round_state.sumcheck_prover.clone().unwrap_or_else(|| {
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 });
+
+            final_folding_sumcheck.assert_sum_invariant();
+            assert_eq!(
+                folded_coefficients,
+                &final_folding_sumcheck.evaluations().to_coeffs()
+            );
+
             let sumcheck_config = sumcheck::Config {
                 field: Type::<F>::new(),
                 initial_size: 1 << final_folding_sumcheck.num_variables(),
@@ -881,7 +957,15 @@ where
             };
 
             let final_folding_randomness =
-                sumcheck_config.prove(prover_state.inner_mut(), &mut final_folding_sumcheck);
+                sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
+
+            final_folding_sumcheck.assert_sum_invariant();
+            assert_eq!(
+                &folded_coefficients.fold(&final_folding_randomness),
+                &final_folding_sumcheck.evaluations().to_coeffs()
+            );
+            dbg!(final_folding_sumcheck.evaluations());
+
             let start_idx = self.config.folding_factor.total_number(round_state.round);
             let rand_dst = &mut round_state.randomness_vec
                 [start_idx..start_idx + final_folding_randomness.0.len()];

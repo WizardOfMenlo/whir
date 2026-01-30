@@ -36,7 +36,7 @@ pub struct Witness<F: FftField> {
 }
 
 /// Commitment parsed by the verifier from verifier's FS context.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParsedCommitment<F: Field> {
     pub commitment: irs_commit::Commitment<F>,
     pub batching_randomness: F,
@@ -47,6 +47,9 @@ pub fn constraints<F: Field>(
     batching_randomness: F,
     num_variables: usize,
 ) -> Vec<(Weights<F>, F)> {
+    if evals.points.is_empty() {
+        return Vec::new();
+    }
     let num_points = evals.points.len();
     let num_polynomials = evals.matrix.len() / num_points;
     let weights = geometric_sequence(batching_randomness, num_polynomials);

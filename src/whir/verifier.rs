@@ -1,5 +1,4 @@
 use ark_ff::FftField;
-use spongefish::{Codec, Decoding, DuplexSpongeInterface, VerificationError, VerificationResult};
 
 use super::{
     committer::ParsedCommitment,
@@ -15,9 +14,13 @@ use crate::{
     },
     hash::Hash,
     protocols::{irs_commit, matrix_commit, sumcheck},
-    transcript::{codecs::U64, ProverMessage, VerifierMessage, VerifierState},
+    transcript::{
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
+        VerifierMessage, VerifierState,
+    },
     type_info::Type,
     utils::expand_randomness,
+    verify,
     whir::{committer::constraints, utils::get_challenge_stir_queries},
 };
 
@@ -32,9 +35,10 @@ pub(crate) enum RoundCommitment<F: FftField> {
     },
     Round {
         matrix_commitment: matrix_commit::Commitment,
-        ood_points: Vec<F>,
-        ood_answers: Vec<F>,
     },
+    // Final {
+    //     polynomial: Vec<F>,
+    // }
 }
 
 impl<'a, F: FftField> Verifier<'a, F> {
@@ -70,6 +74,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             commitment: parsed_commitment.commitment.clone(),
             batching_randomness: parsed_commitment.batching_randomness,
         };
+        dbg!(claimed_sum);
 
         // Optional initial sumcheck round
         if self.config.initial_statement {
@@ -92,9 +97,11 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 .chain(statement.constraints.iter().cloned())
                 .collect();
 
+            dbg!(claimed_sum);
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness, constraints));
+            dbg!(claimed_sum);
 
             // Initial sumcheck
             let config = sumcheck::Config {
@@ -107,8 +114,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     self.config.folding_factor.at_round(0)
                 ],
             };
-            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
+            dbg!(claimed_sum);
         } else {
             assert_eq!(parsed_commitment.commitment.out_of_domain().points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -121,12 +129,12 @@ impl<'a, F: FftField> Verifier<'a, F> {
             round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
             // PoW
-            self.config
-                .starting_folding_pow
-                .verify(verifier_state.inner_mut())?;
+            self.config.starting_folding_pow.verify(verifier_state)?;
         }
 
         for round_index in 0..self.config.n_rounds() {
+            dbg!(round_index);
+
             // Fetch round parameters from config
             let config = &self.config.round_configs[round_index];
 
@@ -152,36 +160,32 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     commitment,
                     batching_randomness,
                 } => {
-                    let config = &self.config.initial_committer;
-                    let num_variables = config.polynomial_size.trailing_zeros() as usize;
-                    let in_domain = config.verify(verifier_state, &commitment)?;
+                    eprintln!("Initial commitment");
+                    let comitter = &self.config.initial_committer;
+                    let in_domain = comitter.verify(verifier_state, &commitment)?;
 
                     let weights = tensor_product(
-                        &geometric_sequence(batching_randomness, config.num_polynomials),
-                        &round_folding_randomness.last().unwrap().eq_weights(),
+                        &geometric_sequence(batching_randomness, comitter.num_polynomials),
+                        &round_folding_randomness.last().unwrap().coeff_weights(),
                     );
-                    let mut constraints = Vec::with_capacity(config.in_domain_samples);
+                    let mut constraints = Vec::with_capacity(comitter.in_domain_samples);
                     for (point, values) in in_domain.points.iter().zip(
                         in_domain
                             .matrix
-                            .chunks_exact(config.num_polynomials * config.interleaving_depth),
+                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
                     ) {
                         constraints.push(Constraint {
                             weights: Weights::univariate(
-                                config.embedding.map(*point),
-                                num_variables,
+                                comitter.embedding.map(*point),
+                                config.num_variables,
                             ),
-                            sum: mixed_dot(&*config.embedding, &weights, values),
+                            sum: mixed_dot(&*comitter.embedding, &weights, values),
                             defer_evaluation: false,
                         });
                     }
                     constraints
                 }
-                RoundCommitment::Round {
-                    matrix_commitment,
-                    ood_points,
-                    ood_answers,
-                } => {
+                RoundCommitment::Round { matrix_commitment } => {
                     let prev_config = &self.config.round_configs[round_index - 1];
 
                     // Verify in-domain challenges on the previous commitment.
@@ -202,9 +206,13 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 .into_iter()
                 .chain(stir_constraints.into_iter())
                 .collect();
+
+            dbg!(&constraints);
+
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
+            dbg!(claimed_sum);
 
             let config = sumcheck::Config {
                 field: Type::new(),
@@ -216,15 +224,12 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     self.config.folding_factor.at_round(round_index + 1)
                 ],
             };
-            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
+            dbg!(claimed_sum);
 
             // Update round parameters
-            prev_commitment = RoundCommitment::Round {
-                matrix_commitment,
-                ood_points,
-                ood_answers,
-            };
+            prev_commitment = RoundCommitment::Round { matrix_commitment };
         }
 
         // In the final round we receive the full polynomial instead of a commitment.
@@ -241,12 +246,13 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 batching_randomness,
             } => {
                 let config = &self.config.initial_committer;
-                let num_variables = config.polynomial_size.trailing_zeros() as usize;
+                let num_variables = self.config.mv_parameters.num_variables
+                    - self.config.folding_factor.at_round(0);
                 let in_domain = config.verify(verifier_state, &commitment)?;
 
                 let weights = tensor_product(
                     &geometric_sequence(batching_randomness, config.num_polynomials),
-                    &round_folding_randomness.last().unwrap().eq_weights(),
+                    &round_folding_randomness.last().unwrap().coeff_weights(),
                 );
                 let mut constraints = Vec::with_capacity(config.in_domain_samples);
                 for (point, values) in in_domain.points.iter().zip(
@@ -262,11 +268,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 }
                 constraints
             }
-            RoundCommitment::Round {
-                matrix_commitment,
-                ood_points,
-                ood_answers,
-            } => self.verify_stir_challenges(
+            RoundCommitment::Round { matrix_commitment } => self.verify_stir_challenges(
                 self.config.n_rounds(),
                 verifier_state,
                 &self.config.final_round_config(),
@@ -278,12 +280,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
         };
 
         // Verify stir constraints directly on final polynomial
-        if !stir_constraints
+        verify!(stir_constraints
             .iter()
-            .all(|c| c.verify(&final_coefficients))
-        {
-            return Err(VerificationError);
-        }
+            .all(|c| c.verify(&final_coefficients)));
 
         let config = sumcheck::Config {
             field: Type::new(),
@@ -295,8 +294,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 self.config.final_sumcheck_rounds
             ],
         };
-        let final_sumcheck_randomness =
-            config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+        let final_sumcheck_randomness = config.verify(verifier_state, &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds.
@@ -317,9 +315,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
         // Check the final sumcheck evaluation
         let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
-        if claimed_sum != evaluation_of_weights * final_value {
-            return Err(VerificationError);
-        }
+        verify!(claimed_sum == evaluation_of_weights * final_value);
 
         Ok((folding_randomness, deferred))
     }
@@ -432,7 +428,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     self.config.folding_factor.at_round(0)
                 ],
             };
-            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
         } else {
             for commitment in parsed_commitments {
@@ -451,7 +447,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
             self.config
                 .starting_folding_pow
-                .verify(verifier_state.inner_mut())?;
+                .verify(verifier_state)?;
         }
 
         // Round 0: Batch-specific verification
@@ -476,7 +472,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         )?;
 
         // Verify STIR challenges on N original witness trees
-        round_params.pow.verify(verifier_state.inner_mut())?;
+        round_params.pow.verify(verifier_state)?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
@@ -563,7 +559,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 self.config.folding_factor.at_round(1)
             ],
         };
-        let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+        let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
         round_folding_randomness.push(folding_randomness);
 
         // Rounds 1+: Standard WHIR verification on the single batched polynomial
@@ -607,7 +603,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     self.config.folding_factor.at_round(round_index + 1)
                 ],
             };
-            let folding_randomness = config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             prev_committer = &round_params.matrix_committer;
@@ -648,7 +644,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             ],
         };
         let final_sumcheck_randomness =
-            config.verify(verifier_state.inner_mut(), &mut claimed_sum)?;
+            config.verify(verifier_state, &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
@@ -692,9 +688,15 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        assert!(constraints
+            .windows(2)
+            .all(|w| w[0].weights.num_variables() == w[1].weights.num_variables()));
+
         let combination_randomness_gen = verifier_state.verifier_message();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, constraints.len());
+        dbg!(&combination_randomness);
+        dbg!(*claimed_sum);
         *claimed_sum += constraints
             .iter()
             .zip(&combination_randomness)
@@ -723,7 +725,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        params.pow.verify(verifier_state.inner_mut())?;
+        params.pow.verify(verifier_state)?;
 
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,

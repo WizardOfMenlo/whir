@@ -6,7 +6,6 @@ use ark_ff::{Field, PrimeField};
 use ark_std::rand::{CryptoRng, RngCore};
 use derive_where::derive_where;
 use serde::{Deserialize, Serialize};
-use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -15,7 +14,10 @@ use zerocopy::{Immutable, IntoBytes};
 use crate::{
     hash::{self, Hash},
     protocols::merkle_tree,
-    transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+    transcript::{
+        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
+        VerificationResult, VerifierState,
+    },
     type_info::{Type, TypeInfo},
     utils::workload_size,
     verify,
@@ -372,13 +374,12 @@ pub(crate) mod tests {
         Rng, SeedableRng,
     };
     use proptest::{prop_assume, proptest, strategy::Strategy};
-    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
         algebra::fields,
         hash::{self, tests::hash_for_size},
-        transcript::codecs::Empty,
+        transcript::{codecs::Empty, DomainSeparator},
     };
 
     pub fn config<T>(num_rows: usize, num_cols: usize) -> impl Strategy<Value = Config<T>>
@@ -412,9 +413,6 @@ pub(crate) mod tests {
         assert!(indices.iter().all(|&index| index < num_rows));
 
         // Config
-        let ds = domain_separator!("whir::protocols::matrix_commit")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty);
         let config = Config {
             element_type: Type::<T>::new(),
             num_cols,
@@ -424,6 +422,9 @@ pub(crate) mod tests {
                 layers: vec![merkle_tree::LayerConfig { hash_id: node_hash }; layers],
             },
         };
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
 
         // Instance
         let matrix: Vec<T> = (0..config.size()).map(|_| rng.gen()).collect();
@@ -445,14 +446,13 @@ pub(crate) mod tests {
         };
 
         // Prover
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
         let tree = config.commit(&mut prover_state, &matrix);
         config.open(&mut prover_state, &tree, indices);
         let proof = prover_state.proof();
 
         // Verifier
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         config
             .verify(&mut verifier_state, &commitment, indices, &submatrix)

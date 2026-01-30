@@ -6,13 +6,11 @@ pub mod statement;
 pub mod utils;
 pub mod verifier;
 
-/*
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use ark_ff::Field;
-    use spongefish::{domain_separator, session};
 
     use crate::{
         algebra::{
@@ -24,7 +22,7 @@ mod tests {
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        transcript::{codecs::Empty, ProverState, VerifierState},
+        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
         whir::{
             committer::{CommitmentReader, CommitmentWriter},
@@ -162,12 +160,12 @@ mod tests {
         statement.add_constraint(geometric_claim_weight, geometric_sum);
 
         // Define the Fiat-Shamir domain separator for committing and proving
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
         // Initialize the Merlin transcript from the domain separator
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
@@ -187,8 +185,7 @@ mod tests {
 
         // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // Parse the commitment
         let parsed_commitment = commitment_reader
@@ -352,10 +349,10 @@ mod tests {
 
         // Set up domain separator for batch proving
         // Each polynomial needs its own commitment phase
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Commit to each polynomial and generate witnesses
         let committer = CommitmentWriter::new(params.clone());
@@ -376,8 +373,7 @@ mod tests {
 
         // Reconstruct verifier's transcript view
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // Parse all N commitments from the transcript
         let mut parsed_commitments = Vec::new();
@@ -505,10 +501,10 @@ mod tests {
         let statements = vec![statement1, statement2];
 
         // Commit to the correct polynomials
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params.clone());
         let witness1 = committer.commit(&mut prover_state, &poly1);
@@ -530,8 +526,7 @@ mod tests {
         let commitment_reader = CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_polynomials {
@@ -634,10 +629,10 @@ mod tests {
         }
 
         // Set up domain separator
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Commit using commit_batch (stacks batch_size polynomials per witness)
         let committer = CommitmentWriter::new(params.clone());
@@ -657,8 +652,7 @@ mod tests {
         let commitment_reader = CommitmentReader::new(&params);
         let verifier = Verifier::new(&params);
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let mut parsed_commitments = Vec::new();
         for _ in 0..num_witnesses {
@@ -702,4 +696,3 @@ mod tests {
         }
     }
 }
-*/

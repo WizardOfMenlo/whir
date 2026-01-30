@@ -7,12 +7,16 @@ pub mod codecs;
 mod engines;
 mod protocol_id;
 
+use std::{any::type_name, fmt::Debug};
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{
-    Decoding, DomainSeparator, DuplexSpongeInterface, Encoding, NargDeserialize, NargSerialize,
-    StdHash, VerificationError, VerificationResult,
+use sha3::{Digest, Sha3_256, Sha3_512};
+use spongefish::StdHash;
+pub use spongefish::{
+    Codec, Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, NargSerialize,
+    VerificationError, VerificationResult,
 };
 
 pub use self::{
@@ -43,17 +47,27 @@ where
 {
 }
 
-impl<T, U> ProverMessage<U> for T
-where
-    T: NargSerialize + NargDeserialize + Encoding<U>,
-    U: ?Sized,
-{
+#[derive(Clone, Copy, Debug)]
+pub struct DomainSeparator<'a, I> {
+    protocol_id: [u8; 64],
+    session_id: [u8; 32],
+    instance: &'a I,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum Interaction {
+    ProverMessage(String),
+    VerifierMessage(String),
+    Hint(String),
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Proof {
     pub narg_string: Vec<u8>,
     pub hints: Vec<u8>,
+
+    #[cfg(test)]
+    pub pattern: Vec<Interaction>,
 }
 
 pub struct ProverState<H = StdHash, R = StdRng>
@@ -63,6 +77,9 @@ where
 {
     inner: spongefish::ProverState<H, R>,
     hints: Vec<u8>,
+
+    #[cfg(test)]
+    pattern: Vec<Interaction>,
 }
 
 pub struct VerifierState<'a, H = StdHash>
@@ -71,6 +88,9 @@ where
 {
     inner: spongefish::VerifierState<'a, H>,
     hints: &'a [u8],
+
+    #[cfg(test)]
+    pattern: &'a [Interaction],
 }
 
 pub trait VerifierMessage {
@@ -88,16 +108,75 @@ pub trait VerifierMessage {
     }
 }
 
-impl<H, R> From<spongefish::ProverState<H, R>> for ProverState<H, R>
+impl DomainSeparator<'static, ()> {
+    pub fn protocol<C: Serialize>(config: &C) -> Self {
+        const INSTANCE: &'static () = &();
+        let mut hash = Sha3_512::new();
+        ciborium::into_writer(config, &mut hash).expect("Computing protocol hash failed");
+        let protocol_id: [u8; 64] = hash.finalize().into();
+        Self {
+            protocol_id,
+            session_id: [0; 32],
+            instance: INSTANCE,
+        }
+    }
+
+    pub fn session<S: Serialize>(self, session: &S) -> Self {
+        let mut hash = Sha3_256::new();
+        ciborium::into_writer(session, &mut hash).expect("Computing session hash failed");
+        let session_id: [u8; 32] = hash.finalize().into();
+        Self { session_id, ..self }
+    }
+
+    pub fn instance<'a, I>(self, instance: &'a I) -> DomainSeparator<'a, I> {
+        DomainSeparator {
+            protocol_id: self.protocol_id,
+            session_id: self.session_id,
+            instance,
+        }
+    }
+}
+
+impl<T, U> ProverMessage<U> for T
+where
+    T: NargSerialize + NargDeserialize + Encoding<U>,
+    U: ?Sized,
+{
+}
+
+impl<H> ProverState<H, StdRng>
 where
     H: DuplexSpongeInterface,
-    R: RngCore + CryptoRng,
 {
-    fn from(inner: spongefish::ProverState<H, R>) -> Self {
+    /// Construct a new prover state with a custom duplex hash function.
+    ///
+    /// **Note.** The `spongefish` API currently does not allow creating an
+    /// instance with a non-standard random number generator.
+    pub fn new<'a, I>(ds: &DomainSeparator<'a, I>, duplex: H) -> Self
+    where
+        u8: Encoding<[H::U]>,
+        I: Encoding<[H::U]>,
+    {
         Self {
-            inner,
+            inner: spongefish::DomainSeparator::new(ds.protocol_id)
+                .session(ds.session_id)
+                .instance(ds.instance)
+                .to_prover(duplex),
             hints: Vec::new(),
+
+            #[cfg(test)]
+            pattern: Vec::new(),
         }
+    }
+}
+
+impl ProverState<StdHash, StdRng> {
+    /// Construct a new prover state with the standard duplex hash function.
+    pub fn new_std<'a, I>(ds: &DomainSeparator<'a, I>) -> Self
+    where
+        I: Encoding<[u8]>,
+    {
+        Self::new(ds, StdHash::default())
     }
 }
 
@@ -106,25 +185,23 @@ where
     H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
 {
-    pub fn into_inner(self) -> (spongefish::ProverState<H, R>, Vec<u8>) {
-        (self.inner, self.hints)
-    }
-
-    pub const fn inner_mut(&mut self) -> &mut spongefish::ProverState<H, R> {
-        &mut self.inner
-    }
-
     pub fn prover_message<T>(&mut self, message: &T)
     where
         T: Encoding<[H::U]> + NargSerialize + ?Sized,
     {
-        self.inner.prover_message(message);
+        #[cfg(test)]
+        self.pattern
+            .push(Interaction::ProverMessage(type_name::<T>().to_owned()));
+        self.inner.prover_message(message)
     }
 
     pub fn prover_hint<T>(&mut self, hint: &T)
     where
         T: NargSerialize,
     {
+        #[cfg(test)]
+        self.pattern
+            .push(Interaction::Hint(type_name::<T>().to_owned()));
         hint.serialize_into_narg(&mut self.hints);
     }
 
@@ -132,6 +209,9 @@ where
     where
         T: CanonicalSerialize + ?Sized,
     {
+        #[cfg(test)]
+        self.pattern
+            .push(Interaction::Hint(type_name::<T>().to_owned()));
         value
             .serialize_compressed(&mut self.hints)
             .expect("Failed to serialize hint");
@@ -141,25 +221,10 @@ where
         Proof {
             narg_string: self.inner.narg_string().to_owned(),
             hints: self.hints,
-        }
-    }
-}
 
-impl<H> ProverState<H, StdRng>
-where
-    H: DuplexSpongeInterface,
-{
-    pub fn new<S, I>(protocol: [u8; 64], session: S, instance: &I, sponge: H) -> Self
-    where
-        [u8; 64]: Encoding<[H::U]>,
-        S: Encoding<[H::U]>,
-        I: Encoding<[H::U]>,
-    {
-        DomainSeparator::new(protocol)
-            .session(session)
-            .instance(instance)
-            .to_prover(sponge)
-            .into()
+            #[cfg(test)]
+            pattern: self.pattern,
+        }
     }
 }
 
@@ -174,6 +239,9 @@ where
     where
         T: Decoding<[H::U]>,
     {
+        #[cfg(test)]
+        self.pattern
+            .push(Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
     }
 }
@@ -182,40 +250,29 @@ impl<'a, H> VerifierState<'a, H>
 where
     H: DuplexSpongeInterface,
 {
-    pub const fn from(inner: spongefish::VerifierState<'a, H>, hints: &'a [u8]) -> Self {
-        Self { inner, hints }
-    }
-
-    pub fn into_inner(self) -> (spongefish::VerifierState<'a, H>, &'a [u8]) {
-        (self.inner, self.hints)
-    }
-
-    pub const fn inner_mut(&mut self) -> &mut spongefish::VerifierState<'a, H> {
-        &mut self.inner
-    }
-
-    pub fn new<I, S>(
-        protocol: [u8; 64],
-        session: S,
-        sponge: H,
-        instance: &I,
-        proof: &'a Proof,
-    ) -> Self
+    pub fn new<'b, I>(ds: &DomainSeparator<'b, I>, proof: &'a Proof, duplex: H) -> Self
     where
-        [u8; 64]: Encoding<[H::U]>,
-        S: Encoding<[H::U]>,
+        u8: Encoding<[H::U]>,
         I: Encoding<[H::U]>,
     {
         Self {
-            inner: DomainSeparator::new(protocol)
-                .session(session)
-                .instance(instance)
-                .to_verifier(sponge, &proof.narg_string),
+            inner: spongefish::DomainSeparator::new(ds.protocol_id)
+                .session(ds.session_id)
+                .instance(ds.instance)
+                .to_verifier(duplex, &proof.narg_string),
             hints: &proof.hints,
+            #[cfg(test)]
+            pattern: &proof.pattern,
         }
     }
 
+    pub const fn as_spongefish(&mut self) -> &mut spongefish::VerifierState<'a, H> {
+        &mut self.inner
+    }
+
     pub fn check_eof(self) -> VerificationResult<()> {
+        #[cfg(test)]
+        assert!(self.pattern.is_empty());
         verify!(self.inner.check_eof().is_ok());
         verify!(self.hints.is_empty());
         Ok(())
@@ -225,6 +282,8 @@ where
     where
         T: Encoding<[H::U]> + NargDeserialize,
     {
+        #[cfg(test)]
+        self.pop_pattern(Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message()
     }
 
@@ -232,13 +291,15 @@ where
     where
         T: Encoding<[H::U]> + NargDeserialize,
     {
-        self.inner.prover_messages_vec(len)
+        (0..len).map(|_| self.prover_message()).collect()
     }
 
     pub fn prover_hint<T>(&mut self) -> VerificationResult<T>
     where
         T: NargDeserialize,
     {
+        #[cfg(test)]
+        self.pop_pattern(Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_from_narg(&mut self.hints)
     }
 
@@ -246,7 +307,27 @@ where
     where
         T: CanonicalDeserialize,
     {
+        #[cfg(test)]
+        self.pop_pattern(Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_compressed(&mut self.hints).map_err(|_| VerificationError)
+    }
+
+    #[cfg(test)]
+    fn pop_pattern(&mut self, interaction: Interaction) {
+        assert!(!self.pattern.is_empty());
+        let (expected, tail) = self.pattern.split_first().unwrap();
+        assert_eq!(&interaction, expected);
+        self.pattern = tail;
+    }
+}
+
+impl<'a> VerifierState<'a, StdHash> {
+    /// Construct a new prover state with the standard duplex hash function.
+    pub fn new_std<'b, I>(ds: &DomainSeparator<'b, I>, proof: &'a Proof) -> Self
+    where
+        I: Encoding<[u8]>,
+    {
+        Self::new(ds, proof, StdHash::default())
     }
 }
 
@@ -260,34 +341,8 @@ where
     where
         T: Decoding<[H::U]>,
     {
+        #[cfg(test)]
+        self.pop_pattern(Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
-    }
-}
-
-impl<H, R> VerifierMessage for spongefish::ProverState<H, R>
-where
-    H: DuplexSpongeInterface,
-    R: RngCore + CryptoRng,
-{
-    type U = H::U;
-
-    fn verifier_message<T>(&mut self) -> T
-    where
-        T: Decoding<[H::U]>,
-    {
-        Self::verifier_message(self)
-    }
-}
-impl<H> VerifierMessage for spongefish::VerifierState<'_, H>
-where
-    H: DuplexSpongeInterface,
-{
-    type U = H::U;
-
-    fn verifier_message<T>(&mut self) -> T
-    where
-        T: Decoding<[H::U]>,
-    {
-        Self::verifier_message(self)
     }
 }

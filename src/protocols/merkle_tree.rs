@@ -7,14 +7,16 @@ use std::{fmt, mem::swap};
 
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 use zerocopy::IntoBytes;
 
 use crate::{
     hash::{self, Engine, Hash, ENGINES},
-    transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+    transcript::{
+        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
+        VerificationResult, VerifierState,
+    },
     verify,
 };
 
@@ -305,12 +307,11 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 #[cfg(test)]
 pub(crate) mod tests {
     use proptest::{collection::vec, prelude::Strategy};
-    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
         hash::{tests::hash_for_size, BLAKE3},
-        transcript::codecs::Empty,
+        transcript::{codecs::Empty, DomainSeparator},
     };
 
     pub fn config(num_leaves: usize) -> impl Strategy<Value = Config> {
@@ -334,19 +335,18 @@ pub(crate) mod tests {
             .map(|i| Hash([i as u8; 32]))
             .collect::<Vec<_>>();
 
-        let ds = domain_separator!("whir::protocols::merkle_tree")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
         // Prover
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
         let tree = config.commit(&mut prover_state, leaves);
         config.open(&mut prover_state, &tree, &[13, 42]);
         let proof = prover_state.proof();
 
         // Verifier
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let root = config.receive_commitment(&mut verifier_state).unwrap();
         config
             .verify(
