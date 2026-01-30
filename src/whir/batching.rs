@@ -41,7 +41,7 @@ mod batching_tests {
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         whir::{
-            committer::{reader::CommitmentReader, CommitmentWriter},
+            committer::{CommitmentReader, CommitmentWriter},
             parameters::WhirConfig,
             prover::Prover,
             statement::{Statement, Weights},

@@ -126,18 +126,7 @@ where
                 combination_randomness_gen,
             );
 
-            // Check invariants
-            sumcheck.assert_sum_invariant();
-            assert_eq!(witness.polynomial, sumcheck.evaluations().to_coeffs());
-
             let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck);
-
-            // Check invariants
-            sumcheck.assert_sum_invariant();
-            assert_eq!(
-                witness.polynomial.fold(&folding_randomness),
-                sumcheck.evaluations().to_coeffs()
-            );
 
             sumcheck_prover = Some(sumcheck);
             folding_randomness
@@ -174,24 +163,8 @@ where
         };
 
         // Run WHIR rounds (including final round)
-        dbg!(self.config.n_rounds());
         for _round in 0..=self.config.n_rounds() {
-            dbg!(_round);
-            if let Some(sumcheck_instance) = &round_state.sumcheck_prover {
-                sumcheck_instance.assert_sum_invariant();
-            }
             self.round(prover_state, &mut round_state);
-
-            // Invariant check
-            if let Some(sumcheck_instance) = &round_state.sumcheck_prover {
-                sumcheck_instance.assert_sum_invariant();
-                assert_eq!(
-                    round_state
-                        .coefficients
-                        .fold(&round_state.folding_randomness),
-                    sumcheck_instance.evaluations().to_coeffs()
-                );
-            }
         }
 
         // Hints for deferred constraints
@@ -657,7 +630,6 @@ where
                 witness,
                 batching_randomness,
             } => {
-                eprintln!("RoundWitness Intial");
                 let config = &self.config.initial_committer;
                 let in_domain = config.open(prover_state, &[&witness]).pop().unwrap();
 
@@ -699,7 +671,6 @@ where
                 prev_matrix_committer,
                 prev_matrix_witness,
             } => {
-                eprintln!("RoundWitness Round");
                 // STIR Queries
                 let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
                     prover_state,
@@ -749,18 +720,14 @@ where
             .sumcheck_prover
             .take()
             .map(|mut sumcheck_prover| {
-                eprintln!("Unwrap!");
-                sumcheck_prover.assert_sum_invariant();
                 sumcheck_prover.add_new_equality(
                     &stir_challenges,
                     &stir_evaluations,
                     &combination_randomness,
                 );
-                sumcheck_prover.assert_sum_invariant();
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                eprintln!("Else!");
                 let mut statement = Statement::new(folded_coefficients.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
@@ -773,7 +740,6 @@ where
                     combination_randomness[1],
                 )
             });
-        sumcheck_prover.assert_sum_invariant();
 
         let sumcheck_config = sumcheck::Config {
             field: Type::<F>::new(),
@@ -785,9 +751,7 @@ where
                 folding_factor_next
             ],
         };
-        sumcheck_prover.assert_sum_invariant();
         let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
-        sumcheck_prover.assert_sum_invariant();
 
         let start_idx = self.config.folding_factor.total_number(round_state.round);
         let dst_randomness =
@@ -832,29 +796,6 @@ where
         for coeff in folded_coefficients.coeffs() {
             prover_state.prover_message(coeff);
         }
-
-        assert_eq!(
-            &round_state
-                .coefficients
-                .fold(&round_state.folding_randomness),
-            folded_coefficients,
-        );
-        round_state
-            .sumcheck_prover
-            .as_ref()
-            .unwrap()
-            .assert_sum_invariant();
-        assert_eq!(
-            round_state
-                .coefficients
-                .fold(&round_state.folding_randomness),
-            round_state
-                .sumcheck_prover
-                .as_ref()
-                .unwrap()
-                .evaluations()
-                .to_coeffs()
-        );
 
         // Precompute the folding factors for later use
         let folding_factor = self.config.folding_factor.at_round(round_state.round);
@@ -922,12 +863,6 @@ where
                     SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
                 });
 
-            final_folding_sumcheck.assert_sum_invariant();
-            assert_eq!(
-                folded_coefficients,
-                &final_folding_sumcheck.evaluations().to_coeffs()
-            );
-
             let sumcheck_config = sumcheck::Config {
                 field: Type::<F>::new(),
                 initial_size: 1 << final_folding_sumcheck.num_variables(),
@@ -941,13 +876,6 @@ where
 
             let final_folding_randomness =
                 sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
-
-            final_folding_sumcheck.assert_sum_invariant();
-            assert_eq!(
-                &folded_coefficients.fold(&final_folding_randomness),
-                &final_folding_sumcheck.evaluations().to_coeffs()
-            );
-            dbg!(final_folding_sumcheck.evaluations());
 
             let start_idx = self.config.folding_factor.total_number(round_state.round);
             let rand_dst = &mut round_state.randomness_vec

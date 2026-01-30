@@ -169,6 +169,9 @@ mod tests {
         let folding_factor = 1;
         let num_queries = 5;
 
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         // Mock transcript with fixed bytes (ensuring reproducibility)
         let sponge = MockSponge {
             absorb: None, // Anything is fine
@@ -180,10 +183,7 @@ mod tests {
                 0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
             ],
         };
-        let ds = DomainSeparator::protocol(&module_path!())
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty);
-        let mut prover_state = ProverState::new_std(&ds);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
@@ -213,6 +213,9 @@ mod tests {
         let folding_factor = 3; // 2^3 = 8
         let num_queries = 5;
 
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         // Expected `folded_domain_size = 65536 / 8 = 8192`
         let sponge = MockSponge {
             absorb: None,
@@ -224,10 +227,7 @@ mod tests {
                 0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
             ],
         };
-        let ds = DomainSeparator::protocol(&module_path!())
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty);
-        let mut prover_state = ProverState::new_std(&ds);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
@@ -258,6 +258,9 @@ mod tests {
         let num_queries = 4;
 
         // Expected `folded_domain_size = 2^24 / 16 = 2^20 = 1,048,576`
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         let sponge = MockSponge {
             absorb: None,
             squeeze: &[
@@ -267,10 +270,7 @@ mod tests {
                 0x22, 0x33, 0x44, // Query 4
             ],
         };
-        let ds = DomainSeparator::protocol(&module_path!())
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty);
-        let mut prover_state = ProverState::new_std(&ds);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);

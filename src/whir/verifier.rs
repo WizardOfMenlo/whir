@@ -129,10 +129,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         }
 
         // Run WHIR rounds (excluding final round)
-        dbg!(self.config.n_rounds());
         for round_index in 0..self.config.n_rounds() {
-            dbg!(round_index);
-
             // Fetch round parameters from config
             let config = &self.config.round_configs[round_index];
 
@@ -161,7 +158,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     commitment,
                     batching_randomness,
                 } => {
-                    eprintln!("Initial commitment");
                     // Open the previous commitment
                     let comitter = &self.config.initial_committer;
                     let in_domain = comitter
@@ -212,12 +208,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 .chain(stir_constraints.into_iter())
                 .collect();
 
-            dbg!(&constraints);
-
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
-            dbg!(claimed_sum);
 
             let config = sumcheck::Config {
                 field: Type::new(),
@@ -231,13 +224,10 @@ impl<'a, F: FftField> Verifier<'a, F> {
             };
             let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
-            dbg!(claimed_sum);
 
             // Update round parameters
             prev_commitment = RoundCommitment::Round { matrix_commitment };
         }
-
-        dbg!();
 
         // In the final round we receive the full polynomial instead of a commitment.
         let mut final_coefficients = vec![F::ZERO; 1 << self.config.final_sumcheck_rounds];
@@ -245,7 +235,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
             *coeff = verifier_state.prover_message()?;
         }
         let final_coefficients = CoefficientList::new(final_coefficients);
-        dbg!(&final_coefficients);
 
         // Verify the final PoW
         self.config.final_pow.verify(verifier_state)?;
@@ -256,7 +245,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 commitment,
                 batching_randomness,
             } => {
-                dbg!();
                 let config = &self.config.initial_committer;
                 let num_variables = self.config.mv_parameters.num_variables
                     - self.config.folding_factor.at_round(0);
@@ -496,13 +484,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
         // Verify STIR challenges on N original witness trees
         round_params.pow.verify(verifier_state)?;
 
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            verifier_state,
-            round_params.domain_size,
-            round_params.folding_factor,
-            round_params.num_queries,
-        );
-
         // Verify Merkle openings in all N original commitment trees
         let irs_commitment_refs = parsed_commitments
             .iter()
@@ -518,7 +499,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let fold_size = 1 << round_params.folding_factor;
         let leaf_size = fold_size * self.config.batch_size;
-        let rlc_answers: Vec<Vec<F>> = (0..stir_challenges_indexes.len())
+        let rlc_answers: Vec<Vec<F>> = (0..points.len())
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
@@ -549,9 +530,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .map(|answers| CoefficientList::new(answers).evaluate(&round_folding_randomness[0]))
             .collect();
 
-        let stir_constraints: Vec<Constraint<F>> = stir_challenges_indexes
+        let stir_constraints: Vec<Constraint<F>> = points
             .iter()
-            .map(|&index| round_params.exp_domain_gen.pow([index as u64]))
+            .map(|p| embedding.map(*p))
             .zip(&folds)
             .map(|(point, &value)| Constraint {
                 weights: Weights::univariate(point, round_params.num_variables),
