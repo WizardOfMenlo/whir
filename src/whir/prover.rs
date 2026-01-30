@@ -125,7 +125,6 @@ where
                 &statement,
                 combination_randomness_gen,
             );
-            dbg!(sumcheck.sum());
 
             // Check invariants
             sumcheck.assert_sum_invariant();
@@ -139,7 +138,6 @@ where
                 witness.polynomial.fold(&folding_randomness),
                 sumcheck.evaluations().to_coeffs()
             );
-            dbg!(sumcheck.sum());
 
             sumcheck_prover = Some(sumcheck);
             folding_randomness
@@ -175,7 +173,8 @@ where
             batching_randomness: witness.batching_randomness,
         };
 
-        // Run WHIR rounds
+        // Run WHIR rounds (including final round)
+        dbg!(self.config.n_rounds());
         for _round in 0..=self.config.n_rounds() {
             dbg!(_round);
             if let Some(sumcheck_instance) = &round_state.sumcheck_prover {
@@ -849,11 +848,10 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         // Directly send coefficients of the polynomial to the verifier.
-        dbg!(folded_coefficients.coeffs());
-        dbg!(&round_state.folding_randomness);
         for coeff in folded_coefficients.coeffs() {
             prover_state.prover_message(coeff);
         }
+        dbg!(folded_coefficients.coeffs());
 
         assert_eq!(
             &round_state

@@ -74,7 +74,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
             commitment: parsed_commitment.commitment.clone(),
             batching_randomness: parsed_commitment.batching_randomness,
         };
-        dbg!(claimed_sum);
 
         // Optional initial sumcheck round
         if self.config.initial_statement {
@@ -97,11 +96,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 .chain(statement.constraints.iter().cloned())
                 .collect();
 
-            dbg!(claimed_sum);
             let combination_randomness =
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness, constraints));
-            dbg!(claimed_sum);
 
             // Initial sumcheck
             let config = sumcheck::Config {
@@ -116,7 +113,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
             };
             let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
-            dbg!(claimed_sum);
         } else {
             assert_eq!(parsed_commitment.commitment.out_of_domain().points.len(), 0);
             assert!(statement.constraints.is_empty());
@@ -132,6 +128,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
             self.config.starting_folding_pow.verify(verifier_state)?;
         }
 
+        // Run WHIR rounds (excluding final round)
+        dbg!(self.config.n_rounds());
         for round_index in 0..self.config.n_rounds() {
             dbg!(round_index);
 
@@ -154,6 +152,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 })
                 .collect::<Vec<_>>();
 
+            // Verify the proof of work
+            config.pow.verify(verifier_state)?;
+
             // Open the previous commitment
             let stir_constraints = match prev_commitment {
                 RoundCommitment::Initial {
@@ -161,6 +162,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     batching_randomness,
                 } => {
                     eprintln!("Initial commitment");
+                    // Open the previous commitment
                     let comitter = &self.config.initial_committer;
                     let in_domain = comitter.verify(verifier_state, &commitment)?;
 
@@ -232,12 +234,18 @@ impl<'a, F: FftField> Verifier<'a, F> {
             prev_commitment = RoundCommitment::Round { matrix_commitment };
         }
 
+        dbg!();
+
         // In the final round we receive the full polynomial instead of a commitment.
         let mut final_coefficients = vec![F::ZERO; 1 << self.config.final_sumcheck_rounds];
         for coeff in &mut final_coefficients {
             *coeff = verifier_state.prover_message()?;
         }
         let final_coefficients = CoefficientList::new(final_coefficients);
+        dbg!(&final_coefficients);
+
+        // Verify the final PoW
+        self.config.final_pow.verify(verifier_state)?;
 
         // Verify in-domain challenges on the previous commitment.
         let stir_constraints = match prev_commitment {
@@ -245,6 +253,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 commitment,
                 batching_randomness,
             } => {
+                dbg!();
                 let config = &self.config.initial_committer;
                 let num_variables = self.config.mv_parameters.num_variables
                     - self.config.folding_factor.at_round(0);
@@ -695,8 +704,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
         let combination_randomness_gen = verifier_state.verifier_message();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, constraints.len());
-        dbg!(&combination_randomness);
-        dbg!(*claimed_sum);
         *claimed_sum += constraints
             .iter()
             .zip(&combination_randomness)
@@ -725,8 +732,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        params.pow.verify(verifier_state)?;
-
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
             params.domain_size,

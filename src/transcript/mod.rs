@@ -185,6 +185,7 @@ where
     H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
 {
+    #[cfg_attr(test, track_caller)]
     pub fn prover_message<T>(&mut self, message: &T)
     where
         T: Encoding<[H::U]> + NargSerialize + ?Sized,
@@ -195,6 +196,7 @@ where
         self.inner.prover_message(message)
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_hint<T>(&mut self, hint: &T)
     where
         T: NargSerialize,
@@ -205,6 +207,7 @@ where
         hint.serialize_into_narg(&mut self.hints);
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_hint_ark<T>(&mut self, value: &T)
     where
         T: CanonicalSerialize + ?Sized,
@@ -235,6 +238,7 @@ where
 {
     type U = H::U;
 
+    #[cfg_attr(test, track_caller)]
     fn verifier_message<T>(&mut self) -> T
     where
         T: Decoding<[H::U]>,
@@ -270,6 +274,7 @@ where
         &mut self.inner
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn check_eof(self) -> VerificationResult<()> {
         #[cfg(test)]
         assert!(self.pattern.is_empty());
@@ -278,6 +283,7 @@ where
         Ok(())
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_message<T>(&mut self) -> VerificationResult<T>
     where
         T: Encoding<[H::U]> + NargDeserialize,
@@ -287,6 +293,7 @@ where
         self.inner.prover_message()
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_messages_vec<T>(&mut self, len: usize) -> VerificationResult<Vec<T>>
     where
         T: Encoding<[H::U]> + NargDeserialize,
@@ -294,6 +301,7 @@ where
         (0..len).map(|_| self.prover_message()).collect()
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_hint<T>(&mut self) -> VerificationResult<T>
     where
         T: NargDeserialize,
@@ -303,6 +311,7 @@ where
         T::deserialize_from_narg(&mut self.hints)
     }
 
+    #[cfg_attr(test, track_caller)]
     pub fn prover_hint_ark<T>(&mut self) -> VerificationResult<T>
     where
         T: CanonicalDeserialize,
@@ -313,6 +322,7 @@ where
     }
 
     #[cfg(test)]
+    #[track_caller]
     fn pop_pattern(&mut self, interaction: Interaction) {
         assert!(!self.pattern.is_empty());
         let (expected, tail) = self.pattern.split_first().unwrap();
@@ -337,6 +347,7 @@ where
 {
     type U = H::U;
 
+    #[cfg_attr(test, track_caller)]
     fn verifier_message<T>(&mut self) -> T
     where
         T: Decoding<[H::U]>,
