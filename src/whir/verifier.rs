@@ -164,7 +164,10 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     eprintln!("Initial commitment");
                     // Open the previous commitment
                     let comitter = &self.config.initial_committer;
-                    let in_domain = comitter.verify(verifier_state, &commitment)?;
+                    let in_domain = comitter
+                        .verify(verifier_state, &[&commitment])?
+                        .pop()
+                        .unwrap();
 
                     let weights = tensor_product(
                         &geometric_sequence(batching_randomness, comitter.num_polynomials),
@@ -257,7 +260,10 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 let config = &self.config.initial_committer;
                 let num_variables = self.config.mv_parameters.num_variables
                     - self.config.folding_factor.at_round(0);
-                let in_domain = config.verify(verifier_state, &commitment)?;
+                let in_domain = config
+                    .verify(verifier_state, &[&commitment])?
+                    .pop()
+                    .unwrap();
 
                 let weights = tensor_product(
                     &geometric_sequence(batching_randomness, config.num_polynomials),
@@ -352,9 +358,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        /*
         assert!(!parsed_commitments.is_empty());
         assert_eq!(parsed_commitments.len(), statements.len());
+        let embedding = self.config.initial_committer.embedding();
 
         // Step 1: Read the N×M constraint evaluation matrix from the transcript
 
@@ -363,7 +369,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
         // OOD constraints from each commitment
         for commitment in parsed_commitments {
-            for point in &commitment.ood_points {
+            for point in &commitment.commitment.out_of_domain().points {
                 let ml_point = MultilinearPoint::expand_from_univariate(
                     *point,
                     self.config.mv_parameters.num_variables,
@@ -441,7 +447,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             round_folding_randomness.push(folding_randomness);
         } else {
             for commitment in parsed_commitments {
-                assert_eq!(commitment.ood_points.len(), 0);
+                assert_eq!(commitment.commitment.out_of_domain().points.len(), 0);
             }
             for statement in statements {
                 assert!(statement.constraints.is_empty());
@@ -454,9 +460,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             }
             round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
-            self.config
-                .starting_folding_pow
-                .verify(verifier_state)?;
+            self.config.starting_folding_pow.verify(verifier_state)?;
         }
 
         // Round 0: Batch-specific verification
@@ -472,13 +476,22 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
         // Receive commitment to the batched folded polynomial
         let mut prev_committer = &round_params.matrix_committer;
-        let mut prev_commitment = ParsedCommitment::receive(
-            verifier_state,
-            &round_params.matrix_committer,
-            round_params.num_variables,
-            round_params.ood_samples,
-            1,
-        )?;
+        let mut prev_commitment = round_params
+            .matrix_committer
+            .receive_commitment(verifier_state)?;
+        let ood_points: Vec<F> = verifier_state.verifier_message_vec(round_params.ood_samples);
+        let ood_answers: Vec<F> = (0..round_params.ood_samples)
+            .map(|_| verifier_state.prover_message::<F>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let oods_constraints = ood_points
+            .iter()
+            .zip(ood_answers.iter())
+            .map(|(point, answer)| Constraint {
+                weights: Weights::univariate(*point, round_params.num_variables),
+                sum: *answer,
+                defer_evaluation: false,
+            })
+            .collect::<Vec<_>>();
 
         // Verify STIR challenges on N original witness trees
         round_params.pow.verify(verifier_state)?;
@@ -491,17 +504,16 @@ impl<'a, F: FftField> Verifier<'a, F> {
         );
 
         // Verify Merkle openings in all N original commitment trees
-        let mut all_answers: Vec<Vec<F>> = Vec::with_capacity(parsed_commitments.len());
-        for commitment in parsed_commitments {
-            let answers: Vec<F> = verifier_state.prover_hint_ark()?;
-            self.config.initial_matrix_committer.verify(
-                verifier_state,
-                commitment.matrix_commitment,
-                &stir_challenges_indexes,
-                &answers,
-            )?;
-            all_answers.push(answers);
-        }
+        let irs_commitment_refs = parsed_commitments
+            .iter()
+            .map(|commitment| &commitment.commitment)
+            .collect::<Vec<_>>();
+        let in_domain = self
+            .config
+            .initial_committer
+            .verify(verifier_state, irs_commitment_refs.as_slice())?;
+        let points = in_domain[0].points.clone();
+        let mut all_answers = in_domain.into_iter().map(|e| e.matrix).collect::<Vec<_>>();
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let fold_size = 1 << round_params.folding_factor;
@@ -519,7 +531,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     for poly_idx in 0..self.config.batch_size {
                         let start = poly_idx * fold_size;
                         for j in 0..fold_size {
-                            combined[j] += pow * internal_pow * stacked_answer[start + j];
+                            combined[j] +=
+                                pow * embedding.mixed_mul(internal_pow, stacked_answer[start + j]);
                         }
                         internal_pow *= commitment.batching_randomness;
                     }
@@ -548,8 +561,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .collect();
 
         // Add batched commitment's OOD constraints and STIR constraints
-        let constraints: Vec<Constraint<F>> = prev_commitment
-            .oods_constraints()
+        let constraints: Vec<Constraint<F>> = oods_constraints
             .into_iter()
             .chain(stir_constraints)
             .collect();
@@ -576,13 +588,23 @@ impl<'a, F: FftField> Verifier<'a, F> {
         for round_index in 1..self.config.n_rounds() {
             let round_params = &self.config.round_configs[round_index];
 
-            let new_commitment = ParsedCommitment::receive(
-                verifier_state,
-                &round_params.matrix_committer,
-                round_params.num_variables,
-                round_params.ood_samples,
-                1,
-            )?;
+            let matrix_commitment = round_params
+                .matrix_committer
+                .receive_commitment(verifier_state)?;
+            let ood_points: Vec<F> = verifier_state.verifier_message_vec(round_params.ood_samples);
+            let ood_answers: Vec<F> = (0..round_params.ood_samples)
+                .map(|_| verifier_state.prover_message::<F>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let oods_constraints =
+                ood_points
+                    .iter()
+                    .zip(ood_answers.iter())
+                    .map(|(point, answer)| Constraint {
+                        weights: Weights::univariate(*point, round_params.num_variables),
+                        sum: *answer,
+                        defer_evaluation: false,
+                    });
+            let new_commitment = matrix_commitment;
 
             let stir_constraints = self.verify_stir_challenges(
                 round_index,
@@ -590,11 +612,11 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 round_params,
                 prev_committer,
                 &prev_commitment,
+                F::ZERO,
                 round_folding_randomness.last().unwrap(),
             )?;
 
-            let constraints: Vec<Constraint<F>> = new_commitment
-                .oods_constraints()
+            let constraints: Vec<Constraint<F>> = oods_constraints
                 .into_iter()
                 .chain(stir_constraints.into_iter())
                 .collect();
@@ -632,15 +654,13 @@ impl<'a, F: FftField> Verifier<'a, F> {
             &self.config.final_round_config(),
             prev_committer,
             &prev_commitment,
+            F::ZERO,
             round_folding_randomness.last().unwrap(),
         )?;
 
-        if !stir_constraints
+        verify!(stir_constraints
             .iter()
-            .all(|c| c.verify(&final_coefficients))
-        {
-            return Err(VerificationError);
-        }
+            .all(|c| c.verify(&final_coefficients)));
 
         let config = sumcheck::Config {
             field: Type::new(),
@@ -652,8 +672,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 self.config.final_sumcheck_rounds
             ],
         };
-        let final_sumcheck_randomness =
-            config.verify(verifier_state, &mut claimed_sum)?;
+        let final_sumcheck_randomness = config.verify(verifier_state, &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
@@ -672,13 +691,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
 
         // Check the final sumcheck evaluation
         let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
-        if claimed_sum != evaluation_of_weights * final_value {
-            return Err(VerificationError);
-        }
+        verify!(claimed_sum == evaluation_of_weights * final_value);
 
         Ok((folding_randomness, deferred))
-        */
-        todo!()
     }
 
     /// Create a random linear combination of constraints and add it to the claim.

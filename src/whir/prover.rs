@@ -237,7 +237,6 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        /*
         // Validation
         assert!(self.validate_parameters());
         assert!(
@@ -287,13 +286,7 @@ where
 
         // OOD constraints from each witness
         for witness in witnesses {
-            all_constraint_weights.extend(
-                witness
-                    .oods_constraints()
-                    .into_iter()
-                    .map(|(weight, _)| weight),
-            );
-            for point in &witness.ood_points() {
+            for point in &witness.witness.out_of_domain().points {
                 let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
                 all_constraint_weights.push(Weights::evaluation(ml_point));
             }
@@ -305,25 +298,21 @@ where
                 all_constraint_weights.push(constraint.weights.clone());
             }
         }
+        let num_constrants = all_constraint_weights.len();
 
         // Evaluate EVERY polynomial at EVERY constraint point
         // This creates an N×M matrix where N = #polynomials, M = #constraints
-        let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len());
+        let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len() * num_constrants);
         for witness in witnesses {
-            let mut poly_evals = Vec::with_capacity(all_constraint_weights.len());
             for weights in &all_constraint_weights {
                 let eval = weights.evaluate(&witness.polynomial);
-                poly_evals.push(eval);
+                constraint_evals_matrix.push(eval);
             }
-            constraint_evals_matrix.push(poly_evals);
         }
 
         // Commit the evaluation matrix to the transcript
-        let all_evals_flat = constraint_evals_matrix
-            .iter()
-            .flat_map(|row| row.iter().copied());
-        for eval in all_evals_flat {
-            prover_state.prover_message(&eval);
+        for eval in &constraint_evals_matrix {
+            prover_state.prover_message(eval);
         }
 
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
@@ -347,7 +336,7 @@ where
         for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
             let mut combined_eval = F::ZERO;
             let mut pow = F::ONE;
-            for poly_evals in &constraint_evals_matrix {
+            for poly_evals in constraint_evals_matrix.chunks_exact(num_constrants) {
                 combined_eval += pow * poly_evals[constraint_idx];
                 pow *= batching_randomness;
             }
@@ -382,9 +371,7 @@ where
             for randomness in &mut folding_randomness {
                 *randomness = prover_state.verifier_message();
             }
-            self.config
-                .starting_folding_pow
-                .prove(prover_state);
+            self.config.starting_folding_pow.prove(prover_state);
             MultilinearPoint(folding_randomness)
         };
 
@@ -401,7 +388,7 @@ where
         //
         // This allows the verifier to check consistency with the N original commitments
         // while the rest of the protocol operates on the single batched polynomial.
-        let round_params = &self.config.round_parameters[0];
+        let round_params = &self.config.round_configs[0];
         let num_variables_after_fold = num_vars - self.config.folding_factor.at_round(0);
         let batched_folded_poly = batched_poly.fold(&folding_randomness);
 
@@ -475,11 +462,13 @@ where
                         [query_idx * leaf_size..(query_idx + 1) * leaf_size];
 
                     // First, internally reduce stacked leaf using witness's batching_randomness
+                    let embedding = self.config.initial_committer.embedding();
                     let mut internal_pow = F::ONE;
                     for poly_idx in 0..self.config.batch_size {
                         let start = poly_idx * fold_size;
                         for j in 0..fold_size {
-                            combined[j] += pow * internal_pow * answer[start + j];
+                            combined[j] +=
+                                pow * embedding.mixed_mul(internal_pow, answer[start + j]);
                         }
                         internal_pow *= witness.batching_randomness;
                     }
@@ -554,8 +543,7 @@ where
                 folding_factor_next
             ],
         };
-        let folding_randomness =
-            sumcheck_config.prove(prover_state, &mut sumcheck_prover);
+        let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
 
         let start_idx = self.config.folding_factor.at_round(0);
         let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
@@ -574,7 +562,7 @@ where
             sumcheck_prover: Some(sumcheck_prover),
             folding_randomness,
             coefficients: batched_folded_poly,
-            prev_commitment: RoundCommitment::Round {
+            prev_commitment: RoundWitness::Round {
                 prev_matrix: batched_evals,
                 prev_matrix_committer: round_params.matrix_committer.clone(),
                 prev_matrix_witness: matrix_witness,
@@ -603,8 +591,6 @@ where
         prover_state.prover_hint_ark(&deferred);
 
         (constraint_eval, deferred)
-        */
-        todo!()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -673,7 +659,7 @@ where
             } => {
                 eprintln!("RoundWitness Intial");
                 let config = &self.config.initial_committer;
-                let in_domain = config.open(prover_state, &witness);
+                let in_domain = config.open(prover_state, &[&witness]).pop().unwrap();
 
                 // Convert RS evaluation point to multivariate over extension
                 let points = ood_points
@@ -758,9 +744,6 @@ where
         let combination_randomness =
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
-        dbg!(&stir_challenges, &stir_evaluations);
-        dbg!(&combination_randomness);
-
         #[allow(clippy::map_unwrap_or)]
         let mut sumcheck_prover = round_state
             .sumcheck_prover
@@ -791,7 +774,6 @@ where
                 )
             });
         sumcheck_prover.assert_sum_invariant();
-        dbg!(sumcheck_prover.sum());
 
         let sumcheck_config = sumcheck::Config {
             field: Type::<F>::new(),
@@ -806,7 +788,6 @@ where
         sumcheck_prover.assert_sum_invariant();
         let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
         sumcheck_prover.assert_sum_invariant();
-        dbg!(sumcheck_prover.sum());
 
         let start_idx = self.config.folding_factor.total_number(round_state.round);
         let dst_randomness =
@@ -851,7 +832,6 @@ where
         for coeff in folded_coefficients.coeffs() {
             prover_state.prover_message(coeff);
         }
-        dbg!(folded_coefficients.coeffs());
 
         assert_eq!(
             &round_state
@@ -887,7 +867,12 @@ where
                 witness,
                 batching_randomness,
             } => {
-                let _in_domain = self.config.initial_committer.open(prover_state, witness);
+                let _in_domain = self
+                    .config
+                    .initial_committer
+                    .open(prover_state, &[witness])
+                    .pop()
+                    .unwrap();
                 // TODO: Why are these unchecked?
             }
             RoundWitness::Round {

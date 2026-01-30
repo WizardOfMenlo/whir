@@ -20,6 +20,7 @@
 //! *To do:*:
 //! - Consistently Reframe as vector commitment protocol (or, with batching, a matrix commitment protocol).
 //! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
+//! - Support mixed `num_polys` openings.
 
 // COMMIT NOTES:
 // Changes compared to previous version:
@@ -252,100 +253,116 @@ where
     ///
     /// Constraints are returned as a pair of evaluation point and values
     /// for each row.
+    ///
+    /// When there are multiple openings, they will have the same evaluation points.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        witness: &Witness<F, G>,
-    ) -> Evaluations<F>
+        witnesses: &[&Witness<F, G>],
+    ) -> Vec<Evaluations<F>>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert_eq!(witness.matrix.len(), self.size());
-        assert_eq!(witness.out_of_domain.points.len(), self.out_domain_samples);
-        assert_eq!(
-            witness.out_of_domain.matrix.len(),
-            self.out_domain_samples * self.num_polynomials
-        );
-
-        // Generate in-domain evaluations
-        let indices = challenge_indices(
-            prover_state,
-            self.num_rows(),
-            self.in_domain_samples,
-            self.deduplicate_in_domain,
-        );
-        let mut submatrix = Vec::with_capacity(self.in_domain_samples * self.num_cols());
-        for &index in &indices {
-            let row = &witness.matrix[index * self.num_cols()..(index + 1) * self.num_cols()];
-            submatrix.extend_from_slice(row);
+        for witness in witnesses {
+            assert_eq!(witness.matrix.len(), self.size());
+            assert_eq!(witness.out_of_domain.points.len(), self.out_domain_samples);
+            assert_eq!(
+                witness.out_of_domain.matrix.len(),
+                self.out_domain_samples * self.num_polynomials
+            );
         }
-        prover_state.prover_hint_ark(&submatrix);
-        self.matrix_commit
-            .open(prover_state, &witness.matrix_witness, &indices);
 
-        // Compute corresponding RS evaluation points
-        let generator = self.generator();
-        let points = indices
-            .iter()
-            .map(|&index| generator.pow([index as u64]))
-            .collect();
+        // Get in-domain openings
+        let (indices, points) = self.in_domain_challenges(prover_state);
 
-        Evaluations {
-            points,
-            matrix: submatrix,
+        // For each commitment, send the selected rows to the verifier.
+        let mut evaluations = Vec::with_capacity(witnesses.len());
+        for witness in witnesses {
+            let mut submatrix = Vec::with_capacity(self.in_domain_samples * self.num_cols());
+            for &index in &indices {
+                let row = &witness.matrix[index * self.num_cols()..(index + 1) * self.num_cols()];
+                submatrix.extend_from_slice(row);
+            }
+            prover_state.prover_hint_ark(&submatrix);
+            self.matrix_commit
+                .open(prover_state, &witness.matrix_witness, &indices);
+            evaluations.push(Evaluations {
+                points: points.clone(),
+                matrix: submatrix,
+            });
         }
+        evaluations
     }
 
-    /// Verifies an opening and returns the folded in-domain evaluations.
+    /// Verifies one or more openings and returns the in-domain evaluations.
     ///
-    /// **Note.** The verifier needs to separately verify the out-of-domain evaluations
-    /// from [`Witness::out_of_domain()`]!
+    /// **Note.** This does not verify the out-of-domain evaluations.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: &Commitment<G>,
-    ) -> VerificationResult<Evaluations<F>>
+        commitments: &[&Commitment<G>],
+    ) -> VerificationResult<Vec<Evaluations<F>>>
     where
         H: DuplexSpongeInterface,
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        verify!(commitment.out_of_domain.points.len() == self.out_domain_samples);
-        verify!(
-            commitment.out_of_domain.matrix.len() == self.num_polynomials * self.out_domain_samples
-        );
+        for commitment in commitments {
+            verify!(commitment.out_of_domain.points.len() == self.out_domain_samples);
+            verify!(
+                commitment.out_of_domain.matrix.len()
+                    == self.num_polynomials * self.out_domain_samples
+            );
+        }
 
         // Get in-domain openings
+        let (indices, points) = self.in_domain_challenges(verifier_state);
+
+        // Receive (as a hint) a matrix of all the columns of all the commitments
+        // corresponding to the in-domain opening rows.
+        let mut evaluations = Vec::with_capacity(commitments.len());
+        for commitment in commitments {
+            let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
+            self.matrix_commit.verify(
+                verifier_state,
+                &commitment.matrix_commitment,
+                &indices,
+                &submatrix,
+            )?;
+            evaluations.push(Evaluations {
+                points: points.clone(),
+                matrix: submatrix,
+            });
+        }
+        Ok(evaluations)
+    }
+
+    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<F>)
+    where
+        T: VerifierMessage,
+        u8: Decoding<[T::U]>,
+    {
+        // Get in-domain openings
         let indices = challenge_indices(
-            verifier_state,
+            transcript,
             self.num_rows(),
             self.in_domain_samples,
             self.deduplicate_in_domain,
         );
-        let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
-        self.matrix_commit.verify(
-            verifier_state,
-            &commitment.matrix_commitment,
-            &indices,
-            &submatrix,
-        )?;
 
         // Compute corresponding in-domain evaluation points
         let generator = self.generator();
         let points = indices
-            .into_iter()
-            .map(|index| generator.pow([index as u64]))
+            .iter()
+            .map(|index| generator.pow([*index as u64]))
             .collect::<Vec<_>>();
 
-        Ok(Evaluations {
-            points,
-            matrix: submatrix,
-        })
+        (indices, points)
     }
 }
 
@@ -354,12 +371,30 @@ impl<G: Field> Commitment<G> {
     pub fn out_of_domain(&self) -> &Evaluations<G> {
         &self.out_of_domain
     }
+
+    pub fn num_polynomials(&self) -> usize {
+        self.out_of_domain().num_columns()
+    }
 }
 
 impl<F: FftField, G: Field> Witness<F, G> {
     /// Returns the out-of-domain evaluations.
     pub fn out_of_domain(&self) -> &Evaluations<G> {
         &self.out_of_domain
+    }
+
+    pub fn num_polynomials(&self) -> usize {
+        self.out_of_domain().num_columns()
+    }
+}
+
+impl<F: Field> Evaluations<F> {
+    pub fn num_points(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn num_columns(&self) -> usize {
+        self.matrix.len() / self.num_points()
     }
 }
 
@@ -521,6 +556,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        // TODO: Multiple commitments and openings.
+
         // Prover
         let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit(
@@ -550,43 +587,48 @@ mod tests {
                 }
             }
         }
-        let in_domain_evals = config.open(&mut prover_state, &witness);
-        if config.deduplicate_in_domain {
-            // Sorting is over index order, not points
-            assert!(in_domain_evals.points.len() <= config.in_domain_samples);
-            assert!({
-                let mut unique = in_domain_evals.points.clone();
-                unique.sort_unstable();
-                unique.dedup();
-                unique.len() == in_domain_evals.points.len()
-            });
-        } else {
-            assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
-        }
-        assert_eq!(
-            in_domain_evals.matrix.len(),
-            in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
-        );
-        if config.num_polynomials > 0 {
-            for (point, evals) in in_domain_evals.points.iter().zip(
-                in_domain_evals
-                    .matrix
-                    .chunks_exact(config.num_polynomials * config.interleaving_depth),
-            ) {
-                let expected_iter = polynomials.iter().flat_map(|poly| {
-                    (0..config.interleaving_depth).map(|j| {
-                        // coefficients at positions j, j+d, j+2d, ...
-                        let coeffs: Vec<_> = poly
-                            .iter()
-                            .copied()
-                            .skip(j)
-                            .step_by(config.interleaving_depth)
-                            .collect();
-                        univariate_evaluate(&coeffs, *point)
-                    })
+        let in_domain_evals = config.open(&mut prover_state, &[&witness]);
+        assert!(in_domain_evals
+            .windows(2)
+            .all(|w| w[0].points == w[1].points));
+        for in_domain_evals in &in_domain_evals {
+            if config.deduplicate_in_domain {
+                // Sorting is over index order, not points
+                assert!(in_domain_evals.points.len() <= config.in_domain_samples);
+                assert!({
+                    let mut unique = in_domain_evals.points.clone();
+                    unique.sort_unstable();
+                    unique.dedup();
+                    unique.len() == in_domain_evals.points.len()
                 });
-                for (expected, got) in expected_iter.zip(evals.iter()) {
-                    assert_eq!(expected, *got);
+            } else {
+                assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
+            }
+            assert_eq!(
+                in_domain_evals.matrix.len(),
+                in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
+            );
+            if config.num_polynomials > 0 {
+                for (point, evals) in in_domain_evals.points.iter().zip(
+                    in_domain_evals
+                        .matrix
+                        .chunks_exact(config.num_polynomials * config.interleaving_depth),
+                ) {
+                    let expected_iter = polynomials.iter().flat_map(|poly| {
+                        (0..config.interleaving_depth).map(|j| {
+                            // coefficients at positions j, j+d, j+2d, ...
+                            let coeffs: Vec<_> = poly
+                                .iter()
+                                .copied()
+                                .skip(j)
+                                .step_by(config.interleaving_depth)
+                                .collect();
+                            univariate_evaluate(&coeffs, *point)
+                        })
+                    });
+                    for (expected, got) in expected_iter.zip(evals.iter()) {
+                        assert_eq!(expected, *got);
+                    }
                 }
             }
         }
@@ -596,7 +638,7 @@ mod tests {
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         assert_eq!(commitment.out_of_domain(), witness.out_of_domain());
-        let verifier_in_domain_evals = config.verify(&mut verifier_state, &commitment).unwrap();
+        let verifier_in_domain_evals = config.verify(&mut verifier_state, &[&commitment]).unwrap();
         assert_eq!(&verifier_in_domain_evals, &in_domain_evals);
         verifier_state.check_eof().unwrap();
     }
