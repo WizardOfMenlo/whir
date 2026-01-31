@@ -169,107 +169,54 @@ impl<'a, F: FftField> Verifier<'a, F> {
             config.pow.verify(verifier_state)?;
 
             // Open the previous commitment
-            let stir_constraints = match prev_commitment {
-                RoundCommitment::Initial {
-                    commitment,
-                    batching_randomness,
-                } => {
-                    // Open the previous commitment
-                    let comitter = &self.config.initial_committer;
-                    let in_domain = comitter
-                        .verify(verifier_state, &[&commitment])?
-                        .pop()
-                        .unwrap();
+            let stir_constraints =
+                match prev_commitment {
+                    RoundCommitment::Initial {
+                        commitment,
+                        batching_randomness,
+                    } => {
+                        // Open the previous commitment
+                        let comitter = &self.config.initial_committer;
+                        let in_domain = comitter
+                            .verify(verifier_state, &[&commitment])?
+                            .pop()
+                            .unwrap();
 
-                    let mut constraints = Vec::with_capacity(comitter.in_domain_samples);
-                    for (point, values) in in_domain.points.iter().zip(
+                        let weights = tensor_product(
+                            &geometric_sequence(batching_randomness, comitter.num_polynomials),
+                            &round_folding_randomness.last().unwrap().coeff_weights(true),
+                        );
                         in_domain
-                            .matrix
-                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
-                    ) {
-                        constraints.push(Constraint {
-                            weights: Weights::univariate(
-                                comitter.embedding.map(*point),
-                                config.num_variables,
-                            ),
-                            sum: {
-                                let mut acc = F::ZERO;
-                                let mut pow = F::ONE;
-                                for block in values
-                                    .chunks_exact(comitter.interleaving_depth)
-                                    .take(comitter.num_polynomials)
-                                {
-                                    let eval = CoefficientList::new(block.to_vec())
-                                        .evaluate_at_extension(
-                                            round_folding_randomness.last().unwrap(),
-                                        );
-                                    acc += pow * eval;
-                                    pow *= batching_randomness;
-                                }
-                                acc
-                            },
-                            defer_evaluation: false,
-                        });
+                            .points
+                            .iter()
+                            .zip(in_domain.matrix.chunks_exact(
+                                comitter.num_polynomials * comitter.interleaving_depth,
+                            ))
+                            .map(|(point, row)| Constraint {
+                                weights: Weights::univariate(
+                                    comitter.embedding.map(*point),
+                                    config.num_variables,
+                                ),
+                                sum: mixed_dot(comitter.embedding(), &weights, row),
+                                defer_evaluation: false,
+                            })
+                            .collect::<Vec<_>>()
                     }
+                    RoundCommitment::Round { matrix_commitment } => {
+                        let prev_config = &self.config.round_configs[round_index - 1];
 
-                    let geo = geometric_sequence(batching_randomness, comitter.num_polynomials);
-                    let coeff_w1 = round_folding_randomness.last().unwrap().coeff_weights();
-                    let coeff_w2 = bit_reverse_permute(
-                        &coeff_w1,
-                        comitter.interleaving_depth.trailing_zeros() as usize,
-                    );
-                    let weights1 = tensor_product(&geo, &coeff_w1);
-                    let weights2 = tensor_product(&geo, &coeff_w2);
-
-                    let mut constraints1 = Vec::with_capacity(comitter.in_domain_samples);
-                    for (point, values) in in_domain.points.iter().zip(
-                        in_domain
-                            .matrix
-                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
-                    ) {
-                        constraints1.push(Constraint {
-                            weights: Weights::univariate(
-                                comitter.embedding.map(*point),
-                                config.num_variables,
-                            ),
-                            sum: mixed_dot(comitter.embedding(), &weights1, values),
-                            defer_evaluation: false,
-                        });
+                        // Verify in-domain challenges on the previous commitment.
+                        self.verify_stir_challenges(
+                            round_index,
+                            verifier_state,
+                            config,
+                            &prev_config.matrix_committer,
+                            &matrix_commitment,
+                            F::ZERO,
+                            round_folding_randomness.last().unwrap(),
+                        )?
                     }
-                    let mut constraints2 = Vec::with_capacity(comitter.in_domain_samples);
-                    for (point, values) in in_domain.points.iter().zip(
-                        in_domain
-                            .matrix
-                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
-                    ) {
-                        constraints2.push(Constraint {
-                            weights: Weights::univariate(
-                                comitter.embedding.map(*point),
-                                config.num_variables,
-                            ),
-                            sum: mixed_dot(comitter.embedding(), &weights2, values),
-                            defer_evaluation: false,
-                        });
-                    }
-                    assert!(constraints == constraints1 || constraints == constraints2);
-
-                    constraints
-                }
-                RoundCommitment::Round { matrix_commitment } => {
-                    let prev_config = &self.config.round_configs[round_index - 1];
-
-                    // Verify in-domain challenges on the previous commitment.
-                    self.verify_stir_challenges(
-                        round_index,
-                        verifier_state,
-                        config,
-                        &prev_config.matrix_committer,
-                        &matrix_commitment,
-                        F::ZERO,
-                        round_folding_randomness.last().unwrap(),
-                    )?
-                }
-            };
+                };
 
             // Add out-of-domain and in-domain constraints to claimed_sum
             let constraints: Vec<Constraint<F>> = oods_constraints
