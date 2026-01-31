@@ -7,7 +7,9 @@ pub mod codecs;
 mod engines;
 mod protocol_id;
 
-use std::{any::type_name, fmt::Debug};
+#[cfg(test)]
+use std::any::type_name;
+use std::fmt::Debug;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
@@ -110,7 +112,7 @@ pub trait VerifierMessage {
 
 impl DomainSeparator<'static, ()> {
     pub fn protocol<C: Serialize>(config: &C) -> Self {
-        const INSTANCE: &'static () = &();
+        const INSTANCE: &() = &();
         let mut hash = Sha3_512::new();
         ciborium::into_writer(config, &mut hash).expect("Computing protocol hash failed");
         let protocol_id: [u8; 64] = hash.finalize().into();
@@ -121,6 +123,7 @@ impl DomainSeparator<'static, ()> {
         }
     }
 
+    #[must_use]
     pub fn session<S: Serialize>(self, session: &S) -> Self {
         let mut hash = Sha3_256::new();
         ciborium::into_writer(session, &mut hash).expect("Computing session hash failed");
@@ -128,7 +131,7 @@ impl DomainSeparator<'static, ()> {
         Self { session_id, ..self }
     }
 
-    pub fn instance<'a, I>(self, instance: &'a I) -> DomainSeparator<'a, I> {
+    pub const fn instance<I>(self, instance: &I) -> DomainSeparator<'_, I> {
         DomainSeparator {
             protocol_id: self.protocol_id,
             session_id: self.session_id,
@@ -152,7 +155,7 @@ where
     ///
     /// **Note.** The `spongefish` API currently does not allow creating an
     /// instance with a non-standard random number generator.
-    pub fn new<'a, I>(ds: &DomainSeparator<'a, I>, duplex: H) -> Self
+    pub fn new<I>(ds: &DomainSeparator<'_, I>, duplex: H) -> Self
     where
         u8: Encoding<[H::U]>,
         I: Encoding<[H::U]>,
@@ -172,7 +175,7 @@ where
 
 impl ProverState<StdHash, StdRng> {
     /// Construct a new prover state with the standard duplex hash function.
-    pub fn new_std<'a, I>(ds: &DomainSeparator<'a, I>) -> Self
+    pub fn new_std<I>(ds: &DomainSeparator<'_, I>) -> Self
     where
         I: Encoding<[u8]>,
     {
@@ -192,7 +195,7 @@ where
     {
         #[cfg(test)]
         self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
-        self.inner.prover_message(message)
+        self.inner.prover_message(message);
     }
 
     #[cfg_attr(test, track_caller)]
@@ -291,7 +294,7 @@ where
         T: Encoding<[H::U]> + NargDeserialize,
     {
         #[cfg(test)]
-        self.pop_pattern(Interaction::ProverMessage(type_name::<T>().to_owned()));
+        self.pop_pattern(&Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message()
     }
 
@@ -309,7 +312,7 @@ where
         T: NargDeserialize,
     {
         #[cfg(test)]
-        self.pop_pattern(Interaction::Hint(type_name::<T>().to_owned()));
+        self.pop_pattern(&Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_from_narg(&mut self.hints)
     }
 
@@ -319,16 +322,16 @@ where
         T: CanonicalDeserialize,
     {
         #[cfg(test)]
-        self.pop_pattern(Interaction::Hint(type_name::<T>().to_owned()));
+        self.pop_pattern(&Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_compressed(&mut self.hints).map_err(|_| VerificationError)
     }
 
     #[cfg(test)]
     #[track_caller]
-    fn pop_pattern(&mut self, interaction: Interaction) {
+    fn pop_pattern(&mut self, interaction: &Interaction) {
         assert!(!self.pattern.is_empty());
         let (expected, tail) = self.pattern.split_first().unwrap();
-        assert_eq!(&interaction, expected);
+        assert_eq!(interaction, expected);
         self.pattern = tail;
     }
 }
@@ -355,7 +358,7 @@ where
         T: Decoding<[H::U]>,
     {
         #[cfg(test)]
-        self.pop_pattern(Interaction::VerifierMessage(type_name::<T>().to_owned()));
+        self.pop_pattern(&Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
     }
 }

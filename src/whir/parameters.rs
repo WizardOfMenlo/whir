@@ -290,7 +290,7 @@ where
                     whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
                 ),
                 in_domain_samples: round_parameters
-                    .get(0)
+                    .first()
                     .map_or(final_queries, |r| r.num_queries),
                 out_domain_samples: commitment_ood_samples,
                 deduplicate_in_domain: true,

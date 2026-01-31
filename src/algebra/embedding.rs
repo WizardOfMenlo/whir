@@ -38,7 +38,7 @@ pub trait Embedding: Clone + Debug + TypeInfo + Serialize + for<'de> Deserialize
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default, Serialize, Deserialize,
 )]
-#[serde(bound = "F: Field")]
+#[serde(bound = "")]
 pub struct Identity<F: Field> {
     field: Type<F>,
 }
@@ -47,7 +47,7 @@ pub struct Identity<F: Field> {
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default, Serialize, Deserialize,
 )]
-#[serde(bound = "F: Field")]
+#[serde(bound = "")]
 pub struct Basefield<F: Field> {
     extension: Type<F>,
 }
@@ -59,7 +59,7 @@ pub struct Basefield<F: Field> {
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default, Serialize, Deserialize,
 )]
-#[serde(bound = "F: Field")]
+#[serde(bound = "")]
 pub struct Frobenius<F: Field> {
     field: Type<F>,
     power: u64,
@@ -69,7 +69,7 @@ pub struct Frobenius<F: Field> {
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default, Serialize, Deserialize,
 )]
-#[serde(bound = "A: Embedding, B: Embedding<Source = A::Target>")]
+#[serde(bound = "")]
 pub struct Compose<A: Embedding, B: Embedding<Source = A::Target>> {
     inner: Typed<A>,
     outer: Typed<B>,
@@ -101,7 +101,7 @@ where
     A: Embedding,
     B: Embedding<Source = A::Target>,
 {
-    pub fn new(inner: A, outer: B) -> Self {
+    pub const fn new(inner: A, outer: B) -> Self {
         Self {
             inner: Typed::new(inner),
             outer: Typed::new(outer),
@@ -233,7 +233,7 @@ pub(crate) mod tests {
         .prop_map(|elements| F::from_base_prime_field_elems(elements).unwrap())
     }
 
-    pub fn test_embedding<E: Embedding>(e: E) {
+    pub fn test_embedding<E: Embedding>(e: &E) {
         assert_eq!(e.map(E::Source::ZERO), E::Target::ZERO);
         assert_eq!(e.map(E::Source::ONE), E::Target::ONE);
         proptest!(|(a in arb_field(), b in arb_field())| {
@@ -252,10 +252,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_field64_3() {
-        test_embedding(Identity::<fields::Field64_3>::new());
-        test_embedding(Basefield::<fields::Field64_3>::new());
-        test_embedding(Frobenius::<fields::Field64_3>::new(0));
-        test_embedding(Frobenius::<fields::Field64_3>::new(1));
-        test_embedding(Frobenius::<fields::Field64_3>::new(2));
+        test_embedding(&Identity::<fields::Field64_3>::new());
+        test_embedding(&Basefield::<fields::Field64_3>::new());
+        test_embedding(&Frobenius::<fields::Field64_3>::new(0));
+        test_embedding(&Frobenius::<fields::Field64_3>::new(1));
+        test_embedding(&Frobenius::<fields::Field64_3>::new(2));
     }
 }

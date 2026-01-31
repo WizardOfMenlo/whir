@@ -47,10 +47,7 @@ pub fn mixed_univariate_evaluate<F: Field, G: Field>(
     point: G,
 ) -> G {
     coefficients.iter().rev().skip(1).fold(
-        coefficients
-            .last()
-            .map(|f| embedding.map(*f))
-            .unwrap_or(G::ZERO),
+        coefficients.last().map_or(G::ZERO, |f| embedding.map(*f)),
         |acc, &coeff| embedding.mixed_add(acc * point, coeff),
     )
 }

@@ -80,11 +80,11 @@ where
             }
         }
 
-        return Witness {
+        Witness {
             polynomial: CoefficientList::new(batched),
             witness,
             batching_randomness,
-        };
+        }
     }
 }
 

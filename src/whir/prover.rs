@@ -13,9 +13,7 @@ use crate::{
     algebra::{
         domain::Domain,
         embedding::Embedding,
-        geometric_sequence,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
-        tensor_product,
     },
     hash::Hash,
     protocols::{
@@ -436,7 +434,7 @@ where
             .map(|univariate| {
                 MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
             })
-            .chain(in_domain_points.into_iter())
+            .chain(in_domain_points)
             .collect();
 
         let mut stir_evaluations = ood_answers;
@@ -599,7 +597,7 @@ where
                 batching_randomness,
             } => {
                 let config = &self.config.initial_committer;
-                let in_domain = config.open(prover_state, &[&witness]).pop().unwrap();
+                let in_domain = config.open(prover_state, &[witness]).pop().unwrap();
 
                 // Convert RS evaluation point to multivariate over extension
                 let points = ood_points
@@ -672,7 +670,7 @@ where
                 prover_state.prover_hint_ark(&answers);
                 prev_matrix_committer.open(
                     prover_state,
-                    &prev_matrix_witness,
+                    prev_matrix_witness,
                     &stir_challenges_indexes,
                 );
 
@@ -778,10 +776,7 @@ where
         self.config.final_pow.prove(prover_state);
 
         match &round_state.prev_commitment {
-            RoundWitness::Initial {
-                witness,
-                batching_randomness,
-            } => {
+            RoundWitness::Initial { witness, .. } => {
                 let in_domain = self
                     .config
                     .initial_committer
@@ -827,7 +822,7 @@ where
                 prover_state.prover_hint_ark(&answers);
                 prev_matrix_committer.open(
                     prover_state,
-                    &prev_matrix_witness,
+                    prev_matrix_witness,
                     &final_challenge_indexes,
                 );
             }

@@ -233,7 +233,7 @@ mod tests {
     fn test_difficulty_monotonic() {
         proptest!(|(threshold in 16_u64.., delta: u64)| {
             let high = difficulty(threshold);
-            let low = difficulty(threshold.checked_add(delta).unwrap_or(u64::MAX));
+            let low = difficulty(threshold.saturating_add(delta));
             assert!(low <= high);
         });
     }

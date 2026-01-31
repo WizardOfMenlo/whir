@@ -431,7 +431,7 @@ pub(crate) mod tests {
         let submatrix: Vec<T> = if num_cols > 0 {
             indices
                 .iter()
-                .map(|&index| {
+                .flat_map(|&index| {
                     matrix
                         .chunks_exact(num_cols)
                         .nth(index)
@@ -439,7 +439,6 @@ pub(crate) mod tests {
                         .iter()
                         .cloned()
                 })
-                .flatten()
                 .collect::<Vec<T>>()
         } else {
             Vec::new()
@@ -499,7 +498,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field128() {
         proptest::<fields::Field128>();
     }
@@ -511,7 +510,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
         proptest::<fields::Field256>();
     }

@@ -7,10 +7,10 @@ use crate::{
     transcript::{Decoding, VerifierMessage},
 };
 
-pub fn geometric_challenge<T, F: Field>(transcript: &mut T, count: usize) -> Vec<F>
+pub fn geometric_challenge<T, F>(transcript: &mut T, count: usize) -> Vec<F>
 where
     T: VerifierMessage,
-    F: Decoding<[T::U]>,
+    F: Field + Decoding<[T::U]>,
 {
     match count {
         0 => Vec::new(),

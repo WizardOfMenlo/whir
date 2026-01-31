@@ -1,4 +1,4 @@
-use ark_ff::{FftField, Field};
+use ark_ff::FftField;
 
 use super::{
     committer::ParsedCommitment,
@@ -23,22 +23,6 @@ use crate::{
     verify,
     whir::{committer::constraints, utils::get_challenge_stir_queries},
 };
-
-fn bit_reverse(index: usize, bits: usize) -> usize {
-    index.reverse_bits() >> (usize::BITS - bits as u32)
-}
-
-fn bit_reverse_permute<F: Field>(values: &[F], bits: usize) -> Vec<F> {
-    let cols = 1 << bits;
-    assert!(values.len().is_multiple_of(cols));
-    let mut result = vec![F::ZERO; values.len()];
-    for (src, dst) in values.chunks_exact(cols).zip(result.chunks_exact_mut(cols)) {
-        for (index, src) in src.iter().enumerate() {
-            dst[bit_reverse(index, bits)] = *src;
-        }
-    }
-    result
-}
 
 pub struct Verifier<'a, F: FftField> {
     config: &'a WhirConfig<F>,
@@ -737,6 +721,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
     }
 
     /// Verify a STIR challenges against a commitment and return the constraints.
+    #[allow(clippy::too_many_arguments)] // To be replaced with irs_commit
     pub fn verify_stir_challenges<H>(
         &self,
         round_index: usize,

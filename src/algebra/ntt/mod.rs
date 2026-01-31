@@ -25,7 +25,7 @@ pub use self::{
 };
 use crate::type_map::{self, TypeMap};
 
-pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(|| TypeMap::default());
+pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(TypeMap::default);
 
 #[derive(Default)]
 pub struct NttFamily;

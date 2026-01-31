@@ -133,15 +133,15 @@ where
     G: Field,
     M: Embedding<Source = F, Target = G>,
 {
-    pub fn num_rows(&self) -> usize {
+    pub const fn num_rows(&self) -> usize {
         self.matrix_commit.num_rows()
     }
 
-    pub fn num_cols(&self) -> usize {
+    pub const fn num_cols(&self) -> usize {
         self.matrix_commit.num_cols
     }
 
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         self.matrix_commit.size()
     }
 
@@ -368,32 +368,32 @@ where
 
 impl<G: Field> Commitment<G> {
     /// Returns the out-of-domain evaluations.
-    pub fn out_of_domain(&self) -> &Evaluations<G> {
+    pub const fn out_of_domain(&self) -> &Evaluations<G> {
         &self.out_of_domain
     }
 
-    pub fn num_polynomials(&self) -> usize {
+    pub const fn num_polynomials(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
 
 impl<F: FftField, G: Field> Witness<F, G> {
     /// Returns the out-of-domain evaluations.
-    pub fn out_of_domain(&self) -> &Evaluations<G> {
+    pub const fn out_of_domain(&self) -> &Evaluations<G> {
         &self.out_of_domain
     }
 
-    pub fn num_polynomials(&self) -> usize {
+    pub const fn num_polynomials(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
 
 impl<F: Field> Evaluations<F> {
-    pub fn num_points(&self) -> usize {
+    pub const fn num_points(&self) -> usize {
         self.points.len()
     }
 
-    pub fn num_columns(&self) -> usize {
+    pub const fn num_columns(&self) -> usize {
         self.matrix.len() / self.num_points()
     }
 }
@@ -430,10 +430,7 @@ mod tests {
             embedding::{Compose, Frobenius},
             fields, univariate_evaluate,
         },
-        transcript::{
-            codecs::{Empty, U64},
-            DomainSeparator,
-        },
+        transcript::{codecs::U64, DomainSeparator},
     };
 
     // Create a [`Strategy`] for generating [`irs_commit`] configurations.
@@ -487,20 +484,19 @@ mod tests {
         )
     }
 
-    fn test<M: Embedding>(seed: u64, config: Config<M::Source, M::Target, M>)
+    fn test<M: Embedding>(seed: u64, config: &Config<M::Source, M::Target, M>)
     where
         M::Source: FftField + ProverMessage,
         M::Target: Codec,
-        Standard: Distribution<M::Source>,
-        Standard: Distribution<M::Target>,
+        Standard: Distribution<M::Source> + Distribution<M::Target>,
     {
         crate::tests::init();
 
         // Pseudo-random Instance
         let instance = U64(seed);
-        let ds = DomainSeparator::protocol(&config)
+        let ds = DomainSeparator::protocol(config)
             .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty);
+            .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
         let polynomials = (0..config.num_polynomials)
             .map(|_| {
@@ -597,12 +593,11 @@ mod tests {
         verifier_state.check_eof().unwrap();
     }
 
-    fn proptest<M: Embedding>(embedding: M)
+    fn proptest<M: Embedding>(embedding: &M)
     where
         M::Source: FftField + ProverMessage,
         M::Target: FftField + Codec,
-        Standard: Distribution<M::Source>,
-        Standard: Distribution<M::Target>,
+        Standard: Distribution<M::Source> + Distribution<M::Target>,
     {
         let valid_sizes = (1..=1024)
             .filter(|&n| ntt::generator::<M::Source>(n).is_some())
@@ -623,60 +618,60 @@ mod tests {
             seed: u64,
             config in config,
         )| {
-            test(seed, config);
+            test(seed, &config);
         });
     }
 
     #[test]
     fn test_field64_1() {
-        proptest(Identity::<fields::Field64>::new());
+        proptest(&Identity::<fields::Field64>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_2() {
-        proptest(Identity::<fields::Field64_2>::new());
+        proptest(&Identity::<fields::Field64_2>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_3() {
-        proptest(Identity::<fields::Field64_3>::new());
+        proptest(&Identity::<fields::Field64_3>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field128() {
-        proptest(Identity::<fields::Field128>::new());
+        proptest(&Identity::<fields::Field128>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field192() {
-        proptest(Identity::<fields::Field192>::new());
+        proptest(&Identity::<fields::Field192>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
-        proptest(Identity::<fields::Field256>::new());
+        proptest(&Identity::<fields::Field256>::new());
     }
 
     #[test]
     fn test_basefield_field64_2() {
-        proptest(Basefield::<fields::Field64_2>::new());
+        proptest(&Basefield::<fields::Field64_2>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_basefield_field64_3() {
-        proptest(Basefield::<fields::Field64_3>::new());
+        proptest(&Basefield::<fields::Field64_3>::new());
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "Somewhat expensive and redundant"]
     fn test_base_frob_field64_3() {
         let embedding = Compose::new(Basefield::<fields::Field64_3>::new(), Frobenius::new(2));
-        proptest(embedding);
+        proptest(&embedding);
     }
 }

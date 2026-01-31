@@ -110,7 +110,7 @@ impl<F: Field> Config<F> {
         for round in &self.rounds {
             // Send sumcheck polynomial
             let sumcheck_poly = instance.compute_sumcheck_polynomial();
-            for eval in sumcheck_poly.evaluations().iter() {
+            for eval in sumcheck_poly.evaluations() {
                 prover_state.prover_message(eval);
             }
 
@@ -236,11 +236,11 @@ where
         );
     }
 
-    pub fn evaluations(&self) -> &EvaluationsList<F> {
+    pub const fn evaluations(&self) -> &EvaluationsList<F> {
         &self.evaluation_of_p
     }
 
-    pub fn sum(&self) -> F {
+    pub const fn sum(&self) -> F {
         self.sum
     }
 
