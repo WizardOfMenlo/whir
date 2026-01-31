@@ -159,7 +159,6 @@ where
             },
             randomness_vec,
             statement,
-            batching_randomness: witness.batching_randomness,
         };
 
         // Run WHIR rounds (including final round)
@@ -291,7 +290,7 @@ where
         }
 
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
-        let batching_randomness = prover_state.verifier_message();
+        let batching_randomness: F = prover_state.verifier_message();
 
         // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
         let mut batched_coeffs = witnesses[0].polynomial.coeffs().to_vec();
@@ -511,7 +510,6 @@ where
             },
             randomness_vec,
             statement: combined_statement,
-            batching_randomness,
         };
 
         // Execute standard WHIR rounds 1 through n on the batched polynomial
@@ -970,6 +968,4 @@ where
     ///
     /// May be updated during recursion as queries are folded and batched.
     pub(crate) statement: Statement<F>,
-
-    pub(crate) batching_randomness: F,
 }

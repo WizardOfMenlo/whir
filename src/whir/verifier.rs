@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::{FftField, Field};
 
 use super::{
     committer::ParsedCommitment,
@@ -23,6 +23,22 @@ use crate::{
     verify,
     whir::{committer::constraints, utils::get_challenge_stir_queries},
 };
+
+fn bit_reverse(index: usize, bits: usize) -> usize {
+    index.reverse_bits() >> (usize::BITS - bits as u32)
+}
+
+fn bit_reverse_permute<F: Field>(values: &[F], bits: usize) -> Vec<F> {
+    let cols = 1 << bits;
+    assert!(values.len().is_multiple_of(cols));
+    let mut result = vec![F::ZERO; values.len()];
+    for (src, dst) in values.chunks_exact(cols).zip(result.chunks_exact_mut(cols)) {
+        for (index, src) in src.iter().enumerate() {
+            dst[bit_reverse(index, bits)] = *src;
+        }
+    }
+    result
+}
 
 pub struct Verifier<'a, F: FftField> {
     config: &'a WhirConfig<F>,
@@ -195,6 +211,48 @@ impl<'a, F: FftField> Verifier<'a, F> {
                             defer_evaluation: false,
                         });
                     }
+
+                    let geo = geometric_sequence(batching_randomness, comitter.num_polynomials);
+                    let coeff_w1 = round_folding_randomness.last().unwrap().coeff_weights();
+                    let coeff_w2 = bit_reverse_permute(
+                        &coeff_w1,
+                        comitter.interleaving_depth.trailing_zeros() as usize,
+                    );
+                    let weights1 = tensor_product(&geo, &coeff_w1);
+                    let weights2 = tensor_product(&geo, &coeff_w2);
+
+                    let mut constraints1 = Vec::with_capacity(comitter.in_domain_samples);
+                    for (point, values) in in_domain.points.iter().zip(
+                        in_domain
+                            .matrix
+                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
+                    ) {
+                        constraints1.push(Constraint {
+                            weights: Weights::univariate(
+                                comitter.embedding.map(*point),
+                                config.num_variables,
+                            ),
+                            sum: mixed_dot(comitter.embedding(), &weights1, values),
+                            defer_evaluation: false,
+                        });
+                    }
+                    let mut constraints2 = Vec::with_capacity(comitter.in_domain_samples);
+                    for (point, values) in in_domain.points.iter().zip(
+                        in_domain
+                            .matrix
+                            .chunks_exact(comitter.num_polynomials * comitter.interleaving_depth),
+                    ) {
+                        constraints2.push(Constraint {
+                            weights: Weights::univariate(
+                                comitter.embedding.map(*point),
+                                config.num_variables,
+                            ),
+                            sum: mixed_dot(comitter.embedding(), &weights2, values),
+                            defer_evaluation: false,
+                        });
+                    }
+                    assert!(constraints == constraints1 || constraints == constraints2);
+
                     constraints
                 }
                 RoundCommitment::Round { matrix_commitment } => {
