@@ -76,13 +76,14 @@ mod batching_tests {
         soundness_type: SoundnessType,
         pow_bits: usize,
     ) {
-        println!("Test parameters: ");
-        println!("  num_polynomials: {batch_size}");
-        println!("  num_variables  : {num_variables}");
-        println!("  folding_factor : {:?}", &folding_factor);
-        println!("  num_points     : {num_points:?}");
-        println!("  soundness_type : {soundness_type:?}");
-        println!("  pow_bits       : {pow_bits}");
+        eprintln!("\n---------------------");
+        eprintln!("Test parameters: ");
+        eprintln!("  num_polynomials: {batch_size}");
+        eprintln!("  num_variables  : {num_variables}");
+        eprintln!("  folding_factor : {:?}", &folding_factor);
+        eprintln!("  num_points     : {num_points:?}");
+        eprintln!("  soundness_type : {soundness_type:?}");
+        eprintln!("  pow_bits       : {pow_bits}");
 
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -188,8 +189,20 @@ mod batching_tests {
 
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement,)
+            .verify(&mut verifier_state, &parsed_commitment, &statement)
             .is_ok());
+    }
+
+    #[test]
+    fn test_fail() {
+        make_batched_whir_things(
+            1,
+            2,
+            FoldingFactor::Constant(2),
+            0,
+            SoundnessType::UniqueDecoding,
+            0,
+        );
     }
 
     #[test]
@@ -217,7 +230,6 @@ mod batching_tests {
                                     num_points,
                                     soundness_type,
                                     pow_bits,
-                                    // FoldType::Naive,
                                 );
                             }
                         }

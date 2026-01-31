@@ -162,6 +162,7 @@ impl<F: Field> Config<F> {
             let point = MultilinearPoint(vec![folding_randomness]);
             *sum = sumcheck_poly.evaluate_at_point(&point);
         }
+
         res.reverse();
         Ok(MultilinearPoint(res))
     }

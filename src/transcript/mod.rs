@@ -191,8 +191,7 @@ where
         T: Encoding<[H::U]> + NargSerialize + ?Sized,
     {
         #[cfg(test)]
-        self.pattern
-            .push(Interaction::ProverMessage(type_name::<T>().to_owned()));
+        self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message(message)
     }
 
@@ -202,8 +201,7 @@ where
         T: NargSerialize,
     {
         #[cfg(test)]
-        self.pattern
-            .push(Interaction::Hint(type_name::<T>().to_owned()));
+        self.push(Interaction::Hint(type_name::<T>().to_owned()));
         hint.serialize_into_narg(&mut self.hints);
     }
 
@@ -213,8 +211,7 @@ where
         T: CanonicalSerialize + ?Sized,
     {
         #[cfg(test)]
-        self.pattern
-            .push(Interaction::Hint(type_name::<T>().to_owned()));
+        self.push(Interaction::Hint(type_name::<T>().to_owned()));
         value
             .serialize_compressed(&mut self.hints)
             .expect("Failed to serialize hint");
@@ -228,6 +225,12 @@ where
             #[cfg(test)]
             pattern: self.pattern,
         }
+    }
+
+    #[cfg(test)]
+    fn push(&mut self, interaction: Interaction) {
+        eprintln!("Prover: {interaction:?}");
+        self.pattern.push(interaction);
     }
 }
 
@@ -244,8 +247,7 @@ where
         T: Decoding<[H::U]>,
     {
         #[cfg(test)]
-        self.pattern
-            .push(Interaction::VerifierMessage(type_name::<T>().to_owned()));
+        self.push(Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
     }
 }

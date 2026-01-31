@@ -13,7 +13,7 @@ use crate::{
     algebra::{
         domain::Domain,
         embedding::Embedding,
-        geometric_sequence, mixed_dot,
+        geometric_sequence,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -210,6 +210,8 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let embedding = self.config.initial_committer.embedding();
+
         // Validation
         assert!(self.validate_parameters());
         assert!(
@@ -390,52 +392,28 @@ where
         // PoW
         round_params.pow.prove(prover_state);
 
-        // STIR Queries: Open all N original witness trees at challenge positions
-        let stir_indexes = get_challenge_stir_queries(
-            prover_state,
-            self.config.starting_domain.size(),
-            self.config.folding_factor.at_round(0),
-            round_params.num_queries,
-        );
-
-        let fold_size = 1 << self.config.folding_factor.at_round(0);
-        let leaf_size = fold_size * self.config.batch_size;
-        let mut all_witness_answers = Vec::with_capacity(witnesses.len());
-
-        // For each witness, provide Merkle proof opening at the challenge indices
-        for witness in witnesses {
-            let answers: Vec<F::BasePrimeField> = stir_indexes
-                .iter()
-                .flat_map(|&i| {
-                    witness.witness.matrix[i * leaf_size..(i + 1) * leaf_size]
-                        .iter()
-                        .copied()
-                })
-                .collect();
-            prover_state.prover_hint_ark(&answers);
-            all_witness_answers.push(answers);
-
-            // Prove the answers using the matrix witness
-            self.config.initial_committer.matrix_commit.open(
-                prover_state,
-                &witness.witness.matrix_witness,
-                &stir_indexes,
-            );
-        }
+        let witness_refs = witnesses.iter().map(|w| &w.witness).collect::<Vec<_>>();
+        let in_domain_evals = self
+            .config
+            .initial_committer
+            .open(prover_state, &witness_refs);
+        let in_domain_points = in_domain_evals[0].points.iter().map(|p| {
+            MultilinearPoint::expand_from_univariate(embedding.map(*p), num_variables_after_fold)
+        });
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·witness_answers[i][j]
         // This produces the expected answers for the batched polynomial
-        let rlc_answers: Vec<Vec<F>> = (0..stir_indexes.len())
+        let fold_size = 1 << self.config.folding_factor.at_round(0);
+        let rlc_answers: Vec<Vec<F>> = (0..in_domain_points.len())
             .map(|query_idx| {
                 let mut combined = vec![F::ZERO; fold_size];
                 let mut pow = F::ONE;
                 for (witness_idx, witness) in witnesses.iter().enumerate() {
                     let leaf_size = fold_size * self.config.batch_size;
-                    let answer = &all_witness_answers[witness_idx]
+                    let answer = &in_domain_evals[witness_idx].matrix
                         [query_idx * leaf_size..(query_idx + 1) * leaf_size];
 
                     // First, internally reduce stacked leaf using witness's batching_randomness
-                    let embedding = self.config.initial_committer.embedding();
                     let mut internal_pow = F::ONE;
                     for poly_idx in 0..self.config.batch_size {
                         let start = poly_idx * fold_size;
@@ -453,22 +431,13 @@ where
             .collect();
 
         // Compute STIR challenges and evaluations
-        let domain_scaled_gen = self
-            .config
-            .starting_domain
-            .backing_domain
-            .element(1 << self.config.folding_factor.at_round(0));
         let stir_challenges: Vec<MultilinearPoint<F>> = ood_points
             .iter()
             .copied()
-            .chain(
-                stir_indexes
-                    .iter()
-                    .map(|&i| domain_scaled_gen.pow([i as u64])),
-            )
             .map(|univariate| {
                 MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
             })
+            .chain(in_domain_points.into_iter())
             .collect();
 
         let mut stir_evaluations = ood_answers;
@@ -579,6 +548,7 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         // Fold the coefficients
+
         let folded_coefficients = round_state
             .coefficients
             .fold(&round_state.folding_randomness);
@@ -640,26 +610,32 @@ where
                     .chain(
                         in_domain
                             .points
+                            .clone()
                             .into_iter()
                             .map(|a| config.embedding.map(a)),
                     )
                     .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
                     .collect::<Vec<_>>();
-
-                // TODO: Check if equalities hold.
-
-                // Combine rows using batching randomness and combination randomness.
-                let weights = tensor_product(
-                    &geometric_sequence(*batching_randomness, config.num_polynomials),
-                    &round_state.folding_randomness.coeff_weights(),
-                );
                 let evals = ood_answers
                     .into_iter()
                     .chain(
                         in_domain
                             .matrix
                             .chunks_exact(config.num_polynomials * config.interleaving_depth)
-                            .map(|row| mixed_dot(&*config.embedding, &weights, row)),
+                            .map(|row| {
+                                let fold_size = config.interleaving_depth;
+                                let mut acc = F::ZERO;
+                                let mut pow = F::ONE;
+                                for block in
+                                    row.chunks_exact(fold_size).take(config.num_polynomials)
+                                {
+                                    let val = CoefficientList::new(block.to_vec())
+                                        .evaluate_at_extension(&round_state.folding_randomness);
+                                    acc += pow * val;
+                                    pow *= *batching_randomness;
+                                }
+                                acc
+                            }),
                     )
                     .collect::<Vec<_>>();
 
@@ -808,13 +784,16 @@ where
                 witness,
                 batching_randomness,
             } => {
-                let _in_domain = self
+                let in_domain = self
                     .config
                     .initial_committer
                     .open(prover_state, &[witness])
                     .pop()
                     .unwrap();
-                // TODO: Why are these unchecked?
+
+                // The verifier will directly test these on the final polynomial
+                // (which it has in full) without our help.
+                drop(in_domain);
             }
             RoundWitness::Round {
                 prev_matrix,
@@ -857,36 +836,33 @@ where
         }
 
         // Final sumcheck
-        if self.config.final_sumcheck_rounds > 0 {
-            let mut final_folding_sumcheck =
-                round_state.sumcheck_prover.clone().unwrap_or_else(|| {
-                    SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
-                });
+        let mut final_folding_sumcheck = round_state.sumcheck_prover.clone().unwrap_or_else(|| {
+            SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
+        });
 
-            let sumcheck_config = sumcheck::Config {
-                field: Type::<F>::new(),
-                initial_size: 1 << final_folding_sumcheck.num_variables(),
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: self.config.final_folding_pow
-                    };
-                    self.config.final_sumcheck_rounds
-                ],
-            };
+        let sumcheck_config = sumcheck::Config {
+            field: Type::<F>::new(),
+            initial_size: 1 << final_folding_sumcheck.num_variables(),
+            rounds: vec![
+                sumcheck::RoundConfig {
+                    pow: self.config.final_folding_pow
+                };
+                self.config.final_sumcheck_rounds
+            ],
+        };
 
-            let final_folding_randomness =
-                sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
+        let final_folding_randomness =
+            sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
 
-            let start_idx = self.config.folding_factor.total_number(round_state.round);
-            let rand_dst = &mut round_state.randomness_vec
-                [start_idx..start_idx + final_folding_randomness.0.len()];
+        let start_idx = self.config.folding_factor.total_number(round_state.round);
+        let rand_dst = &mut round_state.randomness_vec
+            [start_idx..start_idx + final_folding_randomness.0.len()];
 
-            for (dst, src) in rand_dst
-                .iter_mut()
-                .zip(final_folding_randomness.0.iter().rev())
-            {
-                *dst = *src;
-            }
+        for (dst, src) in rand_dst
+            .iter_mut()
+            .zip(final_folding_randomness.0.iter().rev())
+        {
+            *dst = *src;
         }
     }
 

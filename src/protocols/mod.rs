@@ -9,6 +9,7 @@
 //!
 
 pub mod challenge_indices;
+pub mod geometric_challenge;
 pub mod irs_commit;
 pub mod matrix_commit;
 pub mod merkle_tree;

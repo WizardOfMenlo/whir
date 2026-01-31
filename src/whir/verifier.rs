@@ -165,10 +165,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
                         .pop()
                         .unwrap();
 
-                    let weights = tensor_product(
-                        &geometric_sequence(batching_randomness, comitter.num_polynomials),
-                        &round_folding_randomness.last().unwrap().coeff_weights(),
-                    );
                     let mut constraints = Vec::with_capacity(comitter.in_domain_samples);
                     for (point, values) in in_domain.points.iter().zip(
                         in_domain
@@ -180,7 +176,22 @@ impl<'a, F: FftField> Verifier<'a, F> {
                                 comitter.embedding.map(*point),
                                 config.num_variables,
                             ),
-                            sum: mixed_dot(&*comitter.embedding, &weights, values),
+                            sum: {
+                                let mut acc = F::ZERO;
+                                let mut pow = F::ONE;
+                                for block in values
+                                    .chunks_exact(comitter.interleaving_depth)
+                                    .take(comitter.num_polynomials)
+                                {
+                                    let eval = CoefficientList::new(block.to_vec())
+                                        .evaluate_at_extension(
+                                            round_folding_randomness.last().unwrap(),
+                                        );
+                                    acc += pow * eval;
+                                    pow *= batching_randomness;
+                                }
+                                acc
+                            },
                             defer_evaluation: false,
                         });
                     }
@@ -253,10 +264,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     .pop()
                     .unwrap();
 
-                let weights = tensor_product(
-                    &geometric_sequence(batching_randomness, config.num_polynomials),
-                    &round_folding_randomness.last().unwrap().coeff_weights(),
-                );
                 let mut constraints = Vec::with_capacity(config.in_domain_samples);
                 for (point, values) in in_domain.points.iter().zip(
                     in_domain
@@ -265,7 +272,22 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 ) {
                     constraints.push(Constraint {
                         weights: Weights::univariate(config.embedding.map(*point), num_variables),
-                        sum: mixed_dot(&*config.embedding, &weights, values),
+                        sum: {
+                            let mut acc = F::ZERO;
+                            let mut pow = F::ONE;
+                            for block in values
+                                .chunks_exact(config.interleaving_depth)
+                                .take(config.num_polynomials)
+                            {
+                                let eval = CoefficientList::new(block.to_vec())
+                                    .evaluate_at_extension(
+                                        round_folding_randomness.last().unwrap(),
+                                    );
+                                acc += pow * eval;
+                                pow *= batching_randomness;
+                            }
+                            acc
+                        },
                         defer_evaluation: false,
                     });
                 }
@@ -494,7 +516,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .initial_committer
             .verify(verifier_state, irs_commitment_refs.as_slice())?;
         let points = in_domain[0].points.clone();
-        let mut all_answers = in_domain.into_iter().map(|e| e.matrix).collect::<Vec<_>>();
+        let all_answers = in_domain.into_iter().map(|e| e.matrix).collect::<Vec<_>>();
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let fold_size = 1 << round_params.folding_factor;

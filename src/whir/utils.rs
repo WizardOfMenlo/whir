@@ -94,10 +94,7 @@ where
 {
     let folded_domain_size = domain_size >> folding_factor;
 
-    let mut indices = challenge_indices(transcript, folded_domain_size, num_queries);
-    indices.sort_unstable();
-    indices.dedup();
-    indices
+    challenge_indices(transcript, folded_domain_size, num_queries, true)
 }
 
 pub(crate) fn rlc_batched_leaves<F: Field>(
