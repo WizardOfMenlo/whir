@@ -29,7 +29,7 @@
 
 use std::fmt;
 
-use ark_ff::{FftField, Field};
+use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -37,9 +37,10 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
-        embedding::{Basefield, Embedding, Identity},
-        mixed_univariate_evaluate,
+        embedding::{self, Basefield, Embedding, Identity},
+        mixed_dot, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
+        poly_utils::multilinear::MultilinearPoint,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -49,6 +50,7 @@ use crate::{
     },
     type_info::{TypeInfo, Typed},
     verify,
+    whir::statement::{Constraint, Weights},
 };
 
 /// Specialization of [`Config`] for commiting with identity embedding.
@@ -372,7 +374,7 @@ impl<G: Field> Commitment<G> {
         &self.out_of_domain
     }
 
-    pub const fn num_polynomials(&self) -> usize {
+    pub fn num_polynomials(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
@@ -383,7 +385,7 @@ impl<F: FftField, G: Field> Witness<F, G> {
         &self.out_of_domain
     }
 
-    pub const fn num_polynomials(&self) -> usize {
+    pub fn num_polynomials(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
@@ -393,8 +395,69 @@ impl<F: Field> Evaluations<F> {
         self.points.len()
     }
 
-    pub const fn num_columns(&self) -> usize {
-        self.matrix.len() / self.num_points()
+    pub fn num_columns(&self) -> usize {
+        self.matrix
+            .len()
+            .checked_div(self.num_points())
+            .unwrap_or_default()
+    }
+
+    pub fn points<M>(&self, embedding: &M, num_variables: usize) -> Vec<MultilinearPoint<M::Target>>
+    where
+        M: Embedding<Source = F>,
+    {
+        self.points
+            .iter()
+            .map(|point| {
+                MultilinearPoint::expand_from_univariate(embedding.map(*point), num_variables)
+            })
+            .collect()
+    }
+
+    pub fn values<M>(&self, embedding: &M, weights: &[M::Target]) -> Vec<M::Target>
+    where
+        M: Embedding<Source = F>,
+    {
+        if self.matrix.is_empty() {
+            return vec![M::Target::ZERO; self.num_points()];
+        }
+        assert_eq!(weights.len(), self.num_columns());
+        self.matrix
+            .chunks_exact(self.num_columns())
+            .map(|row| mixed_dot(embedding, weights, row))
+            .collect()
+    }
+
+    pub fn constraints<M>(
+        &self,
+        embedding: &M,
+        weights: &[M::Target],
+        num_variables: usize,
+    ) -> Vec<Constraint<M::Target>>
+    where
+        M: Embedding<Source = F>,
+    {
+        if self.matrix.is_empty() {
+            self.points
+                .iter()
+                .map(|point| Constraint {
+                    weights: Weights::univariate(embedding.map(*point), num_variables),
+                    sum: M::Target::ZERO,
+                    defer_evaluation: false,
+                })
+                .collect()
+        } else {
+            assert_eq!(weights.len(), self.num_columns());
+            self.points
+                .iter()
+                .zip(self.matrix.chunks_exact(self.num_columns()))
+                .map(|(point, row)| Constraint {
+                    weights: Weights::univariate(embedding.map(*point), num_variables),
+                    sum: mixed_dot(embedding, weights, row),
+                    defer_evaluation: false,
+                })
+                .collect()
+        }
     }
 }
 

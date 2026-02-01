@@ -12,11 +12,13 @@ use super::{
 use crate::{
     algebra::{
         domain::Domain,
-        embedding::Embedding,
+        embedding::{self, Embedding},
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        tensor_product,
     },
     hash::Hash,
     protocols::{
+        geometric_challenge::geometric_challenge,
         irs_commit, matrix_commit,
         sumcheck::{self, SumcheckSingle},
     },
@@ -67,13 +69,23 @@ where
         if !self.config.initial_statement {
             assert!(witness.witness.out_of_domain.points.is_empty());
         }
-        witness.polynomial.num_variables() == self.config.mv_parameters.num_variables
+        assert_eq!(
+            witness.polynomials.len(),
+            self.config.initial_committer.num_polynomials
+        );
+        assert!(witness
+            .polynomials
+            .iter()
+            .all(|p| p.num_coeffs() == self.config.initial_committer.polynomial_size));
+        true
     }
 
     /// Proves that the commitment satisfies constraints in `statement`.
     ///
     /// When called without any constraints it only perfoms a low-degree test.
     /// Returns the constraint evaluation point and values of deferred constraints.
+    ///
+    /// Q: In a batch commitment, which polynomial does the statement apply to?
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -94,12 +106,30 @@ where
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
 
+        let initial_committer = &self.config.initial_committer;
+        let embedding = initial_committer.embedding();
+
+        // Random linear combination of the polynomials
+        let batching_weights = geometric_challenge(prover_state, initial_committer.num_polynomials);
+        let mut polynomial = vec![F::ZERO; initial_committer.polynomial_size];
+        for (weight, poly) in batching_weights.iter().zip(&witness.polynomials) {
+            for (acc, coeff) in polynomial.iter_mut().zip(poly.coeffs()) {
+                *acc += embedding.mixed_mul(*weight, *coeff);
+            }
+        }
+        let polynomial = CoefficientList::new(polynomial);
+
         // Convert witness ood_points into constraints
-        statement.add_constraints_in_front(constraints(
-            &witness.witness.out_of_domain,
-            witness.batching_randomness,
-            witness.polynomial.num_variables(),
-        ));
+        statement.prepend_constraints(
+            witness.witness.out_of_domain().constraints(
+                &embedding::Identity::new(), // OODS is already in extension
+                &batching_weights,
+                self.config
+                    .initial_committer
+                    .polynomial_size
+                    .trailing_zeros() as usize,
+            ),
+        );
 
         let mut sumcheck_prover = None;
         let folding_randomness = if self.config.initial_statement {
@@ -110,7 +140,7 @@ where
             // Create the sumcheck prover
             let sumcheck_config = sumcheck::Config {
                 field: Type::<F>::new(),
-                initial_size: witness.polynomial.num_coeffs(),
+                initial_size: initial_committer.polynomial_size,
                 rounds: vec![
                     sumcheck::RoundConfig {
                         pow: self.config.starting_folding_pow
@@ -118,11 +148,8 @@ where
                     self.config.folding_factor.at_round(0)
                 ],
             };
-            let mut sumcheck = SumcheckSingle::new(
-                witness.polynomial.clone(),
-                &statement,
-                combination_randomness_gen,
-            );
+            let mut sumcheck =
+                SumcheckSingle::new(polynomial.clone(), &statement, combination_randomness_gen);
 
             let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck);
 
@@ -150,10 +177,10 @@ where
             round: 0,
             sumcheck_prover,
             folding_randomness,
-            coefficients: witness.polynomial,
+            coefficients: polynomial,
             prev_commitment: RoundWitness::Initial {
                 witness: witness.witness,
-                batching_randomness: witness.batching_randomness,
+                batching_weights,
             },
             randomness_vec,
             statement,
@@ -207,7 +234,9 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let embedding = self.config.initial_committer.embedding();
+        /*
+        let initial_committer = &self.config.initial_committer;
+        let embedding = initial_committer.embedding();
 
         // Validation
         assert!(self.validate_parameters());
@@ -529,6 +558,8 @@ where
         prover_state.prover_hint_ark(&deferred);
 
         (constraint_eval, deferred)
+         */
+        todo!()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -594,46 +625,26 @@ where
         let (stir_challenges, stir_evaluations) = match &round_state.prev_commitment {
             RoundWitness::Initial {
                 witness,
-                batching_randomness,
+                batching_weights,
             } => {
                 let config = &self.config.initial_committer;
                 let in_domain = config.open(prover_state, &[witness]).pop().unwrap();
 
-                // Convert RS evaluation point to multivariate over extension
-                let points = ood_points
+                // Convert oods_points
+                let mut points = ood_points
                     .iter()
                     .copied()
-                    .chain(
-                        in_domain
-                            .points
-                            .clone()
-                            .into_iter()
-                            .map(|a| config.embedding.map(a)),
-                    )
                     .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
                     .collect::<Vec<_>>();
-                let evals = ood_answers
-                    .into_iter()
-                    .chain(
-                        in_domain
-                            .matrix
-                            .chunks_exact(config.num_polynomials * config.interleaving_depth)
-                            .map(|row| {
-                                let fold_size = config.interleaving_depth;
-                                let mut acc = F::ZERO;
-                                let mut pow = F::ONE;
-                                for block in
-                                    row.chunks_exact(fold_size).take(config.num_polynomials)
-                                {
-                                    let val = CoefficientList::new(block.to_vec())
-                                        .evaluate_at_extension(&round_state.folding_randomness);
-                                    acc += pow * val;
-                                    pow *= *batching_randomness;
-                                }
-                                acc
-                            }),
-                    )
-                    .collect::<Vec<_>>();
+                let mut evals = ood_answers;
+
+                // Convert RS evaluation point to multivariate over extension
+                let weights = tensor_product(
+                    &batching_weights,
+                    &round_state.folding_randomness.coeff_weights(true),
+                );
+                points.extend(in_domain.points(config.embedding(), num_variables));
+                evals.extend(in_domain.values(config.embedding(), &weights));
 
                 (points, evals)
             }
@@ -901,7 +912,7 @@ where
 pub(crate) enum RoundWitness<F: FftField> {
     Initial {
         witness: irs_commit::Witness<F::BasePrimeField, F>,
-        batching_randomness: F,
+        batching_weights: Vec<F>,
     },
     Round {
         prev_matrix: Vec<F>,

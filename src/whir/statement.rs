@@ -301,6 +301,10 @@ impl<F: Field> Statement<F> {
         );
     }
 
+    pub fn prepend_constraints(&mut self, constraints: Vec<Constraint<F>>) {
+        self.constraints.splice(0..0, constraints.into_iter());
+    }
+
     /// Inserts multiple constraints at the front of the system.
     pub fn add_constraints_in_front(&mut self, constraints: Vec<(Weights<F>, F)>) {
         for (weights, _) in &constraints {

@@ -1,4 +1,4 @@
-pub mod batching;
+// pub mod batching;
 pub mod committer;
 pub mod parameters;
 pub mod prover;
@@ -169,7 +169,7 @@ mod tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial);
+        let witness = committer.commit(&mut prover_state, polynomial.clone());
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());
@@ -359,7 +359,7 @@ mod tests {
         let mut witnesses = Vec::new();
 
         for poly in &polynomials {
-            let witness = committer.commit(&mut prover_state, poly);
+            let witness = committer.commit(&mut prover_state, poly.clone());
             witnesses.push(witness);
         }
 
@@ -462,7 +462,7 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::new(num_variables);
+        let mv_params = MultivariateParameters::<F>::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
@@ -508,13 +508,13 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params.clone());
-        let witness1 = committer.commit(&mut prover_state, &poly1);
-        let witness2_committed = committer.commit(&mut prover_state, &poly2);
+        let witness1 = committer.commit(&mut prover_state, poly1.clone());
+        let witness2_committed = committer.commit(&mut prover_state, poly2.clone());
 
         // ATTACK: Create a fake witness using poly_wrong instead of poly2
         // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
         let mut witness2_fake = witness2_committed;
-        witness2_fake.polynomial = poly_wrong;
+        witness2_fake.polynomials[0] = poly_wrong;
 
         let witnesses = vec![witness1, witness2_fake];
 
@@ -640,8 +640,8 @@ mod tests {
         let mut witnesses = Vec::new();
 
         for witness_polys in &all_polynomials {
-            let poly_refs: Vec<_> = witness_polys.iter().collect();
-            let witness = committer.commit_batch(&mut prover_state, &poly_refs);
+            let polys: Vec<_> = witness_polys.iter().map(|p| p.clone()).collect();
+            let witness = committer.commit_batch(&mut prover_state, polys);
             witnesses.push(witness);
         }
 

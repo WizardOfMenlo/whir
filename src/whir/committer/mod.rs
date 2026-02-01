@@ -19,20 +19,12 @@ pub use writer::CommitmentWriter;
 #[derive(Clone)]
 #[allow(clippy::struct_field_names)]
 pub struct Witness<F: FftField> {
-    /// The committed polynomial in coefficient form in the extended field.
-    /// In case of batching, its
-    /// the batched polynomial, i.e., the weighted sum of polynomials in
-    /// batching data.
-    // TODO: Keep unbatched polynomials.
-    pub(crate) polynomial: CoefficientList<F>,
+    /// The committed polynomial in coefficient form in the base field.
+    pub(crate) polynomials: Vec<CoefficientList<F::BasePrimeField>>,
 
     /// The witness to matrix commitment of the matrix containing the polynomial
     /// evaluations.
     pub(crate) witness: irs_commit::Witness<F::BasePrimeField, F>,
-
-    /// The batching randomness. If there's no batching, this value is zero.
-    // TODO: Move to prover opening step.
-    pub batching_randomness: F,
 }
 
 /// Commitment parsed by the verifier from verifier's FS context.

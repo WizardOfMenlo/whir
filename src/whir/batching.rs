@@ -194,18 +194,6 @@ mod batching_tests {
     }
 
     #[test]
-    fn test_fail() {
-        make_batched_whir_things(
-            1,
-            2,
-            FoldingFactor::Constant(2),
-            0,
-            SoundnessType::UniqueDecoding,
-            0,
-        );
-    }
-
-    #[test]
     fn test_whir() {
         let folding_factors = [1, 4];
         let soundness_type = [

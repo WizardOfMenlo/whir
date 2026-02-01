@@ -35,7 +35,7 @@ where
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomial: &CoefficientList<F::BasePrimeField>,
+        polynomial: CoefficientList<F::BasePrimeField>,
     ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
@@ -43,7 +43,7 @@ where
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        self.commit_batch(prover_state, &[polynomial])
+        self.commit_batch(prover_state, vec![polynomial])
     }
 
     #[allow(clippy::too_many_lines)]
@@ -51,7 +51,7 @@ where
     pub fn commit_batch<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&CoefficientList<F::BasePrimeField>],
+        polynomials: Vec<CoefficientList<F::BasePrimeField>>,
     ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
@@ -66,35 +66,10 @@ where
             .collect::<Vec<_>>();
         let witness = config.commit(prover_state, poly_refs.as_slice());
 
-        // Computed batched extended polynomial
-        let batching_randomness = if polynomials.len() > 1 {
-            prover_state.verifier_message()
-        } else {
-            F::ZERO
-        };
-        let weights = geometric_sequence(batching_randomness, config.num_polynomials);
-        let mut batched = vec![F::ZERO; config.polynomial_size];
-        for (polynomial, weight) in polynomials.iter().zip(weights.iter()) {
-            for (dst, src) in batched.iter_mut().zip(polynomial.coeffs()) {
-                *dst += config.embedding.mixed_mul(*weight, *src);
-            }
-        }
-
         Witness {
-            polynomial: CoefficientList::new(batched),
+            polynomials,
             witness,
-            batching_randomness,
         }
-    }
-}
-
-impl<F> Witness<F>
-where
-    F: FftField,
-{
-    /// Returns the batched polynomial
-    pub const fn batched_poly(&self) -> &CoefficientList<F> {
-        &self.polynomial
     }
 }
 
@@ -163,7 +138,7 @@ mod tests {
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial);
+        let witness = committer.commit(&mut prover_state, polynomial.clone());
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -196,7 +171,7 @@ mod tests {
 
         // Ensure polynomial data is correctly stored
         assert_eq!(
-            witness.polynomial.coeffs().len(),
+            witness.polynomials[0].coeffs().len(),
             polynomial.coeffs().len(),
             "Stored polynomial should have the correct number of coefficients"
         );
@@ -244,7 +219,7 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial);
+        let witness = committer.commit(&mut prover_state, polynomial.clone());
 
         // Expansion factor is 2
         assert_eq!(
@@ -286,7 +261,7 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial);
+        let witness = committer.commit(&mut prover_state, polynomial);
 
         assert!(
             witness.witness.out_of_domain.points.is_empty(),
