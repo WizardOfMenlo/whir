@@ -7,13 +7,13 @@ use super::{
 };
 use crate::{
     algebra::{
-        embedding::Embedding,
+        embedding::{self, Embedding},
         geometric_sequence, mixed_dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
     hash::Hash,
-    protocols::{irs_commit, matrix_commit, sumcheck},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, matrix_commit, sumcheck},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
@@ -31,7 +31,7 @@ pub struct Verifier<'a, F: FftField> {
 pub(crate) enum RoundCommitment<F: FftField> {
     Initial {
         commitment: irs_commit::Commitment<F>,
-        batching_randomness: F,
+        batching_weights: Vec<F>,
     },
     Round {
         matrix_commitment: matrix_commit::Commitment,
@@ -65,34 +65,34 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let initial_committer = &self.config.initial_committer;
+        let embedding = initial_committer.embedding();
+
+        let batching_weights =
+            geometric_challenge(verifier_state, initial_committer.num_polynomials);
+
         // During the rounds we collect constraints, combination randomness, folding randomness
         // and we update the claimed sum of constraint evaluation.
+        let num_variables = initial_committer.polynomial_size.trailing_zeros() as usize;
         let mut round_constraints = Vec::new();
         let mut round_folding_randomness = Vec::new();
         let mut claimed_sum = F::ZERO;
         let mut prev_commitment = RoundCommitment::Initial {
             commitment: parsed_commitment.commitment.clone(),
-            batching_randomness: parsed_commitment.batching_randomness,
+            batching_weights: batching_weights.clone(),
         };
 
         // Optional initial sumcheck round
         if self.config.initial_statement {
             // Combine OODS and statement constraints to claimed_sum
-            let oods_constraints = constraints(
-                parsed_commitment.commitment.out_of_domain(),
-                parsed_commitment.batching_randomness,
-                self.config
-                    .initial_committer
-                    .polynomial_size
-                    .trailing_zeros() as usize,
+            let oods_constraints = parsed_commitment.commitment.out_of_domain().constraints(
+                &embedding::Identity::<F>::new(),
+                &batching_weights,
+                num_variables,
             );
+
             let constraints: Vec<_> = oods_constraints
                 .into_iter()
-                .map(|(weights, sum)| Constraint {
-                    weights,
-                    sum,
-                    defer_evaluation: false,
-                })
                 .chain(statement.constraints.iter().cloned())
                 .collect();
 
@@ -153,54 +153,39 @@ impl<'a, F: FftField> Verifier<'a, F> {
             config.pow.verify(verifier_state)?;
 
             // Open the previous commitment
-            let stir_constraints =
-                match prev_commitment {
-                    RoundCommitment::Initial {
-                        commitment,
-                        batching_randomness,
-                    } => {
-                        // Open the previous commitment
-                        let comitter = &self.config.initial_committer;
-                        let in_domain = comitter
-                            .verify(verifier_state, &[&commitment])?
-                            .pop()
-                            .unwrap();
+            let stir_constraints = match prev_commitment {
+                RoundCommitment::Initial {
+                    commitment,
+                    batching_weights,
+                } => {
+                    // Open the previous commitment
+                    let comitter = &self.config.initial_committer;
+                    let in_domain = comitter
+                        .verify(verifier_state, &[&commitment])?
+                        .pop()
+                        .unwrap();
 
-                        let weights = tensor_product(
-                            &geometric_sequence(batching_randomness, comitter.num_polynomials),
-                            &round_folding_randomness.last().unwrap().coeff_weights(true),
-                        );
-                        in_domain
-                            .points
-                            .iter()
-                            .zip(in_domain.matrix.chunks_exact(
-                                comitter.num_polynomials * comitter.interleaving_depth,
-                            ))
-                            .map(|(point, row)| Constraint {
-                                weights: Weights::univariate(
-                                    comitter.embedding.map(*point),
-                                    config.num_variables,
-                                ),
-                                sum: mixed_dot(comitter.embedding(), &weights, row),
-                                defer_evaluation: false,
-                            })
-                            .collect::<Vec<_>>()
-                    }
-                    RoundCommitment::Round { matrix_commitment } => {
-                        let prev_config = &self.config.round_configs[round_index - 1];
+                    let weights = tensor_product(
+                        &batching_weights,
+                        &round_folding_randomness.last().unwrap().coeff_weights(true),
+                    );
+                    in_domain.constraints(embedding, &weights, config.num_variables)
+                }
+                RoundCommitment::Round { matrix_commitment } => {
+                    let prev_config = &self.config.round_configs[round_index - 1];
 
-                        // Verify in-domain challenges on the previous commitment.
-                        self.verify_stir_challenges(
-                            round_index,
-                            verifier_state,
-                            config,
-                            &prev_config.matrix_committer,
-                            &matrix_commitment,
-                            F::ZERO,
-                            round_folding_randomness.last().unwrap(),
-                        )?
-                    }
-                };
+                    // Verify in-domain challenges on the previous commitment.
+                    self.verify_stir_challenges(
+                        round_index,
+                        verifier_state,
+                        config,
+                        &prev_config.matrix_committer,
+                        &matrix_commitment,
+                        F::ZERO,
+                        round_folding_randomness.last().unwrap(),
+                    )?
+                }
+            };
 
             // Add out-of-domain and in-domain constraints to claimed_sum
             let constraints: Vec<Constraint<F>> = oods_constraints
@@ -243,7 +228,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         let stir_constraints = match prev_commitment {
             RoundCommitment::Initial {
                 commitment,
-                batching_randomness,
+                batching_weights,
             } => {
                 let config = &self.config.initial_committer;
                 let num_variables = self.config.mv_parameters.num_variables
@@ -253,34 +238,11 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     .pop()
                     .unwrap();
 
-                let mut constraints = Vec::with_capacity(config.in_domain_samples);
-                for (point, values) in in_domain.points.iter().zip(
-                    in_domain
-                        .matrix
-                        .chunks_exact(config.num_polynomials * config.interleaving_depth),
-                ) {
-                    constraints.push(Constraint {
-                        weights: Weights::univariate(config.embedding.map(*point), num_variables),
-                        sum: {
-                            let mut acc = F::ZERO;
-                            let mut pow = F::ONE;
-                            for block in values
-                                .chunks_exact(config.interleaving_depth)
-                                .take(config.num_polynomials)
-                            {
-                                let eval = CoefficientList::new(block.to_vec())
-                                    .evaluate_at_extension(
-                                        round_folding_randomness.last().unwrap(),
-                                    );
-                                acc += pow * eval;
-                                pow *= batching_randomness;
-                            }
-                            acc
-                        },
-                        defer_evaluation: false,
-                    });
-                }
-                constraints
+                let weights = tensor_product(
+                    &batching_weights,
+                    &round_folding_randomness.last().unwrap().coeff_weights(true),
+                );
+                in_domain.constraints(embedding, &weights, num_variables)
             }
             RoundCommitment::Round { matrix_commitment } => self.verify_stir_challenges(
                 self.config.n_rounds(),
@@ -357,6 +319,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        todo!()
+        /*
         assert!(!parsed_commitments.is_empty());
         assert_eq!(parsed_commitments.len(), statements.len());
         let embedding = self.config.initial_committer.embedding();
@@ -686,6 +650,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         verify!(claimed_sum == evaluation_of_weights * final_value);
 
         Ok((folding_randomness, deferred))
+        */
     }
 
     /// Create a random linear combination of constraints and add it to the claim.

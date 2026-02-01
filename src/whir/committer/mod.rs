@@ -31,7 +31,6 @@ pub struct Witness<F: FftField> {
 #[derive(Clone, Debug)]
 pub struct ParsedCommitment<F: Field> {
     pub commitment: irs_commit::Commitment<F>,
-    pub batching_randomness: F,
 }
 
 pub fn constraints<F: Field>(

@@ -28,14 +28,6 @@ impl<'a, F: FftField> CommitmentReader<'a, F> {
     {
         let config = &self.0.initial_committer;
         let commitment = config.receive_commitment(verifier_state)?;
-        let batching_randomness = if config.num_polynomials > 1 {
-            verifier_state.verifier_message()
-        } else {
-            F::zero()
-        };
-        Ok(ParsedCommitment {
-            commitment,
-            batching_randomness,
-        })
+        Ok(ParsedCommitment { commitment })
     }
 }
