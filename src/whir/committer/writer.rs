@@ -5,9 +5,9 @@ use tracing::instrument;
 
 use super::Witness;
 use crate::{
-    algebra::{embedding::Embedding, geometric_sequence, poly_utils::coeffs::CoefficientList},
+    algebra::poly_utils::coeffs::CoefficientList,
     hash::Hash,
-    transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerifierMessage},
+    transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState},
     whir::parameters::WhirConfig,
 };
 

@@ -1,8 +1,4 @@
-use crate::{
-    algebra::{dot, geometric_sequence, poly_utils::coeffs::CoefficientList},
-    protocols::irs_commit::{self, Evaluations},
-    whir::statement::Weights,
-};
+use crate::{algebra::poly_utils::coeffs::CoefficientList, protocols::irs_commit};
 
 mod reader;
 mod writer;
@@ -31,29 +27,4 @@ pub struct Witness<F: FftField> {
 #[derive(Clone, Debug)]
 pub struct ParsedCommitment<F: Field> {
     pub commitment: irs_commit::Commitment<F>,
-}
-
-pub fn constraints<F: Field>(
-    evals: &Evaluations<F>,
-    batching_randomness: F,
-    num_variables: usize,
-) -> Vec<(Weights<F>, F)> {
-    if evals.points.is_empty() {
-        return Vec::new();
-    }
-    let num_points = evals.points.len();
-    let num_polynomials = evals.matrix.len() / num_points;
-    let weights = geometric_sequence(batching_randomness, num_polynomials);
-    evals
-        .points
-        .iter()
-        .copied()
-        .zip(evals.matrix.chunks_exact(num_polynomials))
-        .map(|(point, evals)| {
-            (
-                Weights::univariate(point, num_variables),
-                dot(&weights, evals),
-            )
-        })
-        .collect()
 }

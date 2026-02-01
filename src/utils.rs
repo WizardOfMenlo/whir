@@ -2,7 +2,6 @@
 use std::fmt::Debug;
 
 use ark_ff::Field;
-use ark_serialize::CanonicalSerialize;
 #[cfg(test)]
 use serde::{Deserialize, Serialize};
 
@@ -14,20 +13,6 @@ macro_rules! ensure {
             return Err($err.into());
         };
     };
-}
-
-/// Workaround for Ark types that are missing comparisons
-pub fn ark_eq<T: CanonicalSerialize>(a: &T, b: &T) -> bool {
-    let mut buf_a = Vec::new();
-    let mut buf_b = Vec::new();
-    a.serialize_uncompressed(&mut buf_a).unwrap();
-    b.serialize_uncompressed(&mut buf_b).unwrap();
-    buf_a == buf_b
-}
-
-/// Fuzzy comparison of f64 using absolute error.
-pub fn f64_eq_abs(a: f64, b: f64, abs_err: f64) -> bool {
-    (a - b).abs() <= abs_err
 }
 
 /// Target single-thread workload size for `T`.
@@ -51,6 +36,21 @@ pub const fn workload_size<T: Sized>() -> usize {
     const CACHE_SIZE: usize = 1 << 15; // 32KB default
 
     CACHE_SIZE / size_of::<T>()
+}
+
+/// Like zip, but panics if the iterators are not the same length.
+#[inline]
+pub fn zip_strict<A, B>(
+    a: impl IntoIterator<Item = A>,
+    b: impl IntoIterator<Item = B>,
+) -> impl Iterator<Item = (A, B)> {
+    let mut a = a.into_iter();
+    let mut b = b.into_iter();
+    std::iter::from_fn(move || match (a.next(), b.next()) {
+        (Some(x), Some(y)) => Some((x, y)),
+        (None, None) => None,
+        _ => panic!("Iterators had different lengths"),
+    })
 }
 
 // TODO(Gotti): n_bits is a misnomer if base > 2. Should be n_limbs or sth.

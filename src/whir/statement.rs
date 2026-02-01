@@ -267,6 +267,10 @@ impl<F: Field> Statement<F> {
         self.num_variables
     }
 
+    pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
+        self.constraints.iter().all(|c| c.verify(poly))
+    }
+
     /// Adds a constraint `(w(X), s)` to the system.
     ///
     /// **Precondition:**

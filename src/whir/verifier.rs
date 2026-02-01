@@ -8,7 +8,7 @@ use super::{
 use crate::{
     algebra::{
         embedding::{self, Embedding},
-        geometric_sequence, mixed_dot,
+        mixed_dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -19,9 +19,9 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::Type,
-    utils::expand_randomness,
+    utils::{expand_randomness, zip_strict},
     verify,
-    whir::{committer::constraints, utils::get_challenge_stir_queries},
+    whir::utils::get_challenge_stir_queries,
 };
 
 pub struct Verifier<'a, F: FftField> {
@@ -319,10 +319,11 @@ impl<'a, F: FftField> Verifier<'a, F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        todo!()
-        /*
         assert!(!parsed_commitments.is_empty());
-        assert_eq!(parsed_commitments.len(), statements.len());
+        assert_eq!(
+            parsed_commitments.len() * self.config.initial_committer.num_polynomials,
+            statements.len()
+        );
         let embedding = self.config.initial_committer.embedding();
 
         // Step 1: Read the N×M constraint evaluation matrix from the transcript
@@ -350,7 +351,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
         }
 
         // Read the N×M evaluation matrix from transcript
-        let num_polynomials = parsed_commitments.len();
+        let num_polynomials =
+            parsed_commitments.len() * self.config.initial_committer.num_polynomials;
         let num_constraints = all_constraints_info.len();
         let mut constraint_evals_matrix = Vec::with_capacity(num_polynomials);
 
@@ -363,7 +365,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
         }
 
         // Step 2: Sample batching randomness γ (cryptographically bound to matrix)
-        let batching_randomness: F = verifier_state.verifier_message();
+        let batching_weights = geometric_challenge(verifier_state, num_polynomials);
 
         let mut round_constraints = Vec::new();
         let mut round_folding_randomness = Vec::new();
@@ -378,10 +380,9 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 all_constraints_info.into_iter().enumerate()
             {
                 let mut combined_eval = F::ZERO;
-                let mut pow = F::ONE;
-                for poly_evals in &constraint_evals_matrix {
-                    combined_eval += pow * poly_evals[constraint_idx];
-                    pow *= batching_randomness;
+                for (weight, poly_evals) in zip_strict(&batching_weights, &constraint_evals_matrix)
+                {
+                    combined_eval += *weight * poly_evals[constraint_idx];
                 }
 
                 all_constraints.push(Constraint {
@@ -469,52 +470,38 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .initial_committer
             .verify(verifier_state, irs_commitment_refs.as_slice())?;
         let points = in_domain[0].points.clone();
-        let all_answers = in_domain.into_iter().map(|e| e.matrix).collect::<Vec<_>>();
+
+        let mut rlc_answers = vec![F::ZERO; points.len()];
+        let weights = tensor_product(
+            &batching_weights,
+            &round_folding_randomness[0].coeff_weights(true),
+        );
+        for (evals, weights) in zip_strict(
+            &in_domain,
+            weights.chunks_exact(self.config.initial_committer.num_cols()),
+        ) {
+            for (acc, row) in zip_strict(
+                &mut rlc_answers,
+                evals
+                    .matrix
+                    .chunks_exact(self.config.initial_committer.num_cols()),
+            ) {
+                *acc += mixed_dot(embedding, weights, row);
+            }
+        }
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let fold_size = 1 << round_params.folding_factor;
         let leaf_size = fold_size * self.config.batch_size;
-        let rlc_answers: Vec<Vec<F>> = (0..points.len())
-            .map(|query_idx| {
-                let mut combined = vec![F::ZERO; fold_size];
-                let mut pow = F::ONE;
-                for (commitment, witness_answers) in parsed_commitments.iter().zip(&all_answers) {
-                    let stacked_answer =
-                        &witness_answers[query_idx * leaf_size..(query_idx + 1) * leaf_size];
 
-                    // First, internally reduce stacked leaf using commitment's batching_randomness
-                    let mut internal_pow = F::ONE;
-                    for poly_idx in 0..self.config.batch_size {
-                        let start = poly_idx * fold_size;
-                        for j in 0..fold_size {
-                            combined[j] +=
-                                pow * embedding.mixed_mul(internal_pow, stacked_answer[start + j]);
-                        }
-                        internal_pow *= commitment.batching_randomness;
-                    }
-
-                    pow *= batching_randomness;
-                }
-                combined
-            })
-            .collect();
-
-        // Compute STIR constraints using the RLC'd answers
-        let folds: Vec<F> = rlc_answers
-            .into_iter()
-            .map(|answers| CoefficientList::new(answers).evaluate(&round_folding_randomness[0]))
-            .collect();
-
-        let stir_constraints: Vec<Constraint<F>> = points
-            .iter()
-            .map(|p| embedding.map(*p))
-            .zip(&folds)
-            .map(|(point, &value)| Constraint {
-                weights: Weights::univariate(point, round_params.num_variables),
-                sum: value,
-                defer_evaluation: false,
-            })
-            .collect();
+        let stir_constraints: Vec<Constraint<F>> =
+            zip_strict(points.iter().map(|p| embedding.map(*p)), &rlc_answers)
+                .map(|(point, &value)| Constraint {
+                    weights: Weights::univariate(point, round_params.num_variables),
+                    sum: value,
+                    defer_evaluation: false,
+                })
+                .collect();
 
         // Add batched commitment's OOD constraints and STIR constraints
         let constraints: Vec<Constraint<F>> = oods_constraints
@@ -650,7 +637,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
         verify!(claimed_sum == evaluation_of_weights * final_value);
 
         Ok((folding_randomness, deferred))
-        */
     }
 
     /// Create a random linear combination of constraints and add it to the claim.

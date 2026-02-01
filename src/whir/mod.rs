@@ -602,31 +602,31 @@ mod tests {
             all_polynomials.push(witness_polys);
         }
 
-        // Create statements - one per witness, based on the first polynomial in each batch
-        // (the internally-batched polynomial is what the statement is about)
+        // Create statements - one per polynomial
         let mut statements = Vec::new();
         for witness_polys in &all_polynomials {
-            let poly = &witness_polys[0]; // Use first poly for statement (will be batched internally)
-            let mut statement = Statement::new(num_variables);
+            for poly in witness_polys {
+                let mut statement = Statement::new(num_variables);
 
-            for _ in 0..num_points_per_poly {
-                let point = MultilinearPoint::rand(&mut rng, num_variables);
-                let eval = poly.evaluate_at_extension(&point);
-                statement.add_constraint(Weights::evaluation(point), eval);
+                for _ in 0..num_points_per_poly {
+                    let point = MultilinearPoint::rand(&mut rng, num_variables);
+                    let eval = poly.evaluate_at_extension(&point);
+                    statement.add_constraint(Weights::evaluation(point), eval);
+                }
+
+                // Add a linear constraint
+                let input = CoefficientList::new(
+                    (0..1 << num_variables)
+                        .map(<EF as Field>::BasePrimeField::from)
+                        .collect(),
+                );
+                let linear_claim_weight = Weights::linear(input.into());
+                let poly_evals = EvaluationsList::from(poly.clone().to_extension());
+                let sum = linear_claim_weight.weighted_sum(&poly_evals);
+                statement.add_constraint(linear_claim_weight, sum);
+
+                statements.push(statement);
             }
-
-            // Add a linear constraint
-            let input = CoefficientList::new(
-                (0..1 << num_variables)
-                    .map(<EF as Field>::BasePrimeField::from)
-                    .collect(),
-            );
-            let linear_claim_weight = Weights::linear(input.into());
-            let poly_evals = EvaluationsList::from(poly.clone().to_extension());
-            let sum = linear_claim_weight.weighted_sum(&poly_evals);
-            statement.add_constraint(linear_claim_weight, sum);
-
-            statements.push(statement);
         }
 
         // Set up domain separator

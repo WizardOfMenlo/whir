@@ -8,7 +8,9 @@ use {
 };
 
 use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
-use crate::algebra::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
+use crate::algebra::{
+    embedding::Embedding, ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint,
+};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -39,6 +41,13 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    pub fn lift<M: Embedding<Source = F>>(&self, embedding: &M) -> CoefficientList<M::Target> {
+        CoefficientList {
+            coeffs: self.coeffs.iter().map(|c| embedding.map(*c)).collect(),
+            num_variables: self.num_variables,
+        }
+    }
+
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field

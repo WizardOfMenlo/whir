@@ -13,6 +13,7 @@ use crate::{
     algebra::{
         domain::Domain,
         embedding::{self, Embedding},
+        mixed_dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -27,9 +28,8 @@ use crate::{
         VerifierMessage,
     },
     type_info::Type,
-    utils::expand_randomness,
+    utils::{expand_randomness, zip_strict},
     whir::{
-        committer::constraints,
         parameters::RoundConfig,
         utils::{get_challenge_stir_queries, sample_ood_points},
     },
@@ -234,44 +234,34 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        /*
+        assert!(self.validate_parameters());
         let initial_committer = &self.config.initial_committer;
         let embedding = initial_committer.embedding();
+        let num_variables = initial_committer.polynomial_size.trailing_zeros() as usize;
 
-        // Validation
-        assert!(self.validate_parameters());
-        assert!(
-            !witnesses.is_empty(),
-            "Cannot batch prove with no witnesses"
-        );
+        // Collect all polynomials from all witnesses and validate
+        let polynomials: Vec<&CoefficientList<F::BasePrimeField>> = witnesses
+            .iter()
+            .flat_map(|w| w.polynomials.iter())
+            .collect();
+        if polynomials.is_empty() {
+            // TODO: Implement something sensible.
+            unimplemented!("Empty case not implemented");
+        }
+
+        // Validate statements
         assert_eq!(
-            witnesses.len(),
             statements.len(),
-            "Number of witnesses must match number of statements"
+            polynomials.len(),
+            "Number of polynomials must match number of statements"
         );
+        for (polynomial, statement) in polynomials.iter().zip(statements) {
+            assert_eq!(statement.num_variables(), num_variables);
 
-        let num_vars = witnesses[0].polynomial.num_variables();
-        assert_eq!(
-            num_vars, self.config.mv_parameters.num_variables,
-            "Witness polynomial variables must match config"
-        );
-
-        for (idx, (statement, witness)) in statements.iter().zip(witnesses).enumerate() {
-            assert!(
-                self.validate_statement(statement),
-                "Statement {idx} is invalid"
-            );
-            assert!(self.validate_witness(witness), "Witness {idx} is invalid");
-            assert_eq!(
-                witness.polynomial.num_variables(),
-                num_vars,
-                "All witness polynomials must have the same number of variables"
-            );
-            assert_eq!(
-                statement.num_variables(),
-                num_vars,
-                "All statements must have the same number of variables"
-            );
+            // TODO: Add a `mixed_verify` function that takes an embedding into account.
+            // Also, this test is optional as the proof will fail when the statements are false.
+            let polynomial = polynomial.lift(embedding);
+            assert!(statement.verify(&polynomial));
         }
 
         // Step 1: Commit to the full N×M constraint evaluation matrix BEFORE sampling γ.
@@ -284,62 +274,55 @@ where
 
         // Collect all constraint weights from OOD samples and statements
         let mut all_constraint_weights = Vec::new();
-
-        // OOD constraints from each witness
-        for witness in witnesses {
-            for point in &witness.witness.out_of_domain().points {
-                let ml_point = MultilinearPoint::expand_from_univariate(*point, num_vars);
-                all_constraint_weights.push(Weights::evaluation(ml_point));
-            }
-        }
-
-        // Statement constraints
-        for statement in statements {
-            for constraint in &statement.constraints {
-                all_constraint_weights.push(constraint.weights.clone());
-            }
-        }
+        all_constraint_weights.extend(witnesses.iter().flat_map(|w| {
+            w.witness
+                .out_of_domain()
+                .weights(&embedding::Identity::<F>::new(), num_variables)
+        }));
+        all_constraint_weights.extend(
+            statements
+                .iter()
+                .flat_map(|s| s.constraints.iter().map(|c| c.weights.clone())),
+        );
         let num_constrants = all_constraint_weights.len();
 
         // Evaluate EVERY polynomial at EVERY constraint point
         // This creates an N×M matrix where N = #polynomials, M = #constraints
-        let mut constraint_evals_matrix = Vec::with_capacity(witnesses.len() * num_constrants);
-        for witness in witnesses {
+        // We commit this matrix to the script.
+        // TODO: This seems unsound? We should use the existing statement values on the diagonal.
+        let mut constraint_evals_matrix = Vec::with_capacity(polynomials.len() * num_constrants);
+        for polynomial in &polynomials {
+            let polynomial = polynomial.lift(embedding);
             for weights in &all_constraint_weights {
-                let eval = weights.evaluate(&witness.polynomial);
+                let eval = weights.evaluate(&polynomial);
+                prover_state.prover_message(&eval);
                 constraint_evals_matrix.push(eval);
             }
         }
 
-        // Commit the evaluation matrix to the transcript
-        for eval in &constraint_evals_matrix {
-            prover_state.prover_message(eval);
-        }
-
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
-        let batching_randomness: F = prover_state.verifier_message();
+        let batching_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
 
         // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
-        let mut batched_coeffs = witnesses[0].polynomial.coeffs().to_vec();
-        let mut pow = batching_randomness;
-        for witness in witnesses.iter().skip(1) {
-            for (dst, src) in batched_coeffs.iter_mut().zip(witness.polynomial.coeffs()) {
-                *dst += pow * src;
+        let mut batched_coeffs = vec![F::ZERO; initial_committer.polynomial_size];
+        for (weight, polynomial) in batching_weights.iter().zip(polynomials) {
+            for (acc, src) in batched_coeffs.iter_mut().zip(polynomial.coeffs()) {
+                *acc += embedding.mixed_mul(*weight, *src);
             }
-            pow *= batching_randomness;
         }
         let batched_poly = CoefficientList::new(batched_coeffs);
 
         // Step 4: Build combined statement using RLC of the committed evaluation matrix
         // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
-        let mut combined_statement = Statement::new(num_vars);
+        let mut combined_statement = Statement::new(num_variables);
 
         for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
             let mut combined_eval = F::ZERO;
-            let mut pow = F::ONE;
-            for poly_evals in constraint_evals_matrix.chunks_exact(num_constrants) {
-                combined_eval += pow * poly_evals[constraint_idx];
-                pow *= batching_randomness;
+            for (weight, poly_evals) in batching_weights
+                .iter()
+                .zip(constraint_evals_matrix.chunks_exact(num_constrants))
+            {
+                combined_eval += *weight * poly_evals[constraint_idx];
             }
             combined_statement.add_constraint(weights, combined_eval);
         }
@@ -390,7 +373,7 @@ where
         // This allows the verifier to check consistency with the N original commitments
         // while the rest of the protocol operates on the single batched polynomial.
         let round_params = &self.config.round_configs[0];
-        let num_variables_after_fold = num_vars - self.config.folding_factor.at_round(0);
+        let num_variables_after_fold = num_variables - self.config.folding_factor.at_round(0);
         let batched_folded_poly = batched_poly.fold(&folding_randomness);
 
         // Build Merkle tree for the batched folded polynomial
@@ -419,42 +402,27 @@ where
         round_params.pow.prove(prover_state);
 
         let witness_refs = witnesses.iter().map(|w| &w.witness).collect::<Vec<_>>();
-        let in_domain_evals = self
+        let in_domain = self
             .config
             .initial_committer
             .open(prover_state, &witness_refs);
-        let in_domain_points = in_domain_evals[0].points.iter().map(|p| {
-            MultilinearPoint::expand_from_univariate(embedding.map(*p), num_variables_after_fold)
-        });
+        // We are guaranteed that all evaluations have the same points, so take from the first.
+        let in_domain_points = in_domain[0].points(embedding, num_variables_after_fold);
 
-        // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·witness_answers[i][j]
-        // This produces the expected answers for the batched polynomial
-        let fold_size = 1 << self.config.folding_factor.at_round(0);
-        let rlc_answers: Vec<Vec<F>> = (0..in_domain_points.len())
-            .map(|query_idx| {
-                let mut combined = vec![F::ZERO; fold_size];
-                let mut pow = F::ONE;
-                for (witness_idx, witness) in witnesses.iter().enumerate() {
-                    let leaf_size = fold_size * self.config.batch_size;
-                    let answer = &in_domain_evals[witness_idx].matrix
-                        [query_idx * leaf_size..(query_idx + 1) * leaf_size];
-
-                    // First, internally reduce stacked leaf using witness's batching_randomness
-                    let mut internal_pow = F::ONE;
-                    for poly_idx in 0..self.config.batch_size {
-                        let start = poly_idx * fold_size;
-                        for j in 0..fold_size {
-                            combined[j] +=
-                                pow * embedding.mixed_mul(internal_pow, answer[start + j]);
-                        }
-                        internal_pow *= witness.batching_randomness;
-                    }
-
-                    pow *= batching_randomness;
-                }
-                combined
-            })
-            .collect();
+        // Combine all the in-domain answers.
+        let mut rlc_answers = vec![F::ZERO; in_domain_points.len()];
+        let weights = tensor_product(&batching_weights, &folding_randomness.coeff_weights(true));
+        for (evals, weights) in zip_strict(
+            in_domain.iter(),
+            weights.chunks_exact(initial_committer.num_cols()),
+        ) {
+            for (acc, row) in zip_strict(
+                &mut rlc_answers,
+                evals.matrix.chunks_exact(initial_committer.num_cols()),
+            ) {
+                *acc += mixed_dot(embedding, weights, row);
+            }
+        }
 
         // Compute STIR challenges and evaluations
         let stir_challenges: Vec<MultilinearPoint<F>> = ood_points
@@ -467,16 +435,10 @@ where
             .collect();
 
         let mut stir_evaluations = ood_answers;
-        stir_evaluations.extend(
-            rlc_answers
-                .iter()
-                .map(|answer| CoefficientList::new(answer.clone()).evaluate(&folding_randomness)),
-        );
+        stir_evaluations.extend(rlc_answers);
 
         // Randomness for combination
-        let combination_randomness_gen = prover_state.verifier_message();
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, stir_challenges.len());
+        let combination_randomness = geometric_challenge(prover_state, stir_challenges.len());
 
         // Update sumcheck with STIR constraints
         let mut sumcheck_prover = sumcheck_prover.map_or_else(
@@ -558,8 +520,6 @@ where
         prover_state.prover_hint_ark(&deferred);
 
         (constraint_eval, deferred)
-         */
-        todo!()
     }
 
     #[allow(clippy::too_many_lines)]

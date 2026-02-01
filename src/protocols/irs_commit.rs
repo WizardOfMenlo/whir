@@ -37,7 +37,7 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
-        embedding::{self, Basefield, Embedding, Identity},
+        embedding::{Basefield, Embedding, Identity},
         mixed_dot, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
         poly_utils::multilinear::MultilinearPoint,
@@ -402,6 +402,8 @@ impl<F: Field> Evaluations<F> {
             .unwrap_or_default()
     }
 
+    // TODO: points, weights and constraints are redudant.
+
     pub fn points<M>(&self, embedding: &M, num_variables: usize) -> Vec<MultilinearPoint<M::Target>>
     where
         M: Embedding<Source = F>,
@@ -411,6 +413,16 @@ impl<F: Field> Evaluations<F> {
             .map(|point| {
                 MultilinearPoint::expand_from_univariate(embedding.map(*point), num_variables)
             })
+            .collect()
+    }
+
+    pub fn weights<M>(&self, embedding: &M, num_variables: usize) -> Vec<Weights<M::Target>>
+    where
+        M: Embedding<Source = F>,
+    {
+        self.points
+            .iter()
+            .map(|point| Weights::univariate(embedding.map(*point), num_variables))
             .collect()
     }
 

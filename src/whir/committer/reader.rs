@@ -3,10 +3,7 @@ use ark_ff::FftField;
 use super::ParsedCommitment;
 use crate::{
     hash::Hash,
-    transcript::{
-        Codec, DuplexSpongeInterface, ProverMessage, VerificationResult, VerifierMessage,
-        VerifierState,
-    },
+    transcript::{Codec, DuplexSpongeInterface, ProverMessage, VerificationResult, VerifierState},
     whir::parameters::WhirConfig,
 };
 
