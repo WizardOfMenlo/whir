@@ -192,11 +192,9 @@ mod tests {
     #[test]
     fn test_threshold_fractional() {
         proptest!(|(bits in 0.0..=60.0)| {
-            dbg!(bits);
             let t = threshold(Bits::new(bits));
             let min = threshold(Bits::new(bits.ceil()));
             let max = threshold(Bits::new(bits.floor()));
-            dbg!(t, min, max);
             assert!((min..=max).contains(&t));
         });
     }

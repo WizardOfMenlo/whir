@@ -1,3 +1,5 @@
+#![allow(type_alias_bounds)] // We need the bound to reference F::BasePrimeField.
+
 use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]

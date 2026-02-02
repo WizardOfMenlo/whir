@@ -61,17 +61,20 @@ impl<F: FftField> WhirConfig<F> {
             // TODO: Implement something sensible.
             unimplemented!("Empty case not implemented");
         }
-
         let num_variables = self.initial_committer.polynomial_size.trailing_zeros() as usize;
 
         // Validate statements
         for (polynomial, statement) in polynomials.iter().zip(statements) {
+            assert_eq!(polynomial.num_variables(), num_variables);
             assert_eq!(statement.num_variables(), num_variables);
 
-            // TODO: Add a `mixed_verify` function that takes an embedding into account.
-            // Also, this test is optional as the proof will fail when the statements are false.
-            let polynomial = polynomial.lift(self.embedding());
-            assert!(statement.verify(&polynomial));
+            #[cfg(test)]
+            {
+                // In debug mode, verify all statment.
+                // TODO: Add a `mixed_verify` function that takes an embedding into account.
+                let polynomial = polynomial.lift(self.embedding());
+                assert!(statement.verify(&polynomial));
+            }
         }
 
         // Step 1: Commit to the full N×M constraint evaluation matrix BEFORE sampling γ.
@@ -133,14 +136,12 @@ impl<F: FftField> WhirConfig<F> {
             polynomials,
             constraint_evals_matrix.chunks_exact_mut(all_constraint_weights.len()),
         ) {
-            // TODO: Avoid lifting.
-            let polynomial = polynomial.lift(self.embedding());
+            let mut lifted = None;
             for (weights, cell) in zip_strict(&all_constraint_weights, row) {
-                if let Some(value) = cell {
-                    // TODO: Expensive check, do only during test
-                    assert_eq!(weights.evaluate(&polynomial), *value);
-                } else {
-                    let eval = weights.evaluate(&polynomial);
+                if cell.is_none() {
+                    // TODO: Avoid lifting by evaluating directly through embedding.
+                    let lifted = lifted.get_or_insert_with(|| polynomial.lift(self.embedding()));
+                    let eval = weights.evaluate(&lifted);
                     prover_state.prover_message(&eval);
                     *cell = Some(eval);
                 }
@@ -155,8 +156,16 @@ impl<F: FftField> WhirConfig<F> {
         let batching_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
 
         // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
-        let mut batched_coeffs = vec![F::ZERO; self.initial_committer.polynomial_size];
-        for (weight, polynomial) in batching_weights.iter().zip(polynomials) {
+        // This also lifts the polynomial to the extension field.
+        assert_eq!(batching_weights[0], F::ONE);
+        let mut batched_coeffs = polynomials
+            .first()
+            .unwrap()
+            .coeffs()
+            .iter()
+            .map(|c| self.embedding().map(*c))
+            .collect::<Vec<_>>();
+        for (weight, polynomial) in zip_strict(&batching_weights, polynomials).skip(1) {
             for (acc, src) in batched_coeffs.iter_mut().zip(polynomial.coeffs()) {
                 *acc += self.embedding().mixed_mul(*weight, *src);
             }

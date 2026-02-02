@@ -21,10 +21,7 @@ use whir::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::{
-        committer::CommitmentReader,
-        statement::{Statement, Weights},
-    },
+    whir::statement::{Statement, Weights},
 };
 
 #[derive(Parser, Debug)]
@@ -159,9 +156,7 @@ where
         whir_ldt_verifier_hashes,
     ) = {
         // Run LDT
-        use whir::whir::{
-            committer::CommitmentWriter, config::WhirConfig, prover::Prover, verifier::Verifier,
-        };
+        use whir::whir::config::WhirConfig;
 
         let whir_params = ProtocolParameters {
             initial_statement: false,
@@ -189,34 +184,30 @@ where
 
         HASH_COUNTER.reset();
 
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial);
-
-        let prover = Prover::new(params.clone());
+        let witness = params.commit(&mut prover_state, &[&polynomial]);
 
         let statement_new = Statement::<F>::new(num_variables);
 
-        prover.prove(&mut prover_state, statement_new.clone(), witness);
+        params.prove(
+            &mut prover_state,
+            &[&polynomial],
+            &[&witness],
+            &[&statement_new],
+        );
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
         let proof = prover_state.proof();
         let whir_ldt_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_ldt_prover_hashes = HASH_COUNTER.get();
 
-        // Just not to count that initial inversion (which could be precomputed)
-        let commitment_reader = CommitmentReader::new(&params);
-        let verifier = Verifier::new(&params);
-
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-            let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
-                .unwrap();
-            verifier
-                .verify(&mut verifier_state, &parsed_commitment, &statement_new)
+            let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+            params
+                .verify(&mut verifier_state, &[&commitment], &[&statement_new])
                 .unwrap();
         }
 
@@ -240,9 +231,7 @@ where
         whir_verifier_hashes,
     ) = {
         // Run PCS
-        use whir::whir::{
-            committer::CommitmentWriter, config::WhirConfig, prover::Prover, verifier::Verifier,
-        };
+        use whir::whir::config::WhirConfig;
 
         let reed_solomon = Arc::new(RSDefault);
 
@@ -273,32 +262,28 @@ where
         HASH_COUNTER.reset();
         let whir_prover_time = Instant::now();
 
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial);
+        let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-        let prover = Prover::new(params.clone());
-
-        prover.prove(&mut prover_state, statement.clone(), witness);
+        params.prove(
+            &mut prover_state,
+            &[&polynomial],
+            &[&witness],
+            &[&statement],
+        );
 
         let whir_prover_time = whir_prover_time.elapsed();
         let proof = prover_state.proof();
         let whir_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_prover_hashes = HASH_COUNTER.get();
 
-        // Just not to count that initial inversion (which could be precomputed)
-        let commitment_reader = CommitmentReader::new(&params);
-        let verifier = Verifier::new(&params);
-
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-            let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
-                .unwrap();
-            verifier
-                .verify(&mut verifier_state, &parsed_commitment, &statement)
+            let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+            params
+                .verify(&mut verifier_state, &[&commitment], &[&statement])
                 .unwrap();
         }
 

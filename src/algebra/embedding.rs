@@ -17,7 +17,9 @@ use crate::type_info::{Type, TypeInfo, Typed};
 /// - `e.mixed_add(a, b) == a + e.map(b)`
 /// - `e.mixed_mul(a, b) == a * e.map(b)`
 ///
-pub trait Embedding: Clone + Debug + TypeInfo + Serialize + for<'de> Deserialize<'de> {
+pub trait Embedding:
+    Clone + Debug + TypeInfo + Serialize + for<'de> Deserialize<'de> + Send + Sync
+{
     type Source: Field;
     type Target: Field;
 

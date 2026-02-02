@@ -128,7 +128,6 @@ impl<F: FftField> WhirConfig<F> {
             .into_iter()
             .map(|e| e.unwrap())
             .collect();
-        dbg!(&constraint_evals_matrix);
         // Reinterpret as rows for easier indexing: rows = num_polynomials, cols = num_constraints
         let constraint_evals_matrix: Vec<&[F]> = constraint_evals_matrix
             .chunks_exact(num_constraints)

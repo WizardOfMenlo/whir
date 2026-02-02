@@ -303,10 +303,8 @@ where
             prover_state.prover_hint_ark(&submatrix);
             self.matrix_commit
                 .open(prover_state, &witness.matrix_witness, &indices);
-            dbg!(&submatrix);
             matrix_col_offset += self.num_cols();
         }
-        dbg!(&matrix);
 
         Evaluations { points, matrix }
     }
@@ -650,7 +648,6 @@ mod tests {
             in_domain_evals.matrix.len(),
             in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
         );
-        dbg!(&in_domain_evals);
         if config.num_polynomials > 0 {
             for (point, evals) in zip_strict(
                 &in_domain_evals.points,
