@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     algebra::{
         domain::Domain,
+        embedding::Basefield,
         fields::FieldWithSize,
         ntt::{RSDefault, ReedSolomon},
     },
@@ -321,6 +322,10 @@ where
             reed_solomon,
             basefield_reed_solomon,
         }
+    }
+
+    pub fn embedding(&self) -> &Basefield<F> {
+        self.initial_committer.embedding()
     }
 
     pub const fn n_rounds(&self) -> usize {

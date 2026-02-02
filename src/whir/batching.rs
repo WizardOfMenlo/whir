@@ -41,11 +41,8 @@ mod batching_tests {
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         whir::{
-            committer::{CommitmentReader, CommitmentWriter},
-            parameters::WhirConfig,
-            prover::Prover,
+            config::WhirConfig,
             statement::{Statement, Weights},
-            verifier::Verifier,
         },
     };
 
@@ -136,8 +133,8 @@ mod batching_tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = CommitmentWriter::new(params.clone());
-        let batched_witness = committer.commit_batch(&mut prover_state, poly_list.clone());
+        let poly_refs = poly_list.iter().collect::<Vec<_>>();
+        let batched_witness = params.commit(&mut prover_state, &poly_refs);
 
         // Create a statement for each polynomial
         let mut statements = Vec::new();
@@ -166,36 +163,28 @@ mod batching_tests {
 
             statements.push(statement);
         }
-
-        // Instantiate the prover with the given parameters
-        let prover = Prover::new(params.clone());
+        let statement_refs = statements.iter().collect::<Vec<_>>();
 
         // Extract verifier-side version of the statement (only public data)
 
         // Generate a STARK proof for the given statement and witness
-        prover.prove_batch(&mut prover_state, statements.as_slice(), &[batched_witness]);
-
-        // Create a verifier with matching parameters
-        let verifier = Verifier::new(&params);
+        params.prove(
+            &mut prover_state,
+            &poly_refs,
+            &[&batched_witness],
+            &statement_refs,
+        );
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        // Create a commitment reader
-        let commitment_reader = CommitmentReader::new(&params);
-
-        let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
-            .unwrap();
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(verifier
-            .verify_batch(
-                &mut verifier_state,
-                &[parsed_commitment],
-                statements.as_slice()
-            )
+        let statement_refs = statements.iter().collect::<Vec<_>>();
+        assert!(params
+            .verify(&mut verifier_state, &[&commitment], &statement_refs)
             .is_ok());
     }
 

@@ -114,7 +114,7 @@ fn run_whir_as_ldt<F>(
     F: FftField + CanonicalSerialize + Codec,
 {
     use whir::whir::{
-        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
+        committer::CommitmentWriter, config::WhirConfig, prover::Prover, verifier::Verifier,
     };
 
     // Runs as a LDT
@@ -222,7 +222,7 @@ fn run_whir_pcs<F>(
     F: FftField + CanonicalSerialize + Codec,
 {
     use whir::whir::{
-        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, statement::Statement,
+        committer::CommitmentWriter, config::WhirConfig, prover::Prover, statement::Statement,
         verifier::Verifier,
     };
 

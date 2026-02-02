@@ -160,7 +160,7 @@ where
     ) = {
         // Run LDT
         use whir::whir::{
-            committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
+            committer::CommitmentWriter, config::WhirConfig, prover::Prover, verifier::Verifier,
         };
 
         let whir_params = ProtocolParameters {
@@ -241,7 +241,7 @@ where
     ) = {
         // Run PCS
         use whir::whir::{
-            committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
+            committer::CommitmentWriter, config::WhirConfig, prover::Prover, verifier::Verifier,
         };
 
         let reed_solomon = Arc::new(RSDefault);

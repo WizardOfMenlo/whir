@@ -1,5 +1,3 @@
-use std::slice;
-
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
@@ -8,14 +6,13 @@ use tracing::instrument;
 
 use super::{
     committer::Witness,
-    parameters::WhirConfig,
+    config::WhirConfig,
     statement::{Statement, Weights},
 };
 use crate::{
     algebra::{
         domain::Domain,
         embedding::{self, Embedding},
-        mixed_dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -32,98 +29,19 @@ use crate::{
     type_info::Type,
     utils::{expand_randomness, zip_strict},
     whir::{
-        parameters::RoundConfig,
+        config::RoundConfig,
         utils::{get_challenge_stir_queries, sample_ood_points},
     },
 };
 
-pub struct Prover<F: FftField> {
-    config: WhirConfig<F>,
-}
-
-impl<F> Prover<F>
-where
-    F: FftField,
-{
-    pub const fn new(config: WhirConfig<F>) -> Self {
-        Self { config }
-    }
-
-    pub const fn config(&self) -> &WhirConfig<F> {
-        &self.config
-    }
-
-    pub(crate) fn validate_parameters(&self) -> bool {
-        self.config.mv_parameters.num_variables
-            == self
-                .config
-                .folding_factor
-                .total_number(self.config.n_rounds())
-                + self.config.final_sumcheck_rounds
-    }
-
-    pub(crate) const fn validate_statement(&self, statement: &Statement<F>) -> bool {
-        statement.num_variables() == self.config.mv_parameters.num_variables
-            && (self.config.initial_statement || statement.constraints.is_empty())
-    }
-
-    pub(crate) fn validate_witness(&self, witness: &Witness<F>) -> bool {
-        if !self.config.initial_statement {
-            assert!(witness.witness.out_of_domain.points.is_empty());
-        }
-        assert_eq!(
-            witness.polynomials.len(),
-            self.config.initial_committer.num_polynomials
-        );
-        assert!(witness
-            .polynomials
-            .iter()
-            .all(|p| p.num_coeffs() == self.config.initial_committer.polynomial_size));
-        true
-    }
-
-    /// Proves that the commitment satisfies constraints in `statement`.
-    ///
-    /// When called without any constraints it only perfoms a low-degree test.
-    /// Returns the constraint evaluation point and values of deferred constraints.
-    ///
-    /// Q: In a batch commitment, which polynomial does the statement apply to?
+impl<F: FftField> WhirConfig<F> {
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        mut statement: Statement<F>,
-        witness: Witness<F>,
-    ) -> (MultilinearPoint<F>, Vec<F>)
-    where
-        H: DuplexSpongeInterface,
-        R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
-    {
-        self.prove_batch(prover_state, &[statement], &[witness])
-    }
-
-    /// Proves that multiple commitments satisfy their respective constraints by batching them.
-    ///
-    /// This combines multiple independent witnesses and statements into a single proof using
-    /// random linear combination (RLC). The prover commits to a complete cross-term evaluation
-    /// matrix before sampling the batching randomness γ, preventing adaptive attacks.
-    ///
-    /// After Round 0, all polynomials are combined into a single batched polynomial and the
-    /// protocol proceeds as standard WHIR.
-    ///
-    /// Returns the constraint evaluation point and values of deferred constraints.
-    #[allow(clippy::too_many_lines)]
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove_batch<H, R>(
-        &self,
-        prover_state: &mut ProverState<H, R>,
-        statements: &[Statement<F>],
-        witnesses: &[Witness<F>],
+        polynomials: &[&CoefficientList<F::BasePrimeField>],
+        witnesses: &[&Witness<F>],
+        statements: &[&Statement<F>],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
         H: DuplexSpongeInterface,
@@ -134,33 +52,25 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert!(self.validate_parameters());
-        let initial_committer = &self.config.initial_committer;
-        let embedding = initial_committer.embedding();
-        let num_variables = initial_committer.polynomial_size.trailing_zeros() as usize;
-
-        // Collect all polynomials from all witnesses and validate
-        let polynomials: Vec<&CoefficientList<F::BasePrimeField>> = witnesses
-            .iter()
-            .flat_map(|w| w.polynomials.iter())
-            .collect();
+        assert_eq!(polynomials.len(), statements.len());
+        assert_eq!(
+            polynomials.len(),
+            witnesses.len() * self.initial_committer.num_polynomials
+        );
         if polynomials.is_empty() {
             // TODO: Implement something sensible.
             unimplemented!("Empty case not implemented");
         }
 
+        let num_variables = self.initial_committer.polynomial_size.trailing_zeros() as usize;
+
         // Validate statements
-        assert_eq!(
-            statements.len(),
-            polynomials.len(),
-            "Number of polynomials must match number of statements"
-        );
         for (polynomial, statement) in polynomials.iter().zip(statements) {
             assert_eq!(statement.num_variables(), num_variables);
 
             // TODO: Add a `mixed_verify` function that takes an embedding into account.
             // Also, this test is optional as the proof will fail when the statements are false.
-            let polynomial = polynomial.lift(embedding);
+            let polynomial = polynomial.lift(self.embedding());
             assert!(statement.verify(&polynomial));
         }
 
@@ -175,8 +85,7 @@ where
         // Collect all constraint weights from OOD samples and statements
         let mut all_constraint_weights = Vec::new();
         all_constraint_weights.extend(witnesses.iter().flat_map(|w| {
-            w.witness
-                .out_of_domain()
+            w.out_of_domain()
                 .weights(&embedding::Identity::<F>::new(), num_variables)
         }));
         all_constraint_weights.extend(
@@ -195,7 +104,7 @@ where
         let mut constraint_offset = 0;
         let mut polynomial_offset = 0;
         for witness in witnesses {
-            for row in witness.witness.out_of_domain().rows() {
+            for row in witness.out_of_domain().rows() {
                 let mut index = polynomial_offset + constraint_offset;
                 for value in row {
                     assert!(constraint_evals_matrix[index].is_none());
@@ -204,12 +113,12 @@ where
                 }
                 constraint_offset += 1;
             }
-            polynomial_offset += witness.witness.out_of_domain().num_columns() * num_constraints;
+            polynomial_offset += witness.out_of_domain().num_columns() * num_constraints;
         }
         // Statement
         let mut index = witnesses
             .iter()
-            .map(|w| w.witness.out_of_domain().num_points())
+            .map(|w| w.out_of_domain().num_points())
             .sum::<usize>();
         for statement in statements.iter() {
             for constraint in &statement.constraints {
@@ -221,11 +130,11 @@ where
         }
         // Completion
         for (polynomial, row) in zip_strict(
-            &polynomials,
+            polynomials,
             constraint_evals_matrix.chunks_exact_mut(all_constraint_weights.len()),
         ) {
             // TODO: Avoid lifting.
-            let polynomial = polynomial.lift(embedding);
+            let polynomial = polynomial.lift(self.embedding());
             for (weights, cell) in zip_strict(&all_constraint_weights, row) {
                 if let Some(value) = cell {
                     // TODO: Expensive check, do only during test
@@ -246,10 +155,10 @@ where
         let batching_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
 
         // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
-        let mut batched_coeffs = vec![F::ZERO; initial_committer.polynomial_size];
+        let mut batched_coeffs = vec![F::ZERO; self.initial_committer.polynomial_size];
         for (weight, polynomial) in batching_weights.iter().zip(polynomials) {
             for (acc, src) in batched_coeffs.iter_mut().zip(polynomial.coeffs()) {
-                *acc += embedding.mixed_mul(*weight, *src);
+                *acc += self.embedding().mixed_mul(*weight, *src);
             }
         }
         let batched_poly = CoefficientList::new(batched_coeffs);
@@ -271,7 +180,7 @@ where
 
         // Run initial sumcheck on batched polynomial with combined statement
         let mut sumcheck_prover = None;
-        let folding_randomness = if self.config.initial_statement {
+        let folding_randomness = if self.initial_statement {
             let combination_randomness_gen = prover_state.verifier_message();
             let sumcheck_config = sumcheck::Config {
                 // TODO: Make part of parameters
@@ -279,9 +188,9 @@ where
                 initial_size: batched_poly.num_coeffs(),
                 rounds: vec![
                     sumcheck::RoundConfig {
-                        pow: self.config.starting_folding_pow
+                        pow: self.starting_folding_pow
                     };
-                    self.config.folding_factor.at_round(0)
+                    self.folding_factor.at_round(0)
                 ],
             };
             let mut sumcheck = SumcheckSingle::new(
@@ -293,30 +202,26 @@ where
             sumcheck_prover = Some(sumcheck);
             folding_randomness
         } else {
-            let mut folding_randomness = vec![F::ZERO; self.config.folding_factor.at_round(0)];
+            let mut folding_randomness = vec![F::ZERO; self.folding_factor.at_round(0)];
             for randomness in &mut folding_randomness {
                 *randomness = prover_state.verifier_message();
             }
-            self.config.starting_folding_pow.prove(prover_state);
+            self.starting_folding_pow.prove(prover_state);
             MultilinearPoint(folding_randomness)
         };
 
-        let mut randomness_vec = Vec::with_capacity(self.config.mv_parameters.num_variables);
+        let mut randomness_vec = Vec::with_capacity(self.mv_parameters.num_variables);
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-        randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
+        randomness_vec.resize(self.mv_parameters.num_variables, F::ZERO);
 
-        let irs_witnesses_owned = witnesses
-            .iter()
-            .map(|w| w.witness.clone())
-            .collect::<Vec<_>>();
         let mut round_state = RoundState {
-            domain: self.config.starting_domain.clone(),
+            domain: self.starting_domain.clone(),
             round: 0,
             sumcheck_prover,
             folding_randomness,
             coefficients: batched_poly,
             prev_commitment: RoundWitness::Initial {
-                witnesses: irs_witnesses_owned.as_slice(),
+                witnesses,
                 batching_weights,
             },
             randomness_vec,
@@ -324,7 +229,7 @@ where
         };
 
         // Execute standard WHIR rounds on the batched polynomial
-        for _round in 0..=self.config.n_rounds() {
+        for _round in 0..=self.n_rounds() {
             self.round(prover_state, &mut round_state);
         }
 
@@ -362,26 +267,26 @@ where
             .coefficients
             .fold(&round_state.folding_randomness);
 
-        let num_variables = self.config.mv_parameters.num_variables
-            - self.config.folding_factor.total_number(round_state.round);
+        let num_variables =
+            self.mv_parameters.num_variables - self.folding_factor.total_number(round_state.round);
         // num_variables should match the folded_coefficients here.
         assert_eq!(num_variables, folded_coefficients.num_variables());
 
         // Base case
-        if round_state.round == self.config.n_rounds() {
+        if round_state.round == self.n_rounds() {
             return self.final_round(prover_state, round_state, &folded_coefficients);
         }
 
-        let round_params = &self.config.round_configs[round_state.round];
+        let round_params = &self.round_configs[round_state.round];
 
         // Compute the folding factors for later use
-        let folding_factor = self.config.folding_factor.at_round(round_state.round);
-        let folding_factor_next = self.config.folding_factor.at_round(round_state.round + 1);
+        let folding_factor = self.folding_factor.at_round(round_state.round);
+        let folding_factor_next = self.folding_factor.at_round(round_state.round + 1);
 
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2); // TODO: Why 2?
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals = self.config.reed_solomon.interleaved_encode(
+        let evals = self.reed_solomon.interleaved_encode(
             folded_coefficients.coeffs(),
             expansion,
             folding_factor_next,
@@ -409,9 +314,7 @@ where
                 witnesses,
                 batching_weights,
             } => {
-                let as_refs = witnesses.iter().map(|w| w).collect::<Vec<_>>();
-                let config = &self.config.initial_committer;
-                let in_domain = config.open(prover_state, &as_refs);
+                let in_domain = self.initial_committer.open(prover_state, witnesses);
 
                 // Convert oods_points
                 let mut points = ood_points
@@ -426,8 +329,8 @@ where
                     &batching_weights,
                     &round_state.folding_randomness.coeff_weights(true),
                 );
-                points.extend(in_domain.points(config.embedding(), num_variables));
-                evals.extend(in_domain.values(config.embedding(), &weights));
+                points.extend(in_domain.points(self.embedding(), num_variables));
+                evals.extend(in_domain.values(self.embedding(), &weights));
 
                 (points, evals)
             }
@@ -519,7 +422,7 @@ where
         };
         let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
 
-        let start_idx = self.config.folding_factor.total_number(round_state.round);
+        let start_idx = self.folding_factor.total_number(round_state.round);
         let dst_randomness =
             &mut round_state.randomness_vec[start_idx..][..folding_randomness.0.len()];
 
@@ -564,15 +467,15 @@ where
         }
 
         // Precompute the folding factors for later use
-        let folding_factor = self.config.folding_factor.at_round(round_state.round);
+        let folding_factor = self.folding_factor.at_round(round_state.round);
 
         // PoW
-        self.config.final_pow.prove(prover_state);
+        self.final_pow.prove(prover_state);
 
         match &round_state.prev_commitment {
             RoundWitness::Initial { witnesses, .. } => {
                 for witness in witnesses.iter() {
-                    let in_domain = self.config.initial_committer.open(prover_state, &[witness]);
+                    let in_domain = self.initial_committer.open(prover_state, &[witness]);
 
                     // The verifier will directly test these on the final polynomial.
                     // It has the final polynomial in full, so it needs no furhter help
@@ -593,7 +496,7 @@ where
                     round_state.domain.size(),
                     // The folding factor we used to fold the previous polynomial
                     folding_factor,
-                    self.config.final_queries,
+                    self.final_queries,
                 );
 
                 // Every query requires opening these many in the previous Merkle tree
@@ -630,16 +533,16 @@ where
             initial_size: 1 << final_folding_sumcheck.num_variables(),
             rounds: vec![
                 sumcheck::RoundConfig {
-                    pow: self.config.final_folding_pow
+                    pow: self.final_folding_pow
                 };
-                self.config.final_sumcheck_rounds
+                self.final_sumcheck_rounds
             ],
         };
 
         let final_folding_randomness =
             sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
 
-        let start_idx = self.config.folding_factor.total_number(round_state.round);
+        let start_idx = self.folding_factor.total_number(round_state.round);
         let rand_dst = &mut round_state.randomness_vec
             [start_idx..start_idx + final_folding_randomness.0.len()];
 
@@ -667,7 +570,7 @@ where
         let stir_challenges_indexes = get_challenge_stir_queries(
             prover_state,
             round_state.domain.size(),
-            self.config.folding_factor.at_round(round_state.round),
+            self.folding_factor.at_round(round_state.round),
             round_params.num_queries,
         );
 
@@ -675,7 +578,7 @@ where
         let domain_scaled_gen = round_state
             .domain
             .backing_domain
-            .element(1 << self.config.folding_factor.at_round(round_state.round));
+            .element(1 << self.folding_factor.at_round(round_state.round));
         let stir_challenges = ood_points
             .into_iter()
             .chain(
@@ -692,7 +595,7 @@ where
 
 pub(crate) enum RoundWitness<'a, F: FftField> {
     Initial {
-        witnesses: &'a [irs_commit::Witness<F::BasePrimeField, F>],
+        witnesses: &'a [&'a irs_commit::Witness<F::BasePrimeField, F>],
         batching_weights: Vec<F>,
     },
     Round {

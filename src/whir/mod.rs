@@ -1,10 +1,12 @@
 pub mod batching;
-pub mod committer;
-pub mod parameters;
+mod committer;
+pub mod config;
 pub mod prover;
 pub mod statement;
 pub mod utils;
 pub mod verifier;
+
+pub use committer::{Commitment, Witness};
 
 #[cfg(test)]
 mod tests {
@@ -25,11 +27,8 @@ mod tests {
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
         whir::{
-            committer::{CommitmentReader, CommitmentWriter},
-            parameters::WhirConfig,
-            prover::Prover,
+            config::WhirConfig,
             statement::{Statement, Weights},
-            verifier::Verifier,
         },
     };
 
@@ -168,33 +167,26 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, polynomial.clone());
-
-        // Instantiate the prover with the given parameters
-        let prover = Prover::new(params.clone());
+        let witness = params.commit(&mut prover_state, &[&polynomial]);
 
         // Generate a STARK proof for the given statement and witness
-        prover.prove(&mut prover_state, statement.clone(), witness);
-
-        // Create a commitment reader
-        let commitment_reader = CommitmentReader::new(&params);
-
-        // Create a verifier with matching parameters
-        let verifier = Verifier::new(&params);
+        params.prove(
+            &mut prover_state,
+            &[&polynomial],
+            &[&witness],
+            &[&statement],
+        );
 
         // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // Parse the commitment
-        let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
-            .unwrap();
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+        params
+            .verify(&mut verifier_state, &[&commitment], &[&statement])
             .unwrap();
     }
 
@@ -320,6 +312,7 @@ mod tests {
                 CoefficientList::new(vec![F::from((i + 1) as u64); num_coeffs])
             })
             .collect();
+        let poly_refs = polynomials.iter().collect::<Vec<_>>();
 
         // Create N statements, one for each polynomial
         let mut statements = Vec::new();
@@ -348,6 +341,7 @@ mod tests {
 
             statements.push(statement);
         }
+        let statement_refs = statements.iter().collect::<Vec<_>>();
 
         // Set up domain separator for batch proving
         // Each polynomial needs its own commitment phase
@@ -357,38 +351,36 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Commit to each polynomial and generate witnesses
-        let committer = CommitmentWriter::new(params.clone());
         let mut witnesses = Vec::new();
-
         for poly in &polynomials {
-            let witness = committer.commit(&mut prover_state, poly.clone());
+            let witness = params.commit(&mut prover_state, &[&poly]);
             witnesses.push(witness);
         }
+        let witness_refs = witnesses.iter().collect::<Vec<_>>();
 
         // Batch prove all polynomials together
-        let prover = Prover::new(params.clone());
-        let (_point, _evals) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
-
-        // Set up verifier and parse commitments
-        let commitment_reader = CommitmentReader::new(&params);
-        let verifier = Verifier::new(&params);
+        let (_point, _evals) = params.prove(
+            &mut prover_state,
+            &poly_refs,
+            &witness_refs,
+            &statement_refs,
+        );
 
         // Reconstruct verifier's transcript view
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // Parse all N commitments from the transcript
-        let mut parsed_commitments = Vec::new();
+        let mut commitments = Vec::new();
         for _ in 0..num_polynomials {
-            let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
-                .unwrap();
-            parsed_commitments.push(parsed_commitment);
+            let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+            commitments.push(commitment);
         }
+        let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
-        verifier
-            .verify_batch(&mut verifier_state, &parsed_commitments, &statements)
+        params
+            .verify(&mut verifier_state, &commitment_refs, &statement_refs)
             .unwrap();
     }
 
@@ -501,46 +493,39 @@ mod tests {
         let eval2 = poly2.evaluate_at_extension(&point2);
         statement2.add_constraint(Weights::evaluation(point2), eval2);
 
-        let statements = vec![statement1, statement2];
-
         // Commit to the correct polynomials
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
-        let committer = CommitmentWriter::new(params.clone());
-        let witness1 = committer.commit(&mut prover_state, poly1.clone());
-        let witness2_committed = committer.commit(&mut prover_state, poly2.clone());
+        let witness1 = params.commit(&mut prover_state, &[&poly1]);
+        let witness2 = params.commit(&mut prover_state, &[&poly2]);
 
-        // ATTACK: Create a fake witness using poly_wrong instead of poly2
-        // The commitment is valid for poly2, but we'll use poly_wrong for evaluation
-        let mut witness2_fake = witness2_committed;
-        witness2_fake.polynomials[0] = poly_wrong;
-
-        let witnesses = vec![witness1, witness2_fake];
-
-        // Generate proof with the mismatched polynomial
+        // Generate proof with mismatched polynomials
         // The prover will compute cross-terms using poly_wrong, not poly2
-        let prover = Prover::new(params.clone());
-        let (_evalpoint, _values) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let (_evalpoint, _values) = params.prove(
+            &mut prover_state,
+            &[&poly1, &poly_wrong],
+            &[&witness1, &witness2],
+            &[&statement1, &statement2],
+        );
 
         // Verification should fail because the cross-terms don't match the commitment
-        let commitment_reader = CommitmentReader::new(&params);
-        let verifier = Verifier::new(&params);
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        let mut parsed_commitments = Vec::new();
+        let mut commitments = Vec::new();
         for _ in 0..num_polynomials {
-            let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
-                .unwrap();
-            parsed_commitments.push(parsed_commitment);
+            let parsed_commitment = params.receive_commitment(&mut verifier_state).unwrap();
+            commitments.push(parsed_commitment);
         }
 
-        let verify_result =
-            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        let verify_result = params.verify(
+            &mut verifier_state,
+            &[&commitments[0], &commitments[1]],
+            &[&statement1, &statement2],
+        );
         assert!(
             verify_result.is_err(),
             "Verifier should reject mismatched polynomial"
@@ -603,6 +588,10 @@ mod tests {
                 .collect();
             all_polynomials.push(witness_polys);
         }
+        let polynomial_refs = all_polynomials
+            .iter()
+            .flat_map(|ps| ps.iter())
+            .collect::<Vec<_>>();
 
         // Create statements - one per polynomial
         let mut statements = Vec::new();
@@ -630,6 +619,7 @@ mod tests {
                 statements.push(statement);
             }
         }
+        let statement_refs = statements.iter().collect::<Vec<_>>();
 
         // Set up domain separator
         let ds = DomainSeparator::protocol(&params)
@@ -638,35 +628,34 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Commit using commit_batch (stacks batch_size polynomials per witness)
-        let committer = CommitmentWriter::new(params.clone());
         let mut witnesses = Vec::new();
-
         for witness_polys in &all_polynomials {
-            let polys: Vec<_> = witness_polys.iter().map(|p| p.clone()).collect();
-            let witness = committer.commit_batch(&mut prover_state, polys);
+            let poly_refs: Vec<_> = witness_polys.iter().collect::<Vec<_>>();
+            let witness = params.commit(&mut prover_state, &poly_refs);
             witnesses.push(witness);
         }
+        let witness_refs = witnesses.iter().collect::<Vec<_>>();
 
         // Batch prove all witnesses together
-        let prover = Prover::new(params.clone());
-        let (_point, _evals) = prover.prove_batch(&mut prover_state, &statements, &witnesses);
+        let (_point, _evals) = params.prove(
+            &mut prover_state,
+            &polynomial_refs,
+            &witness_refs,
+            &statement_refs,
+        );
 
         // Verify
-        let commitment_reader = CommitmentReader::new(&params);
-        let verifier = Verifier::new(&params);
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        let mut parsed_commitments = Vec::new();
+        let mut commitments = Vec::new();
         for _ in 0..num_witnesses {
-            let parsed_commitment = commitment_reader
-                .parse_commitment(&mut verifier_state)
-                .unwrap();
-            parsed_commitments.push(parsed_commitment);
+            let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+            commitments.push(commitment);
         }
+        let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let verify_result =
-            verifier.verify_batch(&mut verifier_state, &parsed_commitments, &statements);
+        let verify_result = params.verify(&mut verifier_state, &commitment_refs, &statement_refs);
         assert!(
             verify_result.is_ok(),
             "Batch verification with batch_size={} failed: {:?}",
