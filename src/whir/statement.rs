@@ -306,7 +306,7 @@ impl<F: Field> Statement<F> {
     }
 
     pub fn prepend_constraints(&mut self, constraints: Vec<Constraint<F>>) {
-        self.constraints.splice(0..0, constraints.into_iter());
+        self.constraints.splice(0..0, constraints);
     }
 
     /// Inserts multiple constraints at the front of the system.

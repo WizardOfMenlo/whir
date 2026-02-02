@@ -353,7 +353,7 @@ mod tests {
         // Commit to each polynomial and generate witnesses
         let mut witnesses = Vec::new();
         for poly in &polynomials {
-            let witness = params.commit(&mut prover_state, &[&poly]);
+            let witness = params.commit(&mut prover_state, &[poly]);
             witnesses.push(witness);
         }
         let witness_refs = witnesses.iter().collect::<Vec<_>>();

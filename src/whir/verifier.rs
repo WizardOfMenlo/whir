@@ -110,8 +110,8 @@ impl<F: FftField> WhirConfig<F> {
             .iter()
             .map(|c| c.out_of_domain().num_points())
             .sum::<usize>();
-        for statement in statements.iter() {
-            for constraint in statement.constraints.iter() {
+        for statement in statements {
+            for constraint in &statement.constraints {
                 assert!(constraint_evals_matrix[index].is_none());
                 constraint_evals_matrix[index] = Some(constraint.sum);
                 index += 1;

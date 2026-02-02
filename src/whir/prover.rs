@@ -35,6 +35,7 @@ use crate::{
 };
 
 impl<F: FftField> WhirConfig<F> {
+    #[allow(clippy::too_many_lines)] // TODO
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -123,7 +124,7 @@ impl<F: FftField> WhirConfig<F> {
             .iter()
             .map(|w| w.out_of_domain().num_points())
             .sum::<usize>();
-        for statement in statements.iter() {
+        for statement in statements {
             for constraint in &statement.constraints {
                 assert!(constraint_evals_matrix[index].is_none());
                 constraint_evals_matrix[index] = Some(constraint.sum);
@@ -141,7 +142,7 @@ impl<F: FftField> WhirConfig<F> {
                 if cell.is_none() {
                     // TODO: Avoid lifting by evaluating directly through embedding.
                     let lifted = lifted.get_or_insert_with(|| polynomial.lift(self.embedding()));
-                    let eval = weights.evaluate(&lifted);
+                    let eval = weights.evaluate(lifted);
                     prover_state.prover_message(&eval);
                     *cell = Some(eval);
                 }
@@ -335,7 +336,7 @@ impl<F: FftField> WhirConfig<F> {
 
                 // Convert RS evaluation point to multivariate over extension
                 let weights = tensor_product(
-                    &batching_weights,
+                    batching_weights,
                     &round_state.folding_randomness.coeff_weights(true),
                 );
                 points.extend(in_domain.points(self.embedding(), num_variables));
@@ -483,7 +484,7 @@ impl<F: FftField> WhirConfig<F> {
 
         match &round_state.prev_commitment {
             RoundWitness::Initial { witnesses, .. } => {
-                for witness in witnesses.iter() {
+                for witness in *witnesses {
                     let in_domain = self.initial_committer.open(prover_state, &[witness]);
 
                     // The verifier will directly test these on the final polynomial.
