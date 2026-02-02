@@ -104,7 +104,7 @@ where
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        return self.prove_batch(prover_state, &[statement], &[witness]);
+        self.prove_batch(prover_state, &[statement], &[witness])
     }
 
     /// Proves that multiple commitments satisfy their respective constraints by batching them.
