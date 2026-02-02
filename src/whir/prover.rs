@@ -1,3 +1,5 @@
+use std::slice;
+
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
@@ -102,6 +104,8 @@ where
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        // return self.prove_batch(prover_state, &[statement], &[witness]);
+
         assert!(self.validate_parameters());
         assert!(self.validate_statement(&statement));
         assert!(self.validate_witness(&witness));
@@ -179,7 +183,7 @@ where
             folding_randomness,
             coefficients: polynomial,
             prev_commitment: RoundWitness::Initial {
-                witness: witness.witness,
+                witnesses: slice::from_ref(&witness.witness),
                 batching_weights,
             },
             randomness_vec,
@@ -306,7 +310,6 @@ where
             }
             polynomial_offset += witness.witness.out_of_domain().num_columns() * num_constraints;
         }
-        dbg!(&constraint_evals_matrix);
         // Statement
         let mut index = witnesses
             .iter()
@@ -406,146 +409,26 @@ where
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         randomness_vec.resize(self.config.mv_parameters.num_variables, F::ZERO);
 
-        // Round 0: Batch-specific handling
-        //
-        // Unlike regular proving, Round 0 for batch proving:
-        // 1. Folds and commits the batched polynomial (for Round 1+)
-        // 2. Queries all N original witness Merkle trees (not the batched tree)
-        // 3. RLC-combines the N query answers before feeding them to sumcheck
-        //
-        // This allows the verifier to check consistency with the N original commitments
-        // while the rest of the protocol operates on the single batched polynomial.
-        let round_params = &self.config.round_configs[0];
-        let num_variables_after_fold = num_variables - self.config.folding_factor.at_round(0);
-        let batched_folded_poly = batched_poly.fold(&folding_randomness);
-
-        // Build Merkle tree for the batched folded polynomial
-        let new_domain = self.config.starting_domain.scale(2); // TODO: Why 2?
-        let expansion = new_domain.size() / batched_folded_poly.num_coeffs();
-        let folding_factor_next = self.config.folding_factor.at_round(1);
-        let batched_evals = self.config.reed_solomon.interleaved_encode(
-            batched_folded_poly.coeffs(),
-            expansion,
-            folding_factor_next,
-        );
-
-        let matrix_witness = round_params
-            .matrix_committer
-            .commit(prover_state, &batched_evals);
-
-        // Handle OOD (Out-Of-Domain) samples
-        let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
-            round_params.ood_samples,
-            num_variables_after_fold,
-            |point| batched_folded_poly.evaluate(point),
-        );
-
-        // PoW
-        round_params.pow.prove(prover_state);
-
-        let witness_refs = witnesses.iter().map(|w| &w.witness).collect::<Vec<_>>();
-        let in_domain = self
-            .config
-            .initial_committer
-            .open(prover_state, &witness_refs);
-        // We are guaranteed that all evaluations have the same points, so take from the first.
-        let in_domain_points = in_domain[0].points(embedding, num_variables_after_fold);
-
-        // Combine all the in-domain answers.
-        let mut rlc_answers = vec![F::ZERO; in_domain_points.len()];
-        let weights = tensor_product(&batching_weights, &folding_randomness.coeff_weights(true));
-        for (evals, weights) in zip_strict(
-            in_domain.iter(),
-            weights.chunks_exact(initial_committer.num_cols()),
-        ) {
-            for (acc, row) in zip_strict(
-                &mut rlc_answers,
-                evals.matrix.chunks_exact(initial_committer.num_cols()),
-            ) {
-                *acc += mixed_dot(embedding, weights, row);
-            }
-        }
-
-        // Compute STIR challenges and evaluations
-        let stir_challenges: Vec<MultilinearPoint<F>> = ood_points
+        let irs_witnesses_owned = witnesses
             .iter()
-            .copied()
-            .map(|univariate| {
-                MultilinearPoint::expand_from_univariate(univariate, num_variables_after_fold)
-            })
-            .chain(in_domain_points)
-            .collect();
-
-        let mut stir_evaluations = ood_answers;
-        stir_evaluations.extend(rlc_answers);
-
-        // Randomness for combination
-        let combination_randomness = geometric_challenge(prover_state, stir_challenges.len());
-
-        // Update sumcheck with STIR constraints
-        let mut sumcheck_prover = sumcheck_prover.map_or_else(
-            || {
-                let mut statement = Statement::new(batched_folded_poly.num_variables());
-                for (point, eval) in stir_challenges.iter().zip(stir_evaluations.iter()) {
-                    statement.add_constraint(Weights::evaluation(point.clone()), *eval);
-                }
-                SumcheckSingle::new(
-                    batched_folded_poly.clone(),
-                    &statement,
-                    combination_randomness[1],
-                )
-            },
-            |mut sumcheck| {
-                sumcheck.add_new_equality(
-                    &stir_challenges,
-                    &stir_evaluations,
-                    &combination_randomness,
-                );
-                sumcheck
-            },
-        );
-
-        let sumcheck_config = sumcheck::Config {
-            field: Type::<F>::new(),
-            initial_size: 1 << sumcheck_prover.num_variables(),
-            rounds: vec![
-                sumcheck::RoundConfig {
-                    pow: round_params.folding_pow,
-                };
-                folding_factor_next
-            ],
-        };
-        let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
-
-        let start_idx = self.config.folding_factor.at_round(0);
-        let dst_randomness = &mut randomness_vec[start_idx..][..folding_randomness.0.len()];
-        for (dst, src) in dst_randomness
-            .iter_mut()
-            .zip(folding_randomness.0.iter().rev())
-        {
-            *dst = *src;
-        }
-
-        // Transition to Round 1: From here on, the protocol operates on the single batched
-        // polynomial. All subsequent rounds use standard WHIR proving with one Merkle tree.
+            .map(|w| w.witness.clone())
+            .collect::<Vec<_>>();
         let mut round_state = RoundState {
-            domain: new_domain,
-            round: 1,
-            sumcheck_prover: Some(sumcheck_prover),
+            domain: self.config.starting_domain.clone(),
+            round: 0,
+            sumcheck_prover,
             folding_randomness,
-            coefficients: batched_folded_poly,
-            prev_commitment: RoundWitness::Round {
-                prev_matrix: batched_evals,
-                prev_matrix_committer: round_params.matrix_committer.clone(),
-                prev_matrix_witness: matrix_witness,
+            coefficients: batched_poly,
+            prev_commitment: RoundWitness::Initial {
+                witnesses: irs_witnesses_owned.as_slice(),
+                batching_weights,
             },
             randomness_vec,
             statement: combined_statement,
         };
 
-        // Execute standard WHIR rounds 1 through n on the batched polynomial
-        for _round in 1..=self.config.n_rounds() {
+        // Execute standard WHIR rounds on the batched polynomial
+        for _round in 0..=self.config.n_rounds() {
             self.round(prover_state, &mut round_state);
         }
 
@@ -627,11 +510,12 @@ where
         // set of constraints for the next round.
         let (stir_challenges, stir_evaluations) = match &round_state.prev_commitment {
             RoundWitness::Initial {
-                witness,
+                witnesses,
                 batching_weights,
             } => {
+                let as_refs = witnesses.iter().map(|w| w).collect::<Vec<_>>();
                 let config = &self.config.initial_committer;
-                let in_domain = config.open(prover_state, &[witness]).pop().unwrap();
+                let in_domain = config.open(prover_state, &as_refs);
 
                 // Convert oods_points
                 let mut points = ood_points
@@ -790,17 +674,15 @@ where
         self.config.final_pow.prove(prover_state);
 
         match &round_state.prev_commitment {
-            RoundWitness::Initial { witness, .. } => {
-                let in_domain = self
-                    .config
-                    .initial_committer
-                    .open(prover_state, &[witness])
-                    .pop()
-                    .unwrap();
+            RoundWitness::Initial { witnesses, .. } => {
+                for witness in witnesses.iter() {
+                    let in_domain = self.config.initial_committer.open(prover_state, &[witness]);
 
-                // The verifier will directly test these on the final polynomial
-                // (which it has in full) without our help.
-                drop(in_domain);
+                    // The verifier will directly test these on the final polynomial.
+                    // It has the final polynomial in full, so it needs no furhter help
+                    // from us.
+                    drop(in_domain);
+                }
             }
             RoundWitness::Round {
                 prev_matrix,
@@ -912,9 +794,9 @@ where
     }
 }
 
-pub(crate) enum RoundWitness<F: FftField> {
+pub(crate) enum RoundWitness<'a, F: FftField> {
     Initial {
-        witness: irs_commit::Witness<F::BasePrimeField, F>,
+        witnesses: &'a [irs_commit::Witness<F::BasePrimeField, F>],
         batching_weights: Vec<F>,
     },
     Round {
@@ -930,7 +812,7 @@ pub(crate) enum RoundWitness<F: FftField> {
 /// responds to verifier queries, and updates internal randomness for the next step.
 /// This struct tracks all data needed to perform that round, and passes it forward
 /// across recursive iterations.
-pub(crate) struct RoundState<F>
+pub(crate) struct RoundState<'a, F>
 where
     F: FftField,
 {
@@ -962,7 +844,7 @@ where
     /// Matrix commitment to the polynomial evaluations from the previous round.
     ///
     /// Used to prove query openings from the folded function.
-    pub(crate) prev_commitment: RoundWitness<F>,
+    pub(crate) prev_commitment: RoundWitness<'a, F>,
 
     /// Flat list of evaluations corresponding to `prev_merkle` leaves.
     ///

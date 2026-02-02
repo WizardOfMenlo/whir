@@ -49,6 +49,7 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::{TypeInfo, Typed},
+    utils::zip_strict,
     verify,
     whir::statement::{Constraint, Weights},
 };
@@ -256,13 +257,14 @@ where
     /// Constraints are returned as a pair of evaluation point and values
     /// for each row.
     ///
-    /// When there are multiple openings, they will have the same evaluation points.
+    /// When there are multiple openings, the evaluation matrices will
+    /// be horizontally concatenated.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         witnesses: &[&Witness<F, G>],
-    ) -> Vec<Evaluations<F>>
+    ) -> Evaluations<F>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -281,23 +283,32 @@ where
         // Get in-domain openings
         let (indices, points) = self.in_domain_challenges(prover_state);
 
-        // For each commitment, send the selected rows to the verifier.
-        let mut evaluations = Vec::with_capacity(witnesses.len());
+        // For each commitment, send the selected rows to the verifier
+        // and collect them in the evaluation matrix.
+        let stride = witnesses.len() * self.num_cols();
+        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut submatrix = Vec::with_capacity(indices.len() * self.num_cols());
+        let mut matrix_col_offset = 0;
         for witness in witnesses {
-            let mut submatrix = Vec::with_capacity(self.in_domain_samples * self.num_cols());
-            for &index in &indices {
-                let row = &witness.matrix[index * self.num_cols()..(index + 1) * self.num_cols()];
+            submatrix.clear();
+            for (point_index, &code_index) in indices.iter().enumerate() {
+                let row = &witness.matrix
+                    [code_index * self.num_cols()..(code_index + 1) * self.num_cols()];
                 submatrix.extend_from_slice(row);
+
+                let matrix_row = &mut matrix[point_index * stride..(point_index + 1) * stride];
+                matrix_row[matrix_col_offset..matrix_col_offset + self.num_cols()]
+                    .copy_from_slice(row);
             }
             prover_state.prover_hint_ark(&submatrix);
             self.matrix_commit
                 .open(prover_state, &witness.matrix_witness, &indices);
-            evaluations.push(Evaluations {
-                points: points.clone(),
-                matrix: submatrix,
-            });
+            dbg!(&submatrix);
+            matrix_col_offset += self.num_cols();
         }
-        evaluations
+        dbg!(&matrix);
+
+        Evaluations { points, matrix }
     }
 
     /// Verifies one or more openings and returns the in-domain evaluations.
@@ -308,7 +319,7 @@ where
         &self,
         verifier_state: &mut VerifierState<H>,
         commitments: &[&Commitment<G>],
-    ) -> VerificationResult<Vec<Evaluations<F>>>
+    ) -> VerificationResult<Evaluations<F>>
     where
         H: DuplexSpongeInterface,
         u8: Decoding<[H::U]>,
@@ -327,7 +338,9 @@ where
 
         // Receive (as a hint) a matrix of all the columns of all the commitments
         // corresponding to the in-domain opening rows.
-        let mut evaluations = Vec::with_capacity(commitments.len());
+        let stride = commitments.len() * self.num_cols();
+        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut matrix_col_offset = 0;
         for commitment in commitments {
             let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
             self.matrix_commit.verify(
@@ -336,12 +349,19 @@ where
                 &indices,
                 &submatrix,
             )?;
-            evaluations.push(Evaluations {
-                points: points.clone(),
-                matrix: submatrix,
-            });
+            // Horizontally concatenate matrices.
+            if stride != 0 && self.num_cols() != 0 {
+                for (dst, src) in zip_strict(
+                    matrix.chunks_exact_mut(stride),
+                    submatrix.chunks_exact(self.num_cols()),
+                ) {
+                    dst[matrix_col_offset..matrix_col_offset + self.num_cols()]
+                        .copy_from_slice(src);
+                }
+            }
+            matrix_col_offset += self.num_cols();
         }
-        Ok(evaluations)
+        Ok(Evaluations { points, matrix })
     }
 
     fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<F>)
@@ -614,47 +634,44 @@ mod tests {
             }
         }
         let in_domain_evals = config.open(&mut prover_state, &[&witness]);
-        assert!(in_domain_evals
-            .windows(2)
-            .all(|w| w[0].points == w[1].points));
-        for in_domain_evals in &in_domain_evals {
-            if config.deduplicate_in_domain {
-                // Sorting is over index order, not points
-                assert!(in_domain_evals.points.len() <= config.in_domain_samples);
-                assert!({
-                    let mut unique = in_domain_evals.points.clone();
-                    unique.sort_unstable();
-                    unique.dedup();
-                    unique.len() == in_domain_evals.points.len()
+        if config.deduplicate_in_domain {
+            // Sorting is over index order, not points
+            assert!(in_domain_evals.points.len() <= config.in_domain_samples);
+            assert!({
+                let mut unique = in_domain_evals.points.clone();
+                unique.sort_unstable();
+                unique.dedup();
+                unique.len() == in_domain_evals.points.len()
+            });
+        } else {
+            assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
+        }
+        assert_eq!(
+            in_domain_evals.matrix.len(),
+            in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
+        );
+        dbg!(&in_domain_evals);
+        if config.num_polynomials > 0 {
+            for (point, evals) in zip_strict(
+                &in_domain_evals.points,
+                in_domain_evals
+                    .matrix
+                    .chunks_exact(config.num_polynomials * config.interleaving_depth),
+            ) {
+                let expected_iter = polynomials.iter().flat_map(|poly| {
+                    (0..config.interleaving_depth).map(|j| {
+                        // coefficients at positions j, j+d, j+2d, ...
+                        let coeffs: Vec<_> = poly
+                            .iter()
+                            .copied()
+                            .skip(j)
+                            .step_by(config.interleaving_depth)
+                            .collect();
+                        univariate_evaluate(&coeffs, *point)
+                    })
                 });
-            } else {
-                assert_eq!(in_domain_evals.points.len(), config.in_domain_samples);
-            }
-            assert_eq!(
-                in_domain_evals.matrix.len(),
-                in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
-            );
-            if config.num_polynomials > 0 {
-                for (point, evals) in in_domain_evals.points.iter().zip(
-                    in_domain_evals
-                        .matrix
-                        .chunks_exact(config.num_polynomials * config.interleaving_depth),
-                ) {
-                    let expected_iter = polynomials.iter().flat_map(|poly| {
-                        (0..config.interleaving_depth).map(|j| {
-                            // coefficients at positions j, j+d, j+2d, ...
-                            let coeffs: Vec<_> = poly
-                                .iter()
-                                .copied()
-                                .skip(j)
-                                .step_by(config.interleaving_depth)
-                                .collect();
-                            univariate_evaluate(&coeffs, *point)
-                        })
-                    });
-                    for (expected, got) in expected_iter.zip(evals.iter()) {
-                        assert_eq!(expected, *got);
-                    }
+                for (expected, got) in expected_iter.zip(evals.iter()) {
+                    assert_eq!(expected, *got);
                 }
             }
         }

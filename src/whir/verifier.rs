@@ -160,10 +160,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 } => {
                     // Open the previous commitment
                     let comitter = &self.config.initial_committer;
-                    let in_domain = comitter
-                        .verify(verifier_state, &[&commitment])?
-                        .pop()
-                        .unwrap();
+                    let in_domain = comitter.verify(verifier_state, &[&commitment])?;
 
                     let weights = tensor_product(
                         &batching_weights,
@@ -233,10 +230,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 let config = &self.config.initial_committer;
                 let num_variables = self.config.mv_parameters.num_variables
                     - self.config.folding_factor.at_round(0);
-                let in_domain = config
-                    .verify(verifier_state, &[&commitment])?
-                    .pop()
-                    .unwrap();
+                let in_domain = config.verify(verifier_state, &[&commitment])?;
 
                 let weights = tensor_product(
                     &batching_weights,
@@ -504,7 +498,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .config
             .initial_committer
             .verify(verifier_state, irs_commitment_refs.as_slice())?;
-        let points = in_domain[0].points.clone();
+        let points = in_domain.points.clone();
 
         // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let mut rlc_answers = vec![F::ZERO; points.len()];
@@ -512,18 +506,13 @@ impl<'a, F: FftField> Verifier<'a, F> {
             &batching_weights,
             &round_folding_randomness[0].coeff_weights(true),
         );
-        for (evals, weights) in zip_strict(
-            &in_domain,
-            weights.chunks_exact(self.config.initial_committer.num_cols()),
+        for (acc, row) in zip_strict(
+            &mut rlc_answers,
+            in_domain
+                .matrix
+                .chunks_exact(self.config.initial_committer.num_cols()),
         ) {
-            for (acc, row) in zip_strict(
-                &mut rlc_answers,
-                evals
-                    .matrix
-                    .chunks_exact(self.config.initial_committer.num_cols()),
-            ) {
-                *acc += mixed_dot(embedding, weights, row);
-            }
+            *acc += mixed_dot(embedding, &weights, row);
         }
 
         let stir_constraints: Vec<Constraint<F>> =
