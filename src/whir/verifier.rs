@@ -506,12 +506,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             &batching_weights,
             &round_folding_randomness[0].coeff_weights(true),
         );
-        for (acc, row) in zip_strict(
-            &mut rlc_answers,
-            in_domain
-                .matrix
-                .chunks_exact(self.config.initial_committer.num_cols()),
-        ) {
+        for (acc, row) in zip_strict(&mut rlc_answers, in_domain.rows()) {
             *acc += mixed_dot(embedding, &weights, row);
         }
 
