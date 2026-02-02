@@ -284,21 +284,64 @@ where
                 .iter()
                 .flat_map(|s| s.constraints.iter().map(|c| c.weights.clone())),
         );
-        let num_constrants = all_constraint_weights.len();
+        let num_constraints = all_constraint_weights.len();
 
-        // Evaluate EVERY polynomial at EVERY constraint point
+        // Complete evaluations of EVERY polynomial at EVERY constraint point
         // This creates an N×M matrix where N = #polynomials, M = #constraints
         // We commit this matrix to the script.
-        // TODO: This seems unsound? We should use the existing statement values on the diagonal.
-        let mut constraint_evals_matrix = Vec::with_capacity(polynomials.len() * num_constrants);
-        for polynomial in &polynomials {
+        let mut constraint_evals_matrix: Vec<Option<F>> =
+            vec![None; polynomials.len() * num_constraints];
+        // OODs Points
+        let mut constraint_offset = 0;
+        let mut polynomial_offset = 0;
+        for witness in witnesses {
+            for row in witness.witness.out_of_domain().rows() {
+                let mut index = polynomial_offset + constraint_offset;
+                for value in row {
+                    assert!(constraint_evals_matrix[index].is_none());
+                    constraint_evals_matrix[index] = Some(*value);
+                    index += num_constraints;
+                }
+                constraint_offset += 1;
+            }
+            polynomial_offset += witness.witness.out_of_domain().num_columns() * num_constraints;
+        }
+        dbg!(&constraint_evals_matrix);
+        // Statement
+        let mut index = witnesses
+            .iter()
+            .map(|w| w.witness.out_of_domain().num_points())
+            .sum::<usize>();
+        for statement in statements.iter() {
+            for constraint in &statement.constraints {
+                assert!(constraint_evals_matrix[index].is_none());
+                constraint_evals_matrix[index] = Some(constraint.sum);
+                index += 1; // To next column
+            }
+            index += num_constraints; // To next row, same column
+        }
+        // Completion
+        for (polynomial, row) in zip_strict(
+            &polynomials,
+            constraint_evals_matrix.chunks_exact_mut(all_constraint_weights.len()),
+        ) {
+            // TODO: Avoid lifting.
             let polynomial = polynomial.lift(embedding);
-            for weights in &all_constraint_weights {
-                let eval = weights.evaluate(&polynomial);
-                prover_state.prover_message(&eval);
-                constraint_evals_matrix.push(eval);
+            for (weights, cell) in zip_strict(&all_constraint_weights, row) {
+                if let Some(value) = cell {
+                    // TODO: Expensive check, do only during test
+                    assert_eq!(weights.evaluate(&polynomial), *value);
+                } else {
+                    let eval = weights.evaluate(&polynomial);
+                    prover_state.prover_message(&eval);
+                    *cell = Some(eval);
+                }
             }
         }
+        let constraint_evals_matrix: Vec<F> = constraint_evals_matrix
+            .into_iter()
+            .map(|e| e.unwrap())
+            .collect();
 
         // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
         let batching_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
@@ -320,7 +363,7 @@ where
             let mut combined_eval = F::ZERO;
             for (weight, poly_evals) in batching_weights
                 .iter()
-                .zip(constraint_evals_matrix.chunks_exact(num_constrants))
+                .zip(constraint_evals_matrix.chunks_exact(num_constraints))
             {
                 combined_eval += *weight * poly_evals[constraint_idx];
             }

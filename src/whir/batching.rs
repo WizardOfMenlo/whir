@@ -137,33 +137,35 @@ mod batching_tests {
 
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
-        let batched_witness =
-            committer.commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>());
+        let batched_witness = committer.commit_batch(&mut prover_state, poly_list.clone());
 
-        // Get the batched polynomial
-        let batched_poly = batched_witness.batched_poly();
+        // Create a statement for each polynomial
+        let mut statements = Vec::new();
+        for poly in &poly_list {
+            // Initialize a statement with no constraints yet
+            let mut statement = Statement::new(num_variables);
 
-        // Initialize a statement with no constraints yet
-        let mut statement = Statement::new(num_variables);
+            // For each random point, evaluate the polynomial and create a constraint
+            for point in &points {
+                let eval = poly.evaluate(point);
+                let weights = Weights::evaluation(point.clone());
+                statement.add_constraint(weights, eval);
+            }
 
-        // For each random point, evaluate the polynomial and create a constraint
-        for point in &points {
-            let eval = batched_poly.evaluate(point);
-            let weights = Weights::evaluation(point.clone());
-            statement.add_constraint(weights, eval);
+            // Define weights for linear combination
+            let linear_claim_weight = Weights::linear(weight_poly.clone().into());
+
+            // Convert polynomial to extension field representation
+            let poly = EvaluationsList::from(poly.clone().to_extension());
+
+            // Compute the weighted sum of the polynomial (for sumcheck)
+            let sum = linear_claim_weight.weighted_sum(&poly);
+
+            // Add linear constraint to the statement
+            statement.add_constraint(linear_claim_weight, sum);
+
+            statements.push(statement);
         }
-
-        // Define weights for linear combination
-        let linear_claim_weight = Weights::linear(weight_poly.into());
-
-        // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(batched_poly.clone().to_extension());
-
-        // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.weighted_sum(&poly);
-
-        // Add linear constraint to the statement
-        statement.add_constraint(linear_claim_weight, sum);
 
         // Instantiate the prover with the given parameters
         let prover = Prover::new(params.clone());
@@ -171,7 +173,7 @@ mod batching_tests {
         // Extract verifier-side version of the statement (only public data)
 
         // Generate a STARK proof for the given statement and witness
-        prover.prove(&mut prover_state, statement.clone(), batched_witness);
+        prover.prove_batch(&mut prover_state, statements.as_slice(), &[batched_witness]);
 
         // Create a verifier with matching parameters
         let verifier = Verifier::new(&params);
@@ -189,7 +191,11 @@ mod batching_tests {
 
         // Verify that the generated proof satisfies the statement
         assert!(verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+            .verify_batch(
+                &mut verifier_state,
+                &[parsed_commitment],
+                statements.as_slice()
+            )
             .is_ok());
     }
 

@@ -108,6 +108,9 @@ impl<F: Field> Config<F> {
 
         let mut res = Vec::with_capacity(self.num_rounds());
         for round in &self.rounds {
+            #[cfg(test)]
+            prover_state.prover_message(&instance.sum);
+
             // Send sumcheck polynomial
             let sumcheck_poly = instance.compute_sumcheck_polynomial();
             for eval in sumcheck_poly.evaluations() {
@@ -144,6 +147,9 @@ impl<F: Field> Config<F> {
 
         let mut res = Vec::with_capacity(self.num_rounds());
         for round in &self.rounds {
+            #[cfg(test)]
+            assert_eq!(*sum, verifier_state.prover_message::<F>()?);
+
             // Receive sumcheck polynomial
             let evals = verifier_state.prover_messages_vec(3)?;
             let sumcheck_poly = SumcheckPolynomial::new(evals, 1);

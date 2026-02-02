@@ -402,6 +402,11 @@ impl<F: Field> Evaluations<F> {
             .unwrap_or_default()
     }
 
+    pub fn rows(&self) -> impl Iterator<Item = &[F]> {
+        let cols = self.num_columns();
+        (0..self.num_points()).map(move |i| &self.matrix[i * cols..(i + 1) * cols])
+    }
+
     // TODO: points, weights and constraints are redudant.
 
     pub fn points<M>(&self, embedding: &M, num_variables: usize) -> Vec<MultilinearPoint<M::Target>>
@@ -430,12 +435,8 @@ impl<F: Field> Evaluations<F> {
     where
         M: Embedding<Source = F>,
     {
-        if self.matrix.is_empty() {
-            return vec![M::Target::ZERO; self.num_points()];
-        }
         assert_eq!(weights.len(), self.num_columns());
-        self.matrix
-            .chunks_exact(self.num_columns())
+        self.rows()
             .map(|row| mixed_dot(embedding, weights, row))
             .collect()
     }

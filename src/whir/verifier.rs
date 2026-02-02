@@ -350,19 +350,55 @@ impl<'a, F: FftField> Verifier<'a, F> {
             }
         }
 
-        // Read the N×M evaluation matrix from transcript
+        // Construct the N×M evaluation matrix.
         let num_polynomials =
             parsed_commitments.len() * self.config.initial_committer.num_polynomials;
         let num_constraints = all_constraints_info.len();
-        let mut constraint_evals_matrix = Vec::with_capacity(num_polynomials);
-
-        for _ in 0..num_polynomials {
-            let mut poly_evals = vec![F::ZERO; num_constraints];
-            for eval in &mut poly_evals {
-                *eval = verifier_state.prover_message()?;
+        let mut constraint_evals_matrix = vec![None; num_polynomials * num_constraints];
+        // Add the claimed OODs values
+        let mut polynomial_offset = 0;
+        let mut constraint_offset = 0;
+        for commitment in parsed_commitments.iter() {
+            for row in commitment.commitment.out_of_domain().rows() {
+                let mut index = polynomial_offset + constraint_offset;
+                for value in row {
+                    assert!(constraint_evals_matrix[index].is_none());
+                    constraint_evals_matrix[index] = Some(*value);
+                    index += num_constraints;
+                }
+                constraint_offset += 1;
             }
-            constraint_evals_matrix.push(poly_evals);
+            polynomial_offset +=
+                commitment.commitment.out_of_domain().num_columns() * num_constraints;
         }
+        // Add the claimed statement values
+        let mut index = parsed_commitments
+            .iter()
+            .map(|c| c.commitment.out_of_domain().num_points())
+            .sum::<usize>();
+        for statement in statements.iter() {
+            for constraint in statement.constraints.iter() {
+                assert!(constraint_evals_matrix[index].is_none());
+                constraint_evals_matrix[index] = Some(constraint.sum);
+                index += 1;
+            }
+            index += num_constraints;
+        }
+        // Complete using prover claimed values
+        for cell in &mut constraint_evals_matrix {
+            if cell.is_none() {
+                *cell = Some(verifier_state.prover_message()?);
+            }
+        }
+        let constraint_evals_matrix: Vec<F> = constraint_evals_matrix
+            .into_iter()
+            .map(|e| e.unwrap())
+            .collect();
+        dbg!(&constraint_evals_matrix);
+        // Reinterpret as rows for easier indexing: rows = num_polynomials, cols = num_constraints
+        let constraint_evals_matrix: Vec<&[F]> = constraint_evals_matrix
+            .chunks_exact(num_constraints)
+            .collect();
 
         // Step 2: Sample batching randomness γ (cryptographically bound to matrix)
         let batching_weights = geometric_challenge(verifier_state, num_polynomials);
@@ -380,9 +416,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 all_constraints_info.into_iter().enumerate()
             {
                 let mut combined_eval = F::ZERO;
-                for (weight, poly_evals) in zip_strict(&batching_weights, &constraint_evals_matrix)
-                {
-                    combined_eval += *weight * poly_evals[constraint_idx];
+                for (row, weight) in batching_weights.iter().enumerate() {
+                    combined_eval += *weight * constraint_evals_matrix[row][constraint_idx];
                 }
 
                 all_constraints.push(Constraint {

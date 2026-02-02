@@ -1,4 +1,4 @@
-// pub mod batching;
+pub mod batching;
 pub mod committer;
 pub mod parameters;
 pub mod prover;
@@ -344,6 +344,8 @@ mod tests {
             let sum = linear_claim_weight.weighted_sum(&poly_evals);
             statement.add_constraint(linear_claim_weight, sum);
 
+            assert!(statement.verify(poly));
+
             statements.push(statement);
         }
 
@@ -391,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn test_whir_batch() {
+    fn test_whir_batch_1() {
         // Test with different configurations
         let folding_factors = [1, 2, 3, 4];
         let num_polynomials = [2, 3, 4];
