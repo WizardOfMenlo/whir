@@ -329,9 +329,13 @@ where
     #[cfg(test)]
     #[track_caller]
     fn pop_pattern(&mut self, interaction: &Interaction) {
+        eprintln!("Verifier: {interaction:?}");
         assert!(!self.pattern.is_empty());
         let (expected, tail) = self.pattern.split_first().unwrap();
-        assert_eq!(interaction, expected);
+        assert_eq!(
+            interaction, expected,
+            "Transcript error: Expected interaction {expected:?} got {interaction:?}"
+        );
         self.pattern = tail;
     }
 }

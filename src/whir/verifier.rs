@@ -506,6 +506,7 @@ impl<'a, F: FftField> Verifier<'a, F> {
             .verify(verifier_state, irs_commitment_refs.as_slice())?;
         let points = in_domain[0].points.clone();
 
+        // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
         let mut rlc_answers = vec![F::ZERO; points.len()];
         let weights = tensor_product(
             &batching_weights,
@@ -524,10 +525,6 @@ impl<'a, F: FftField> Verifier<'a, F> {
                 *acc += mixed_dot(embedding, weights, row);
             }
         }
-
-        // RLC-combine the N query answers: combined[j] = Σᵢ γⁱ·answers[i][j]
-        let fold_size = 1 << round_params.folding_factor;
-        let leaf_size = fold_size * self.config.batch_size;
 
         let stir_constraints: Vec<Constraint<F>> =
             zip_strict(points.iter().map(|p| embedding.map(*p)), &rlc_answers)
@@ -584,6 +581,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
                     });
             let new_commitment = matrix_commitment;
 
+            round_params.pow.verify(verifier_state)?;
+
             let stir_constraints = self.verify_stir_challenges(
                 round_index,
                 verifier_state,
@@ -625,6 +624,8 @@ impl<'a, F: FftField> Verifier<'a, F> {
             *coeff = verifier_state.prover_message()?;
         }
         let final_coefficients = CoefficientList::new(final_coefficients);
+
+        self.config.final_pow.verify(verifier_state)?;
 
         let stir_constraints = self.verify_stir_challenges(
             self.config.n_rounds(),
