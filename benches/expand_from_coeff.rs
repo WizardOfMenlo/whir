@@ -31,7 +31,11 @@ fn interleaved_rs_encode(bencher: Bencher, case: &(u32, usize, usize)) {
             (coeffs, expansion, coset_sz)
         })
         .bench_values(|(coeffs, expansion, coset_sz)| {
-            black_box(ntt::interleaved_rs_encode(&coeffs, expansion, coset_sz))
+            black_box(ntt::interleaved_rs_encode(
+                &coeffs,
+                1 << expansion,
+                1 << coset_sz,
+            ))
         });
 }
 
