@@ -5,6 +5,7 @@
 
 pub mod codecs;
 mod engines;
+mod mock_sponge;
 mod protocol_id;
 
 #[cfg(debug_assertions)]
@@ -21,6 +22,8 @@ pub use spongefish::{
     VerificationError, VerificationResult,
 };
 
+#[cfg(test)]
+pub use self::mock_sponge::MockSponge;
 pub use self::{
     engines::Engines,
     protocol_id::{Protocol, ProtocolId, NONE},

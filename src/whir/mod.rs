@@ -3,7 +3,6 @@ mod committer;
 pub mod config;
 pub mod prover;
 pub mod statement;
-pub mod utils;
 pub mod verifier;
 
 pub use committer::{Commitment, Witness};
@@ -228,6 +227,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_fail() {
+        make_whir_things(
+            3,
+            FoldingFactor::Constant(2),
+            0,
+            SoundnessType::ConjectureList,
+            0,
+        );
     }
 
     #[test]

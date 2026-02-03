@@ -156,6 +156,10 @@ where
         ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
     }
 
+    pub fn rate(&self) -> f64 {
+        1.0 / self.expansion as f64
+    }
+
     /// Commit to one or more polynomials.
     ///
     /// Polynomials are given in coefficient form.
@@ -501,12 +505,18 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "IRSCommit(count: {}, size: {}, interleaving: {}, samples: ({}, {}))",
-            self.num_polynomials,
-            self.polynomial_size,
-            self.interleaving_depth,
-            self.in_domain_samples,
-            self.out_domain_samples
+            "size {}×{}/{}",
+            self.num_polynomials, self.polynomial_size, self.interleaving_depth,
+        )?;
+        if self.expansion.is_power_of_two() {
+            write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
+        } else {
+            write!(f, " rate 1/{}", self.expansion,)?;
+        }
+        write!(
+            f,
+            " samples {} in- {} out-domain",
+            self.in_domain_samples, self.out_domain_samples
         )
     }
 }

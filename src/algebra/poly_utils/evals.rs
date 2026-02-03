@@ -125,7 +125,7 @@ impl<F> Index<usize> for EvaluationsList<F> {
 }
 
 fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
-    debug_assert_eq!(evals.len(), 1 << point.len());
+    assert_eq!(evals.len(), 1 << point.len());
     match point {
         [] => evals[0],
         [x] => evals[0] + (evals[1] - evals[0]) * *x,
