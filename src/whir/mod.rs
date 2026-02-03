@@ -482,7 +482,7 @@ mod tests {
         let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
         let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
 
-        // Create valid statements for poly1 and poly2
+        // Create valid statements for poly1 and poly_wrong
         let mut statement1 = Statement::new(num_variables);
         let point1 = MultilinearPoint::rand(&mut rng, num_variables);
         let eval1 = poly1.evaluate_at_extension(&point1);
@@ -490,7 +490,7 @@ mod tests {
 
         let mut statement2 = Statement::new(num_variables);
         let point2 = MultilinearPoint::rand(&mut rng, num_variables);
-        let eval2 = poly2.evaluate_at_extension(&point2);
+        let eval2 = poly_wrong.evaluate_at_extension(&point2);
         statement2.add_constraint(Weights::evaluation(point2), eval2);
 
         // Commit to the correct polynomials
