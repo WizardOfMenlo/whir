@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     algebra::{
+        embedding,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -26,7 +27,7 @@ pub(crate) enum RoundCommitment<'a, F: FftField> {
         batching_weights: Vec<F>,
     },
     Round {
-        matrix_commitment: matrix_commit::Commitment,
+        commitment: irs_commit::Commitment<F>,
     },
 }
 
@@ -196,22 +197,15 @@ impl<F: FftField> WhirConfig<F> {
         for round_index in 0..self.n_rounds() {
             let round_config = &self.round_configs[round_index];
 
-            let matrix_commitment = round_config
-                .matrix_committer
+            let commitment = round_config
+                .irs_committer
                 .receive_commitment(verifier_state)?;
-            let ood_points: Vec<F> = verifier_state.verifier_message_vec(round_config.ood_samples);
-            let ood_answers: Vec<F> = (0..round_config.ood_samples)
-                .map(|_| verifier_state.prover_message::<F>())
-                .collect::<Result<Vec<_>, _>>()?;
-            let oods_constraints =
-                ood_points
-                    .iter()
-                    .zip(ood_answers.iter())
-                    .map(|(point, answer)| Constraint {
-                        weights: Weights::univariate(*point, round_config.num_variables),
-                        sum: *answer,
-                        defer_evaluation: false,
-                    });
+
+            let oods_constraints = commitment.out_of_domain().constraints(
+                &embedding::Identity::new(),
+                &[F::ONE],
+                round_config.num_variables,
+            );
 
             round_config.pow.verify(verifier_state)?;
 
@@ -227,15 +221,18 @@ impl<F: FftField> WhirConfig<F> {
                     );
                     in_domain.constraints(embedding, &weights, round_config.num_variables)
                 }
-                RoundCommitment::Round { matrix_commitment } => self.verify_stir_challenges(
-                    round_index,
-                    verifier_state,
-                    round_config,
-                    &self.round_configs[round_index - 1].matrix_committer,
-                    &matrix_commitment,
-                    F::ZERO,
-                    round_folding_randomness.last().unwrap(),
-                )?,
+                RoundCommitment::Round { commitment } => {
+                    let prev_round_config = &self.round_configs[round_index - 1];
+                    let in_domain = prev_round_config
+                        .irs_committer
+                        .verify(verifier_state, &[&commitment])?;
+                    let weights = round_folding_randomness.last().unwrap().coeff_weights(true);
+                    in_domain.constraints(
+                        &embedding::Identity::new(),
+                        &weights,
+                        round_config.num_variables,
+                    )
+                }
             };
 
             let constraints: Vec<Constraint<F>> = oods_constraints
@@ -251,7 +248,7 @@ impl<F: FftField> WhirConfig<F> {
                 .verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
-            prev_commitment = RoundCommitment::Round { matrix_commitment };
+            prev_commitment = RoundCommitment::Round { commitment };
         }
 
         // Final round (same as regular verify)
@@ -277,15 +274,18 @@ impl<F: FftField> WhirConfig<F> {
                 );
                 in_domain.constraints(embedding, &weights, num_variables)
             }
-            RoundCommitment::Round { matrix_commitment } => self.verify_stir_challenges(
-                self.n_rounds(),
-                verifier_state,
-                &self.final_round_config(),
-                &self.round_configs.last().unwrap().matrix_committer,
-                &matrix_commitment,
-                F::ZERO,
-                round_folding_randomness.last().unwrap(),
-            )?,
+            RoundCommitment::Round { commitment } => {
+                let prev_round_config = self.round_configs.last().unwrap();
+                let in_domain = prev_round_config
+                    .irs_committer
+                    .verify(verifier_state, &[&commitment])?;
+                let weights = round_folding_randomness.last().unwrap().coeff_weights(true);
+                in_domain.constraints(
+                    &embedding::Identity::new(),
+                    &weights,
+                    prev_round_config.num_variables - prev_round_config.sumcheck.num_rounds(),
+                )
+            }
         };
 
         verify!(in_domain_constraints
