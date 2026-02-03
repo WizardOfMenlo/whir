@@ -18,15 +18,13 @@ use crate::{
     },
     hash::Hash,
     protocols::{
-        geometric_challenge::geometric_challenge,
-        irs_commit, matrix_commit,
-        sumcheck::{self, SumcheckSingle},
+        geometric_challenge::geometric_challenge, irs_commit, matrix_commit,
+        sumcheck::SumcheckSingle,
     },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
     },
-    type_info::Type,
     utils::{expand_randomness, zip_strict},
     whir::{
         config::RoundConfig,
@@ -192,17 +190,7 @@ impl<F: FftField> WhirConfig<F> {
         let mut sumcheck_prover = None;
         let folding_randomness = if self.initial_statement {
             let combination_randomness_gen = prover_state.verifier_message();
-            let sumcheck_config = sumcheck::Config {
-                // TODO: Make part of parameters
-                field: Type::<F>::new(),
-                initial_size: batched_poly.num_coeffs(),
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: self.starting_folding_pow
-                    };
-                    self.folding_factor.at_round(0)
-                ],
-            };
+            let sumcheck_config = self.initial_sumcheck.as_ref().unwrap();
             let mut sumcheck = SumcheckSingle::new(
                 batched_poly.clone(),
                 &combined_statement,
@@ -287,7 +275,7 @@ impl<F: FftField> WhirConfig<F> {
             return self.final_round(prover_state, round_state, &folded_coefficients);
         }
 
-        let round_params = &self.round_configs[round_state.round];
+        let round_config = &self.round_configs[round_state.round];
 
         // Compute the folding factors for later use
         let folding_factor = self.folding_factor.at_round(round_state.round);
@@ -303,18 +291,18 @@ impl<F: FftField> WhirConfig<F> {
         );
 
         // Commit to the matrix of evaluations
-        let matrix_witness = round_params.matrix_committer.commit(prover_state, &evals);
+        let matrix_witness = round_config.matrix_committer.commit(prover_state, &evals);
 
         // Handle OOD (Out-Of-Domain) samples
         let (ood_points, ood_answers) = sample_ood_points(
             prover_state,
-            round_params.ood_samples,
+            round_config.ood_samples,
             num_variables,
             |point| folded_coefficients.evaluate(point),
         );
 
         // PoW
-        round_params.pow.prove(prover_state);
+        round_config.pow.prove(prover_state);
 
         // Open the previous round's commitment, producing in-domain evaluations.
         // We prepend these with the OOD points and answers to produce a new
@@ -355,7 +343,7 @@ impl<F: FftField> WhirConfig<F> {
                     prover_state,
                     round_state,
                     num_variables,
-                    round_params,
+                    round_config,
                     ood_points,
                 );
 
@@ -395,7 +383,7 @@ impl<F: FftField> WhirConfig<F> {
             expand_randomness(combination_randomness_gen, stir_challenges.len());
 
         #[allow(clippy::map_unwrap_or)]
-        let mut sumcheck_prover = round_state
+        let mut sumcheck_instance = round_state
             .sumcheck_prover
             .take()
             .map(|mut sumcheck_prover| {
@@ -420,17 +408,9 @@ impl<F: FftField> WhirConfig<F> {
                 )
             });
 
-        let sumcheck_config = sumcheck::Config {
-            field: Type::<F>::new(),
-            initial_size: 1 << sumcheck_prover.num_variables(),
-            rounds: vec![
-                sumcheck::RoundConfig {
-                    pow: round_params.folding_pow,
-                };
-                folding_factor_next
-            ],
-        };
-        let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck_prover);
+        let folding_randomness = round_config
+            .sumcheck
+            .prove(prover_state, &mut sumcheck_instance);
 
         let start_idx = self.folding_factor.total_number(round_state.round);
         let dst_randomness =
@@ -446,12 +426,12 @@ impl<F: FftField> WhirConfig<F> {
         // Update round state
         round_state.round += 1;
         round_state.domain = new_domain;
-        round_state.sumcheck_prover = Some(sumcheck_prover);
+        round_state.sumcheck_prover = Some(sumcheck_instance);
         round_state.folding_randomness = folding_randomness;
         round_state.coefficients = folded_coefficients;
         round_state.prev_commitment = RoundWitness::Round {
             prev_matrix: evals,
-            prev_matrix_committer: round_params.matrix_committer.clone(),
+            prev_matrix_committer: round_config.matrix_committer.clone(),
             prev_matrix_witness: matrix_witness,
         };
     }
@@ -538,19 +518,9 @@ impl<F: FftField> WhirConfig<F> {
             SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
         });
 
-        let sumcheck_config = sumcheck::Config {
-            field: Type::<F>::new(),
-            initial_size: 1 << final_folding_sumcheck.num_variables(),
-            rounds: vec![
-                sumcheck::RoundConfig {
-                    pow: self.final_folding_pow
-                };
-                self.final_sumcheck_rounds
-            ],
-        };
-
-        let final_folding_randomness =
-            sumcheck_config.prove(prover_state, &mut final_folding_sumcheck);
+        let final_folding_randomness = self
+            .final_sumcheck
+            .prove(prover_state, &mut final_folding_sumcheck);
 
         let start_idx = self.folding_factor.total_number(round_state.round);
         let rand_dst = &mut round_state.randomness_vec

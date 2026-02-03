@@ -50,6 +50,7 @@ where
     pub folding_factor: FoldingFactor,
     pub round_configs: Vec<RoundConfig<F>>,
 
+    pub final_sumcheck: sumcheck::Config<F>,
     pub final_queries: usize,
     pub final_pow: proof_of_work::Config,
     pub final_log_inv_rate: usize,
@@ -81,6 +82,7 @@ where
     F: FftField,
 {
     pub matrix_committer: matrix_commit::Config<F>,
+    pub sumcheck: sumcheck::Config<F>,
     pub pow: proof_of_work::Config,
     pub folding_pow: proof_of_work::Config,
     pub num_queries: usize,
@@ -234,6 +236,16 @@ where
 
             round_parameters.push(RoundConfig {
                 matrix_committer,
+                sumcheck: sumcheck::Config {
+                    field: Type::<F>::new(),
+                    initial_size: 1 << num_variables,
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: pow(folding_pow_bits),
+                        };
+                        next_folding_factor
+                    ],
+                },
                 pow: pow(pow_bits),
                 folding_pow: pow(folding_pow_bits),
                 num_queries,
@@ -298,8 +310,8 @@ where
             },
             initial_sumcheck: if whir_parameters.initial_statement {
                 Some(sumcheck::Config {
-                    field: Type::new(),
-                    initial_size: starting_domain.size(),
+                    field: Type::<F>::new(),
+                    initial_size: 1 << mv_parameters.num_variables,
                     rounds: vec![
                         sumcheck::RoundConfig {
                             pow: pow(starting_folding_pow_bits),
@@ -313,6 +325,16 @@ where
             starting_folding_pow: pow(starting_folding_pow_bits),
             folding_factor: whir_parameters.folding_factor,
             round_configs: round_parameters,
+            final_sumcheck: sumcheck::Config {
+                field: Type::<F>::new(),
+                initial_size: 1 << num_variables,
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: pow(final_folding_pow_bits),
+                    };
+                    final_sumcheck_rounds
+                ],
+            },
             final_queries,
             final_pow: pow(final_pow_bits),
             final_sumcheck_rounds,
@@ -577,19 +599,28 @@ where
         } else {
             // Derive final round config from last round, adjusted for next fold
             let last = self.round_configs.last().unwrap();
+            let folding_factor = self.folding_factor.at_round(self.n_rounds());
+            let num_variables = last.num_variables - folding_factor;
             RoundConfig {
                 matrix_committer: last.matrix_committer.clone(),
-                num_variables: last.num_variables - self.folding_factor.at_round(self.n_rounds()),
-                folding_factor: self.folding_factor.at_round(self.n_rounds()),
+                sumcheck: sumcheck::Config {
+                    field: Type::<F>::new(),
+                    initial_size: 1 << num_variables,
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: self.final_folding_pow,
+                        };
+                        folding_factor
+                    ],
+                },
+                num_variables,
+                folding_factor,
                 num_queries: self.final_queries,
                 pow: self.final_pow,
                 domain_size: last.domain_size / 2,
                 domain_gen: last.domain_gen.square(),
                 domain_gen_inv: last.domain_gen_inv.square(),
-                exp_domain_gen: last
-                    .domain_gen
-                    .square()
-                    .pow([1 << self.folding_factor.at_round(self.n_rounds())]),
+                exp_domain_gen: last.domain_gen.square().pow([1 << folding_factor]),
                 ood_samples: last.ood_samples,
                 folding_pow: self.final_folding_pow,
                 log_inv_rate: last.log_inv_rate,
@@ -997,6 +1028,16 @@ mod tests {
         config.round_configs = vec![
             RoundConfig {
                 matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+                sumcheck: sumcheck::Config {
+                    field: Type::<Field64>::new(),
+                    initial_size: 1 << 10,
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
+                        };
+                        2
+                    ],
+                },
                 pow: proof_of_work::Config::from_difficulty(Bits::new(17.0)),
                 folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
                 num_queries: 5,
@@ -1011,6 +1052,16 @@ mod tests {
             },
             RoundConfig {
                 matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+                sumcheck: sumcheck::Config {
+                    field: Type::<Field64>::new(),
+                    initial_size: 1 << 10,
+                    rounds: vec![
+                        sumcheck::RoundConfig {
+                            pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
+                        };
+                        2
+                    ],
+                },
                 pow: proof_of_work::Config::from_difficulty(Bits::new(18.0)),
                 folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
                 num_queries: 6,
@@ -1088,6 +1139,16 @@ mod tests {
         // One round's pow_bits exceeds limit
         config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            sumcheck: sumcheck::Config {
+                field: Type::<Field64>::new(),
+                initial_size: 1 << 10,
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
+                    };
+                    2
+                ],
+            },
             pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
             num_queries: 5,
@@ -1124,6 +1185,16 @@ mod tests {
         // One round's folding_pow_bits exceeds limit
         config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            sumcheck: sumcheck::Config {
+                field: Type::<Field64>::new(),
+                initial_size: 1 << 10,
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)),
+                    };
+                    2
+                ],
+            },
             pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
             num_queries: 5,
@@ -1159,6 +1230,16 @@ mod tests {
 
         config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            sumcheck: sumcheck::Config {
+                field: Type::<Field64>::new(),
+                initial_size: 1 << 10,
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
+                    };
+                    2
+                ],
+            },
             pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
             num_queries: 5,
@@ -1194,6 +1275,16 @@ mod tests {
 
         config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
+            sumcheck: sumcheck::Config {
+                field: Type::<Field64>::new(),
+                initial_size: 1 << 10,
+                rounds: vec![
+                    sumcheck::RoundConfig {
+                        pow: proof_of_work::Config::from_difficulty(Bits::new(26.0)),
+                    };
+                    2
+                ],
+            },
             pow: proof_of_work::Config::from_difficulty(Bits::new(25.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(26.0)),
             num_queries: 5,

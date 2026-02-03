@@ -10,12 +10,11 @@ use crate::{
         tensor_product,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit, matrix_commit, sumcheck},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, matrix_commit},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
     },
-    type_info::Type,
     utils::expand_randomness,
     verify,
     whir::{utils::get_challenge_stir_queries, Commitment},
@@ -170,17 +169,11 @@ impl<F: FftField> WhirConfig<F> {
             round_constraints.push((combination_randomness, all_constraints));
 
             // Initial sumcheck on the combined constraints
-            let config = sumcheck::Config {
-                field: Type::new(),
-                initial_size: 1 << self.folding_factor.at_round(0), // Not used
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: self.starting_folding_pow
-                    };
-                    self.folding_factor.at_round(0)
-                ],
-            };
-            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
+            let folding_randomness = self
+                .initial_sumcheck
+                .as_ref()
+                .unwrap()
+                .verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
         } else {
             for commitment in commitments {
@@ -201,13 +194,13 @@ impl<F: FftField> WhirConfig<F> {
         }
 
         for round_index in 0..self.n_rounds() {
-            let round_params = &self.round_configs[round_index];
+            let round_config = &self.round_configs[round_index];
 
-            let matrix_commitment = round_params
+            let matrix_commitment = round_config
                 .matrix_committer
                 .receive_commitment(verifier_state)?;
-            let ood_points: Vec<F> = verifier_state.verifier_message_vec(round_params.ood_samples);
-            let ood_answers: Vec<F> = (0..round_params.ood_samples)
+            let ood_points: Vec<F> = verifier_state.verifier_message_vec(round_config.ood_samples);
+            let ood_answers: Vec<F> = (0..round_config.ood_samples)
                 .map(|_| verifier_state.prover_message::<F>())
                 .collect::<Result<Vec<_>, _>>()?;
             let oods_constraints =
@@ -215,12 +208,12 @@ impl<F: FftField> WhirConfig<F> {
                     .iter()
                     .zip(ood_answers.iter())
                     .map(|(point, answer)| Constraint {
-                        weights: Weights::univariate(*point, round_params.num_variables),
+                        weights: Weights::univariate(*point, round_config.num_variables),
                         sum: *answer,
                         defer_evaluation: false,
                     });
 
-            round_params.pow.verify(verifier_state)?;
+            round_config.pow.verify(verifier_state)?;
 
             let in_domain_constraints = match prev_commitment {
                 RoundCommitment::Initial {
@@ -232,12 +225,12 @@ impl<F: FftField> WhirConfig<F> {
                         &batching_weights,
                         &round_folding_randomness.last().unwrap().coeff_weights(true),
                     );
-                    in_domain.constraints(embedding, &weights, round_params.num_variables)
+                    in_domain.constraints(embedding, &weights, round_config.num_variables)
                 }
                 RoundCommitment::Round { matrix_commitment } => self.verify_stir_challenges(
                     round_index,
                     verifier_state,
-                    round_params,
+                    round_config,
                     &self.round_configs[round_index - 1].matrix_committer,
                     &matrix_commitment,
                     F::ZERO,
@@ -253,17 +246,9 @@ impl<F: FftField> WhirConfig<F> {
                 self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
             round_constraints.push((combination_randomness.clone(), constraints));
 
-            let config = sumcheck::Config {
-                field: Type::new(),
-                initial_size: 1 << self.folding_factor.at_round(round_index + 1), // Not used
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: round_params.folding_pow
-                    };
-                    self.folding_factor.at_round(round_index + 1)
-                ],
-            };
-            let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
+            let folding_randomness = round_config
+                .sumcheck
+                .verify(verifier_state, &mut claimed_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             prev_commitment = RoundCommitment::Round { matrix_commitment };
@@ -307,17 +292,9 @@ impl<F: FftField> WhirConfig<F> {
             .iter()
             .all(|c| c.verify(&final_coefficients)));
 
-        let config = sumcheck::Config {
-            field: Type::new(),
-            initial_size: 1 << self.final_sumcheck_rounds, // Not used
-            rounds: vec![
-                sumcheck::RoundConfig {
-                    pow: self.final_folding_pow
-                };
-                self.final_sumcheck_rounds
-            ],
-        };
-        let final_sumcheck_randomness = config.verify(verifier_state, &mut claimed_sum)?;
+        let final_sumcheck_randomness = self
+            .final_sumcheck
+            .verify(verifier_state, &mut claimed_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
@@ -379,7 +356,7 @@ impl<F: FftField> WhirConfig<F> {
         &self,
         round_index: usize,
         verifier_state: &mut VerifierState<'_, H>,
-        params: &RoundConfig<F>,
+        round_config: &RoundConfig<F>,
         committer: &matrix_commit::Config<F>,
         matrix_commitment: &matrix_commit::Commitment,
         batching_randomness: F,
@@ -395,9 +372,9 @@ impl<F: FftField> WhirConfig<F> {
     {
         let stir_challenges_indexes = get_challenge_stir_queries(
             verifier_state,
-            params.domain_size,
-            params.folding_factor,
-            params.num_queries,
+            round_config.domain_size,
+            round_config.folding_factor,
+            round_config.num_queries,
         );
 
         // Always open against the single batched commitment
@@ -411,7 +388,7 @@ impl<F: FftField> WhirConfig<F> {
 
         // If this is the first round and batching > 1, RLC per leaf to fold_size
         if round_index == 0 && self.batch_size > 1 {
-            let fold_size = 1 << params.folding_factor;
+            let fold_size = 1 << round_config.folding_factor;
             answers = crate::whir::utils::rlc_batched_leaves(
                 &answers,
                 fold_size,
@@ -422,16 +399,16 @@ impl<F: FftField> WhirConfig<F> {
 
         // Compute STIR Constraints
         let folds: Vec<F> = answers
-            .chunks_exact(1 << params.folding_factor)
+            .chunks_exact(1 << round_config.folding_factor)
             .map(|answers| CoefficientList::new(answers.to_vec()).evaluate(folding_randomness))
             .collect();
 
         let stir_constraints = stir_challenges_indexes
             .iter()
-            .map(|&index| params.exp_domain_gen.pow([index as u64]))
+            .map(|&index| round_config.exp_domain_gen.pow([index as u64]))
             .zip(&folds)
             .map(|(point, &value)| Constraint {
-                weights: Weights::univariate(point, params.num_variables),
+                weights: Weights::univariate(point, round_config.num_variables),
                 sum: value,
                 defer_evaluation: false,
             })
