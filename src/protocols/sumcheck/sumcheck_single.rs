@@ -1,3 +1,5 @@
+use std::fmt;
+
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
@@ -194,7 +196,7 @@ impl<F: Field> Config<F> {
 ///
 /// The sumcheck protocol ensures that the claimed sum is correct.
 #[derive(Clone, Debug)]
-pub struct SumcheckSingle<F> {
+pub struct SumcheckSingle<F: Field> {
     /// Evaluations of the polynomial `p(X)`.
     evaluation_of_p: EvaluationsList<F>,
     /// Evaluations of the weight polynomial used for enforcing constraints.
@@ -203,10 +205,7 @@ pub struct SumcheckSingle<F> {
     sum: F,
 }
 
-impl<F> SumcheckSingle<F>
-where
-    F: Field,
-{
+impl<F: Field> SumcheckSingle<F> {
     /// Constructs a new `SumcheckSingle` instance from polynomial coefficients.
     ///
     /// This function:
@@ -445,6 +444,21 @@ where
         self.evaluation_of_p = EvaluationsList::new(evaluations_of_p);
         self.weights = EvaluationsList::new(evaluations_of_eq);
         self.sum = combination_randomness * sumcheck_poly.evaluate_at_point(folding_randomness);
+    }
+}
+
+impl<F: Field> fmt::Display for Config<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Sumcheck(initial size: {}, rounds: {}, proof of work:",
+            self.initial_size,
+            self.num_rounds()
+        )?;
+        for round in &self.rounds {
+            write!(f, " {:.2}", round.pow.difficulty())?;
+        }
+        write!(f, ")")
     }
 }
 

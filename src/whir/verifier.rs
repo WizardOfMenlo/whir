@@ -1,7 +1,7 @@
 use ark_ff::FftField;
 
 use super::{
-    config::{RoundConfig, WhirConfig},
+    config::WhirConfig,
     statement::{Constraint, Statement, Weights},
 };
 use crate::{
@@ -11,14 +11,14 @@ use crate::{
         tensor_product,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit, matrix_commit},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
     },
     utils::expand_randomness,
     verify,
-    whir::{utils::get_challenge_stir_queries, Commitment},
+    whir::{config::InitialSumcheck, Commitment},
 };
 
 pub(crate) enum RoundCommitment<'a, F: FftField> {
@@ -147,56 +147,53 @@ impl<F: FftField> WhirConfig<F> {
 
         // Step 3: Reconstruct combined constraints using RLC of the evaluation matrix
         // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
-        if self.initial_statement {
-            let mut all_constraints = Vec::new();
+        //
+        match &self.initial_sumcheck {
+            InitialSumcheck::Full(config) => {
+                let mut all_constraints = Vec::new();
 
-            for (constraint_idx, (weights, defer_evaluation)) in
-                all_constraints_info.into_iter().enumerate()
-            {
-                let mut combined_eval = F::ZERO;
-                for (row, weight) in batching_weights.iter().enumerate() {
-                    combined_eval += *weight * constraint_evals_matrix[row][constraint_idx];
+                for (constraint_idx, (weights, defer_evaluation)) in
+                    all_constraints_info.into_iter().enumerate()
+                {
+                    let mut combined_eval = F::ZERO;
+                    for (row, weight) in batching_weights.iter().enumerate() {
+                        combined_eval += *weight * constraint_evals_matrix[row][constraint_idx];
+                    }
+
+                    all_constraints.push(Constraint {
+                        weights,
+                        sum: combined_eval,
+                        defer_evaluation,
+                    });
                 }
 
-                all_constraints.push(Constraint {
-                    weights,
-                    sum: combined_eval,
-                    defer_evaluation,
-                });
+                let combination_randomness =
+                    self.combine_constraints(verifier_state, &mut claimed_sum, &all_constraints)?;
+                round_constraints.push((combination_randomness, all_constraints));
+
+                // Initial sumcheck on the combined constraints
+                let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
+                round_folding_randomness.push(folding_randomness);
             }
+            InitialSumcheck::Abridged { folding_size, pow } => {
+                for commitment in commitments {
+                    assert_eq!(commitment.out_of_domain().points.len(), 0);
+                }
+                for statement in statements {
+                    assert!(statement.constraints.is_empty());
+                }
+                round_constraints.push((vec![], vec![]));
 
-            let combination_randomness =
-                self.combine_constraints(verifier_state, &mut claimed_sum, &all_constraints)?;
-            round_constraints.push((combination_randomness, all_constraints));
+                let mut folding_randomness = vec![F::ZERO; *folding_size];
+                for randomness in &mut folding_randomness {
+                    *randomness = verifier_state.verifier_message();
+                }
+                round_folding_randomness.push(MultilinearPoint(folding_randomness));
 
-            // Initial sumcheck on the combined constraints
-            let folding_randomness = self
-                .initial_sumcheck
-                .as_ref()
-                .unwrap()
-                .verify(verifier_state, &mut claimed_sum)?;
-            round_folding_randomness.push(folding_randomness);
-        } else {
-            for commitment in commitments {
-                assert_eq!(commitment.out_of_domain().points.len(), 0);
+                pow.verify(verifier_state)?;
             }
-            for statement in statements {
-                assert!(statement.constraints.is_empty());
-            }
-            round_constraints.push((vec![], vec![]));
-
-            let mut folding_randomness = vec![F::ZERO; self.folding_factor.at_round(0)];
-            for randomness in &mut folding_randomness {
-                *randomness = verifier_state.verifier_message();
-            }
-            round_folding_randomness.push(MultilinearPoint(folding_randomness));
-
-            self.starting_folding_pow.verify(verifier_state)?;
-        }
-
-        for round_index in 0..self.n_rounds() {
-            let round_config = &self.round_configs[round_index];
-
+        };
+        for (round_index, round_config) in self.round_configs.iter().enumerate() {
             let commitment = round_config
                 .irs_committer
                 .receive_commitment(verifier_state)?;
@@ -204,7 +201,7 @@ impl<F: FftField> WhirConfig<F> {
             let oods_constraints = commitment.out_of_domain().constraints(
                 &embedding::Identity::new(),
                 &[F::ONE],
-                round_config.num_variables,
+                round_config.initial_num_variables(),
             );
 
             round_config.pow.verify(verifier_state)?;
@@ -219,7 +216,7 @@ impl<F: FftField> WhirConfig<F> {
                         &batching_weights,
                         &round_folding_randomness.last().unwrap().coeff_weights(true),
                     );
-                    in_domain.constraints(embedding, &weights, round_config.num_variables)
+                    in_domain.constraints(embedding, &weights, round_config.initial_num_variables())
                 }
                 RoundCommitment::Round { commitment } => {
                     let prev_round_config = &self.round_configs[round_index - 1];
@@ -230,7 +227,7 @@ impl<F: FftField> WhirConfig<F> {
                     in_domain.constraints(
                         &embedding::Identity::new(),
                         &weights,
-                        round_config.num_variables,
+                        round_config.initial_num_variables(),
                     )
                 }
             };
@@ -252,7 +249,7 @@ impl<F: FftField> WhirConfig<F> {
         }
 
         // Final round (same as regular verify)
-        let mut final_coefficients = vec![F::ZERO; 1 << self.final_sumcheck_rounds];
+        let mut final_coefficients = vec![F::ZERO; self.final_sumcheck.initial_size];
         for coeff in &mut final_coefficients {
             *coeff = verifier_state.prover_message()?;
         }
@@ -265,14 +262,13 @@ impl<F: FftField> WhirConfig<F> {
                 commitments,
                 batching_weights,
             } => {
-                let num_variables =
-                    self.mv_parameters.num_variables - self.folding_factor.at_round(0);
                 let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
                 let weights = tensor_product(
                     &batching_weights,
                     &round_folding_randomness.last().unwrap().coeff_weights(true),
                 );
-                in_domain.constraints(embedding, &weights, num_variables)
+                let final_num_variables = self.final_sumcheck.initial_size.ilog2() as usize;
+                in_domain.constraints(embedding, &weights, final_num_variables)
             }
             RoundCommitment::Round { commitment } => {
                 let prev_round_config = self.round_configs.last().unwrap();
@@ -283,7 +279,8 @@ impl<F: FftField> WhirConfig<F> {
                 in_domain.constraints(
                     &embedding::Identity::new(),
                     &weights,
-                    prev_round_config.num_variables - prev_round_config.sumcheck.num_rounds(),
+                    prev_round_config.initial_num_variables()
+                        - prev_round_config.sumcheck.num_rounds(),
                 )
             }
         };
@@ -350,73 +347,6 @@ impl<F: FftField> WhirConfig<F> {
         Ok(combination_randomness)
     }
 
-    /// Verify a STIR challenges against a commitment and return the constraints.
-    #[allow(clippy::too_many_arguments)] // To be replaced with irs_commit
-    pub fn verify_stir_challenges<H>(
-        &self,
-        round_index: usize,
-        verifier_state: &mut VerifierState<'_, H>,
-        round_config: &RoundConfig<F>,
-        committer: &matrix_commit::Config<F>,
-        matrix_commitment: &matrix_commit::Commitment,
-        batching_randomness: F,
-        folding_randomness: &MultilinearPoint<F>,
-    ) -> VerificationResult<Vec<Constraint<F>>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
-    {
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            verifier_state,
-            round_config.domain_size,
-            round_config.folding_factor,
-            round_config.num_queries,
-        );
-
-        // Always open against the single batched commitment
-        let mut answers: Vec<F> = verifier_state.prover_hint_ark()?;
-        committer.verify(
-            verifier_state,
-            matrix_commitment,
-            &stir_challenges_indexes,
-            &answers,
-        )?;
-
-        // If this is the first round and batching > 1, RLC per leaf to fold_size
-        if round_index == 0 && self.batch_size > 1 {
-            let fold_size = 1 << round_config.folding_factor;
-            answers = crate::whir::utils::rlc_batched_leaves(
-                &answers,
-                fold_size,
-                self.batch_size,
-                batching_randomness,
-            );
-        }
-
-        // Compute STIR Constraints
-        let folds: Vec<F> = answers
-            .chunks_exact(1 << round_config.folding_factor)
-            .map(|answers| CoefficientList::new(answers.to_vec()).evaluate(folding_randomness))
-            .collect();
-
-        let stir_constraints = stir_challenges_indexes
-            .iter()
-            .map(|&index| round_config.exp_domain_gen.pow([index as u64]))
-            .zip(&folds)
-            .map(|(point, &value)| Constraint {
-                weights: Weights::univariate(point, round_config.num_variables),
-                sum: value,
-                defer_evaluation: false,
-            })
-            .collect();
-
-        Ok(stir_constraints)
-    }
-
     /// Evaluate the random linear combination of constraints in `point`.
     fn eval_constraints_poly(
         &self,
@@ -424,16 +354,16 @@ impl<F: FftField> WhirConfig<F> {
         deferred: &[F],
         mut point: MultilinearPoint<F>,
     ) -> F {
-        let mut num_variables = self.mv_parameters.num_variables;
         let mut deferred = deferred.iter().copied();
         let mut value = F::ZERO;
 
         for (round, (randomness, constraints)) in constraints.iter().enumerate() {
             assert_eq!(randomness.len(), constraints.len());
-            if round > 0 {
-                num_variables -= self.folding_factor.at_round(round - 1);
-                point = MultilinearPoint(point.0[..num_variables].to_vec());
-            }
+            let num_variables = round.checked_sub(1).map_or_else(
+                || self.initial_size().ilog2() as usize,
+                |p| self.round_configs[p].initial_num_variables(),
+            );
+            point = MultilinearPoint(point.0[..num_variables].to_vec());
             value += constraints
                 .iter()
                 .zip(randomness)

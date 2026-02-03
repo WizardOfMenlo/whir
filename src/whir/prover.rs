@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{
     algebra::{
-        domain::Domain,
         embedding::{self, Embedding, Identity},
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
@@ -22,6 +21,7 @@ use crate::{
         VerifierMessage,
     },
     utils::zip_strict,
+    whir::config::InitialSumcheck,
 };
 
 impl<F: FftField> WhirConfig<F> {
@@ -180,32 +180,32 @@ impl<F: FftField> WhirConfig<F> {
 
         // Run initial sumcheck on batched polynomial with combined statement
         let mut sumcheck_prover = None;
-        let folding_randomness = if self.initial_statement {
-            let combination_randomness_gen = prover_state.verifier_message();
-            let sumcheck_config = self.initial_sumcheck.as_ref().unwrap();
-            let mut sumcheck = SumcheckSingle::new(
-                batched_poly.clone(),
-                &combined_statement,
-                combination_randomness_gen,
-            );
-            let folding_randomness = sumcheck_config.prove(prover_state, &mut sumcheck);
-            sumcheck_prover = Some(sumcheck);
-            folding_randomness
-        } else {
-            let mut folding_randomness = vec![F::ZERO; self.folding_factor.at_round(0)];
-            for randomness in &mut folding_randomness {
-                *randomness = prover_state.verifier_message();
+        let folding_randomness = match &self.initial_sumcheck {
+            InitialSumcheck::Full(config) => {
+                let combination_randomness_gen = prover_state.verifier_message();
+                let mut sumcheck = SumcheckSingle::new(
+                    batched_poly.clone(),
+                    &combined_statement,
+                    combination_randomness_gen,
+                );
+                let folding_randomness = config.prove(prover_state, &mut sumcheck);
+                sumcheck_prover = Some(sumcheck);
+                folding_randomness
             }
-            self.starting_folding_pow.prove(prover_state);
-            MultilinearPoint(folding_randomness)
+            InitialSumcheck::Abridged { folding_size, pow } => {
+                let mut folding_randomness = vec![F::ZERO; *folding_size];
+                for randomness in &mut folding_randomness {
+                    *randomness = prover_state.verifier_message();
+                }
+                pow.prove(prover_state);
+                MultilinearPoint(folding_randomness)
+            }
         };
 
         let mut randomness_vec = Vec::with_capacity(self.mv_parameters.num_variables);
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-        randomness_vec.resize(self.mv_parameters.num_variables, F::ZERO);
 
         let mut round_state = RoundState {
-            domain: self.starting_domain.clone(),
             round: 0,
             sumcheck_prover,
             folding_randomness,
@@ -257,20 +257,17 @@ impl<F: FftField> WhirConfig<F> {
             .coefficients
             .fold(&round_state.folding_randomness);
 
-        let num_variables =
-            self.mv_parameters.num_variables - self.folding_factor.total_number(round_state.round);
-        // num_variables should match the folded_coefficients here.
-        assert_eq!(num_variables, folded_coefficients.num_variables());
-
         // Base case
         if round_state.round == self.n_rounds() {
+            assert_eq!(
+                folded_coefficients.num_coeffs(),
+                self.final_sumcheck.initial_size
+            );
             return self.final_round(prover_state, round_state, &folded_coefficients);
         }
 
         let round_config = &self.round_configs[round_state.round];
 
-        // Compute the folding factors for later use
-        let new_domain = round_state.domain.scale(2); // TODO: Why 2?
 
         let witness = round_config
             .irs_committer
@@ -295,7 +292,12 @@ impl<F: FftField> WhirConfig<F> {
                 let mut points = ood_points
                     .iter()
                     .copied()
-                    .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
+                    .map(|a| {
+                        MultilinearPoint::expand_from_univariate(
+                            a,
+                            round_config.initial_num_variables(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 let mut evals = ood_answers;
 
@@ -304,7 +306,9 @@ impl<F: FftField> WhirConfig<F> {
                     batching_weights,
                     &round_state.folding_randomness.coeff_weights(true),
                 );
-                points.extend(in_domain.points(self.embedding(), num_variables));
+                points.extend(
+                    in_domain.points(self.embedding(), round_config.initial_num_variables()),
+                );
                 evals.extend(in_domain.values(self.embedding(), &weights));
 
                 (points, evals)
@@ -320,13 +324,20 @@ impl<F: FftField> WhirConfig<F> {
                 let mut points = ood_points
                     .iter()
                     .copied()
-                    .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
+                    .map(|a| {
+                        MultilinearPoint::expand_from_univariate(
+                            a,
+                            round_config.initial_num_variables(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 let mut evals = ood_answers;
 
                 // Convert RS evaluation point to multivariate over extension
                 let weights = round_state.folding_randomness.coeff_weights(true);
-                points.extend(in_domain.points(&Identity::new(), num_variables));
+                points.extend(
+                    in_domain.points(&Identity::new(), round_config.initial_num_variables()),
+                );
                 evals.extend(in_domain.values(&Identity::new(), &weights));
 
                 (points, evals)
@@ -366,20 +377,12 @@ impl<F: FftField> WhirConfig<F> {
             .sumcheck
             .prove(prover_state, &mut sumcheck_instance);
 
-        let start_idx = self.folding_factor.total_number(round_state.round);
-        let dst_randomness =
-            &mut round_state.randomness_vec[start_idx..][..folding_randomness.0.len()];
-
-        for (dst, src) in dst_randomness
-            .iter_mut()
-            .zip(folding_randomness.0.iter().rev())
-        {
-            *dst = *src;
-        }
+        round_state
+            .randomness_vec
+            .extend(folding_randomness.0.iter().rev());
 
         // Update round state
         round_state.round += 1;
-        round_state.domain = new_domain;
         round_state.sumcheck_prover = Some(sumcheck_instance);
         round_state.folding_randomness = folding_randomness;
         round_state.coefficients = folded_coefficients;
@@ -440,16 +443,9 @@ impl<F: FftField> WhirConfig<F> {
             .final_sumcheck
             .prove(prover_state, &mut final_folding_sumcheck);
 
-        let start_idx = self.folding_factor.total_number(round_state.round);
-        let rand_dst = &mut round_state.randomness_vec
-            [start_idx..start_idx + final_folding_randomness.0.len()];
-
-        for (dst, src) in rand_dst
-            .iter_mut()
-            .zip(final_folding_randomness.0.iter().rev())
-        {
-            *dst = *src;
-        }
+        round_state
+            .randomness_vec
+            .extend(final_folding_randomness.0.iter().rev());
     }
 }
 
@@ -477,11 +473,6 @@ where
     ///
     /// Increases after each folding iteration.
     pub(crate) round: usize,
-
-    /// Domain over which the current polynomial is evaluated.
-    ///
-    /// Grows with each round due to NTT expansion.
-    pub(crate) domain: Domain<F>,
 
     /// Optional sumcheck prover used to enforce constraints.
     ///
