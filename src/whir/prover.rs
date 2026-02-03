@@ -1,5 +1,4 @@
 use ark_ff::FftField;
-use ark_poly::EvaluationDomain;
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -12,24 +11,17 @@ use super::{
 use crate::{
     algebra::{
         domain::Domain,
-        embedding::{self, Embedding},
+        embedding::{self, Embedding, Identity},
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
     hash::Hash,
-    protocols::{
-        geometric_challenge::geometric_challenge, irs_commit, matrix_commit,
-        sumcheck::SumcheckSingle,
-    },
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, sumcheck::SumcheckSingle},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
     },
-    utils::{expand_randomness, zip_strict},
-    whir::{
-        config::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points},
-    },
+    utils::zip_strict,
 };
 
 impl<F: FftField> WhirConfig<F> {
@@ -278,28 +270,13 @@ impl<F: FftField> WhirConfig<F> {
         let round_config = &self.round_configs[round_state.round];
 
         // Compute the folding factors for later use
-        let folding_factor = self.folding_factor.at_round(round_state.round);
-        let folding_factor_next = self.folding_factor.at_round(round_state.round + 1);
-
-        // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2); // TODO: Why 2?
-        let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals = self.reed_solomon.interleaved_encode(
-            folded_coefficients.coeffs(),
-            expansion,
-            folding_factor_next,
-        );
 
-        // Commit to the matrix of evaluations
-        let matrix_witness = round_config.matrix_committer.commit(prover_state, &evals);
-
-        // Handle OOD (Out-Of-Domain) samples
-        let (ood_points, ood_answers) = sample_ood_points(
-            prover_state,
-            round_config.ood_samples,
-            num_variables,
-            |point| folded_coefficients.evaluate(point),
-        );
+        let witness = round_config
+            .irs_committer
+            .commit(prover_state, &[folded_coefficients.coeffs()]);
+        let ood_points = witness.out_of_domain().points.clone();
+        let ood_answers = witness.out_of_domain().matrix.clone();
 
         // PoW
         round_config.pow.prove(prover_state);
@@ -332,55 +309,32 @@ impl<F: FftField> WhirConfig<F> {
 
                 (points, evals)
             }
+            RoundWitness::Round { witness } => {
+                let prev_round_config = &self.round_configs[round_state.round - 1];
 
-            RoundWitness::Round {
-                prev_matrix,
-                prev_matrix_committer,
-                prev_matrix_witness,
-            } => {
-                // STIR Queries
-                let (stir_challenges, stir_challenges_indexes) = self.compute_stir_queries(
-                    prover_state,
-                    round_state,
-                    num_variables,
-                    round_config,
-                    ood_points,
-                );
+                let in_domain = prev_round_config
+                    .irs_committer
+                    .open(prover_state, &[&witness]);
 
-                let fold_size = 1 << folding_factor;
-                let leaf_size = fold_size;
-                let answers: Vec<F> = stir_challenges_indexes
+                // Convert oods_points
+                let mut points = ood_points
                     .iter()
-                    .flat_map(|i| {
-                        prev_matrix[i * leaf_size..(i + 1) * leaf_size]
-                            .iter()
-                            .copied()
-                    })
-                    .collect();
+                    .copied()
+                    .map(|a| MultilinearPoint::expand_from_univariate(a, num_variables))
+                    .collect::<Vec<_>>();
+                let mut evals = ood_answers;
 
-                assert_eq!(
-                    answers.len(),
-                    prev_matrix_committer.num_cols * stir_challenges_indexes.len()
-                );
-                prover_state.prover_hint_ark(&answers);
-                prev_matrix_committer.open(
-                    prover_state,
-                    prev_matrix_witness,
-                    &stir_challenges_indexes,
-                );
+                // Convert RS evaluation point to multivariate over extension
+                let weights = round_state.folding_randomness.coeff_weights(true);
+                points.extend(in_domain.points(&Identity::new(), num_variables));
+                evals.extend(in_domain.values(&Identity::new(), &weights));
 
-                let mut stir_evaluations = ood_answers;
-                stir_evaluations.extend(answers.chunks(fold_size).map(|answers| {
-                    CoefficientList::new(answers.to_vec()).evaluate(&round_state.folding_randomness)
-                }));
-                (stir_challenges, stir_evaluations)
+                (points, evals)
             }
         };
 
         // Randomness for combination
-        let combination_randomness_gen = prover_state.verifier_message();
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, stir_challenges.len());
+        let combination_randomness = geometric_challenge(prover_state, stir_challenges.len());
 
         #[allow(clippy::map_unwrap_or)]
         let mut sumcheck_instance = round_state
@@ -429,11 +383,7 @@ impl<F: FftField> WhirConfig<F> {
         round_state.sumcheck_prover = Some(sumcheck_instance);
         round_state.folding_randomness = folding_randomness;
         round_state.coefficients = folded_coefficients;
-        round_state.prev_commitment = RoundWitness::Round {
-            prev_matrix: evals,
-            prev_matrix_committer: round_config.matrix_committer.clone(),
-            prev_matrix_witness: matrix_witness,
-        };
+        round_state.prev_commitment = RoundWitness::Round { witness };
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_coefficients.num_coeffs())))]
@@ -456,9 +406,6 @@ impl<F: FftField> WhirConfig<F> {
             prover_state.prover_message(coeff);
         }
 
-        // Precompute the folding factors for later use
-        let folding_factor = self.folding_factor.at_round(round_state.round);
-
         // PoW
         self.final_pow.prove(prover_state);
 
@@ -473,43 +420,14 @@ impl<F: FftField> WhirConfig<F> {
                     drop(in_domain);
                 }
             }
-            RoundWitness::Round {
-                prev_matrix,
-                prev_matrix_committer,
-                prev_matrix_witness,
-            } => {
-                // Final verifier queries and answers. The indices are over the
-                // *folded* domain.
-                let final_challenge_indexes = get_challenge_stir_queries(
-                    prover_state,
-                    // The size of the *original* domain before folding
-                    round_state.domain.size(),
-                    // The folding factor we used to fold the previous polynomial
-                    folding_factor,
-                    self.final_queries,
-                );
+            RoundWitness::Round { witness } => {
+                let prev_config = self.round_configs.last().unwrap();
+                let in_domain = prev_config.irs_committer.open(prover_state, &[&witness]);
 
-                // Every query requires opening these many in the previous Merkle tree
-                let fold_size = 1 << folding_factor;
-                let answers = final_challenge_indexes
-                    .iter()
-                    .flat_map(|i| {
-                        prev_matrix[i * fold_size..(i + 1) * fold_size]
-                            .iter()
-                            .copied()
-                    })
-                    .collect::<Vec<F>>();
-
-                assert_eq!(
-                    answers.len(),
-                    prev_matrix_committer.num_cols * final_challenge_indexes.len()
-                );
-                prover_state.prover_hint_ark(&answers);
-                prev_matrix_committer.open(
-                    prover_state,
-                    prev_matrix_witness,
-                    &final_challenge_indexes,
-                );
+                // The verifier will directly test these on the final polynomial.
+                // It has the final polynomial in full, so it needs no furhter help
+                // from us.
+                drop(in_domain);
             }
         }
 
@@ -533,44 +451,6 @@ impl<F: FftField> WhirConfig<F> {
             *dst = *src;
         }
     }
-
-    fn compute_stir_queries<H, R>(
-        &self,
-        prover_state: &mut ProverState<H, R>,
-        round_state: &RoundState<F>,
-        num_variables: usize,
-        round_params: &RoundConfig<F>,
-        ood_points: Vec<F>,
-    ) -> (Vec<MultilinearPoint<F>>, Vec<usize>)
-    where
-        H: DuplexSpongeInterface,
-        R: RngCore + CryptoRng,
-        u8: Decoding<[H::U]>,
-    {
-        let stir_challenges_indexes = get_challenge_stir_queries(
-            prover_state,
-            round_state.domain.size(),
-            self.folding_factor.at_round(round_state.round),
-            round_params.num_queries,
-        );
-
-        // Compute the generator of the folded domain, in the extension field
-        let domain_scaled_gen = round_state
-            .domain
-            .backing_domain
-            .element(1 << self.folding_factor.at_round(round_state.round));
-        let stir_challenges = ood_points
-            .into_iter()
-            .chain(
-                stir_challenges_indexes
-                    .iter()
-                    .map(|i| domain_scaled_gen.pow([*i as u64])),
-            )
-            .map(|univariate| MultilinearPoint::expand_from_univariate(univariate, num_variables))
-            .collect();
-
-        (stir_challenges, stir_challenges_indexes)
-    }
 }
 
 pub(crate) enum RoundWitness<'a, F: FftField> {
@@ -579,9 +459,7 @@ pub(crate) enum RoundWitness<'a, F: FftField> {
         batching_weights: Vec<F>,
     },
     Round {
-        prev_matrix: Vec<F>,
-        prev_matrix_committer: matrix_commit::Config<F>,
-        prev_matrix_witness: matrix_commit::Witness,
+        witness: irs_commit::Witness<F, F>,
     },
 }
 

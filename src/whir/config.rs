@@ -12,14 +12,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     algebra::{
         domain::Domain,
-        embedding::Basefield,
+        embedding::{self, Basefield},
         fields::FieldWithSize,
         ntt::{RSDefault, ReedSolomon},
     },
     bits::Bits,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
-    type_info::Type,
+    type_info::{Type, Typed},
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -81,6 +81,8 @@ pub struct RoundConfig<F>
 where
     F: FftField,
 {
+    pub irs_committer: irs_commit::Config<F>,
+
     pub matrix_committer: matrix_commit::Config<F>,
     pub sumcheck: sumcheck::Config<F>,
     pub pow: proof_of_work::Config,
@@ -235,6 +237,21 @@ where
             );
 
             round_parameters.push(RoundConfig {
+                irs_committer: irs_commit::Config {
+                    embedding: Typed::new(embedding::Identity::new()),
+                    num_polynomials: 1,
+                    polynomial_size: 1 << num_variables,
+                    expansion: 1 << next_rate,
+                    interleaving_depth: 1 << next_folding_factor,
+                    matrix_commit: matrix_committer.clone(),
+                    in_domain_samples: Self::queries(
+                        whir_parameters.soundness_type,
+                        protocol_security_level,
+                        next_rate,
+                    ),
+                    out_domain_samples: ood_samples,
+                    deduplicate_in_domain: true, // TODO: Configurable
+                },
                 matrix_committer,
                 sumcheck: sumcheck::Config {
                     field: Type::<F>::new(),
@@ -602,6 +619,17 @@ where
             let folding_factor = self.folding_factor.at_round(self.n_rounds());
             let num_variables = last.num_variables - folding_factor;
             RoundConfig {
+                irs_committer: irs_commit::Config {
+                    embedding: Typed::new(embedding::Identity::new()),
+                    num_polynomials: 1,
+                    polynomial_size: 1 << num_variables,
+                    expansion: last.irs_committer.expansion * 2,
+                    interleaving_depth: 1 << folding_factor,
+                    matrix_commit: last.matrix_committer.clone(),
+                    in_domain_samples: self.final_queries,
+                    out_domain_samples: last.ood_samples,
+                    deduplicate_in_domain: true,
+                },
                 matrix_committer: last.matrix_committer.clone(),
                 sumcheck: sumcheck::Config {
                     field: Type::<F>::new(),
@@ -1027,6 +1055,17 @@ mod tests {
         // Ensure all rounds are within limits
         config.round_configs = vec![
             RoundConfig {
+                irs_committer: irs_commit::Config {
+                    embedding: Typed::new(embedding::Identity::new()),
+                    num_polynomials: 1,
+                    polynomial_size: 1 << 10,
+                    expansion: 1 << 3,
+                    interleaving_depth: 1 << 2,
+                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    in_domain_samples: 5,
+                    out_domain_samples: 2,
+                    deduplicate_in_domain: true,
+                },
                 matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
                 sumcheck: sumcheck::Config {
                     field: Type::<Field64>::new(),
@@ -1051,6 +1090,17 @@ mod tests {
                 exp_domain_gen: Field64::from(2),
             },
             RoundConfig {
+                irs_committer: irs_commit::Config {
+                    embedding: Typed::new(embedding::Identity::new()),
+                    num_polynomials: 1,
+                    polynomial_size: 1 << 10,
+                    expansion: 1 << 4,
+                    interleaving_depth: 1 << 2,
+                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    in_domain_samples: 6,
+                    out_domain_samples: 2,
+                    deduplicate_in_domain: true,
+                },
                 matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
                 sumcheck: sumcheck::Config {
                     field: Type::<Field64>::new(),
@@ -1138,6 +1188,17 @@ mod tests {
 
         // One round's pow_bits exceeds limit
         config.round_configs = vec![RoundConfig {
+            irs_committer: irs_commit::Config {
+                embedding: Typed::new(embedding::Identity::new()),
+                num_polynomials: 1,
+                polynomial_size: 1 << 10,
+                expansion: 1 << 3,
+                interleaving_depth: 1 << 2,
+                matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                in_domain_samples: 5,
+                out_domain_samples: 2,
+                deduplicate_in_domain: true,
+            },
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             sumcheck: sumcheck::Config {
                 field: Type::<Field64>::new(),
@@ -1184,6 +1245,17 @@ mod tests {
 
         // One round's folding_pow_bits exceeds limit
         config.round_configs = vec![RoundConfig {
+            irs_committer: irs_commit::Config {
+                embedding: Typed::new(embedding::Identity::new()),
+                num_polynomials: 1,
+                polynomial_size: 1 << 10,
+                expansion: 1 << 3,
+                interleaving_depth: 1 << 2,
+                matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                in_domain_samples: 5,
+                out_domain_samples: 2,
+                deduplicate_in_domain: true,
+            },
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             sumcheck: sumcheck::Config {
                 field: Type::<Field64>::new(),
@@ -1229,6 +1301,17 @@ mod tests {
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
 
         config.round_configs = vec![RoundConfig {
+            irs_committer: irs_commit::Config {
+                embedding: Typed::new(embedding::Identity::new()),
+                num_polynomials: 1,
+                polynomial_size: 1 << 10,
+                expansion: 1 << 3,
+                interleaving_depth: 1 << 2,
+                matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                in_domain_samples: 5,
+                out_domain_samples: 2,
+                deduplicate_in_domain: true,
+            },
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             sumcheck: sumcheck::Config {
                 field: Type::<Field64>::new(),
@@ -1274,6 +1357,17 @@ mod tests {
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(24.0));
 
         config.round_configs = vec![RoundConfig {
+            irs_committer: irs_commit::Config {
+                embedding: Typed::new(embedding::Identity::new()),
+                num_polynomials: 1,
+                polynomial_size: 1 << 10,
+                expansion: 1 << 3,
+                interleaving_depth: 1 << 2,
+                matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                in_domain_samples: 5,
+                out_domain_samples: 2,
+                deduplicate_in_domain: true,
+            },
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             sumcheck: sumcheck::Config {
                 field: Type::<Field64>::new(),
