@@ -451,14 +451,14 @@ impl<F: Field> fmt::Display for Config<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Sumcheck(initial size: {}, rounds: {}, proof of work:",
+            "size {} rounds {} pow",
             self.initial_size,
             self.num_rounds()
         )?;
         for round in &self.rounds {
             write!(f, " {:.2}", round.pow.difficulty())?;
         }
-        write!(f, ")")
+        Ok(())
     }
 }
 
