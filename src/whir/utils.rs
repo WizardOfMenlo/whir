@@ -1,80 +1,9 @@
-use ark_ff::{FftField, Field};
-use ark_std::rand::{CryptoRng, RngCore};
-#[cfg(feature = "tracing")]
-use tracing::instrument;
+use ark_ff::Field;
 
 use crate::{
-    algebra::poly_utils::multilinear::MultilinearPoint,
     protocols::challenge_indices::challenge_indices,
-    transcript::{Codec, Decoding, DuplexSpongeInterface, ProverState, VerifierMessage},
+    transcript::{Decoding, VerifierMessage},
 };
-
-///
-/// A utility function to compute the response to OOD challenge and add it to
-/// the transcript. The OOD challenge should have already been sampled and added
-/// to the transcript before this call.
-///
-#[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
-pub(crate) fn compute_ood_response<H, R, F, E>(
-    prover_state: &mut ProverState<H, R>,
-    ood_points: &[F],
-    num_variables: usize,
-    evaluate_fn: E,
-) -> Vec<F>
-where
-    H: DuplexSpongeInterface,
-    R: RngCore + CryptoRng,
-    F: FftField + Codec<[H::U]>,
-    E: Fn(&MultilinearPoint<F>) -> F,
-{
-    let num_samples = ood_points.len();
-    let mut ood_answers = Vec::<F>::with_capacity(ood_points.len());
-
-    if num_samples > 0 {
-        // Evaluate the function at each OOD point
-        ood_answers.extend(ood_points.iter().map(|ood_point| {
-            evaluate_fn(&MultilinearPoint::expand_from_univariate(
-                *ood_point,
-                num_variables,
-            ))
-        }));
-
-        // Commit the answers to the narg_string
-        for answer in &ood_answers {
-            prover_state.prover_message(answer);
-        }
-    }
-
-    ood_answers
-}
-
-/// A utility function to sample Out-of-Domain (OOD) points and evaluate them
-///
-/// This operates on the prover side.
-#[cfg_attr(feature = "tracing", instrument(skip(prover_state, evaluate_fn)))]
-pub(crate) fn sample_ood_points<F, H, R, E>(
-    prover_state: &mut ProverState<H, R>,
-    num_samples: usize,
-    num_variables: usize,
-    evaluate_fn: E,
-) -> (Vec<F>, Vec<F>)
-where
-    H: DuplexSpongeInterface,
-    R: RngCore + CryptoRng,
-    F: FftField + Codec<[H::U]>,
-    E: Fn(&MultilinearPoint<F>) -> F,
-{
-    let ood_points: Vec<F> = (0..num_samples)
-        .map(|_| prover_state.verifier_message())
-        .collect();
-    let ood_answers = if num_samples > 0 {
-        compute_ood_response(prover_state, &ood_points, num_variables, evaluate_fn)
-    } else {
-        vec![]
-    };
-
-    (ood_points, ood_answers)
-}
 
 /// Generates a list of unique challenge queries within a folded domain.
 ///
@@ -121,9 +50,8 @@ pub(crate) fn rlc_batched_leaves<F: Field>(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::transcript::{codecs::Empty, DomainSeparator, ProverState};
+    use crate::transcript::{codecs::Empty, DomainSeparator, DuplexSpongeInterface, ProverState};
 
     #[derive(Clone, Debug)]
     struct MockSponge<'a> {
