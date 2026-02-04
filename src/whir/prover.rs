@@ -12,6 +12,7 @@ use crate::{
     algebra::{
         embedding::Identity,
         lift, mixed_scalar_mul_add,
+        ntt::transpose,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -71,72 +72,61 @@ impl<F: FftField> WhirConfig<F> {
             return (MultilinearPoint::default(), Vec::new());
         }
 
-        // Complete evaluations of EVERY polynomial at EVERY constraint point
-        // TODO: Transpose and make the order (constraint, polynomial)
-        // This creates an N×M matrix where N = #polynomials, M = #constraints
-        // We commit this matrix to the script.
-        let constraints = witnesses
-            .iter()
-            .flat_map(|w| {
-                w.out_of_domain()
-                    .weights(&Identity::new(), self.initial_num_variables())
-            })
-            .chain(
-                statements
-                    .iter()
-                    .flat_map(|s| s.constraints.iter().map(|c| c.weights.clone())),
-            )
-            .collect::<Vec<_>>();
-        let num_constraints = constraints.len();
-        let mut constraint_evals_matrix = vec![None; polynomials.len() * num_constraints];
-        // Fill in provided OODs Points
-        let mut constraint_offset = 0;
-        let mut polynomial_offset = 0;
-        for witness in witnesses {
-            for row in witness.out_of_domain().rows() {
-                let mut index = polynomial_offset + constraint_offset;
-                for value in row {
-                    assert!(constraint_evals_matrix[index].is_none());
-                    constraint_evals_matrix[index] = Some(*value);
-                    index += num_constraints;
+        // Complete evaluations of EVERY polynomial at EVERY OOD/Statment constraint.
+        // We take the caller provided values. The rest are computed and provided to
+        // the verifier.
+        let (constraint_weights, constraint_matrix) = {
+            let mut weigths = Vec::new();
+            let mut matrix = Vec::new();
+            let mut polynomial_offset = 0;
+
+            // Out of domain samples
+            for witness in witnesses {
+                for (weights, oods_row) in zip_strict(
+                    witness
+                        .out_of_domain()
+                        .weights(&Identity::new(), self.initial_num_variables()),
+                    witness.out_of_domain().rows(),
+                ) {
+                    for (j, polynomial) in polynomials.iter().enumerate() {
+                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
+                            matrix.push(oods_row[j - polynomial_offset]);
+                        } else {
+                            let eval = weights.mixed_evaluate(self.embedding(), polynomial);
+                            prover_state.prover_message(&eval);
+                            matrix.push(eval);
+                        }
+                    }
+                    weigths.push(weights);
                 }
-                constraint_offset += 1;
+                polynomial_offset += witness.num_polynomials();
             }
-            polynomial_offset += witness.out_of_domain().num_columns() * num_constraints;
-        }
-        // Fill in provided Statements
-        let mut index = witnesses
-            .iter()
-            .map(|w| w.out_of_domain().num_points())
-            .sum::<usize>();
-        for statement in statements {
-            for constraint in &statement.constraints {
-                assert!(constraint_evals_matrix[index].is_none());
-                constraint_evals_matrix[index] = Some(constraint.sum);
-                index += 1; // To next column
-            }
-            index += num_constraints; // To next row, same column
-        }
-        // Complete the matrix by evaluating non-filled in terms.
-        for (polynomial, row) in zip_strict(
-            polynomials,
-            constraint_evals_matrix.chunks_exact_mut(constraints.len()),
-        ) {
-            let mut lifted = None;
-            for (weights, cell) in zip_strict(&constraints, row) {
-                if cell.is_none() {
-                    // TODO: Avoid lifting by evaluating directly through embedding.
-                    let lifted = lifted.get_or_insert_with(|| polynomial.lift(self.embedding()));
-                    let eval = weights.evaluate(lifted);
-                    prover_state.prover_message(&eval);
-                    *cell = Some(eval);
+
+            // Constraints from statements over the input polynomials.
+            for (i, statement) in statements.iter().enumerate() {
+                for constraint in &statement.constraints {
+                    weigths.push(constraint.weights.clone());
+                    for (j, polynomial) in polynomials.iter().enumerate() {
+                        if i == j {
+                            matrix.push(constraint.sum);
+                        } else {
+                            let eval = constraint
+                                .weights
+                                .mixed_evaluate(self.embedding(), polynomial);
+                            prover_state.prover_message(&eval);
+                            matrix.push(eval);
+                        }
+                    }
                 }
             }
-        }
-        let constraint_evals_matrix: Vec<F> = constraint_evals_matrix
-            .into_iter()
-            .map(|e| e.unwrap())
-            .collect();
+
+            // TODO: elliminate
+            let cols = matrix.len() / weigths.len();
+            transpose(matrix.as_mut_slice(), weigths.len(), cols);
+
+            (weigths, matrix)
+        };
+        let num_constraints = constraint_weights.len();
 
         // Random linear combination of the polynomials
         let polynomial_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
@@ -155,11 +145,11 @@ impl<F: FftField> WhirConfig<F> {
         // Step 4: Build combined statement using RLC of the committed evaluation matrix
         // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
         let mut statement = Statement::new(self.initial_num_variables());
-        for (constraint_idx, weights) in constraints.into_iter().enumerate() {
+        for (constraint_idx, weights) in constraint_weights.into_iter().enumerate() {
             let mut combined_eval = F::ZERO;
             for (weight, poly_evals) in zip_strict(
                 polynomial_weights.iter(),
-                constraint_evals_matrix.chunks_exact(num_constraints),
+                constraint_matrix.chunks_exact(num_constraints),
             ) {
                 combined_eval += *weight * poly_evals[constraint_idx];
             }

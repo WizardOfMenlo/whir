@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{
-    algebra::poly_utils::{
-        coeffs::CoefficientList,
-        evals::{geometric_till, EvaluationsList},
-        multilinear::MultilinearPoint,
+    algebra::{
+        embedding::Embedding,
+        mixed_dot,
+        poly_utils::{
+            coeffs::CoefficientList,
+            evals::{geometric_till, EvaluationsList},
+            multilinear::MultilinearPoint,
+        },
     },
     utils::zip_strict,
 };
@@ -87,6 +91,20 @@ impl<F: Field> Weights<F> {
         match self {
             Self::Evaluation { point } => point.num_variables(),
             Self::Linear { weight } | Self::Geometric { weight, .. } => weight.num_variables(),
+        }
+    }
+
+    pub fn mixed_evaluate<M>(&self, embedding: &M, poly: &CoefficientList<M::Source>) -> M::Target
+    where
+        M: Embedding<Target = F>,
+    {
+        assert_eq!(self.num_variables(), poly.num_variables());
+        match self {
+            Self::Evaluation { point } => poly.mixed_evaluate(embedding, point),
+            Self::Linear { weight } | Self::Geometric { weight, .. } => {
+                let poly: EvaluationsList<M::Source> = poly.clone().into();
+                mixed_dot(embedding, weight.evals(), poly.evals())
+            }
         }
     }
 
