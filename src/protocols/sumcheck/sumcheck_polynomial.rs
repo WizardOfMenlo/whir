@@ -10,7 +10,7 @@ use crate::algebra::poly_utils::multilinear::MultilinearPoint;
 ///
 /// Given `n_variables`, the number of stored evaluations is `3^n_variables`.
 #[derive(Debug, Clone)]
-pub struct SumcheckPolynomial<F> {
+pub(super) struct SumcheckPolynomial<F> {
     /// Number of variables in the polynomial (defines the dimension of the evaluation domain).
     num_variables: usize,
     /// Vector of function evaluations at points in `{0,1,2}^n_variables`, stored in lexicographic
@@ -29,7 +29,7 @@ where
     /// - `n_variables`: The number of variables (determines the evaluation domain size).
     ///
     /// The vector `evaluations` **must** have a length of `3^n_variables`.
-    pub const fn new(evaluations: Vec<F>, num_variables: usize) -> Self {
+    pub(super) const fn new(evaluations: Vec<F>, num_variables: usize) -> Self {
         Self {
             num_variables,
             evaluations,
@@ -44,7 +44,7 @@ where
     /// evaluations[i] = f(x_1, x_2, ..., x_n)  where (x_1, ..., x_n) ∈ {0,1,2}^n
     /// ```
     #[allow(clippy::missing_const_for_fn)]
-    pub fn evaluations(&self) -> &[F] {
+    pub(super) fn evaluations(&self) -> &[F] {
         &self.evaluations
     }
 
@@ -57,7 +57,7 @@ where
     /// ```ignore
     /// sum = ∑ h(x_1, ..., x_n)  where  (x_1, ..., x_n) ∈ {0,1}^n
     /// ```
-    pub fn sum_over_boolean_hypercube(&self) -> F {
+    pub(super) fn sum_over_boolean_hypercube(&self) -> F {
         (0..(1 << self.num_variables))
             .map(|point| self.evaluations[self.binary_to_ternary_index(point)])
             .sum()
@@ -110,7 +110,7 @@ where
     ///
     /// # Constraints:
     /// - The input `point` must have `n_variables` dimensions.
-    pub fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
+    pub(super) fn evaluate_at_point(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(point.num_variables(), self.num_variables);
         self.evaluations
             .iter()

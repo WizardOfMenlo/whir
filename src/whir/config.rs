@@ -632,8 +632,12 @@ impl<F: FftField> Display for WhirConfig<F> {
         for (i, r) in self.round_configs.iter().enumerate() {
             write!(f, "Round {i}:\n{r}")?;
         }
-        writeln!(f, "Final sumcheck: {}", self.final_sumcheck)?;
-        writeln!(f, "Final pow: {:.2}bits", self.final_pow.difficulty())?;
+        writeln!(
+            f,
+            "Final:\n  pow      {:.2}bits",
+            self.final_pow.difficulty()
+        )?;
+        writeln!(f, "  sumcheck {}", self.final_sumcheck)?;
 
         writeln!(f, "------------------------------------")?;
         writeln!(f, "Round by round soundness analysis:")?;
