@@ -16,7 +16,7 @@ use crate::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
     },
-    utils::expand_randomness,
+    utils::{expand_randomness, zip_strict},
     verify,
     whir::{config::InitialSumcheck, Commitment},
 };
@@ -338,9 +338,7 @@ impl<F: FftField> WhirConfig<F> {
         let combination_randomness_gen = verifier_state.verifier_message();
         let combination_randomness =
             expand_randomness(combination_randomness_gen, constraints.len());
-        *claimed_sum += constraints
-            .iter()
-            .zip(&combination_randomness)
+        *claimed_sum += zip_strict(constraints.iter(), &combination_randomness)
             .map(|(c, rand)| c.sum * rand)
             .sum::<F>();
 
@@ -364,9 +362,7 @@ impl<F: FftField> WhirConfig<F> {
                 |p| self.round_configs[p].initial_num_variables(),
             );
             point = MultilinearPoint(point.0[..num_variables].to_vec());
-            value += constraints
-                .iter()
-                .zip(randomness)
+            value += zip_strict(constraints.iter(), randomness)
                 .map(|(constraint, &randomness)| {
                     let value = if constraint.defer_evaluation {
                         deferred.next().unwrap()

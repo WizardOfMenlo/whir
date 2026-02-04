@@ -134,6 +134,7 @@ fn hash_many_const<const N: usize>(platform: Platform, inputs: &[u8], output: &m
         <[[u8; N]]>::ref_from_bytes(inputs).expect("Input length is not a multiple of N");
 
     // Process up to MAX_SIMD_DEGREE messages in parallel.
+    assert_eq!(inputs.len() * OUT_LEN, output.len());
     for (inputs, out) in inputs
         .chunks(MAX_SIMD_DEGREE)
         .zip(output.chunks_mut(OUT_LEN * MAX_SIMD_DEGREE))

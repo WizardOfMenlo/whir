@@ -5,6 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
+use crate::utils::zip_strict;
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -68,9 +69,7 @@ where
             return self.evals[binary_index.0];
         }
 
-        self.evals
-            .iter()
-            .zip(LagrangePolynomialIterator::from(point))
+        zip_strict(self.evals.iter(), LagrangePolynomialIterator::from(point))
             .map(|(eval, (_, lag))| *eval * lag)
             .sum()
     }

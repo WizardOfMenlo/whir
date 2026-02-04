@@ -19,7 +19,7 @@ use crate::{
         VerificationResult, VerifierState,
     },
     type_info::{Type, TypeInfo},
-    utils::workload_size,
+    utils::{workload_size, zip_strict},
     verify,
 };
 
@@ -352,9 +352,8 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
         let target = workload_size::<u8>() / 8;
         let batch_size = (target / message_size).next_multiple_of(engine.preferred_batch_size());
         assert!(batch_size >= 1);
-        for (matrix, out) in matrix
-            .chunks(batch_size * cols)
-            .zip(out.chunks_mut(batch_size))
+        for (matrix, out) in
+            zip_strict(matrix.chunks(batch_size * cols), out.chunks_mut(batch_size))
         {
             let bytes = encoder.encode(matrix);
             engine.hash_many(message_size, bytes, out);

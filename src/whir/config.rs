@@ -692,7 +692,7 @@ impl<F: FftField> Display for WhirConfig<F> {
 
         num_variables -= self.initial_sumcheck.num_rounds();
 
-        for (round, r) in self.round_configs.iter().enumerate() {
+        for r in &self.round_configs {
             let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds() - 1)) as f64;
             let log_eta = Self::log_eta(self.soundness_type, next_rate);
 

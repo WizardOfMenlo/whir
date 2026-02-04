@@ -15,6 +15,7 @@ use crate::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProtocolId, ProverState,
         VerificationResult, VerifierMessage, VerifierState,
     },
+    utils::zip_strict,
     verify,
 };
 
@@ -88,11 +89,13 @@ impl Config {
                 }
                 let mut outputs = vec![Hash::default(); batch_size];
                 move |nonce| {
-                    for (input, nonce) in inputs.iter_mut().zip(nonce..) {
+                    let input_len = inputs.len();
+                    for (input, nonce) in zip_strict(inputs.iter_mut(), (nonce..).take(input_len)) {
                         input[32..40].copy_from_slice(&nonce.to_le_bytes());
                     }
                     engine.hash_many(64, inputs.as_bytes(), &mut outputs);
-                    for (output, nonce) in outputs.iter().zip(nonce..) {
+                    let output_len = outputs.len();
+                    for (output, nonce) in zip_strict(outputs.iter(), (nonce..).take(output_len)) {
                         let value = u64::from_le_bytes(output.0[..8].try_into().unwrap());
                         if value <= self.threshold {
                             return Some(nonce);
@@ -123,11 +126,17 @@ impl Config {
                     if batch_start >= global_min.load(Ordering::Relaxed) {
                         break;
                     }
-                    for (input, nonce) in inputs.iter_mut().zip(batch_start..) {
+                    let input_len = inputs.len();
+                    for (input, nonce) in
+                        zip_strict(inputs.iter_mut(), (batch_start..).take(input_len))
+                    {
                         input[32..40].copy_from_slice(&nonce.to_le_bytes());
                     }
                     engine.hash_many(64, inputs.as_bytes(), &mut outputs);
-                    for (output, nonce) in outputs.iter().zip(batch_start..) {
+                    let output_len = outputs.len();
+                    for (output, nonce) in
+                        zip_strict(outputs.iter(), (batch_start..).take(output_len))
+                    {
                         let value = u64::from_le_bytes(output.0[..8].try_into().unwrap());
                         if value <= self.threshold {
                             // We found a solution, store it in the global_min.

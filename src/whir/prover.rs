@@ -55,7 +55,7 @@ impl<F: FftField> WhirConfig<F> {
         let num_variables = self.initial_committer.polynomial_size.trailing_zeros() as usize;
 
         // Validate statements
-        for (polynomial, statement) in polynomials.iter().zip(statements) {
+        for (polynomial, statement) in zip_strict(polynomials.iter(), statements) {
             assert_eq!(polynomial.num_variables(), num_variables);
             assert_eq!(statement.num_variables(), num_variables);
 
@@ -157,7 +157,7 @@ impl<F: FftField> WhirConfig<F> {
             .map(|c| self.embedding().map(*c))
             .collect::<Vec<_>>();
         for (weight, polynomial) in zip_strict(&batching_weights, polynomials).skip(1) {
-            for (acc, src) in batched_coeffs.iter_mut().zip(polynomial.coeffs()) {
+            for (acc, src) in zip_strict(batched_coeffs.iter_mut(), polynomial.coeffs()) {
                 *acc += self.embedding().mixed_mul(*weight, *src);
             }
         }
@@ -169,10 +169,10 @@ impl<F: FftField> WhirConfig<F> {
 
         for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
             let mut combined_eval = F::ZERO;
-            for (weight, poly_evals) in batching_weights
-                .iter()
-                .zip(constraint_evals_matrix.chunks_exact(num_constraints))
-            {
+            for (weight, poly_evals) in zip_strict(
+                batching_weights.iter(),
+                constraint_evals_matrix.chunks_exact(num_constraints),
+            ) {
                 combined_eval += *weight * poly_evals[constraint_idx];
             }
             combined_statement.add_constraint(weights, combined_eval);
@@ -361,7 +361,7 @@ impl<F: FftField> WhirConfig<F> {
             .unwrap_or_else(|| {
                 let mut statement = Statement::new(folded_coefficients.num_variables());
 
-                for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
+                for (point, eval) in zip_strict(stir_challenges.into_iter(), stir_evaluations) {
                     let weights = Weights::evaluation(point);
                     statement.add_constraint(weights, eval);
                 }
