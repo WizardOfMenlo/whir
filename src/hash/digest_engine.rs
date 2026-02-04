@@ -6,7 +6,7 @@ use hex_literal::hex;
 use zerocopy::IntoBytes;
 
 use super::{Engine, Hash, HASH_COUNTER};
-use crate::transcript::ProtocolId;
+use crate::{transcript::ProtocolId, utils::zip_strict};
 
 pub const SHA2: ProtocolId = ProtocolId::new(hex!(
     "018eaa247cb8957ab1e9fdac885450403c5e7bda1acaaa504e4cc8f2f76bb076"
@@ -131,7 +131,7 @@ where
         if size == 0 {
             output.fill(Hash(D::digest([]).into()));
         } else {
-            for (input, out) in input.chunks_exact(size).zip(output.iter_mut()) {
+            for (input, out) in zip_strict(input.chunks_exact(size), output.iter_mut()) {
                 let input = input.as_bytes();
                 let hash = D::digest(input);
                 out.as_mut_bytes().copy_from_slice(hash.as_ref());

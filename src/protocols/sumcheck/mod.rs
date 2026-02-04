@@ -27,7 +27,7 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::Type,
-    utils::eval_eq,
+    utils::{eval_eq, zip_strict},
     verify,
     whir::statement::Statement,
 };
@@ -343,13 +343,14 @@ impl<F: Field> SumcheckSingle<F> {
         assert_eq!(combination_randomness.len(), evaluations.len());
 
         // Accumulate the sum while applying all constraints simultaneously
-        points
-            .iter()
-            .zip(combination_randomness.iter().zip(evaluations.iter()))
-            .for_each(|(point, (&rand, &eval))| {
-                eval_eq(&point.0, self.weights.evals_mut(), rand);
-                self.sum += rand * eval;
-            });
+        zip_strict(
+            points.iter(),
+            zip_strict(combination_randomness.iter(), evaluations.iter()),
+        )
+        .for_each(|(point, (&rand, &eval))| {
+            eval_eq(&point.0, self.weights.evals_mut(), rand);
+            self.sum += rand * eval;
+        });
     }
 
     /// Compresses the polynomial and weight evaluations by reducing the number of variables.

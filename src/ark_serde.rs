@@ -4,6 +4,8 @@
 
 use serde::{de::Error as _, ser::Error as _, Deserialize as _, Deserializer, Serializer};
 
+use crate::utils::zip_strict;
+
 /// Serialize using ark_serialize
 pub mod canonical {
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -104,7 +106,8 @@ pub mod bigint {
         let mut result = T::default();
         #[cfg(target_endian = "little")]
         let bytes = result.as_mut().as_mut_bytes();
-        for (dst, src) in bytes.iter_mut().zip(le_bytes) {
+        let bytes_len = bytes.len();
+        for (dst, src) in zip_strict(bytes.iter_mut(), le_bytes.take(bytes_len)) {
             *dst = src;
         }
         Ok(result)

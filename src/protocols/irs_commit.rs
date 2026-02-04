@@ -203,7 +203,7 @@ where
                     .nth(i)
                     .unwrap()
             });
-            for (evals, leaves) in evals.chunks_exact(self.interleaving_depth).zip(dst) {
+            for (evals, leaves) in zip_strict(evals.chunks_exact(self.interleaving_depth), dst) {
                 leaves.copy_from_slice(evals);
             }
         }
@@ -483,15 +483,16 @@ impl<F: Field> Evaluations<F> {
                 .collect()
         } else {
             assert_eq!(weights.len(), self.num_columns());
-            self.points
-                .iter()
-                .zip(self.matrix.chunks_exact(self.num_columns()))
-                .map(|(point, row)| Constraint {
-                    weights: Weights::univariate(embedding.map(*point), num_variables),
-                    sum: mixed_dot(embedding, weights, row),
-                    defer_evaluation: false,
-                })
-                .collect()
+            zip_strict(
+                self.points.iter(),
+                self.matrix.chunks_exact(self.num_columns()),
+            )
+            .map(|(point, row)| Constraint {
+                weights: Weights::univariate(embedding.map(*point), num_variables),
+                sum: mixed_dot(embedding, weights, row),
+                defer_evaluation: false,
+            })
+            .collect()
         }
     }
 }
@@ -627,13 +628,14 @@ mod tests {
             config.out_domain_samples * config.num_polynomials
         );
         if config.num_polynomials > 0 {
-            for (point, evals) in witness.out_of_domain().points.iter().zip(
+            for (point, evals) in zip_strict(
+                witness.out_of_domain().points.iter(),
                 witness
                     .out_of_domain()
                     .matrix
                     .chunks_exact(config.num_polynomials),
             ) {
-                for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
+                for (polynomial, expected) in zip_strict(polynomials.iter(), evals.iter()) {
                     assert_eq!(
                         mixed_univariate_evaluate(config.embedding(), polynomial, *point),
                         *expected
@@ -677,7 +679,7 @@ mod tests {
                         univariate_evaluate(&coeffs, *point)
                     })
                 });
-                for (expected, got) in expected_iter.zip(evals.iter()) {
+                for (expected, got) in zip_strict(expected_iter, evals.iter()) {
                     assert_eq!(expected, *got);
                 }
             }

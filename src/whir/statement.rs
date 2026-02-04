@@ -8,10 +8,13 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::algebra::poly_utils::{
-    coeffs::CoefficientList,
-    evals::{geometric_till, EvaluationsList},
-    multilinear::MultilinearPoint,
+use crate::{
+    algebra::poly_utils::{
+        coeffs::CoefficientList,
+        evals::{geometric_till, EvaluationsList},
+        multilinear::MultilinearPoint,
+    },
+    utils::zip_strict,
 };
 
 /// Represents a weight function used in polynomial evaluations.
@@ -97,10 +100,7 @@ impl<F: Field> Weights<F> {
 
                 // We intentionally avoid parallel iterators here because this function is only called by the verifier,
                 // which is assumed to run on a lightweight device.
-                weight
-                    .evals()
-                    .iter()
-                    .zip(poly.evals())
+                zip_strict(weight.evals().iter(), poly.evals())
                     .map(|(&w, &p)| w * p)
                     .sum()
             }
@@ -172,17 +172,14 @@ impl<F: Field> Weights<F> {
                 assert_eq!(poly.num_variables(), weight.num_variables());
                 #[cfg(not(feature = "parallel"))]
                 {
-                    poly.evals()
-                        .iter()
-                        .zip(weight.evals().iter())
+                    zip_strict(poly.evals().iter(), weight.evals().iter())
                         .map(|(p, w)| *p * *w)
                         .sum()
                 }
                 #[cfg(feature = "parallel")]
                 {
-                    poly.evals()
-                        .par_iter()
-                        .zip(weight.evals().par_iter())
+                    zip_strict(poly.evals().iter(), weight.evals().iter())
+                        .par_bridge()
                         .map(|(p, w)| *p * *w)
                         .sum()
                 }

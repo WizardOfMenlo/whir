@@ -17,6 +17,7 @@ use crate::{
         DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
         VerificationResult, VerifierState,
     },
+    utils::zip_strict,
     verify,
 };
 
@@ -202,10 +203,7 @@ impl Config {
         }
 
         // Sort indices and leaf hashes.
-        let mut layer = indices
-            .iter()
-            .copied()
-            .zip(leaf_hashes.iter().copied())
+        let mut layer = zip_strict(indices.iter().copied(), leaf_hashes.iter().copied())
             .collect::<Vec<(usize, Hash)>>();
         layer.sort_unstable_by_key(|(i, _)| *i);
 
