@@ -74,8 +74,9 @@ pub fn interleaved_rs_encode<F: FftField>(
     let expanded_size = coeffs.len() * expansion;
 
     // 1. Create zero-padded message of appropriate size
-    let mut result = vec![F::zero(); expanded_size];
-    result[..coeffs.len()].copy_from_slice(coeffs);
+    let mut result = Vec::with_capacity(expanded_size);
+    result.extend_from_slice(coeffs);
+    result.resize(expanded_size, F::ZERO);
 
     let rows = expanded_size / interleaving_depth;
     let columns = interleaving_depth;

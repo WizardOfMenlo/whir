@@ -268,7 +268,6 @@ impl<F: FftField> WhirConfig<F> {
 
         let round_config = &self.round_configs[round_state.round];
 
-
         let witness = round_config
             .irs_committer
             .commit(prover_state, &[folded_coefficients.coeffs()]);
