@@ -151,11 +151,12 @@ impl<F: Field> Config<F> {
         let mut res = Vec::with_capacity(self.num_rounds());
         for round in &self.rounds {
             // Receive sumcheck polynomial
-            let evals = verifier_state.prover_messages_vec(3)?;
-            let sumcheck_poly = SumcheckPolynomial::new(evals, 1);
+            let eval_0: F = verifier_state.prover_message()?;
+            let eval_1: F = verifier_state.prover_message()?;
+            let eval_2: F = verifier_state.prover_message()?;
 
             // Check the sum
-            verify!(sumcheck_poly.sum_over_boolean_hypercube() == *sum);
+            verify!(eval_0 + eval_1 == *sum);
 
             // Check proof of work (if any)
             round.pow.verify(verifier_state)?;
@@ -165,8 +166,10 @@ impl<F: Field> Config<F> {
             res.push(folding_randomness);
 
             // Update the sum
-            let point = MultilinearPoint(vec![folding_randomness]);
-            *sum = sumcheck_poly.evaluate_at_point(&point);
+            let c0 = eval_0;
+            let c2 = (eval_2 - eval_1 - eval_1 + eval_0) / (F::ONE + F::ONE);
+            let c1 = (eval_1 - eval_0) - c2;
+            *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
         res.reverse();
