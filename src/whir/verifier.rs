@@ -350,7 +350,11 @@ impl<F: FftField> WhirConfig<F> {
             .windows(2)
             .all(|w| w[0].weights.num_variables() == w[1].weights.num_variables()));
 
-        let combination_randomness_gen = verifier_state.verifier_message();
+        let combination_randomness_gen = if constraints.is_empty() {
+            F::ZERO
+        } else {
+            verifier_state.verifier_message()
+        };
         let combination_randomness =
             expand_randomness(combination_randomness_gen, constraints.len());
         *claimed_sum += zip_strict(constraints.iter(), &combination_randomness)
