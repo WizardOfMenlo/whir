@@ -7,6 +7,7 @@ use super::{
 use crate::{
     algebra::{
         embedding,
+        ntt::transpose,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -118,12 +119,26 @@ impl<F: FftField> WhirConfig<F> {
             }
             index += num_constraints;
         }
+
+        transpose(
+            constraint_evals_matrix.as_mut_slice(),
+            num_polynomials,
+            num_constraints,
+        );
+
         // Complete using prover claimed values
         for cell in &mut constraint_evals_matrix {
             if cell.is_none() {
                 *cell = Some(verifier_state.prover_message()?);
             }
         }
+
+        transpose(
+            constraint_evals_matrix.as_mut_slice(),
+            num_constraints,
+            num_polynomials,
+        );
+
         let constraint_evals_matrix: Vec<F> = constraint_evals_matrix
             .into_iter()
             .map(|e| e.unwrap())

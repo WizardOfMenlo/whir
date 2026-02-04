@@ -11,6 +11,8 @@ use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
 use crate::algebra::{
     embedding::Embedding, ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint,
 };
+#[cfg(feature = "parallel")]
+use crate::utils::workload_size;
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -61,6 +63,14 @@ where
     pub fn evaluate(&self, point: &MultilinearPoint<F>) -> F {
         assert_eq!(self.num_variables, point.num_variables());
         eval_multivariate(&self.coeffs, &point.0)
+    }
+
+    pub fn mixed_evaluate<M>(&self, embedding: &M, point: &MultilinearPoint<M::Target>) -> M::Target
+    where
+        M: Embedding<Source = F>,
+    {
+        assert_eq!(self.num_variables, point.num_variables());
+        mixed_eval(embedding, &self.coeffs, &point.0, M::Target::ONE)
     }
 
     /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
@@ -287,6 +297,33 @@ fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E
         eval_extension(low, tail, scalar) + eval_extension(high, tail, scalar * x)
     } else {
         scalar.mul_by_base_prime_field(&coeff[0])
+    }
+}
+
+fn mixed_eval<M: Embedding>(
+    embedding: &M,
+    coeff: &[M::Source],
+    eval: &[M::Target],
+    scalar: M::Target,
+) -> M::Target {
+    debug_assert_eq!(coeff.len(), 1 << eval.len());
+
+    if let Some((&x, tail)) = eval.split_first() {
+        let (low, high) = coeff.split_at(coeff.len() / 2);
+
+        #[cfg(feature = "parallel")]
+        if low.len() > workload_size::<M::Source>() {
+            let (a, b) = rayon::join(
+                || mixed_eval(embedding, low, tail, scalar),
+                || mixed_eval(embedding, high, tail, scalar * x),
+            );
+            return a + b;
+        }
+
+        // Default non-parallel execution
+        mixed_eval(embedding, low, tail, scalar) + mixed_eval(embedding, high, tail, scalar * x)
+    } else {
+        embedding.mixed_mul(scalar, coeff[0])
     }
 }
 
