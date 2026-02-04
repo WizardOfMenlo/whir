@@ -37,6 +37,26 @@ pub fn univariate_evaluate<F: Field>(coefficients: &[F], point: F) -> F {
     mixed_univariate_evaluate(&embedding::Identity::new(), coefficients, point)
 }
 
+/// Lift a vector to an embedding.
+pub fn lift<M: Embedding>(embedding: &M, source: &[M::Source]) -> Vec<M::Target> {
+    source.iter().map(|c| embedding.map(*c)).collect()
+}
+
+/// Mixed scalar-mul add
+///
+/// accumulator[i] += weight * vector[i]
+pub fn mixed_scalar_mul_add<M: Embedding>(
+    embedding: &M,
+    accumulator: &mut [M::Target],
+    weight: M::Target,
+    vector: &[M::Source],
+) {
+    assert_eq!(accumulator.len(), vector.len());
+    for (accumulator, value) in accumulator.iter_mut().zip(vector) {
+        *accumulator += embedding.mixed_mul(weight, *value);
+    }
+}
+
 /// Mixed field univariate Horner evaluation.
 pub fn mixed_univariate_evaluate<M: Embedding>(
     embedding: &M,

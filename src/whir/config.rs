@@ -340,6 +340,11 @@ where
         self.initial_committer.polynomial_size
     }
 
+    pub fn initial_num_variables(&self) -> usize {
+        assert!(self.initial_size().is_power_of_two());
+        self.initial_size().trailing_zeros() as usize
+    }
+
     pub fn final_size(&self) -> usize {
         self.final_sumcheck.final_size()
     }
