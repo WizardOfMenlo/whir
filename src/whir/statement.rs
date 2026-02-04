@@ -43,7 +43,7 @@ pub enum Weights<F> {
         /// The number of terms in the geometric progression, post which all terms are zero.
         n: usize,
         /// Represents the geometric progression as a set of evaluations.
-        weight: EvaluationsList<F>,
+        weight: EvaluationsList<F>, // TODO: Why do we need this?
     },
 }
 

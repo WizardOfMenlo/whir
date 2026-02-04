@@ -10,14 +10,16 @@ use super::{
 };
 use crate::{
     algebra::{
+        dot,
         embedding::Identity,
-        lift, mixed_scalar_mul_add,
-        ntt::transpose,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        mixed_scalar_mul_add,
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
         tensor_product,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit, sumcheck::SumcheckSingle},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
@@ -69,6 +71,7 @@ impl<F: FftField> WhirConfig<F> {
             debug_assert!(statement.verify(&polynomial.lift(self.embedding())));
         }
         if polynomials.is_empty() {
+            // TODO: Should we draw a random evaluation point?
             return (MultilinearPoint::default(), Vec::new());
         }
 
@@ -119,79 +122,78 @@ impl<F: FftField> WhirConfig<F> {
                     }
                 }
             }
-
-            // TODO: elliminate
-            let cols = matrix.len() / weigths.len();
-            transpose(matrix.as_mut_slice(), weigths.len(), cols);
-
             (weigths, matrix)
         };
-        let num_constraints = constraint_weights.len();
 
-        // Random linear combination of the polynomials
-        let polynomial_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
-        assert_eq!(polynomial_weights[0], F::ONE);
-        let mut coefficients = lift(self.embedding(), polynomials[0].coeffs());
-        for (weight, polynomial) in zip_strict(&polynomial_weights, polynomials).skip(1) {
+        // Random linear combination of the polynomials.
+        let polynomial_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, polynomials.len());
+        assert_eq!(polynomial_rlc_coeffs[0], F::ONE);
+        let mut coefficients = polynomials[0].lift(self.embedding());
+        for (rlc_coeff, polynomial) in zip_strict(&polynomial_rlc_coeffs, polynomials).skip(1) {
             mixed_scalar_mul_add(
                 self.embedding(),
-                &mut coefficients,
-                *weight,
+                coefficients.coeffs_mut(),
+                *rlc_coeff,
                 polynomial.coeffs(),
             );
         }
-        let mut coefficients = CoefficientList::new(coefficients);
+        let mut evaluations = EvaluationsList::from(coefficients.clone());
+        let mut prev_commitment = RoundWitness::Initial {
+            witnesses,
+            batching_weights: polynomial_rlc_coeffs.clone(),
+        };
 
-        // Step 4: Build combined statement using RLC of the committed evaluation matrix
-        // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
-        let mut statement = Statement::new(self.initial_num_variables());
-        for (constraint_idx, weights) in constraint_weights.into_iter().enumerate() {
-            let mut combined_eval = F::ZERO;
-            for (weight, poly_evals) in zip_strict(
-                polynomial_weights.iter(),
-                constraint_matrix.chunks_exact(num_constraints),
-            ) {
-                combined_eval += *weight * poly_evals[constraint_idx];
-            }
-            statement.add_constraint(weights, combined_eval);
+        // Random linear combination of the constraints.
+        let constraint_rlc_coeffs: Vec<F> =
+            geometric_challenge(prover_state, constraint_weights.len());
+        let mut constraints = EvaluationsList::new(vec![F::ZERO; self.initial_size()]);
+        for (rlc_coeff, constraint) in zip_strict(&constraint_rlc_coeffs, constraint_weights) {
+            constraint.accumulate(&mut constraints, *rlc_coeff)
         }
 
+        // Compute "The Sum"
+        let mut the_sum = zip_strict(
+            &constraint_rlc_coeffs,
+            constraint_matrix.chunks_exact(polynomials.len()),
+        )
+        .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
+        .sum();
+
+        // These invariants are maintained throught the proof.
+        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+
         // Run initial sumcheck on batched polynomial with combined statement
-        let mut sumcheck_instance = None;
+        // TODO: Instead of `self.initial_sumcheck` we can branch on `constraint_weights.is_empty.`.
         let mut folding_randomness = match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                let combination_randomness_gen = prover_state.verifier_message();
-                let mut instance = SumcheckSingle::new(
-                    coefficients.clone(),
-                    &statement,
-                    combination_randomness_gen,
-                );
-                let folding_randomness = config.prove(prover_state, &mut instance);
-                sumcheck_instance = Some(instance);
-                folding_randomness
-            }
+            InitialSumcheck::Full(config) => config.prove(
+                prover_state,
+                &mut evaluations,
+                &mut constraints,
+                &mut the_sum,
+            ),
             InitialSumcheck::Abridged { folding_size, pow } => {
-                let mut folding_randomness = vec![F::ZERO; *folding_size];
-                for randomness in &mut folding_randomness {
-                    *randomness = prover_state.verifier_message();
-                }
+                let folding_randomness = (0..*folding_size)
+                    .map(|_| prover_state.verifier_message())
+                    .collect();
                 pow.prove(prover_state);
+                constraints =
+                    EvaluationsList::new(vec![F::ZERO; constraints.num_evals() >> folding_size]);
                 MultilinearPoint(folding_randomness)
             }
         };
-
+        coefficients = coefficients.fold(&folding_randomness);
+        if !self.allows_statement() {
+            evaluations = EvaluationsList::from(coefficients.clone());
+        }
         let mut randomness_vec = Vec::with_capacity(self.mv_parameters.num_variables);
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-
-        let mut prev_commitment = RoundWitness::Initial {
-            witnesses,
-            batching_weights: polynomial_weights,
-        };
+        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Execute standard WHIR rounds on the batched polynomial
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
-            coefficients = coefficients.fold(&folding_randomness);
-
+            // Commit to the polynomial.
             let witness = round_config
                 .irs_committer
                 .commit(prover_state, &[coefficients.coeffs()]);
@@ -264,46 +266,32 @@ impl<F: FftField> WhirConfig<F> {
                     (points, evals)
                 }
             };
-
-            // Randomness for combination
-            let combination_randomness = geometric_challenge(prover_state, stir_challenges.len());
-
-            #[allow(clippy::map_unwrap_or)]
-            let mut round_sumcheck_instance = sumcheck_instance
-                .take()
-                .map(|mut sumcheck_instance| {
-                    sumcheck_instance.add_new_equality(
-                        &stir_challenges,
-                        &stir_evaluations,
-                        &combination_randomness,
-                    );
-                    sumcheck_instance
-                })
-                .unwrap_or_else(|| {
-                    let mut statement = Statement::new(coefficients.num_variables());
-
-                    for (point, eval) in zip_strict(stir_challenges.into_iter(), stir_evaluations) {
-                        let weights = Weights::evaluation(point);
-                        statement.add_constraint(weights, eval);
-                    }
-                    SumcheckSingle::new(coefficients.clone(), &statement, combination_randomness[1])
-                });
-
-            folding_randomness = round_config
-                .sumcheck
-                .prove(prover_state, &mut round_sumcheck_instance);
-
-            randomness_vec.extend(folding_randomness.0.iter().rev());
-
-            // Update round state
-            sumcheck_instance = Some(round_sumcheck_instance);
             prev_commitment = RoundWitness::Round { witness };
+
+            // Add random linear combination of in- and out-domain constraints to the instance
+            let stir_rlc_coeffs = geometric_challenge(prover_state, stir_challenges.len());
+            for (coeff, point) in zip_strict(&stir_rlc_coeffs, stir_challenges) {
+                Weights::evaluation(point).accumulate(&mut constraints, *coeff);
+            }
+            the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
+            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+
+            // Run sumcheck for this round
+            folding_randomness = round_config.sumcheck.prove(
+                prover_state,
+                &mut evaluations,
+                &mut constraints,
+                &mut the_sum,
+            );
+            coefficients = coefficients.fold(&folding_randomness);
+            randomness_vec.extend(folding_randomness.0.iter().rev());
+            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
         }
 
-        coefficients = coefficients.fold(&folding_randomness);
-        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
-
         // Directly send coefficients of the polynomial to the verifier.
+        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
         for coeff in coefficients.coeffs() {
             prover_state.prover_message(coeff);
         }
@@ -334,24 +322,22 @@ impl<F: FftField> WhirConfig<F> {
         }
 
         // Final sumcheck
-        let mut sumcheck_instance = sumcheck_instance
-            .clone()
-            .unwrap_or_else(|| SumcheckSingle::new(coefficients.clone(), &statement, F::ONE));
-
-        let final_folding_randomness = self
-            .final_sumcheck
-            .prove(prover_state, &mut sumcheck_instance);
+        let final_folding_randomness = self.final_sumcheck.prove(
+            prover_state,
+            &mut evaluations,
+            &mut constraints,
+            &mut the_sum,
+        );
         randomness_vec.extend(final_folding_randomness.0.iter().rev());
 
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
-        let deferred = statement
-            .constraints
+        let deferred = statements
             .iter()
+            .flat_map(|s| &s.constraints)
             .filter(|constraint| constraint.defer_evaluation)
             .map(|constraint| constraint.weights.compute(&constraint_eval))
             .collect();
-
         prover_state.prover_hint_ark(&deferred);
 
         (constraint_eval, deferred)
