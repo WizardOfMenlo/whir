@@ -350,10 +350,10 @@ impl<F: FftField> WhirConfig<F> {
             .windows(2)
             .all(|w| w[0].weights.num_variables() == w[1].weights.num_variables()));
 
-        let combination_randomness_gen = if constraints.is_empty() {
-            F::ZERO
-        } else {
+        let combination_randomness_gen = if constraints.len() > 1 {
             verifier_state.verifier_message()
+        } else {
+            F::ONE
         };
         let combination_randomness =
             expand_randomness(combination_randomness_gen, constraints.len());
