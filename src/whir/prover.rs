@@ -10,7 +10,8 @@ use super::{
 };
 use crate::{
     algebra::{
-        embedding::{self, Embedding, Identity},
+        embedding::Identity,
+        lift, mixed_scalar_mul_add,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -53,58 +54,42 @@ impl<F: FftField> WhirConfig<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        // Input validation
         assert_eq!(polynomials.len(), statements.len());
         assert_eq!(
             polynomials.len(),
             witnesses.len() * self.initial_committer.num_polynomials
         );
+        for (polynomial, statement) in zip_strict(polynomials, statements) {
+            assert_eq!(polynomial.num_coeffs(), self.initial_size());
+            assert_eq!(statement.num_variables(), self.initial_num_variables());
+            // In debug mode, verify all statment.
+            // TODO: Add a `mixed_verify` function that takes an embedding into account.
+            debug_assert!(statement.verify(&polynomial.lift(self.embedding())));
+        }
         if polynomials.is_empty() {
-            // TODO: Implement something sensible.
-            unimplemented!("Empty case not implemented");
+            return (MultilinearPoint::default(), Vec::new());
         }
-        let num_variables = self.initial_committer.polynomial_size.trailing_zeros() as usize;
-
-        // Validate statements
-        for (polynomial, statement) in zip_strict(polynomials.iter(), statements) {
-            assert_eq!(polynomial.num_variables(), num_variables);
-            assert_eq!(statement.num_variables(), num_variables);
-
-            #[cfg(test)]
-            {
-                // In debug mode, verify all statment.
-                // TODO: Add a `mixed_verify` function that takes an embedding into account.
-                let polynomial = polynomial.lift(self.embedding());
-                assert!(statement.verify(&polynomial));
-            }
-        }
-
-        // Step 1: Commit to the full N×M constraint evaluation matrix BEFORE sampling γ.
-        //
-        // Security: The prover must commit to ALL cross-term evaluations (P_i(w_j) for all i,j)
-        // before learning the batching randomness γ. This prevents the prover from adaptively
-        // choosing P_i(w_j) values after seeing γ, which would allow breaking soundness by
-        // constructing polynomials that satisfy P_batched = Σ γ^i·P_i at constraint points
-        // but differ elsewhere.
-
-        // Collect all constraint weights from OOD samples and statements
-        let mut all_constraint_weights = Vec::new();
-        all_constraint_weights.extend(witnesses.iter().flat_map(|w| {
-            w.out_of_domain()
-                .weights(&embedding::Identity::<F>::new(), num_variables)
-        }));
-        all_constraint_weights.extend(
-            statements
-                .iter()
-                .flat_map(|s| s.constraints.iter().map(|c| c.weights.clone())),
-        );
-        let num_constraints = all_constraint_weights.len();
 
         // Complete evaluations of EVERY polynomial at EVERY constraint point
+        // TODO: Transpose and make the order (constraint, polynomial)
         // This creates an N×M matrix where N = #polynomials, M = #constraints
         // We commit this matrix to the script.
-        let mut constraint_evals_matrix: Vec<Option<F>> =
-            vec![None; polynomials.len() * num_constraints];
-        // OODs Points
+        let constraints = witnesses
+            .iter()
+            .flat_map(|w| {
+                w.out_of_domain()
+                    .weights(&Identity::new(), self.initial_num_variables())
+            })
+            .chain(
+                statements
+                    .iter()
+                    .flat_map(|s| s.constraints.iter().map(|c| c.weights.clone())),
+            )
+            .collect::<Vec<_>>();
+        let num_constraints = constraints.len();
+        let mut constraint_evals_matrix = vec![None; polynomials.len() * num_constraints];
+        // Fill in provided OODs Points
         let mut constraint_offset = 0;
         let mut polynomial_offset = 0;
         for witness in witnesses {
@@ -119,7 +104,7 @@ impl<F: FftField> WhirConfig<F> {
             }
             polynomial_offset += witness.out_of_domain().num_columns() * num_constraints;
         }
-        // Statement
+        // Fill in provided Statements
         let mut index = witnesses
             .iter()
             .map(|w| w.out_of_domain().num_points())
@@ -132,13 +117,13 @@ impl<F: FftField> WhirConfig<F> {
             }
             index += num_constraints; // To next row, same column
         }
-        // Completion
+        // Complete the matrix by evaluating non-filled in terms.
         for (polynomial, row) in zip_strict(
             polynomials,
-            constraint_evals_matrix.chunks_exact_mut(all_constraint_weights.len()),
+            constraint_evals_matrix.chunks_exact_mut(constraints.len()),
         ) {
             let mut lifted = None;
-            for (weights, cell) in zip_strict(&all_constraint_weights, row) {
+            for (weights, cell) in zip_strict(&constraints, row) {
                 if cell.is_none() {
                     // TODO: Avoid lifting by evaluating directly through embedding.
                     let lifted = lifted.get_or_insert_with(|| polynomial.lift(self.embedding()));
@@ -153,34 +138,27 @@ impl<F: FftField> WhirConfig<F> {
             .map(|e| e.unwrap())
             .collect();
 
-        // Step 2: Sample batching randomness γ (cryptographically bound to committed matrix)
-        let batching_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
-
-        // Step 3: Materialize the batched polynomial P_batched = P₀ + γ·P₁ + γ²·P₂ + ...
-        // This also lifts the polynomial to the extension field.
-        assert_eq!(batching_weights[0], F::ONE);
-        let mut batched_coeffs = polynomials
-            .first()
-            .unwrap()
-            .coeffs()
-            .iter()
-            .map(|c| self.embedding().map(*c))
-            .collect::<Vec<_>>();
-        for (weight, polynomial) in zip_strict(&batching_weights, polynomials).skip(1) {
-            for (acc, src) in zip_strict(batched_coeffs.iter_mut(), polynomial.coeffs()) {
-                *acc += self.embedding().mixed_mul(*weight, *src);
-            }
+        // Random linear combination of the polynomials
+        let polynomial_weights: Vec<F> = geometric_challenge(prover_state, polynomials.len());
+        assert_eq!(polynomial_weights[0], F::ONE);
+        let mut coefficients = lift(self.embedding(), polynomials[0].coeffs());
+        for (weight, polynomial) in zip_strict(&polynomial_weights, polynomials).skip(1) {
+            mixed_scalar_mul_add(
+                self.embedding(),
+                &mut coefficients,
+                *weight,
+                polynomial.coeffs(),
+            );
         }
-        let mut coefficients = CoefficientList::new(batched_coeffs);
+        let mut coefficients = CoefficientList::new(coefficients);
 
         // Step 4: Build combined statement using RLC of the committed evaluation matrix
         // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
-        let mut statement = Statement::new(num_variables);
-
-        for (constraint_idx, weights) in all_constraint_weights.into_iter().enumerate() {
+        let mut statement = Statement::new(self.initial_num_variables());
+        for (constraint_idx, weights) in constraints.into_iter().enumerate() {
             let mut combined_eval = F::ZERO;
             for (weight, poly_evals) in zip_strict(
-                batching_weights.iter(),
+                polynomial_weights.iter(),
                 constraint_evals_matrix.chunks_exact(num_constraints),
             ) {
                 combined_eval += *weight * poly_evals[constraint_idx];
@@ -189,17 +167,17 @@ impl<F: FftField> WhirConfig<F> {
         }
 
         // Run initial sumcheck on batched polynomial with combined statement
-        let mut sumcheck_prover = None;
+        let mut sumcheck_instance = None;
         let mut folding_randomness = match &self.initial_sumcheck {
             InitialSumcheck::Full(config) => {
                 let combination_randomness_gen = prover_state.verifier_message();
-                let mut sumcheck = SumcheckSingle::new(
+                let mut instance = SumcheckSingle::new(
                     coefficients.clone(),
                     &statement,
                     combination_randomness_gen,
                 );
-                let folding_randomness = config.prove(prover_state, &mut sumcheck);
-                sumcheck_prover = Some(sumcheck);
+                let folding_randomness = config.prove(prover_state, &mut instance);
+                sumcheck_instance = Some(instance);
                 folding_randomness
             }
             InitialSumcheck::Abridged { folding_size, pow } => {
@@ -217,7 +195,7 @@ impl<F: FftField> WhirConfig<F> {
 
         let mut prev_commitment = RoundWitness::Initial {
             witnesses,
-            batching_weights,
+            batching_weights: polynomial_weights,
         };
 
         // Execute standard WHIR rounds on the batched polynomial
@@ -301,15 +279,15 @@ impl<F: FftField> WhirConfig<F> {
             let combination_randomness = geometric_challenge(prover_state, stir_challenges.len());
 
             #[allow(clippy::map_unwrap_or)]
-            let mut sumcheck_instance = sumcheck_prover
+            let mut round_sumcheck_instance = sumcheck_instance
                 .take()
-                .map(|mut sumcheck_prover| {
-                    sumcheck_prover.add_new_equality(
+                .map(|mut sumcheck_instance| {
+                    sumcheck_instance.add_new_equality(
                         &stir_challenges,
                         &stir_evaluations,
                         &combination_randomness,
                     );
-                    sumcheck_prover
+                    sumcheck_instance
                 })
                 .unwrap_or_else(|| {
                     let mut statement = Statement::new(coefficients.num_variables());
@@ -323,12 +301,12 @@ impl<F: FftField> WhirConfig<F> {
 
             folding_randomness = round_config
                 .sumcheck
-                .prove(prover_state, &mut sumcheck_instance);
+                .prove(prover_state, &mut round_sumcheck_instance);
 
             randomness_vec.extend(folding_randomness.0.iter().rev());
 
             // Update round state
-            sumcheck_prover = Some(sumcheck_instance);
+            sumcheck_instance = Some(round_sumcheck_instance);
             prev_commitment = RoundWitness::Round { witness };
         }
 
@@ -366,13 +344,13 @@ impl<F: FftField> WhirConfig<F> {
         }
 
         // Final sumcheck
-        let mut final_folding_sumcheck = sumcheck_prover
+        let mut sumcheck_instance = sumcheck_instance
             .clone()
             .unwrap_or_else(|| SumcheckSingle::new(coefficients.clone(), &statement, F::ONE));
 
         let final_folding_randomness = self
             .final_sumcheck
-            .prove(prover_state, &mut final_folding_sumcheck);
+            .prove(prover_state, &mut sumcheck_instance);
         randomness_vec.extend(final_folding_randomness.0.iter().rev());
 
         // Hints for deferred constraints
