@@ -17,7 +17,7 @@ use whir::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::{Statement, Weights},
+    whir::statement::Weights,
 };
 
 #[derive(Parser, Debug)]
@@ -176,12 +176,15 @@ fn run_whir_as_ldt<F>(
 
     let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-    let statement = Statement::new(num_variables);
+    let weights: Vec<Weights<F>> = Vec::new();
+    let evaluations: Vec<F> = Vec::new();
+    let weight_refs = weights.iter().collect::<Vec<_>>();
     params.prove(
         &mut prover_state,
         &[&polynomial],
         &[&witness],
-        &[&statement],
+        &weight_refs,
+        &evaluations,
     );
 
     // Serialize proof
@@ -197,7 +200,12 @@ fn run_whir_as_ldt<F>(
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         params
-            .verify(&mut verifier_state, &[&commitment], &[&statement])
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weight_refs,
+                &evaluations,
+            )
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -212,7 +220,7 @@ fn run_whir_pcs<F>(
 ) where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::{config::WhirConfig, statement::Statement};
+    use whir::whir::config::WhirConfig;
 
     // Runs as a PCS
     let security_level = args.security_level;
@@ -279,7 +287,8 @@ fn run_whir_pcs<F>(
 
     let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-    let mut statement: Statement<F> = Statement::<F>::new(num_variables);
+    let mut weights = Vec::new();
+    let mut evaluations = Vec::new();
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
@@ -288,8 +297,9 @@ fn run_whir_pcs<F>(
 
     for point in &points {
         let eval = polynomial.evaluate_at_extension(point);
-        let weights = Weights::evaluation(point.clone());
-        statement.add_constraint(weights, eval);
+        let weight = Weights::evaluation(point.clone());
+        weights.push(weight);
+        evaluations.push(eval);
     }
 
     // Linear constraint
@@ -300,15 +310,18 @@ fn run_whir_pcs<F>(
         let linear_claim_weight = Weights::linear(input.clone());
         let poly = EvaluationsList::from(polynomial.clone().to_extension());
 
-        let sum = linear_claim_weight.weighted_sum(&poly);
-        statement.add_constraint(linear_claim_weight, sum);
+        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
+        weights.push(linear_claim_weight);
+        evaluations.push(sum);
     }
 
+    let weight_refs = weights.iter().collect::<Vec<_>>();
     params.prove(
         &mut prover_state,
         &[&polynomial],
         &[&witness],
-        &[&statement],
+        &weight_refs,
+        &evaluations,
     );
 
     let proof = prover_state.proof();
@@ -325,7 +338,12 @@ fn run_whir_pcs<F>(
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         params
-            .verify(&mut verifier_state, &[&commitment], &[&statement])
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weight_refs,
+                &evaluations,
+            )
             .unwrap();
     }
     println!(

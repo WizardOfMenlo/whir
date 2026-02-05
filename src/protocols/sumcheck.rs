@@ -32,12 +32,8 @@ where
 {
     pub field: Type<F>,
     pub initial_size: usize,
-    pub rounds: Vec<RoundConfig>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RoundConfig {
-    pub pow: proof_of_work::Config,
+    pub round_pow: proof_of_work::Config,
+    pub num_rounds: usize,
 }
 
 impl<F: Field> Config<F> {
@@ -47,18 +43,14 @@ impl<F: Field> Config<F> {
             "Initial size must be power of two."
         );
         ensure!(
-            self.initial_size.ilog2() as usize >= self.rounds.len(),
+            self.initial_size.ilog2() as usize >= self.num_rounds,
             "Initial size must be >= 2^{rounds}."
         );
         Ok(())
     }
 
     pub const fn final_size(&self) -> usize {
-        self.initial_size >> self.num_rounds()
-    }
-
-    pub const fn num_rounds(&self) -> usize {
-        self.rounds.len()
+        self.initial_size >> self.num_rounds
     }
 
     /// Runs the quadratic sumcheck protocol as configured.
@@ -91,8 +83,8 @@ impl<F: Field> Config<F> {
         assert_eq!(b.num_evals(), self.initial_size);
         debug_assert_eq!(dot(a.evals(), b.evals()), *sum);
 
-        let mut res = Vec::with_capacity(self.num_rounds());
-        for round in &self.rounds {
+        let mut res = Vec::with_capacity(self.num_rounds);
+        for _ in 0..self.num_rounds {
             // Send sumcheck polynomial c0 and c2
             let (c0, c2) = compute_sumcheck_polynomial(a.evals(), b.evals());
             let c1 = *sum - c0.double() - c2;
@@ -100,7 +92,7 @@ impl<F: Field> Config<F> {
             prover_state.prover_message(&c2);
 
             // Do Proof of Work (if any)
-            round.pow.prove(prover_state);
+            self.round_pow.prove(prover_state);
 
             // Receive the random evaluation point
             let folding_randomness = prover_state.verifier_message::<F>();
@@ -130,15 +122,15 @@ impl<F: Field> Config<F> {
     {
         verify!(self.validate().is_ok());
 
-        let mut res = Vec::with_capacity(self.num_rounds());
-        for round in &self.rounds {
+        let mut res = Vec::with_capacity(self.num_rounds);
+        for _ in 0..self.num_rounds {
             // Receive sumcheck polynomial c0 and c2
             let c0: F = verifier_state.prover_message()?;
             let c2: F = verifier_state.prover_message()?;
             let c1 = *sum - c0.double() - c2;
 
             // Check proof of work (if any)
-            round.pow.verify(verifier_state)?;
+            self.round_pow.verify(verifier_state)?;
 
             // Receive the random evaluation point
             let folding_randomness = verifier_state.verifier_message::<F>();
@@ -157,14 +149,11 @@ impl<F: Field> fmt::Display for Config<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "size {} rounds {} pow",
+            "size {} rounds {} pow {:.2}",
             self.initial_size,
-            self.num_rounds()
-        )?;
-        for round in &self.rounds {
-            write!(f, " {:.2}", round.pow.difficulty())?;
-        }
-        Ok(())
+            self.num_rounds,
+            self.round_pow.difficulty()
+        )
     }
 }
 
