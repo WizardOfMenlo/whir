@@ -153,7 +153,7 @@ impl<F: FftField> WhirConfig<F> {
         .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
         .sum();
 
-        // These invariants are maintained throught the proof.
+        // These invariants are maintained throughout the proof.
         debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
@@ -192,7 +192,7 @@ impl<F: FftField> WhirConfig<F> {
                 .irs_committer
                 .commit(prover_state, &[coefficients.coeffs()]);
 
-            // PoW
+            // Proof of work before in-domain challenges
             round_config.pow.prove(prover_state);
 
             // Open the previous round's commitment, producing in-domain evaluations.
