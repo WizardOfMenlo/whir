@@ -8,6 +8,7 @@ use whir::{
         embedding::Basefield,
         fields,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        Weights,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -16,7 +17,6 @@ use whir::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::Weights,
 };
 
 #[derive(Parser, Debug)]
@@ -103,7 +103,7 @@ fn run_whir_as_ldt<F>(args: &Args)
 where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::config::WhirConfig;
+    use whir::protocols::whir::Config;
 
     // Runs as a LDT
     let security_level = args.security_level;
@@ -138,7 +138,7 @@ where
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(mv_params, &whir_params);
+    let params = Config::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -205,7 +205,7 @@ fn run_whir_pcs<F>(args: &Args)
 where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::config::WhirConfig;
+    use whir::protocols::whir::Config;
 
     // Runs as a PCS
     let security_level = args.security_level;
@@ -242,7 +242,7 @@ where
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(mv_params, &whir_params);
+    let params = Config::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))

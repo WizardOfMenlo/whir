@@ -4,10 +4,12 @@ pub mod fields;
 pub mod ntt;
 pub mod polynomials;
 pub mod sumcheck;
+mod weights;
 
 use ark_ff::{AdditiveGroup, Field};
 
 use self::embedding::Embedding;
+pub use self::weights::Weights;
 use crate::utils::workload_size;
 
 pub fn geometric_sequence<F: Field>(base: F, length: usize) -> Vec<F> {

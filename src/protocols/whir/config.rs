@@ -23,7 +23,7 @@ use crate::{
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "F: FftField")]
-pub struct WhirConfig<F>
+pub struct Config<F>
 where
     F: FftField,
 {
@@ -50,7 +50,7 @@ where
     pub pow: proof_of_work::Config,
 }
 
-impl<F> WhirConfig<F>
+impl<F> Config<F>
 where
     F: FftField + FieldWithSize,
 {
@@ -530,7 +530,7 @@ where
     }
 }
 
-impl<F: FftField> Display for WhirConfig<F> {
+impl<F: FftField> Display for Config<F> {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
@@ -761,7 +761,7 @@ mod tests {
         let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = WhirConfig::<Field64>::new(mv_params, &params);
+        let config = Config::<Field64>::new(mv_params, &params);
 
         test_serde(&config);
     }
@@ -770,7 +770,7 @@ mod tests {
     fn test_n_rounds() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = WhirConfig::<Field64>::new(mv_params, &params);
+        let config = Config::<Field64>::new(mv_params, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
@@ -780,7 +780,7 @@ mod tests {
         let field_size_bits = 64;
         let soundness = SoundnessType::ConjectureList;
 
-        let pow_bits = WhirConfig::<Field64>::folding_pow_bits(
+        let pow_bits = Config::<Field64>::folding_pow_bits(
             100, // Security level
             soundness,
             field_size_bits,
@@ -798,11 +798,8 @@ mod tests {
         let security_level = 100;
         let log_inv_rate = 5;
 
-        let result = WhirConfig::<Field64>::queries(
-            SoundnessType::UniqueDecoding,
-            security_level,
-            log_inv_rate,
-        );
+        let result =
+            Config::<Field64>::queries(SoundnessType::UniqueDecoding, security_level, log_inv_rate);
 
         assert_eq!(result, 105);
     }
@@ -812,11 +809,8 @@ mod tests {
         let security_level = 128;
         let log_inv_rate = 8;
 
-        let result = WhirConfig::<Field64>::queries(
-            SoundnessType::ProvableList,
-            security_level,
-            log_inv_rate,
-        );
+        let result =
+            Config::<Field64>::queries(SoundnessType::ProvableList, security_level, log_inv_rate);
 
         assert_eq!(result, 32);
     }
@@ -826,11 +820,8 @@ mod tests {
         let security_level = 256;
         let log_inv_rate = 16;
 
-        let result = WhirConfig::<Field64>::queries(
-            SoundnessType::ConjectureList,
-            security_level,
-            log_inv_rate,
-        );
+        let result =
+            Config::<Field64>::queries(SoundnessType::ConjectureList, security_level, log_inv_rate);
 
         assert_eq!(result, 16);
     }
@@ -840,7 +831,7 @@ mod tests {
         let log_inv_rate = 5.0; // log_inv_rate = 5
         let num_queries = 10; // Number of queries
 
-        let result = WhirConfig::<Field64>::rbr_queries(
+        let result = Config::<Field64>::rbr_queries(
             SoundnessType::UniqueDecoding,
             log_inv_rate,
             num_queries,
@@ -854,11 +845,8 @@ mod tests {
         let log_inv_rate = 8.0; // log_inv_rate = 8
         let num_queries = 16; // Number of queries
 
-        let result = WhirConfig::<Field64>::rbr_queries(
-            SoundnessType::ProvableList,
-            log_inv_rate,
-            num_queries,
-        );
+        let result =
+            Config::<Field64>::rbr_queries(SoundnessType::ProvableList, log_inv_rate, num_queries);
 
         assert!((result - 64.0) < 1e-6);
     }
@@ -868,7 +856,7 @@ mod tests {
         let log_inv_rate = 4.0; // log_inv_rate = 4
         let num_queries = 20; // Number of queries
 
-        let result = WhirConfig::<Field64>::rbr_queries(
+        let result = Config::<Field64>::rbr_queries(
             SoundnessType::ConjectureList,
             log_inv_rate,
             num_queries,
@@ -881,7 +869,7 @@ mod tests {
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Field64>::new(mv_params, &params);
 
         // Set all values within limits
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -942,7 +930,7 @@ mod tests {
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = WhirConfig::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Field64>::new(mv_params, &params);
 
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
@@ -967,7 +955,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = WhirConfig::<Field64>::list_size_bits(
+            let result = Config::<Field64>::list_size_bits(
                 SoundnessType::ConjectureList,
                 num_variables,
                 log_inv_rate,
@@ -993,7 +981,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = WhirConfig::<Field64>::list_size_bits(
+            let result = Config::<Field64>::list_size_bits(
                 SoundnessType::ProvableList,
                 num_variables,
                 log_inv_rate as f64,
@@ -1020,7 +1008,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta) in cases {
-            let result = WhirConfig::<Field64>::list_size_bits(
+            let result = Config::<Field64>::list_size_bits(
                 SoundnessType::UniqueDecoding,
                 num_variables,
                 log_inv_rate as f64,
@@ -1083,7 +1071,7 @@ mod tests {
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
-            let result = WhirConfig::<Field64>::rbr_ood_sample(
+            let result = Config::<Field64>::rbr_ood_sample(
                 SoundnessType::ConjectureList,
                 num_variables,
                 log_inv_rate,
@@ -1146,7 +1134,7 @@ mod tests {
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
-            let result = WhirConfig::<Field64>::rbr_ood_sample(
+            let result = Config::<Field64>::rbr_ood_sample(
                 SoundnessType::ProvableList,
                 num_variables,
                 log_inv_rate,
@@ -1172,14 +1160,7 @@ mod tests {
     fn test_ood_samples_unique_decoding() {
         // UniqueDecoding should always return 0 regardless of parameters
         assert_eq!(
-            WhirConfig::<Field64>::ood_samples(
-                100,
-                SoundnessType::UniqueDecoding,
-                10,
-                3.0,
-                1.5,
-                256
-            ),
+            Config::<Field64>::ood_samples(100, SoundnessType::UniqueDecoding, 10, 3.0, 1.5, 256),
             0
         );
     }
@@ -1188,7 +1169,7 @@ mod tests {
     fn test_ood_samples_valid_case() {
         // Testing a valid case where the function finds an appropriate `ood_samples`
         assert_eq!(
-            WhirConfig::<Field64>::ood_samples(
+            Config::<Field64>::ood_samples(
                 50, // security level
                 SoundnessType::ProvableList,
                 15,  // num_variables
@@ -1204,7 +1185,7 @@ mod tests {
     fn test_ood_samples_low_security_level() {
         // Lower security level should require fewer OOD samples
         assert_eq!(
-            WhirConfig::<Field64>::ood_samples(
+            Config::<Field64>::ood_samples(
                 30, // Lower security level
                 SoundnessType::ConjectureList,
                 20,  // num_variables
@@ -1220,7 +1201,7 @@ mod tests {
     fn test_ood_samples_high_security_level() {
         // Higher security level should require more OOD samples
         assert_eq!(
-            WhirConfig::<Field64>::ood_samples(
+            Config::<Field64>::ood_samples(
                 100, // High security level
                 SoundnessType::ProvableList,
                 25,   // num_variables
@@ -1235,7 +1216,7 @@ mod tests {
     #[test]
     fn test_ood_extremely_high_security_level() {
         assert_eq!(
-            WhirConfig::<Field64>::ood_samples(
+            Config::<Field64>::ood_samples(
                 1000, // Extremely high security level
                 SoundnessType::ConjectureList,
                 10,  // num_variables

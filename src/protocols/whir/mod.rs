@@ -1,27 +1,30 @@
-pub mod batching;
+mod batching;
 mod committer;
-pub mod config;
-pub mod prover;
-pub mod statement;
-pub mod verifier;
+mod config;
+mod prover;
+mod verifier;
 
-pub use committer::{Commitment, Witness};
+pub use self::{
+    committer::{Commitment, Witness},
+    config::{Config, RoundConfig},
+};
 
 #[cfg(test)]
 mod tests {
     use ark_ff::Field;
 
+    use super::*;
     use crate::{
         algebra::{
             embedding::Basefield,
             fields::{Field64, Field64_2},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            Weights,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
-        whir::{config::WhirConfig, statement::Weights},
     };
 
     /// Field type used in the tests.
@@ -67,7 +70,7 @@ mod tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, &whir_params);
+        let params = Config::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -300,7 +303,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = WhirConfig::new(mv_params, &whir_params);
+        let params = Config::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Create N different polynomials
@@ -465,7 +468,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = WhirConfig::new(mv_params, &whir_params);
+        let params = Config::new(mv_params, &whir_params);
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
@@ -558,7 +561,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = WhirConfig::new(mv_params, &whir_params);
+        let params = Config::new(mv_params, &whir_params);
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together

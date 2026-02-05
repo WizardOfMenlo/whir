@@ -3,12 +3,12 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{committer::Witness, config::WhirConfig, statement::Weights};
+use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        tensor_product,
+        tensor_product, Weights,
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -24,7 +24,7 @@ enum RoundWitness<'a, F: FftField> {
     Round(irs_commit::Witness<F, F>),
 }
 
-impl<F: FftField> WhirConfig<F> {
+impl<F: FftField> Config<F> {
     /// Prove a WHIR opening.
     ///
     /// * `prover_state` the mutable transcript to write the proof to.
