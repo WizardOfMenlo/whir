@@ -6,7 +6,6 @@ use tracing::instrument;
 use super::{
     committer::Witness,
     config::{InitialSumcheck, WhirConfig},
-    statement::Statement,
 };
 use crate::{
     algebra::{
@@ -23,6 +22,7 @@ use crate::{
         VerifierMessage,
     },
     utils::zip_strict,
+    whir::statement::Weights,
 };
 
 enum RoundWitness<'a, F: FftField> {
@@ -31,13 +31,28 @@ enum RoundWitness<'a, F: FftField> {
 }
 
 impl<F: FftField> WhirConfig<F> {
+    /// Prove a WHIR opening.
+    ///
+    /// * `prover_state` the mutable transcript to write the proof to.
+    /// * `polynomials` are all the polynomials (in coefficient) form, we are opening.
+    /// * `witnesses` witnesses corresponding to the `polynomials`, in the same
+    ///   order. Multiple polynomials may share the same witness, in which case
+    ///   only one witness should be provided.
+    /// * `weights` the weight vectors (if any) to evaluate each polynomial at.
+    /// * `evaluations` a matrix of each polynomial evaluated at each weight.
+    ///
+    /// The `evaluations` matrix is in row-major order with the number of rows
+    /// equal to the `weights.len()` and the number of columns equal to
+    /// `polynomials.len()`.
+    ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
         witnesses: &[&Witness<F>],
-        statements: &[&Statement<F>],
+        weights: &[&Weights<F>],
+        evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
         H: DuplexSpongeInterface,
@@ -49,30 +64,36 @@ impl<F: FftField> WhirConfig<F> {
         Hash: ProverMessage<[H::U]>,
     {
         // Input validation
-        assert_eq!(polynomials.len(), statements.len());
         assert_eq!(
             polynomials.len(),
             witnesses.len() * self.initial_committer.num_polynomials
         );
-        for (polynomial, statement) in zip_strict(polynomials, statements) {
+        for polynomial in polynomials {
             assert_eq!(polynomial.num_coeffs(), self.initial_size());
-            assert_eq!(statement.num_variables(), self.initial_num_variables());
-            debug_assert!(statement.verify(&polynomial.lift(self.embedding())));
+        }
+        for (weight, evaluations) in
+            zip_strict(weights, evaluations.chunks_exact(polynomials.len()))
+        {
+            assert_eq!(weight.num_variables(), self.initial_num_variables());
+            for (polynomial, evaluation) in zip_strict(polynomials, evaluations) {
+                debug_assert_eq!(
+                    weight.mixed_evaluate(self.embedding(), polynomial),
+                    *evaluation
+                );
+            }
         }
         if polynomials.is_empty() {
             // TODO: Should we draw a random evaluation point?
             return (MultilinearPoint::default(), Vec::new());
         }
 
-        // Complete evaluations of EVERY polynomial at EVERY OOD/Statment constraint.
-        // We take the caller provided values. The rest are computed and provided to
-        // the verifier.
+        // Complete evaluations of EVERY polynomial at EVERY OOD/Statement constraint.
         let (constraint_weights, constraint_matrix) = {
-            let mut weigths = Vec::new();
+            let mut all_weights = Vec::new();
             let mut matrix = Vec::new();
-            let mut polynomial_offset = 0;
 
-            // Out of domain samples
+            // Out of domain samples. Compute missing cross-terms and send to verifier.
+            let mut polynomial_offset = 0;
             for witness in witnesses {
                 for (weights, oods_row) in zip_strict(
                     witness
@@ -89,29 +110,15 @@ impl<F: FftField> WhirConfig<F> {
                             matrix.push(eval);
                         }
                     }
-                    weigths.push(weights);
+                    all_weights.push(weights);
                 }
                 polynomial_offset += witness.num_polynomials();
             }
 
-            // Constraints from statements over the input polynomials.
-            for (i, statement) in statements.iter().enumerate() {
-                for constraint in &statement.constraints {
-                    weigths.push(constraint.weights.clone());
-                    for (j, polynomial) in polynomials.iter().enumerate() {
-                        if i == j {
-                            matrix.push(constraint.sum);
-                        } else {
-                            let eval = constraint
-                                .weights
-                                .mixed_evaluate(self.embedding(), polynomial);
-                            prover_state.prover_message(&eval);
-                            matrix.push(eval);
-                        }
-                    }
-                }
-            }
-            (weigths, matrix)
+            // Add caller provided weights and evaluations.
+            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            matrix.extend_from_slice(evaluations);
+            (all_weights, matrix)
         };
 
         // Random linear combination of the polynomials.
@@ -274,11 +281,10 @@ impl<F: FftField> WhirConfig<F> {
 
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
-        let deferred = statements
+        let deferred = weights
             .iter()
-            .flat_map(|s| &s.constraints)
-            .filter(|constraint| constraint.defer_evaluation)
-            .map(|constraint| constraint.weights.compute(&constraint_eval))
+            .filter(|w| w.deffered())
+            .map(|w| w.compute(&constraint_eval))
             .collect();
         prover_state.prover_hint_ark(&deferred);
 

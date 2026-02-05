@@ -171,7 +171,5 @@ impl<F: Field> fmt::Display for Config<F> {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
-
     // TODO: Proptest based tests checking invariants and post conditions.
 }
