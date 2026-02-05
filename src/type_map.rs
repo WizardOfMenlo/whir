@@ -28,6 +28,10 @@ impl<F: 'static + Family> Default for TypeMap<F> {
 }
 
 impl<F: 'static + Family> TypeMap<F> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn insert<T: 'static>(&self, v: Arc<F::Dyn<T>>) {
         self.inner.write().expect("Lock poisoned").insert(
             TypeId::of::<T>(),
