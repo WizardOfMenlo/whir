@@ -13,6 +13,7 @@ use whir::{
         embedding::Basefield,
         fields,
         polynomials::{CoefficientList, MultilinearPoint},
+        Weights,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -21,7 +22,6 @@ use whir::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::Weights,
 };
 
 #[derive(Parser, Debug)]
@@ -156,13 +156,13 @@ where
         whir_ldt_verifier_hashes,
     ) = {
         // Run LDT
-        use whir::whir::config::WhirConfig;
+        use whir::protocols::whir::Config;
 
         let whir_params = ProtocolParameters {
             initial_statement: false,
             ..whir_params
         };
-        let params = WhirConfig::<F>::new(mv_params, &whir_params);
+        let params = Config::<F>::new(mv_params, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -232,9 +232,9 @@ where
         whir_verifier_hashes,
     ) = {
         // Run PCS
-        use whir::whir::config::WhirConfig;
+        use whir::protocols::whir::Config;
 
-        let params = WhirConfig::<F>::new(mv_params, &whir_params);
+        let params = Config::<F>::new(mv_params, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }

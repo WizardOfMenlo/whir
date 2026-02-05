@@ -29,15 +29,16 @@ mod batching_tests {
 
     use ark_std::UniformRand;
 
+    use super::super::Config;
     use crate::{
         algebra::{
             fields::Field64,
             polynomials::{CoefficientList, MultilinearPoint},
+            Weights,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
-        whir::{config::WhirConfig, statement::Weights},
     };
 
     /// Field type used in the tests.
@@ -97,7 +98,7 @@ mod batching_tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(mv_params, &whir_params);
+        let params = Config::new(mv_params, &whir_params);
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 

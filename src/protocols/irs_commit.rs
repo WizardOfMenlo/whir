@@ -41,6 +41,7 @@ use crate::{
         embedding::{Basefield, Embedding, Identity},
         lift, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
+        Weights,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -51,7 +52,6 @@ use crate::{
     type_info::{TypeInfo, Typed},
     utils::zip_strict,
     verify,
-    whir::statement::Weights,
 };
 
 /// Specialization of [`Config`] for commiting with identity embedding.

@@ -9,7 +9,6 @@ pub mod transcript;
 pub mod type_info;
 pub mod type_map;
 pub mod utils; // Utils in general
-pub mod whir; // The real prover
 
 #[cfg(test)]
 mod tests {
