@@ -5,14 +5,12 @@ use tracing::instrument;
 
 use super::{
     committer::Witness,
-    config::WhirConfig,
-    statement::{Statement, Weights},
+    config::{InitialSumcheck, WhirConfig},
+    statement::Statement,
 };
 use crate::{
     algebra::{
-        dot,
-        embedding::Identity,
-        mixed_scalar_mul_add,
+        dot, mixed_scalar_mul_add,
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
@@ -25,21 +23,14 @@ use crate::{
         VerifierMessage,
     },
     utils::zip_strict,
-    whir::config::InitialSumcheck,
 };
 
-pub(crate) enum RoundWitness<'a, F: FftField> {
-    Initial {
-        witnesses: &'a [&'a irs_commit::Witness<F::BasePrimeField, F>],
-        batching_weights: Vec<F>,
-    },
-    Round {
-        witness: irs_commit::Witness<F, F>,
-    },
+enum RoundWitness<'a, F: FftField> {
+    Initial(&'a [&'a irs_commit::Witness<F::BasePrimeField, F>]),
+    Round(irs_commit::Witness<F, F>),
 }
 
 impl<F: FftField> WhirConfig<F> {
-    #[allow(clippy::too_many_lines)] // TODO
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -66,8 +57,6 @@ impl<F: FftField> WhirConfig<F> {
         for (polynomial, statement) in zip_strict(polynomials, statements) {
             assert_eq!(polynomial.num_coeffs(), self.initial_size());
             assert_eq!(statement.num_variables(), self.initial_num_variables());
-            // In debug mode, verify all statment.
-            // TODO: Add a `mixed_verify` function that takes an embedding into account.
             debug_assert!(statement.verify(&polynomial.lift(self.embedding())));
         }
         if polynomials.is_empty() {
@@ -88,7 +77,7 @@ impl<F: FftField> WhirConfig<F> {
                 for (weights, oods_row) in zip_strict(
                     witness
                         .out_of_domain()
-                        .weights(&Identity::new(), self.initial_num_variables()),
+                        .weights(self.initial_num_variables()),
                     witness.out_of_domain().rows(),
                 ) {
                     for (j, polynomial) in polynomials.iter().enumerate() {
@@ -126,7 +115,8 @@ impl<F: FftField> WhirConfig<F> {
         };
 
         // Random linear combination of the polynomials.
-        let polynomial_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, polynomials.len());
+        let mut polynomial_rlc_coeffs: Vec<F> =
+            geometric_challenge(prover_state, polynomials.len());
         assert_eq!(polynomial_rlc_coeffs[0], F::ONE);
         let mut coefficients = polynomials[0].lift(self.embedding());
         for (rlc_coeff, polynomial) in zip_strict(&polynomial_rlc_coeffs, polynomials).skip(1) {
@@ -138,10 +128,7 @@ impl<F: FftField> WhirConfig<F> {
             );
         }
         let mut evaluations = EvaluationsList::from(coefficients.clone());
-        let mut prev_commitment = RoundWitness::Initial {
-            witnesses,
-            batching_weights: polynomial_rlc_coeffs.clone(),
-        };
+        let mut prev_witness = RoundWitness::Initial(witnesses);
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
@@ -193,85 +180,45 @@ impl<F: FftField> WhirConfig<F> {
 
         // Execute standard WHIR rounds on the batched polynomial
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
-            // Commit to the polynomial.
+            // Commit to the polynomial, this generates out-of-domain evaluations.
             let witness = round_config
                 .irs_committer
                 .commit(prover_state, &[coefficients.coeffs()]);
-            let ood_points = witness.out_of_domain().points.clone();
-            let ood_answers = witness.out_of_domain().matrix.clone();
 
             // PoW
             round_config.pow.prove(prover_state);
 
             // Open the previous round's commitment, producing in-domain evaluations.
-            // We prepend these with the OOD points and answers to produce a new
-            // set of constraints for the next round.
-            let (stir_challenges, stir_evaluations) = match &prev_commitment {
-                RoundWitness::Initial {
-                    witnesses,
-                    batching_weights,
-                } => {
-                    let in_domain = self.initial_committer.open(prover_state, witnesses);
-
-                    // Convert oods_points
-                    let mut points = ood_points
-                        .iter()
-                        .copied()
-                        .map(|a| {
-                            MultilinearPoint::expand_from_univariate(
-                                a,
-                                round_config.initial_num_variables(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let mut evals = ood_answers;
-
-                    // Convert RS evaluation point to multivariate over extension
-                    let weights =
-                        tensor_product(batching_weights, &folding_randomness.coeff_weights(true));
-                    points.extend(
-                        in_domain.points(self.embedding(), round_config.initial_num_variables()),
-                    );
-                    evals.extend(in_domain.values(self.embedding(), &weights));
-
-                    (points, evals)
-                }
-                RoundWitness::Round { witness } => {
+            let in_domain = match &prev_witness {
+                RoundWitness::Initial(witnesses) => self
+                    .initial_committer
+                    .open(prover_state, witnesses)
+                    .lift(self.embedding()),
+                RoundWitness::Round(witness) => {
                     let prev_round_config = &self.round_configs[round_index - 1];
-
-                    let in_domain = prev_round_config
+                    prev_round_config
                         .irs_committer
-                        .open(prover_state, &[&witness]);
-
-                    // Convert oods_points
-                    let mut points = ood_points
-                        .iter()
-                        .copied()
-                        .map(|a| {
-                            MultilinearPoint::expand_from_univariate(
-                                a,
-                                round_config.initial_num_variables(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let mut evals = ood_answers;
-
-                    // Convert RS evaluation point to multivariate over extension
-                    let weights = folding_randomness.coeff_weights(true);
-                    points.extend(
-                        in_domain.points(&Identity::new(), round_config.initial_num_variables()),
-                    );
-                    evals.extend(in_domain.values(&Identity::new(), &weights));
-
-                    (points, evals)
+                        .open(prover_state, &[&witness])
                 }
             };
-            prev_commitment = RoundWitness::Round { witness };
 
-            // Add random linear combination of in- and out-domain constraints to the instance
+            // Collect constraints for this round and RLC them in
+            let stir_challenges = witness
+                .out_of_domain()
+                .weights(round_config.initial_num_variables())
+                .chain(in_domain.weights(round_config.initial_num_variables()))
+                .collect::<Vec<_>>();
+            let stir_evaluations = witness
+                .out_of_domain()
+                .values(&[F::ONE])
+                .chain(in_domain.values(&tensor_product(
+                    &polynomial_rlc_coeffs,
+                    &folding_randomness.coeff_weights(true),
+                )))
+                .collect::<Vec<_>>();
             let stir_rlc_coeffs = geometric_challenge(prover_state, stir_challenges.len());
-            for (coeff, point) in zip_strict(&stir_rlc_coeffs, stir_challenges) {
-                Weights::evaluation(point).accumulate(&mut constraints, *coeff);
+            for (coeff, weights) in zip_strict(&stir_rlc_coeffs, stir_challenges) {
+                weights.accumulate(&mut constraints, *coeff);
             }
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
             debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
@@ -288,6 +235,9 @@ impl<F: FftField> WhirConfig<F> {
             randomness_vec.extend(folding_randomness.0.iter().rev());
             debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+
+            prev_witness = RoundWitness::Round(witness);
+            polynomial_rlc_coeffs = vec![F::ONE];
         }
 
         // Directly send coefficients of the polynomial to the verifier.
@@ -299,25 +249,17 @@ impl<F: FftField> WhirConfig<F> {
         // PoW
         self.final_pow.prove(prover_state);
 
-        match &prev_commitment {
-            RoundWitness::Initial { witnesses, .. } => {
+        // Open previous witness, but ignore the in-domain samepls.
+        // The verifier will directly test these on the final polynomial without our help.
+        match &prev_witness {
+            RoundWitness::Initial(witnesses) => {
                 for witness in *witnesses {
-                    let in_domain = self.initial_committer.open(prover_state, &[witness]);
-
-                    // The verifier will directly test these on the final polynomial.
-                    // It has the final polynomial in full, so it needs no furhter help
-                    // from us.
-                    drop(in_domain);
+                    let _in_domain = self.initial_committer.open(prover_state, &[witness]);
                 }
             }
-            RoundWitness::Round { witness } => {
+            RoundWitness::Round(witness) => {
                 let prev_config = self.round_configs.last().unwrap();
-                let in_domain = prev_config.irs_committer.open(prover_state, &[&witness]);
-
-                // The verifier will directly test these on the final polynomial.
-                // It has the final polynomial in full, so it needs no furhter help
-                // from us.
-                drop(in_domain);
+                let _in_domain = prev_config.irs_committer.open(prover_state, &[&witness]);
             }
         }
 

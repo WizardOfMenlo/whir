@@ -37,10 +37,10 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
+        dot,
         embedding::{Basefield, Embedding, Identity},
-        mixed_dot, mixed_univariate_evaluate,
+        lift, mixed_dot, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
-        poly_utils::multilinear::MultilinearPoint,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -429,38 +429,24 @@ impl<F: Field> Evaluations<F> {
         (0..self.num_points()).map(move |i| &self.matrix[i * cols..(i + 1) * cols])
     }
 
-    // TODO: points, weights and constraints are redudant.
-
-    pub fn points<M>(&self, embedding: &M, num_variables: usize) -> Vec<MultilinearPoint<M::Target>>
+    pub fn lift<M>(&self, embedding: &M) -> Evaluations<M::Target>
     where
         M: Embedding<Source = F>,
     {
-        self.points
-            .iter()
-            .map(|point| {
-                MultilinearPoint::expand_from_univariate(embedding.map(*point), num_variables)
-            })
-            .collect()
+        Evaluations {
+            points: lift(embedding, &self.points),
+            matrix: lift(embedding, &self.matrix),
+        }
     }
 
-    pub fn weights<M>(&self, embedding: &M, num_variables: usize) -> Vec<Weights<M::Target>>
-    where
-        M: Embedding<Source = F>,
-    {
+    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = Weights<F>> {
         self.points
             .iter()
-            .map(|point| Weights::univariate(embedding.map(*point), num_variables))
-            .collect()
+            .map(move |point| Weights::univariate(*point, num_variables))
     }
 
-    pub fn values<M>(&self, embedding: &M, weights: &[M::Target]) -> Vec<M::Target>
-    where
-        M: Embedding<Source = F>,
-    {
-        assert_eq!(weights.len(), self.num_columns());
-        self.rows()
-            .map(|row| mixed_dot(embedding, weights, row))
-            .collect()
+    pub fn values<'a>(&'a self, weights: &'a [F]) -> impl 'a + Iterator<Item = F> {
+        self.rows().map(|row| dot(weights, row))
     }
 
     pub fn constraints<M>(
