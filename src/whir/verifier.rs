@@ -1,6 +1,6 @@
 use ark_ff::FftField;
 
-use super::{config::WhirConfig, statement::Weights};
+use super::{config::WhirConfig, statement::Weights, Commitment};
 use crate::{
     algebra::{
         dot,
@@ -15,7 +15,6 @@ use crate::{
     },
     utils::zip_strict,
     verify,
-    whir::{config::InitialSumcheck, Commitment},
 };
 
 pub(crate) enum RoundCommitment<'a, F: FftField> {
@@ -112,13 +111,16 @@ impl<F: FftField> WhirConfig<F> {
         let mut round_folding_randomness = Vec::new();
 
         // Run initial sumcheck on batched polynomial with combined statement
-        let folding_randomness = match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => config.verify(verifier_state, &mut the_sum)?,
-            InitialSumcheck::Abridged { folding_size, pow } => {
-                let folding_randomness = verifier_state.verifier_message_vec(*folding_size);
-                pow.verify(verifier_state)?;
-                MultilinearPoint(folding_randomness)
-            }
+        let folding_randomness = if constraint_rlc_coeffs.is_empty() {
+            // There are no constraints yet, so we can skip the sumcheck.
+            // (If we did run it, all sumcheck polynomials would be constant zero)
+            assert_eq!(the_sum, F::ZERO);
+            let folding_randomness =
+                verifier_state.verifier_message_vec(self.initial_sumcheck.num_rounds);
+            self.initial_sumcheck.round_pow.verify(verifier_state)?;
+            MultilinearPoint(folding_randomness)
+        } else {
+            self.initial_sumcheck.verify(verifier_state, &mut the_sum)?
         };
         round_folding_randomness.push(folding_randomness);
 
