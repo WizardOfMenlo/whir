@@ -8,17 +8,14 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::{
-    algebra::{
-        embedding::Embedding,
-        mixed_dot,
-        poly_utils::{
-            coeffs::CoefficientList,
-            evals::{geometric_till, EvaluationsList},
-            multilinear::MultilinearPoint,
-        },
+use crate::algebra::{
+    embedding::{Embedding, Identity},
+    mixed_dot,
+    poly_utils::{
+        coeffs::CoefficientList,
+        evals::{geometric_till, EvaluationsList},
+        multilinear::MultilinearPoint,
     },
-    utils::zip_strict,
 };
 
 /// Represents a weight function used in polynomial evaluations.
@@ -98,7 +95,11 @@ impl<F: Field> Weights<F> {
         matches!(self, Self::Linear { .. })
     }
 
-    pub fn mixed_evaluate<M>(&self, embedding: &M, poly: &CoefficientList<M::Source>) -> M::Target
+    pub(crate) fn mixed_evaluate<M>(
+        &self,
+        embedding: &M,
+        poly: &CoefficientList<M::Source>,
+    ) -> M::Target
     where
         M: Embedding<Target = F>,
     {
@@ -113,20 +114,8 @@ impl<F: Field> Weights<F> {
     }
 
     /// Evaluate the weighted sum with a polynomial in coefficient form.
-    pub fn evaluate(&self, poly: &CoefficientList<F>) -> F {
-        assert_eq!(self.num_variables(), poly.num_variables());
-        match self {
-            Self::Evaluation { point } => poly.evaluate(point),
-            Self::Linear { weight } | Self::Geometric { weight, .. } => {
-                let poly: EvaluationsList<F> = poly.clone().into();
-
-                // We intentionally avoid parallel iterators here because this function is only called by the verifier,
-                // which is assumed to run on a lightweight device.
-                zip_strict(weight.evals().iter(), poly.evals())
-                    .map(|(&w, &p)| w * p)
-                    .sum()
-            }
-        }
+    pub(crate) fn evaluate(&self, poly: &CoefficientList<F>) -> F {
+        self.mixed_evaluate(&Identity::new(), poly)
     }
 
     /// Accumulates the contribution of the weight function into `accumulator`, scaled by `factor`.
@@ -145,7 +134,7 @@ impl<F: Field> Weights<F> {
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
-    pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
+    pub(crate) fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
         assert_eq!(accumulator.num_variables(), self.num_variables());
@@ -175,71 +164,13 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    /// Computes the weighted sum of a polynomial `p(X)` under the current weight function.
-    ///
-    /// - In linear mode, computes the inner product between the polynomial values and weights:
-    ///
-    /// \begin{equation}
-    /// \sum_{i} p_i \cdot w_i
-    /// \end{equation}
-    ///
-    /// - In evaluation mode, evaluates `p(X)` at the equality constraint point.
-    ///
-    /// **Precondition:**
-    /// If `self` is in linear mode, `poly.num_variables()` must match `weight.num_variables()`.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
-    pub fn weighted_sum(&self, poly: &EvaluationsList<F>) -> F {
-        match self {
-            Self::Linear { weight } | Self::Geometric { weight, .. } => {
-                assert_eq!(poly.num_variables(), weight.num_variables());
-                #[cfg(not(feature = "parallel"))]
-                {
-                    zip_strict(poly.evals().iter(), weight.evals().iter())
-                        .map(|(p, w)| *p * *w)
-                        .sum()
-                }
-                #[cfg(feature = "parallel")]
-                {
-                    zip_strict(poly.evals().iter(), weight.evals().iter())
-                        .par_bridge()
-                        .map(|(p, w)| *p * *w)
-                        .sum()
-                }
-            }
-            Self::Evaluation { point } => poly.eval_extension(point),
-        }
-    }
-
     /// Computes the weight function evaluation under a given randomness.
-    pub fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
+    pub(crate) fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
         match self {
             Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),
             Self::Linear { weight } => weight.eval_extension(folding_randomness),
             Self::Geometric { a, n, .. } => geometric_till(*a, *n, &folding_randomness.0),
         }
-    }
-}
-
-/// A constraint as a weight function and a target sum.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
-pub struct Constraint<F> {
-    pub weights: Weights<F>,
-
-    #[serde(with = "crate::ark_serde::field")]
-    pub sum: F,
-
-    /// When set, the weight evaluation will not be checked by the WHIR verifier,
-    /// but instead deferred to the caller.
-    ///
-    /// The whir verification will be done using a prover provided hint of the evaluation.
-    pub defer_evaluation: bool,
-}
-
-impl<F: Field> Constraint<F> {
-    /// Verify if a polynomial (in coefficient form) satisfies the constraint.
-    pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
-        self.weights.evaluate(poly) == self.sum
     }
 }
 
@@ -301,7 +232,7 @@ mod tests {
         // Expected result: polynomial evaluation at the given point
         let expected = e1;
 
-        assert_eq!(weight.weighted_sum(&evals), expected);
+        assert_eq!(weight.evaluate(&evals.to_coeffs()), expected);
     }
 
     #[test]
@@ -324,7 +255,7 @@ mod tests {
         // \end{equation}
         let expected = e0 * w0 + e1 * w1;
 
-        assert_eq!(weight.weighted_sum(&evals), expected);
+        assert_eq!(weight.evaluate(&evals.to_coeffs()), expected);
     }
 
     #[test]

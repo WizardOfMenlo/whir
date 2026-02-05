@@ -37,7 +37,6 @@ impl<F: FftField> WhirConfig<F> {
     /// N original commitment trees, while subsequent rounds verify the single batched polynomial.
     ///
     /// Returns the constraint evaluation point and values of deferred constraints.
-    #[allow(clippy::too_many_lines)]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -58,7 +57,6 @@ impl<F: FftField> WhirConfig<F> {
         if num_polynomials == 0 {
             return Ok((MultilinearPoint::default(), Vec::new()));
         }
-        let embedding = self.initial_committer.embedding();
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
         let (constraint_weights, constraint_matrix) = {
