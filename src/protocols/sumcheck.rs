@@ -11,7 +11,7 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        poly_utils::{evals::EvaluationsList, multilinear::MultilinearPoint},
+        polynomials::{EvaluationsList, MultilinearPoint},
         sumcheck::{compute_sumcheck_polynomial, fold},
     },
     ensure,

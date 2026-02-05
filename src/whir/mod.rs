@@ -13,10 +13,9 @@ mod tests {
 
     use crate::{
         algebra::{
+            embedding::Basefield,
             fields::{Field64, Field64_2},
-            poly_utils::{
-                coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-            },
+            polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -89,7 +88,7 @@ mod tests {
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
             weights.push(Weights::evaluation(point.clone()));
-            evaluations.push(polynomial.evaluate_at_extension(point));
+            evaluations.push(polynomial.mixed_evaluate(&Basefield::new(), point));
         }
 
         // Construct a coefficient vector for linear sumcheck constraint
@@ -103,7 +102,7 @@ mod tests {
         let linear_claim_weight = Weights::linear(input.into());
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        let poly = EvaluationsList::from(polynomial.clone().lift(&Basefield::new()));
 
         // Compute the weighted sum of the polynomial (for sumcheck)
         let sum = linear_claim_weight.evaluate(&poly.to_coeffs());

@@ -4,7 +4,7 @@ use super::{config::WhirConfig, statement::Weights, Commitment};
 use crate::{
     algebra::{
         dot,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        polynomials::{CoefficientList, MultilinearPoint},
         tensor_product,
     },
     hash::Hash,

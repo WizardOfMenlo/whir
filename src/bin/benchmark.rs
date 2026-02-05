@@ -10,8 +10,9 @@ use clap::Parser;
 use serde::Serialize;
 use whir::{
     algebra::{
+        embedding::Basefield,
         fields,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        polynomials::{CoefficientList, MultilinearPoint},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -252,7 +253,7 @@ where
         let mut evaluations = Vec::new();
 
         for point in &points {
-            let eval = polynomial.evaluate_at_extension(point);
+            let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
             let weight = Weights::evaluation(point.clone());
             weights.push(weight);
             evaluations.push(eval);

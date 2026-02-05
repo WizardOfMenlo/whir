@@ -2,7 +2,7 @@ pub mod domain;
 pub mod embedding;
 pub mod fields;
 pub mod ntt;
-pub mod poly_utils;
+pub mod polynomials;
 pub mod sumcheck;
 
 use ark_ff::{AdditiveGroup, Field};

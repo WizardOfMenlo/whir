@@ -32,7 +32,7 @@ mod batching_tests {
     use crate::{
         algebra::{
             fields::Field64,
-            poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+            polynomials::{CoefficientList, MultilinearPoint},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},

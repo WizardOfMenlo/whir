@@ -7,9 +7,7 @@ use super::{committer::Witness, config::WhirConfig, statement::Weights};
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-        },
+        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product,
     },
     hash::Hash,
