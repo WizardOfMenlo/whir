@@ -69,7 +69,7 @@ impl<F: FftField> WhirConfig<F> {
             assert_eq!(polynomial.num_variables(), num_variables);
             assert_eq!(statement.num_variables(), num_variables);
 
-            #[cfg(test)]
+            #[cfg(debug_assertions)]
             {
                 // In debug mode, verify all statment.
                 // TODO: Add a `mixed_verify` function that takes an embedding into account.

@@ -7,7 +7,7 @@ pub mod codecs;
 mod engines;
 mod protocol_id;
 
-#[cfg(test)]
+#[cfg(debug_assertions)]
 use std::any::type_name;
 use std::fmt::Debug;
 
@@ -68,7 +68,7 @@ pub struct Proof {
     pub narg_string: Vec<u8>,
     pub hints: Vec<u8>,
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     pub pattern: Vec<Interaction>,
 }
 
@@ -80,7 +80,7 @@ where
     inner: spongefish::ProverState<H, R>,
     hints: Vec<u8>,
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     pattern: Vec<Interaction>,
 }
 
@@ -91,7 +91,7 @@ where
     inner: spongefish::VerifierState<'a, H>,
     hints: &'a [u8],
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     pattern: &'a [Interaction],
 }
 
@@ -167,7 +167,7 @@ where
                 .to_prover(duplex),
             hints: Vec::new(),
 
-            #[cfg(test)]
+            #[cfg(debug_assertions)]
             pattern: Vec::new(),
         }
     }
@@ -193,7 +193,7 @@ where
     where
         T: Encoding<[H::U]> + NargSerialize + ?Sized,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message(message);
     }
@@ -203,7 +203,7 @@ where
     where
         T: NargSerialize,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.push(Interaction::Hint(type_name::<T>().to_owned()));
         hint.serialize_into_narg(&mut self.hints);
     }
@@ -213,7 +213,7 @@ where
     where
         T: CanonicalSerialize + ?Sized,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.push(Interaction::Hint(type_name::<T>().to_owned()));
         value
             .serialize_compressed(&mut self.hints)
@@ -225,12 +225,12 @@ where
             narg_string: self.inner.narg_string().to_owned(),
             hints: self.hints,
 
-            #[cfg(test)]
+            #[cfg(debug_assertions)]
             pattern: self.pattern,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     fn push(&mut self, interaction: Interaction) {
         eprintln!("Prover: {interaction:?}");
         self.pattern.push(interaction);
@@ -249,7 +249,7 @@ where
     where
         T: Decoding<[H::U]>,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.push(Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
     }
@@ -270,7 +270,7 @@ where
                 .instance(ds.instance)
                 .to_verifier(duplex, &proof.narg_string),
             hints: &proof.hints,
-            #[cfg(test)]
+            #[cfg(debug_assertions)]
             pattern: &proof.pattern,
         }
     }
@@ -279,9 +279,9 @@ where
         &mut self.inner
     }
 
-    #[cfg_attr(test, track_caller)]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn check_eof(self) -> VerificationResult<()> {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         assert!(self.pattern.is_empty());
         verify!(self.inner.check_eof().is_ok());
         verify!(self.hints.is_empty());
@@ -293,7 +293,7 @@ where
     where
         T: Encoding<[H::U]> + NargDeserialize,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.pop_pattern(&Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message()
     }
@@ -311,7 +311,7 @@ where
     where
         T: NargDeserialize,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.pop_pattern(&Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_from_narg(&mut self.hints)
     }
@@ -321,12 +321,12 @@ where
     where
         T: CanonicalDeserialize,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.pop_pattern(&Interaction::Hint(type_name::<T>().to_owned()));
         T::deserialize_compressed(&mut self.hints).map_err(|_| VerificationError)
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     #[track_caller]
     fn pop_pattern(&mut self, interaction: &Interaction) {
         eprintln!("Verifier: {interaction:?}");
@@ -361,7 +361,7 @@ where
     where
         T: Decoding<[H::U]>,
     {
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         self.pop_pattern(&Interaction::VerifierMessage(type_name::<T>().to_owned()));
         self.inner.verifier_message()
     }
