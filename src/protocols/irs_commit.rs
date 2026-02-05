@@ -29,7 +29,7 @@
 
 use std::fmt;
 
-use ark_ff::{AdditiveGroup, FftField, Field};
+use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -39,7 +39,7 @@ use crate::{
     algebra::{
         dot,
         embedding::{Basefield, Embedding, Identity},
-        lift, mixed_dot, mixed_univariate_evaluate,
+        lift, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
     },
     hash::Hash,
@@ -51,7 +51,7 @@ use crate::{
     type_info::{TypeInfo, Typed},
     utils::zip_strict,
     verify,
-    whir::statement::{Constraint, Weights},
+    whir::statement::Weights,
 };
 
 /// Specialization of [`Config`] for commiting with identity embedding.
@@ -447,39 +447,6 @@ impl<F: Field> Evaluations<F> {
 
     pub fn values<'a>(&'a self, weights: &'a [F]) -> impl 'a + Iterator<Item = F> {
         self.rows().map(|row| dot(weights, row))
-    }
-
-    pub fn constraints<M>(
-        &self,
-        embedding: &M,
-        weights: &[M::Target],
-        num_variables: usize,
-    ) -> Vec<Constraint<M::Target>>
-    where
-        M: Embedding<Source = F>,
-    {
-        if self.matrix.is_empty() {
-            self.points
-                .iter()
-                .map(|point| Constraint {
-                    weights: Weights::univariate(embedding.map(*point), num_variables),
-                    sum: M::Target::ZERO,
-                    defer_evaluation: false,
-                })
-                .collect()
-        } else {
-            assert_eq!(weights.len(), self.num_columns());
-            zip_strict(
-                self.points.iter(),
-                self.matrix.chunks_exact(self.num_columns()),
-            )
-            .map(|(point, row)| Constraint {
-                weights: Weights::univariate(embedding.map(*point), num_variables),
-                sum: mixed_dot(embedding, weights, row),
-                defer_evaluation: false,
-            })
-            .collect()
-        }
     }
 }
 

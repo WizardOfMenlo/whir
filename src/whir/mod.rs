@@ -116,7 +116,7 @@ mod tests {
         let poly = EvaluationsList::from(polynomial.clone().to_extension());
 
         // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.weighted_sum(&poly);
+        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
 
         // Add linear constraint to the statement
         weights.push(linear_claim_weight);
@@ -150,7 +150,7 @@ mod tests {
         let poly_base = EvaluationsList::from(polynomial.clone());
 
         // Compute the weighted sum for geometric constraint
-        let geometric_sum = geometric_claim_weight.weighted_sum(&poly_base);
+        let geometric_sum = geometric_claim_weight.evaluate(&poly_base.to_coeffs());
 
         // Add geometric constraint to statement
         weights.push(geometric_claim_weight);
