@@ -1,13 +1,9 @@
 use ark_ff::FftField;
 
-use super::{
-    config::WhirConfig,
-    statement::{Constraint, Weights},
-};
+use super::{config::WhirConfig, statement::Weights};
 use crate::{
     algebra::{
-        embedding,
-        ntt::transpose,
+        dot,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         tensor_product,
     },
@@ -17,7 +13,7 @@ use crate::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
     },
-    utils::{expand_randomness, zip_strict},
+    utils::zip_strict,
     verify,
     whir::{config::InitialSumcheck, Commitment},
 };
@@ -65,7 +61,7 @@ impl<F: FftField> WhirConfig<F> {
         let embedding = self.initial_committer.embedding();
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
-        let (constraint_weights, constraints_matrix) = {
+        let (constraint_weights, constraint_matrix) = {
             let mut all_weights = Vec::new();
             let mut matrix = Vec::new();
 
@@ -94,174 +90,132 @@ impl<F: FftField> WhirConfig<F> {
             matrix.extend_from_slice(evaluations);
             (all_weights, matrix)
         };
-        let num_constraints = constraint_weights.len();
-        let mut constraint_evals_matrix = constraints_matrix;
 
-        transpose(
-            constraint_evals_matrix.as_mut_slice(),
-            num_constraints,
-            num_polynomials,
-        );
-
-        // Reinterpret as rows for easier indexing: rows = num_polynomials, cols = num_constraints
-        let constraint_evals_matrix: Vec<&[F]> = constraint_evals_matrix
-            .chunks_exact(num_constraints)
-            .collect();
-
-        // Step 2: Sample batching randomness γ (cryptographically bound to matrix)
-        let batching_weights = geometric_challenge(verifier_state, num_polynomials);
-
+        // Random linear combination of the polynomials.
+        let polynomial_rlc_coeffs = geometric_challenge(verifier_state, num_polynomials);
         let mut prev_commitment = RoundCommitment::Initial {
             commitments,
-            batching_weights: batching_weights.clone(),
+            batching_weights: polynomial_rlc_coeffs.clone(),
         };
 
-        let mut round_constraints = Vec::new();
+        // Random linear combination of the constraints.
+        let constraint_rlc_coeffs: Vec<F> =
+            geometric_challenge(verifier_state, constraint_weights.len());
+        let mut round_constraints = vec![(constraint_rlc_coeffs.clone(), constraint_weights)];
+
+        // Compute "The Sum"
+        let mut the_sum = zip_strict(
+            &constraint_rlc_coeffs,
+            constraint_matrix.chunks_exact(num_polynomials),
+        )
+        .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
+        .sum();
+
         let mut round_folding_randomness = Vec::new();
-        let mut claimed_sum = F::ZERO;
 
-        // Step 3: Reconstruct combined constraints using RLC of the evaluation matrix
-        // For each constraint j: combined_eval[j] = Σᵢ γⁱ·eval[i][j]
-        //
-        match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                let mut all_constraints = Vec::new();
-
-                for (constraint_idx, weights) in constraint_weights.iter().enumerate() {
-                    let mut combined_eval = F::ZERO;
-                    for (row, weight) in batching_weights.iter().enumerate() {
-                        combined_eval += *weight * constraint_evals_matrix[row][constraint_idx];
-                    }
-
-                    all_constraints.push(Constraint {
-                        weights: weights.clone(),
-                        sum: combined_eval,
-                        defer_evaluation: weights.deffered(),
-                    });
-                }
-
-                let combination_randomness =
-                    self.combine_constraints(verifier_state, &mut claimed_sum, &all_constraints)?;
-                round_constraints.push((combination_randomness, all_constraints));
-
-                // Initial sumcheck on the combined constraints
-                let folding_randomness = config.verify(verifier_state, &mut claimed_sum)?;
-                round_folding_randomness.push(folding_randomness);
-            }
+        // Run initial sumcheck on batched polynomial with combined statement
+        let folding_randomness = match &self.initial_sumcheck {
+            InitialSumcheck::Full(config) => config.verify(verifier_state, &mut the_sum)?,
             InitialSumcheck::Abridged { folding_size, pow } => {
-                for commitment in commitments {
-                    assert_eq!(commitment.out_of_domain().points.len(), 0);
-                }
-                round_constraints.push((vec![], vec![]));
-
-                let mut folding_randomness = vec![F::ZERO; *folding_size];
-                for randomness in &mut folding_randomness {
-                    *randomness = verifier_state.verifier_message();
-                }
-                round_folding_randomness.push(MultilinearPoint(folding_randomness));
-
+                let folding_randomness = verifier_state.verifier_message_vec(*folding_size);
                 pow.verify(verifier_state)?;
+                MultilinearPoint(folding_randomness)
             }
         };
+        round_folding_randomness.push(folding_randomness);
+
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
+            // Receive commitment to the folded polynomial, plus out-of-domain constraints
             let commitment = round_config
                 .irs_committer
                 .receive_commitment(verifier_state)?;
 
-            let oods_constraints = commitment.out_of_domain().constraints(
-                &embedding::Identity::new(),
-                &[F::ONE],
-                round_config.initial_num_variables(),
-            );
-
+            // Proof of work before in-domain challenges
             round_config.pow.verify(verifier_state)?;
 
-            let in_domain_constraints = match prev_commitment {
+            // Open the previous round's commitment, producing in-domain evaluations.
+            let (in_domain, poly_rlc) = match prev_commitment {
                 RoundCommitment::Initial {
                     commitments,
                     batching_weights,
                 } => {
                     let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
-                    let weights = tensor_product(
-                        &batching_weights,
-                        &round_folding_randomness.last().unwrap().coeff_weights(true),
-                    );
-                    in_domain.constraints(embedding, &weights, round_config.initial_num_variables())
+                    (in_domain.lift(self.embedding()), batching_weights)
                 }
                 RoundCommitment::Round { commitment } => {
                     let prev_round_config = &self.round_configs[round_index - 1];
                     let in_domain = prev_round_config
                         .irs_committer
                         .verify(verifier_state, &[&commitment])?;
-                    let weights = round_folding_randomness.last().unwrap().coeff_weights(true);
-                    in_domain.constraints(
-                        &embedding::Identity::new(),
-                        &weights,
-                        round_config.initial_num_variables(),
-                    )
+                    (in_domain, vec![F::ONE])
                 }
             };
 
-            let constraints: Vec<Constraint<F>> = oods_constraints
-                .into_iter()
-                .chain(in_domain_constraints.into_iter())
-                .collect();
-            let combination_randomness =
-                self.combine_constraints(verifier_state, &mut claimed_sum, &constraints)?;
-            round_constraints.push((combination_randomness.clone(), constraints));
+            // Random linear combination of out- and in-domain constraints
+            let constraint_weights = commitment
+                .out_of_domain()
+                .weights(round_config.initial_num_variables())
+                .chain(in_domain.weights(round_config.initial_num_variables()))
+                .collect::<Vec<_>>();
+            let constraint_values = commitment
+                .out_of_domain()
+                .values(&[F::ONE])
+                .chain(in_domain.values(&tensor_product(
+                    &poly_rlc,
+                    &round_folding_randomness.last().unwrap().coeff_weights(true),
+                )))
+                .collect::<Vec<_>>();
+            let constraint_rlc_coeffs =
+                geometric_challenge(verifier_state, constraint_weights.len());
+            the_sum += dot(&constraint_rlc_coeffs, &constraint_values);
+            round_constraints.push((constraint_rlc_coeffs, constraint_weights));
 
-            let folding_randomness = round_config
-                .sumcheck
-                .verify(verifier_state, &mut claimed_sum)?;
+            // Sumcheck round
+            let folding_randomness = round_config.sumcheck.verify(verifier_state, &mut the_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             prev_commitment = RoundCommitment::Round { commitment };
         }
 
-        // Final round (same as regular verify)
-        let mut final_coefficients = vec![F::ZERO; self.final_sumcheck.initial_size];
-        for coeff in &mut final_coefficients {
-            *coeff = verifier_state.prover_message()?;
-        }
-        let final_coefficients = CoefficientList::new(final_coefficients);
+        // Final round (we receive the full polynomial instead of a commitment)
+        let final_coefficients = CoefficientList::new(
+            verifier_state.prover_messages_vec(self.final_sumcheck.initial_size)?,
+        );
 
+        // Final proof of work.
         self.final_pow.verify(verifier_state)?;
 
-        let in_domain_constraints = match prev_commitment {
+        // Open previous witness, as usual
+        let (in_domain, poly_rlc) = match prev_commitment {
             RoundCommitment::Initial {
                 commitments,
                 batching_weights,
             } => {
                 let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
-                let weights = tensor_product(
-                    &batching_weights,
-                    &round_folding_randomness.last().unwrap().coeff_weights(true),
-                );
-                let final_num_variables = self.final_sumcheck.initial_size.ilog2() as usize;
-                in_domain.constraints(embedding, &weights, final_num_variables)
+                (in_domain.lift(self.embedding()), batching_weights)
             }
             RoundCommitment::Round { commitment } => {
-                let prev_round_config = self.round_configs.last().unwrap();
+                let prev_round_config = &self.round_configs.last().unwrap();
                 let in_domain = prev_round_config
                     .irs_committer
                     .verify(verifier_state, &[&commitment])?;
-                let weights = round_folding_randomness.last().unwrap().coeff_weights(true);
-                in_domain.constraints(
-                    &embedding::Identity::new(),
-                    &weights,
-                    prev_round_config.initial_num_variables()
-                        - prev_round_config.sumcheck.num_rounds(),
-                )
+                (in_domain, vec![F::ONE])
             }
         };
 
-        verify!(in_domain_constraints
-            .iter()
-            .all(|c| c.verify(&final_coefficients)));
+        // Verify in-domain constraints directly
+        for (weights, evals) in zip_strict(
+            in_domain.weights(final_coefficients.num_variables()),
+            in_domain.values(&tensor_product(
+                &poly_rlc,
+                &round_folding_randomness.last().unwrap().coeff_weights(true),
+            )),
+        ) {
+            verify!(weights.evaluate(&final_coefficients) == evals);
+        }
 
-        let final_sumcheck_randomness = self
-            .final_sumcheck
-            .verify(verifier_state, &mut claimed_sum)?;
+        // Final sumcheck
+        let final_sumcheck_randomness = self.final_sumcheck.verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
@@ -273,80 +227,33 @@ impl<F: FftField> WhirConfig<F> {
                 .collect(),
         );
 
-        // Compute evaluation of weights in folding randomness
+        // Compute evaluation of weights in folding randomness point
         let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
-        let evaluation_of_weights =
-            self.eval_constraints_poly(&round_constraints, &deferred, folding_randomness.clone());
-
-        // Check the final sumcheck evaluation
-        let final_value = final_coefficients.evaluate(&final_sumcheck_randomness);
-        verify!(claimed_sum == evaluation_of_weights * final_value);
-
-        Ok((folding_randomness, deferred))
-    }
-
-    /// Create a random linear combination of constraints and add it to the claim.
-    /// Returns the randomness used.
-    pub fn combine_constraints<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        claimed_sum: &mut F,
-        constraints: &[Constraint<F>],
-    ) -> VerificationResult<Vec<F>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        u8: Decoding<[H::U]>,
-        [u8; 32]: Decoding<[H::U]>,
-        U64: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
-    {
-        assert!(constraints
-            .windows(2)
-            .all(|w| w[0].weights.num_variables() == w[1].weights.num_variables()));
-
-        let combination_randomness_gen = if constraints.len() > 1 {
-            verifier_state.verifier_message()
-        } else {
-            F::ONE
-        };
-        let combination_randomness =
-            expand_randomness(combination_randomness_gen, constraints.len());
-        *claimed_sum += zip_strict(constraints.iter(), &combination_randomness)
-            .map(|(c, rand)| c.sum * rand)
-            .sum::<F>();
-
-        Ok(combination_randomness)
-    }
-
-    /// Evaluate the random linear combination of constraints in `point`.
-    fn eval_constraints_poly(
-        &self,
-        constraints: &[(Vec<F>, Vec<Constraint<F>>)],
-        deferred: &[F],
-        mut point: MultilinearPoint<F>,
-    ) -> F {
-        let mut deferred = deferred.iter().copied();
-        let mut value = F::ZERO;
-
-        for (round, (randomness, constraints)) in constraints.iter().enumerate() {
-            assert_eq!(randomness.len(), constraints.len());
+        let mut deferred_iter = deferred.iter().copied();
+        let mut weight_eval = F::ZERO;
+        for (round, (weights_rlc_coeffs, weights)) in round_constraints.iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
-                || self.initial_size().ilog2() as usize,
+                || self.initial_num_variables(),
                 |p| self.round_configs[p].initial_num_variables(),
             );
-            point = MultilinearPoint(point.0[..num_variables].to_vec());
-            value += zip_strict(constraints.iter(), randomness)
-                .map(|(constraint, &randomness)| {
-                    let value = if constraint.defer_evaluation {
-                        deferred.next().unwrap()
-                    } else {
-                        constraint.weights.compute(&point)
-                    };
-                    value * randomness
-                })
-                .sum::<F>();
+            let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+            for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
+                let eval = if weights.deffered() {
+                    let deferred = deferred_iter.next();
+                    verify!(deferred.is_some());
+                    deferred.unwrap()
+                } else {
+                    weights.compute(&point)
+                };
+                weight_eval += *rlc_coeff * eval;
+            }
         }
-        value
+
+        // Check the final sumcheck equation
+        let poly_eval = final_coefficients.evaluate(&final_sumcheck_randomness);
+        verify!(poly_eval * weight_eval == the_sum);
+
+        // Return the evaluation point and the claimed values of the deferred weights.
+        Ok((folding_randomness, deferred))
     }
 }
