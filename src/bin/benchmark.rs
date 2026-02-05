@@ -21,7 +21,7 @@ use whir::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::{Statement, Weights},
+    whir::statement::Weights,
 };
 
 #[derive(Parser, Debug)]
@@ -186,13 +186,16 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-        let statement_new = Statement::<F>::new(num_variables);
+        let weights: Vec<Weights<F>> = Vec::new();
+        let evaluations: Vec<F> = Vec::new();
+        let weight_refs = weights.iter().collect::<Vec<_>>();
 
         params.prove(
             &mut prover_state,
             &[&polynomial],
             &[&witness],
-            &[&statement_new],
+            &weight_refs,
+            &evaluations,
         );
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -207,7 +210,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             params
-                .verify(&mut verifier_state, &[&commitment], &[&statement_new])
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &weight_refs,
+                    &evaluations,
+                )
                 .unwrap();
         }
 
@@ -251,12 +259,14 @@ where
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
             .collect();
 
-        let mut statement = Statement::<F>::new(num_variables);
+        let mut weights = Vec::new();
+        let mut evaluations = Vec::new();
 
         for point in &points {
             let eval = polynomial.evaluate_at_extension(point);
-            let weights = Weights::evaluation(point.clone());
-            statement.add_constraint(weights, eval);
+            let weight = Weights::evaluation(point.clone());
+            weights.push(weight);
+            evaluations.push(eval);
         }
 
         HASH_COUNTER.reset();
@@ -264,11 +274,13 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
+        let weight_refs = weights.iter().collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &[&polynomial],
             &[&witness],
-            &[&statement],
+            &weight_refs,
+            &evaluations,
         );
 
         let whir_prover_time = whir_prover_time.elapsed();
@@ -283,7 +295,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             params
-                .verify(&mut verifier_state, &[&commitment], &[&statement])
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &weight_refs,
+                    &evaluations,
+                )
                 .unwrap();
         }
 

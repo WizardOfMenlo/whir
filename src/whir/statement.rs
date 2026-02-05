@@ -95,11 +95,7 @@ impl<F: Field> Weights<F> {
         matches!(self, Self::Linear { .. })
     }
 
-    pub(crate) fn mixed_evaluate<M>(
-        &self,
-        embedding: &M,
-        poly: &CoefficientList<M::Source>,
-    ) -> M::Target
+    pub fn mixed_evaluate<M>(&self, embedding: &M, poly: &CoefficientList<M::Source>) -> M::Target
     where
         M: Embedding<Target = F>,
     {
@@ -114,7 +110,7 @@ impl<F: Field> Weights<F> {
     }
 
     /// Evaluate the weighted sum with a polynomial in coefficient form.
-    pub(crate) fn evaluate(&self, poly: &CoefficientList<F>) -> F {
+    pub fn evaluate(&self, poly: &CoefficientList<F>) -> F {
         self.mixed_evaluate(&Identity::new(), poly)
     }
 
@@ -134,7 +130,7 @@ impl<F: Field> Weights<F> {
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
-    pub(crate) fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
+    pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
         assert_eq!(accumulator.num_variables(), self.num_variables());
@@ -165,7 +161,7 @@ impl<F: Field> Weights<F> {
     }
 
     /// Computes the weight function evaluation under a given randomness.
-    pub(crate) fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
+    pub fn compute(&self, folding_randomness: &MultilinearPoint<F>) -> F {
         match self {
             Self::Evaluation { point } => point.eq_poly_outside(folding_randomness),
             Self::Linear { weight } => weight.eval_extension(folding_randomness),

@@ -234,12 +234,8 @@ where
                 sumcheck: sumcheck::Config {
                     field: Type::<F>::new(),
                     initial_size: 1 << num_variables,
-                    rounds: vec![
-                        sumcheck::RoundConfig {
-                            pow: pow(folding_pow_bits),
-                        };
-                        next_folding_factor
-                    ],
+                    round_pow: pow(folding_pow_bits),
+                    num_rounds: next_folding_factor,
                 },
                 pow: pow(pow_bits),
             });
@@ -298,12 +294,8 @@ where
                 InitialSumcheck::Full(sumcheck::Config {
                     field: Type::<F>::new(),
                     initial_size: 1 << mv_parameters.num_variables,
-                    rounds: vec![
-                        sumcheck::RoundConfig {
-                            pow: pow(starting_folding_pow_bits),
-                        };
-                        whir_parameters.folding_factor.at_round(0)
-                    ],
+                    round_pow: pow(starting_folding_pow_bits),
+                    num_rounds: whir_parameters.folding_factor.at_round(0),
                 })
             } else {
                 InitialSumcheck::Abridged {
@@ -315,12 +307,8 @@ where
             final_sumcheck: sumcheck::Config {
                 field: Type::<F>::new(),
                 initial_size: 1 << num_variables,
-                rounds: vec![
-                    sumcheck::RoundConfig {
-                        pow: pow(final_folding_pow_bits),
-                    };
-                    final_sumcheck_rounds
-                ],
+                round_pow: pow(final_folding_pow_bits),
+                num_rounds: final_sumcheck_rounds,
             },
             final_pow: pow(final_pow_bits),
             reed_solomon,
@@ -373,10 +361,8 @@ where
         let max_bits = Bits::new(self.max_pow_bits as f64);
         match &self.initial_sumcheck {
             InitialSumcheck::Full(config) => {
-                for round_config in &config.rounds {
-                    if round_config.pow.difficulty() > max_bits {
-                        return false;
-                    }
+                if config.round_pow.difficulty() > max_bits {
+                    return false;
                 }
             }
             InitialSumcheck::Abridged { pow, .. } => {
@@ -389,19 +375,15 @@ where
             if round_config.pow.difficulty() > max_bits {
                 return false;
             }
-            for round_config in &round_config.sumcheck.rounds {
-                if round_config.pow.difficulty() > max_bits {
-                    return false;
-                }
+            if round_config.sumcheck.round_pow.difficulty() > max_bits {
+                return false;
             }
         }
         if self.final_pow.difficulty() > max_bits {
             return false;
         }
-        for round_config in &self.final_sumcheck.rounds {
-            if round_config.pow.difficulty() > max_bits {
-                return false;
-            }
+        if self.final_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
         }
         true
     }
@@ -698,7 +680,7 @@ impl<F: FftField> Display for WhirConfig<F> {
         num_variables -= self.initial_sumcheck.num_rounds();
 
         for r in &self.round_configs {
-            let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds() - 1)) as f64;
+            let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
             let log_eta = Self::log_eta(self.soundness_type, next_rate);
 
             if r.irs_committer.out_domain_samples > 0 {
@@ -757,15 +739,14 @@ impl<F: FftField> Display for WhirConfig<F> {
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
-                prox_gaps_error.min(sumcheck_error)
-                    + f64::from(r.sumcheck.rounds[0].pow.difficulty()),
-                r.sumcheck.num_rounds(),
+                prox_gaps_error.min(sumcheck_error) + f64::from(r.sumcheck.round_pow.difficulty()),
+                r.sumcheck.num_rounds,
                 prox_gaps_error,
                 sumcheck_error,
-                r.sumcheck.rounds[0].pow.difficulty(),
+                r.sumcheck.round_pow.difficulty(),
             )?;
 
-            num_variables -= r.sumcheck.num_rounds();
+            num_variables -= r.sumcheck.num_rounds;
         }
 
         let query_error = Self::rbr_queries(
@@ -781,15 +762,15 @@ impl<F: FftField> Display for WhirConfig<F> {
             self.final_pow.difficulty(),
         )?;
 
-        if self.final_sumcheck.num_rounds() > 0 {
+        if self.final_sumcheck.num_rounds > 0 {
             let combination_error = field_size_bits as f64 - 1.;
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
                 combination_error + f64::from(self.final_pow.difficulty()),
-                self.final_sumcheck.num_rounds(),
+                self.final_sumcheck.num_rounds,
                 combination_error,
-                self.final_sumcheck.rounds[0].pow.difficulty(),
+                self.final_sumcheck.round_pow.difficulty(),
             )?;
         }
 
@@ -800,7 +781,7 @@ impl<F: FftField> Display for WhirConfig<F> {
 impl<F: FftField> InitialSumcheck<F> {
     pub fn num_rounds(&self) -> usize {
         match self {
-            Self::Full(config) => config.num_rounds(),
+            Self::Full(config) => config.num_rounds,
             Self::Abridged { folding_size, .. } => {
                 assert!(folding_size.is_power_of_two());
                 folding_size.ilog2() as usize
@@ -810,10 +791,7 @@ impl<F: FftField> InitialSumcheck<F> {
 
     pub fn pow(&self) -> &proof_of_work::Config {
         match self {
-            Self::Full(config) => {
-                assert!(config.rounds.windows(2).all(|w| w[0].pow == w[1].pow));
-                &config.rounds[0].pow
-            }
+            Self::Full(config) => &config.round_pow,
             Self::Abridged { pow, .. } => pow,
         }
     }
@@ -1029,18 +1007,14 @@ mod tests {
         config.max_pow_bits = 20;
         match &mut config.initial_sumcheck {
             InitialSumcheck::Full(config) => {
-                for round in &mut config.rounds {
-                    round.pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
-                }
+                config.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
             }
             InitialSumcheck::Abridged { pow, .. } => {
                 *pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
             }
         }
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
-        for round in &mut config.final_sumcheck.rounds {
-            round.pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
-        }
+        config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // Ensure all rounds are within limits
         config.round_configs = vec![
@@ -1059,12 +1033,8 @@ mod tests {
                 sumcheck: sumcheck::Config {
                     field: Type::<Field64>::new(),
                     initial_size: 1 << 10,
-                    rounds: vec![
-                        sumcheck::RoundConfig {
-                            pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
-                        };
-                        2
-                    ],
+                    round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
+                    num_rounds: 2,
                 },
                 pow: proof_of_work::Config::from_difficulty(Bits::new(17.0)),
             },
@@ -1083,12 +1053,8 @@ mod tests {
                 sumcheck: sumcheck::Config {
                     field: Type::<Field64>::new(),
                     initial_size: 1 << 10,
-                    rounds: vec![
-                        sumcheck::RoundConfig {
-                            pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
-                        };
-                        2
-                    ],
+                    round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
+                    num_rounds: 2,
                 },
                 pow: proof_of_work::Config::from_difficulty(Bits::new(18.0)),
             },
@@ -1112,18 +1078,14 @@ mod tests {
         config.max_pow_bits = 20;
         match &mut config.initial_sumcheck {
             InitialSumcheck::Full(config) => {
-                for round in &mut config.rounds {
-                    round.pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
-                }
+                config.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
             }
             InitialSumcheck::Abridged { pow, .. } => {
                 *pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
             }
         }
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
-        for round in &mut config.final_sumcheck.rounds {
-            round.pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
-        }
+        config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         assert!(
             !config.check_pow_bits(),
