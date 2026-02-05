@@ -1,10 +1,10 @@
 use ark_ff::Field;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Compute
 #[cfg(feature = "parallel")]
 pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
-    use rayon::prelude::*;
-
     assert_eq!(a.len(), b.len());
     a.par_chunks_exact(2)
         .zip(b.par_chunks_exact(2))
@@ -40,8 +40,18 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
 
 pub fn fold<F: Field>(weight: F, values: &[F]) -> Vec<F> {
     assert!(values.len().is_multiple_of(2));
-    values
+
+    #[cfg(not(feature = "parallel"))]
+    let result = values
         .chunks_exact(2)
         .map(|w| (w[1] - w[0]) * weight + w[0])
-        .collect()
+        .collect();
+
+    #[cfg(feature = "parallel")]
+    let result = values
+        .par_chunks_exact(2)
+        .map(|w| (w[1] - w[0]) * weight + w[0])
+        .collect();
+
+    result
 }

@@ -7,9 +7,12 @@ pub mod sumcheck;
 mod weights;
 
 use ark_ff::{AdditiveGroup, Field};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use self::embedding::Embedding;
 pub use self::weights::Weights;
+#[cfg(feature = "parallel")]
 use crate::utils::workload_size;
 
 pub fn geometric_sequence<F: Field>(base: F, length: usize) -> Vec<F> {
@@ -42,7 +45,13 @@ pub fn univariate_evaluate<F: Field>(coefficients: &[F], point: F) -> F {
 
 /// Lift a vector to an embedding.
 pub fn lift<M: Embedding>(embedding: &M, source: &[M::Source]) -> Vec<M::Target> {
-    source.iter().map(|c| embedding.map(*c)).collect()
+    #[cfg(not(feature = "parallel"))]
+    let result = source.iter().map(|c| embedding.map(*c)).collect();
+
+    #[cfg(feature = "parallel")]
+    let result = source.par_iter().map(|c| embedding.map(*c)).collect();
+
+    result
 }
 
 /// Mixed scalar-mul add
@@ -93,8 +102,20 @@ pub fn mixed_dot<F: Field, G: Field>(
     b: &[F],
 ) -> G {
     assert_eq!(a.len(), b.len());
-    a.iter()
-        .zip(b.iter())
+
+    #[cfg(not(feature = "parallel"))]
+    let result = a
+        .iter()
+        .zip(b)
         .map(|(a, b)| embedding.mixed_mul(*a, *b))
-        .sum()
+        .sum();
+
+    #[cfg(feature = "parallel")]
+    let result = a
+        .par_iter()
+        .zip(b)
+        .map(|(a, b)| embedding.mixed_mul(*a, *b))
+        .sum();
+
+    result
 }

@@ -160,25 +160,21 @@ where
             .collect(),
     );
 
-    let whir_prover_time = Instant::now();
-
+    let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[&polynomial]);
+    let whir_commit_time = whir_commit_time.elapsed();
 
-    let weights: Vec<Weights<F>> = Vec::new();
-    let evaluations: Vec<F> = Vec::new();
-    let weight_refs = weights.iter().collect::<Vec<_>>();
-    params.prove(
-        &mut prover_state,
-        &[&polynomial],
-        &[&witness],
-        &weight_refs,
-        &evaluations,
-    );
+    let whir_prove_time = Instant::now();
+    params.prove(&mut prover_state, &[&polynomial], &[&witness], &[], &[]);
+    let whir_prove_time = whir_prove_time.elapsed();
 
     // Serialize proof
     let proof = prover_state.proof();
     let proof_size = proof.narg_string.len() + proof.hints.len();
-    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!(
+        "Prover time: {:.1?} + {:.1?}",
+        whir_commit_time, whir_prove_time
+    );
     println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
 
     HASH_COUNTER.reset();
@@ -188,12 +184,7 @@ where
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &weight_refs,
-                &evaluations,
-            )
+            .verify(&mut verifier_state, &[&commitment], &[], &[])
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -263,9 +254,10 @@ where
             .map(<F as Field>::BasePrimeField::from)
             .collect(),
     );
-    let whir_prover_time = Instant::now();
 
+    let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[&polynomial]);
+    let whir_commit_time = whir_commit_time.elapsed();
 
     let mut weights = Vec::new();
     let mut evaluations = Vec::new();
@@ -294,8 +286,9 @@ where
         weights.push(linear_claim_weight);
         evaluations.push(sum);
     }
-
     let weight_refs = weights.iter().collect::<Vec<_>>();
+
+    let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
         &[&polynomial],
@@ -303,9 +296,15 @@ where
         &weight_refs,
         &evaluations,
     );
+    let whir_prove_time = whir_prove_time.elapsed();
 
     let proof = prover_state.proof();
-    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!(
+        "Prover time: {:.1?} + {:.1?} = {:.1?}",
+        whir_commit_time,
+        whir_prove_time,
+        whir_prove_time + whir_commit_time
+    );
     println!(
         "Proof size: {:.1} KiB",
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0

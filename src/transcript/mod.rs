@@ -229,7 +229,6 @@ where
 
     #[cfg(debug_assertions)]
     fn push(&mut self, interaction: Interaction) {
-        eprintln!("Prover: {interaction:?}");
         self.pattern.push(interaction);
     }
 }
@@ -326,7 +325,6 @@ where
     #[cfg(debug_assertions)]
     #[track_caller]
     fn pop_pattern(&mut self, interaction: &Interaction) {
-        eprintln!("Verifier: {interaction:?}");
         assert!(!self.pattern.is_empty());
         let (expected, tail) = self.pattern.split_first().unwrap();
         assert_eq!(
