@@ -539,7 +539,7 @@ impl<F: FftField> Display for Config<F> {
             self.security_level, self.soundness_type
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
-        write!(f, "  sumcheck {}", self.initial_sumcheck)?;
+        writeln!(f, "  sumcheck {}", self.initial_sumcheck)?;
         for (i, r) in self.round_configs.iter().enumerate() {
             write!(f, "Round {i}:\n{r}")?;
         }
