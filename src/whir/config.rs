@@ -3,7 +3,6 @@ use std::{
     f64::consts::LOG2_10,
     fmt::{Debug, Display},
     ops::Neg,
-    sync::Arc,
 };
 
 use ark_ff::FftField;
@@ -15,7 +14,6 @@ use crate::{
         domain::Domain,
         embedding::{self, Basefield},
         fields::FieldWithSize,
-        ntt::{RSDefault, ReedSolomon},
     },
     bits::Bits,
     parameters::{MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -23,32 +21,22 @@ use crate::{
     type_info::{Type, Typed},
 };
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "F: FftField")]
 pub struct WhirConfig<F>
 where
     F: FftField,
 {
-    pub mv_parameters: MultivariateParameters<F>,
-    pub soundness_type: SoundnessType,
-    pub security_level: usize,
-    pub max_pow_bits: usize,
-
     pub initial_committer: irs_commit::BasefieldConfig<F>,
     pub initial_sumcheck: sumcheck::Config<F>,
     pub round_configs: Vec<RoundConfig<F>>,
     pub final_sumcheck: sumcheck::Config<F>,
     pub final_pow: proof_of_work::Config,
 
-    // Reed Solomon vtable
-    #[serde(skip, default = "default_rs")]
-    pub reed_solomon: Arc<dyn ReedSolomon<F>>,
-    #[serde(skip, default = "default_rs")]
-    pub basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-}
-
-fn default_rs<F: FftField>() -> Arc<dyn ReedSolomon<F>> {
-    Arc::new(RSDefault)
+    // TODO: These don't belong in the config. Instead there should be
+    // fn like `WhirConfig::soundness(&self, assumptions: SoundnessType) -> Bits`.
+    pub soundness_type: SoundnessType,
+    pub security_level: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,8 +56,6 @@ where
 {
     #[allow(clippy::too_many_lines)]
     pub fn new(
-        reed_solomon: Arc<dyn ReedSolomon<F>>,
-        basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
         mv_parameters: MultivariateParameters<F>,
         whir_parameters: &ProtocolParameters,
     ) -> Self {
@@ -250,8 +236,6 @@ where
 
         Self {
             security_level: whir_parameters.security_level,
-            max_pow_bits: whir_parameters.pow_bits,
-            mv_parameters,
             soundness_type: whir_parameters.soundness_type,
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
@@ -287,8 +271,6 @@ where
                 num_rounds: final_sumcheck_rounds,
             },
             final_pow: pow(final_pow_bits),
-            reed_solomon,
-            basefield_reed_solomon,
         }
     }
 
@@ -334,8 +316,7 @@ where
         }
     }
 
-    pub fn check_pow_bits(&self) -> bool {
-        let max_bits = Bits::new(self.max_pow_bits as f64);
+    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
         if self.initial_sumcheck.round_pow.difficulty() > max_bits {
             return false;
         }
@@ -549,26 +530,13 @@ where
     }
 }
 
-/// Manual implementation to allow error in `f64` and handle ark types missing `PartialEq`.
-impl<F: FftField> PartialEq for WhirConfig<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.mv_parameters == other.mv_parameters
-            && self.soundness_type == other.soundness_type
-            && self.security_level == other.security_level
-            && self.max_pow_bits == other.max_pow_bits
-            && self.round_configs == other.round_configs
-            && self.final_pow == other.final_pow
-    }
-}
-
 impl<F: FftField> Display for WhirConfig<F> {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", &self.mv_parameters)?;
         writeln!(
             f,
-            "Security level: {} bits using {} security and max {} bits of PoW",
-            self.security_level, self.soundness_type, self.max_pow_bits
+            "Security level: {} bits using {} security",
+            self.security_level, self.soundness_type
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
         write!(f, "  sumcheck {}", self.initial_sumcheck)?;
@@ -591,7 +559,7 @@ impl<F: FftField> Display for WhirConfig<F> {
             self.soundness_type,
             self.initial_committer.rate().log2().neg(),
         );
-        let mut num_variables = self.mv_parameters.num_variables;
+        let mut num_variables = self.initial_num_variables();
 
         if self.initial_committer.out_domain_samples > 0 {
             writeln!(
@@ -783,21 +751,6 @@ mod tests {
     }
 
     #[test]
-    fn test_whir_config_creation() {
-        let params = default_whir_params();
-
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
-
-        assert_eq!(config.security_level, 100);
-        assert_eq!(config.max_pow_bits, 20);
-        assert_eq!(config.soundness_type, SoundnessType::ConjectureList);
-    }
-
-    #[test]
     fn test_whir_params_serde() {
         test_serde(&default_whir_params());
         test_serde(&default_whir_params());
@@ -808,10 +761,7 @@ mod tests {
         let params = default_whir_params();
 
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
+        let config = WhirConfig::<Field64>::new(mv_params, &params);
 
         test_serde(&config);
     }
@@ -820,10 +770,7 @@ mod tests {
     fn test_n_rounds() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
+        let config = WhirConfig::<Field64>::new(mv_params, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
@@ -934,13 +881,9 @@ mod tests {
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
+        let mut config = WhirConfig::<Field64>::new(mv_params, &params);
 
         // Set all values within limits
-        config.max_pow_bits = 20;
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
         config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
@@ -990,7 +933,7 @@ mod tests {
         ];
 
         assert!(
-            config.check_pow_bits(),
+            config.check_max_pow_bits(Bits::new(20.0)),
             "All values are within limits, check_pow_bits should return true."
         );
     }
@@ -999,18 +942,14 @@ mod tests {
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
         let mv_params = MultivariateParameters::<Field64>::new(10);
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let mut config =
-            WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
+        let mut config = WhirConfig::<Field64>::new(mv_params, &params);
 
-        config.max_pow_bits = 20;
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
         config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         assert!(
-            !config.check_pow_bits(),
+            !config.check_max_pow_bits(Bits::new(20.0)),
             "Starting folding pow bits exceeds max_pow_bits, should return false."
         );
     }

@@ -1,7 +1,6 @@
 use std::{
     fs::OpenOptions,
     io::Write,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,9 +11,9 @@ use serde::Serialize;
 use whir::{
     algebra::{
         fields,
-        ntt::RSDefault,
         poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     },
+    bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
     parameters::{
@@ -162,15 +161,8 @@ where
             initial_statement: false,
             ..whir_params
         };
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::<F>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
-        if !params.check_pow_bits() {
+        let params = WhirConfig::<F>::new(mv_params, &whir_params);
+        if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
 
@@ -241,11 +233,8 @@ where
         // Run PCS
         use whir::whir::config::WhirConfig;
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let params =
-            WhirConfig::<F>::new(reed_solomon.clone(), reed_solomon, mv_params, &whir_params);
-        if !params.check_pow_bits() {
+        let params = WhirConfig::<F>::new(mv_params, &whir_params);
+        if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
 

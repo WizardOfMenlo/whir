@@ -177,7 +177,7 @@ impl<F: FftField> WhirConfig<F> {
             // We didn't fold evaluations, so compute it here.
             evaluations = EvaluationsList::from(coefficients.clone());
         }
-        let mut randomness_vec = Vec::with_capacity(self.mv_parameters.num_variables);
+        let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
         debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);

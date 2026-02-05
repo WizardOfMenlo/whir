@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
@@ -6,11 +6,11 @@ use clap::Parser;
 use whir::{
     algebra::{
         fields,
-        ntt::{RSDefault, ReedSolomon},
         poly_utils::{
             coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
         },
     },
+    bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     hash::HASH_COUNTER,
     parameters::{
@@ -90,24 +90,18 @@ fn run_whir<F>(args: &Args)
 where
     F: FftField + CanonicalSerialize + Codec,
 {
-    let reed_solomon = Arc::new(RSDefault);
-    let basefield_reed_solomon = reed_solomon.clone();
-
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F>(args, reed_solomon, basefield_reed_solomon);
+            run_whir_pcs::<F>(args);
         }
         WhirType::LDT => {
-            run_whir_as_ldt::<F>(args, reed_solomon, basefield_reed_solomon);
+            run_whir_as_ldt::<F>(args);
         }
     }
 }
 
-fn run_whir_as_ldt<F>(
-    args: &Args,
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
-    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-) where
+fn run_whir_as_ldt<F>(args: &Args)
+where
     F: FftField + CanonicalSerialize + Codec,
 {
     use whir::whir::config::WhirConfig;
@@ -145,12 +139,7 @@ fn run_whir_as_ldt<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(
-        reed_solomon,
-        basefield_reed_solomon,
-        mv_params,
-        &whir_params,
-    );
+    let params = WhirConfig::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -162,7 +151,7 @@ fn run_whir_as_ldt<F>(
     println!("Whir (LDT) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
-    if !params.check_pow_bits() {
+    if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
 
@@ -213,11 +202,8 @@ fn run_whir_as_ldt<F>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir_pcs<F>(
-    args: &Args,
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
-    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-) where
+fn run_whir_pcs<F>(args: &Args)
+where
     F: FftField + CanonicalSerialize + Codec,
 {
     use whir::whir::config::WhirConfig;
@@ -257,12 +243,7 @@ fn run_whir_pcs<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(
-        reed_solomon,
-        basefield_reed_solomon,
-        mv_params,
-        &whir_params,
-    );
+    let params = WhirConfig::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -274,7 +255,7 @@ fn run_whir_pcs<F>(
     println!("Whir (PCS) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
-    if !params.check_pow_bits() {
+    if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
 
