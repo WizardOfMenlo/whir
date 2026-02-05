@@ -10,12 +10,15 @@ use ark_poly::EvaluationDomain;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    algebra::{
+        domain::Domain,
+        embedding::Basefield,
+        fields::FieldWithSize,
+        ntt::{RSDefault, ReedSolomon},
+    },
     bits::Bits,
-    crypto::fields::FieldWithSize,
-    domain::Domain,
-    ntt::{RSDefault, ReedSolomon},
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-    protocols::{matrix_commit, proof_of_work, sumcheck},
+    protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
     type_info::Type,
 };
 
@@ -45,7 +48,7 @@ where
     pub starting_folding_pow: proof_of_work::Config,
 
     pub folding_factor: FoldingFactor,
-    pub round_parameters: Vec<RoundConfig<F>>,
+    pub round_configs: Vec<RoundConfig<F>>,
 
     pub final_queries: usize,
     pub final_pow: proof_of_work::Config,
@@ -54,7 +57,8 @@ where
     pub final_folding_pow: proof_of_work::Config,
 
     // Merkle tree parameters
-    pub initial_matrix_committer: matrix_commit::Config<F>,
+    // TODO: This has redundant parameters with starting_log_inv_rate and others.
+    pub initial_committer: irs_commit::BasefieldConfig<F>,
 
     // Batch size
     pub batch_size: usize,
@@ -274,11 +278,24 @@ where
             starting_domain: starting_domain.clone(),
             soundness_type: whir_parameters.soundness_type,
             starting_log_inv_rate: whir_parameters.starting_log_inv_rate,
-            initial_matrix_committer: matrix_commit::Config::with_hash(
-                whir_parameters.hash_id,
-                starting_domain.size() >> whir_parameters.folding_factor.at_round(0),
-                whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
-            ),
+            initial_committer: irs_commit::Config {
+                embedding: Default::default(),
+                num_polynomials: whir_parameters.batch_size,
+                polynomial_size: 1 << mv_parameters.num_variables,
+                expansion: 1 << whir_parameters.starting_log_inv_rate,
+                interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
+                matrix_commit: matrix_commit::Config::with_hash(
+                    whir_parameters.hash_id,
+                    1 << (mv_parameters.num_variables + whir_parameters.starting_log_inv_rate
+                        - whir_parameters.folding_factor.at_round(0)),
+                    whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
+                ),
+                in_domain_samples: round_parameters
+                    .first()
+                    .map_or(final_queries, |r| r.num_queries),
+                out_domain_samples: commitment_ood_samples,
+                deduplicate_in_domain: true,
+            },
             initial_sumcheck: if whir_parameters.initial_statement {
                 Some(sumcheck::Config {
                     field: Type::new(),
@@ -295,7 +312,7 @@ where
             },
             starting_folding_pow: pow(starting_folding_pow_bits),
             folding_factor: whir_parameters.folding_factor,
-            round_parameters,
+            round_configs: round_parameters,
             final_queries,
             final_pow: pow(final_pow_bits),
             final_sumcheck_rounds,
@@ -307,8 +324,12 @@ where
         }
     }
 
+    pub fn embedding(&self) -> &Basefield<F> {
+        self.initial_committer.embedding()
+    }
+
     pub const fn n_rounds(&self) -> usize {
-        self.round_parameters.len()
+        self.round_configs.len()
     }
 
     pub fn check_pow_bits(&self) -> bool {
@@ -323,7 +344,7 @@ where
         }
 
         // Check all round parameters
-        self.round_parameters
+        self.round_configs
             .iter()
             .all(|r| r.pow.difficulty() <= max_bits && r.folding_pow.difficulty() <= max_bits)
     }
@@ -530,7 +551,9 @@ where
     /// This is used by the verifier when verifying the final polynomial,
     /// ensuring consistent challenge selection and STIR constraint handling.
     pub fn final_round_config(&self) -> RoundConfig<F> {
-        if self.round_parameters.is_empty() {
+        if self.round_configs.is_empty() {
+            panic!("Can not treat initial_commit as a roundconfig");
+            /*
             // Fallback: no folding rounds, use initial domain setup
             RoundConfig {
                 matrix_committer: self.initial_matrix_committer.clone(),
@@ -550,9 +573,10 @@ where
                 folding_pow: self.final_folding_pow,
                 log_inv_rate: self.starting_log_inv_rate,
             }
+             */
         } else {
             // Derive final round config from last round, adjusted for next fold
-            let last = self.round_parameters.last().unwrap();
+            let last = self.round_configs.last().unwrap();
             RoundConfig {
                 matrix_committer: last.matrix_committer.clone(),
                 num_variables: last.num_variables - self.folding_factor.at_round(self.n_rounds()),
@@ -582,7 +606,7 @@ impl<F: FftField> PartialEq for WhirConfig<F> {
             && self.security_level == other.security_level
             && self.max_pow_bits == other.max_pow_bits
             && self.starting_folding_pow == other.starting_folding_pow
-            && self.round_parameters == other.round_parameters
+            && self.round_configs == other.round_configs
             && self.final_queries == other.final_queries
             && self.final_log_inv_rate == other.final_log_inv_rate
             && self.final_pow == other.final_pow
@@ -610,7 +634,7 @@ impl<F: FftField> Display for WhirConfig<F> {
             self.starting_folding_pow.difficulty()
         )?;
         writeln!(f, "Initial rate: 2^-{}", self.starting_log_inv_rate)?;
-        for (i, r) in self.round_parameters.iter().enumerate() {
+        for (i, r) in self.round_configs.iter().enumerate() {
             write!(f, "Round {i}: {r}")?;
         }
 
@@ -672,7 +696,7 @@ impl<F: FftField> Display for WhirConfig<F> {
 
         num_variables -= self.folding_factor.at_round(0);
 
-        for (round, r) in self.round_parameters.iter().enumerate() {
+        for (round, r) in self.round_configs.iter().enumerate() {
             let next_rate = r.log_inv_rate + (self.folding_factor.at_round(round) - 1);
             let log_eta = Self::log_eta(self.soundness_type, next_rate);
 
@@ -789,7 +813,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bits::Bits, crypto::fields::Field64, hash, utils::test_serde};
+    use crate::{algebra::fields::Field64, bits::Bits, hash, utils::test_serde};
 
     /// Generates default WHIR parameters
     fn default_whir_params() -> ProtocolParameters {
@@ -849,7 +873,7 @@ mod tests {
         let config =
             WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
-        assert_eq!(config.n_rounds(), config.round_parameters.len());
+        assert_eq!(config.n_rounds(), config.round_configs.len());
     }
 
     #[test]
@@ -970,7 +994,7 @@ mod tests {
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // Ensure all rounds are within limits
-        config.round_parameters = vec![
+        config.round_configs = vec![
             RoundConfig {
                 matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
                 pow: proof_of_work::Config::from_difficulty(Bits::new(17.0)),
@@ -1062,7 +1086,7 @@ mod tests {
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // One round's pow_bits exceeds limit
-        config.round_parameters = vec![RoundConfig {
+        config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
@@ -1098,7 +1122,7 @@ mod tests {
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
         // One round's folding_pow_bits exceeds limit
-        config.round_parameters = vec![RoundConfig {
+        config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(21.0)), // Exceeds max_pow_bits
@@ -1133,7 +1157,7 @@ mod tests {
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(20.0));
 
-        config.round_parameters = vec![RoundConfig {
+        config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(20.0)),
@@ -1168,7 +1192,7 @@ mod tests {
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(23.0));
         config.final_folding_pow = proof_of_work::Config::from_difficulty(Bits::new(24.0));
 
-        config.round_parameters = vec![RoundConfig {
+        config.round_configs = vec![RoundConfig {
             matrix_committer: matrix_commit::Config::<Field64>::new(0, 0),
             pow: proof_of_work::Config::from_difficulty(Bits::new(25.0)),
             folding_pow: proof_of_work::Config::from_difficulty(Bits::new(26.0)),

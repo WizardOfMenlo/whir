@@ -10,7 +10,7 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::LazyLock};
 
 use ark_ff::FftField;
 use static_assertions::assert_obj_safe;
@@ -19,40 +19,66 @@ use tracing::instrument;
 
 use self::matrix::MatrixMut;
 pub use self::{
-    cooley_tukey::{intt, intt_batch, ntt, ntt_batch},
+    cooley_tukey::{generator, intt, intt_batch, ntt, ntt_batch},
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
+use crate::type_map::{self, TypeMap};
+
+pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(TypeMap::default);
+
+#[derive(Default)]
+pub struct NttFamily;
+
+impl type_map::Family for NttFamily {
+    type Dyn<F: 'static> = dyn ReedSolomon<F>;
+}
+
+/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
+pub trait ReedSolomon<F>: Debug + Send + Sync {
+    fn interleaved_encode(
+        &self,
+        interleaved_coeffs: &[F],
+        expansion: usize,
+        fold_factor: usize,
+    ) -> Vec<F>;
+}
+
+assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
+
+// pub fn interleaved_rs_encode<F>(
+//     interleaved_coeffs: &[F],
+//     expansion: usize,
+//     fold_factor: usize,
+// ) -> Vec<F> {
+//     let engine = NTT.get::<F>().expect("Unsupported field");
+//     engine.interleaved_encode(interleaved_coeffs, expansion, fold_factor)
+// }
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
-/// 1/`expansion`, where 2^`fold_factor` elements are interleaved
+/// 1/`expansion`, where `interleaving_depth` elements are interleaved
 /// together.
 ///
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
-#[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
+#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
 pub fn interleaved_rs_encode<F: FftField>(
-    interleaved_coeffs: &[F],
+    coeffs: &[F],
     expansion: usize,
-    fold_factor: usize,
+    interleaving_depth: usize,
 ) -> Vec<F> {
-    let fold_factor = u32::try_from(fold_factor).unwrap();
-    debug_assert!(expansion > 0);
-    debug_assert!(interleaved_coeffs.len().is_power_of_two());
-
-    let fold_factor_exp = 2usize.pow(fold_factor);
-    let expanded_size = interleaved_coeffs.len() * expansion;
-
-    debug_assert_eq!(expanded_size % fold_factor_exp, 0);
+    assert!(expansion > 0);
+    assert!(coeffs.len().is_multiple_of(interleaving_depth));
+    let expanded_size = coeffs.len() * expansion;
 
     // 1. Create zero-padded message of appropriate size
     let mut result = vec![F::zero(); expanded_size];
-    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+    result[..coeffs.len()].copy_from_slice(coeffs);
 
-    let rows = expanded_size / fold_factor_exp;
-    let columns = fold_factor_exp;
+    let rows = expanded_size / interleaving_depth;
+    let columns = interleaving_depth;
     //
     // 2. Convert from column-major (interleaved form) to row-major
     //    representation.
@@ -65,18 +91,6 @@ pub fn interleaved_rs_encode<F: FftField>(
     result
 }
 
-/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
-pub trait ReedSolomon<F: FftField>: Debug + Send + Sync {
-    fn interleaved_encode(
-        &self,
-        interleaved_coeffs: &[F],
-        expansion: usize,
-        fold_factor: usize,
-    ) -> Vec<F>;
-}
-
-assert_obj_safe!(ReedSolomon<crate::crypto::fields::Field256>);
-
 /// Tag to select the built-in Reed Solomon Encoding
 #[derive(Clone, Copy, Debug)]
 pub struct RSDefault;
@@ -88,7 +102,7 @@ impl<F: FftField> ReedSolomon<F> for RSDefault {
         expansion: usize,
         fold_factor: usize,
     ) -> Vec<F> {
-        interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
+        interleaved_rs_encode(interleaved_coeffs, expansion, 1 << fold_factor)
     }
 }
 
@@ -97,7 +111,7 @@ mod tests {
     use ark_ff::Field;
 
     use super::*;
-    use crate::{crypto::fields::Field64, ntt::cooley_tukey::NttEngine};
+    use crate::algebra::{fields::Field64, ntt::cooley_tukey::NttEngine};
 
     #[test]
     fn test_expand_from_coeff_size_2() {

@@ -191,7 +191,7 @@ mod tests {
     use ark_ff::Field;
 
     use super::*;
-    use crate::crypto::fields::{Field64, Field64_2};
+    use crate::algebra::fields::{Field64, Field64_2};
 
     type F = Field64;
     type EF2 = Field64_2;

@@ -3,21 +3,26 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use spongefish::{
-    Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
-    VerifierState,
-};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use super::SumcheckPolynomial;
 use crate::{
+    algebra::{
+        dot,
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
+    },
     ensure,
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     protocols::proof_of_work,
-    transcript::codecs::U64,
+    transcript::{
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
+        VerifierMessage, VerifierState,
+    },
     type_info::Type,
     utils::eval_eq,
+    verify,
     whir::statement::Statement,
 };
 
@@ -103,9 +108,14 @@ impl<F: Field> Config<F> {
 
         let mut res = Vec::with_capacity(self.num_rounds());
         for round in &self.rounds {
+            #[cfg(test)]
+            prover_state.prover_message(&instance.sum);
+
             // Send sumcheck polynomial
             let sumcheck_poly = instance.compute_sumcheck_polynomial();
-            prover_state.prover_messages_iter(sumcheck_poly.evaluations().iter().copied());
+            for eval in sumcheck_poly.evaluations() {
+                prover_state.prover_message(eval);
+            }
 
             // Do Proof of Work (if any)
             round.pow.prove(prover_state);
@@ -133,17 +143,19 @@ impl<F: Field> Config<F> {
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
     {
-        self.validate().map_err(|_| VerificationError)?;
+        verify!(self.validate().is_ok());
+
         let mut res = Vec::with_capacity(self.num_rounds());
         for round in &self.rounds {
+            #[cfg(test)]
+            assert_eq!(*sum, verifier_state.prover_message::<F>()?);
+
             // Receive sumcheck polynomial
             let evals = verifier_state.prover_messages_vec(3)?;
             let sumcheck_poly = SumcheckPolynomial::new(evals, 1);
 
             // Check the sum
-            if sumcheck_poly.sum_over_boolean_hypercube() != *sum {
-                return Err(VerificationError);
-            }
+            verify!(sumcheck_poly.sum_over_boolean_hypercube() == *sum);
 
             // Check proof of work (if any)
             round.pow.verify(verifier_state)?;
@@ -156,6 +168,7 @@ impl<F: Field> Config<F> {
             let point = MultilinearPoint(vec![folding_randomness]);
             *sum = sumcheck_poly.evaluate_at_point(&point);
         }
+
         res.reverse();
         Ok(MultilinearPoint(res))
     }
@@ -218,6 +231,23 @@ where
     /// Returns the number of variables in the polynomial.
     pub const fn num_variables(&self) -> usize {
         self.evaluation_of_p.num_variables()
+    }
+
+    /// Do a consistency check by recomputing the sum.
+    #[track_caller]
+    pub fn assert_sum_invariant(&self) {
+        assert_eq!(
+            self.sum,
+            dot(self.evaluation_of_p.evals(), self.weights.evals())
+        );
+    }
+
+    pub const fn evaluations(&self) -> &EvaluationsList<F> {
+        &self.evaluation_of_p
+    }
+
+    pub const fn sum(&self) -> F {
+        self.sum
     }
 
     /// Computes the sumcheck polynomial `h(X)`, which is quadratic.
@@ -423,16 +453,18 @@ mod tests {
     use core::slice;
 
     use ark_ff::AdditiveGroup;
-    use spongefish::{domain_separator, session};
 
     use super::*;
     use crate::{
-        bits::Bits,
-        crypto::fields::Field64 as F,
-        poly_utils::{
-            coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
-            multilinear::MultilinearPoint,
+        algebra::{
+            fields::Field64 as F,
+            poly_utils::{
+                coeffs::CoefficientList, lagrange_iterator::LagrangePolynomialIterator,
+                multilinear::MultilinearPoint,
+            },
         },
+        bits::Bits,
+        transcript::DomainSeparator,
         whir::statement::Weights,
     };
 
@@ -1211,11 +1243,8 @@ mod tests {
                 pow: proof_of_work::Config::from_difficulty(Bits::new(0.0)),
             }],
         };
-        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
-            "Test at {}:{}",
-            file!(),
-            line!()
-        ));
+        let ds =
+            DomainSeparator::protocol(&config).session(&format!("Test at {}:{}", file!(), line!()));
 
         // Polynomial with 1 variable: f(X1) = 1 + 2*X1
         let c1 = F::from(1);
@@ -1228,7 +1257,7 @@ mod tests {
         // Instantiate the Sumcheck prover
         let mut instance = SumcheckSingle::new(coeffs, &statement, F::ONE);
         let ds = ds.instance(&c1);
-        let mut prover_state = ds.std_prover();
+        let mut prover_state = crate::transcript::ProverState::new_std(&ds);
 
         // Compute sumcheck polynomials
         let randomness = config.prove(&mut prover_state, &mut instance);
@@ -1237,8 +1266,8 @@ mod tests {
         assert_eq!(randomness.0.len(), config.num_rounds());
 
         // Create verifier
-        let narg = prover_state.narg_string();
-        let mut verifier_state = ds.std_verifier(narg);
+        let proof = prover_state.proof();
+        let mut verifier_state = crate::transcript::VerifierState::new_std(&ds, &proof);
 
         // Verify sumcheck
         let mut sum = F::ZERO;
@@ -1261,11 +1290,8 @@ mod tests {
                 2
             ],
         };
-        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
-            "Test at {}:{}",
-            file!(),
-            line!()
-        ));
+        let ds =
+            DomainSeparator::protocol(&config).session(&format!("Test at {}:{}", file!(), line!()));
 
         // Polynomial with 2 variables: f(X1, X2) = 1 + 2*X1 + 3*X2 + 4*X1*X2
         let c1 = F::from(1);
@@ -1279,7 +1305,7 @@ mod tests {
         let ds = ds.instance(&c1);
 
         // Convert the domain separator to a prover state
-        let mut prover_state = ds.std_prover();
+        let mut prover_state = crate::transcript::ProverState::new_std(&ds);
 
         let result = config.prove(&mut prover_state, &mut instance);
 
@@ -1299,11 +1325,8 @@ mod tests {
                 3
             ],
         };
-        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
-            "Test at {}:{}",
-            file!(),
-            line!()
-        ));
+        let ds =
+            DomainSeparator::protocol(&config).session(&format!("Test at {}:{}", file!(), line!()));
 
         // Multilinear polynomial with 3 variables:
         // f(X1, X2, X3) = 1 + 2*X1 + 3*X2 + 4*X3 + 5*X1*X2 + 6*X1*X3 + 7*X2*X3 + 8*X1*X2*X3
@@ -1322,7 +1345,7 @@ mod tests {
         let ds = ds.instance(&c1);
 
         // Convert the domain separator to a prover state
-        let mut prover_state = ds.std_prover();
+        let mut prover_state = crate::transcript::ProverState::new_std(&ds);
 
         let result = config.prove(&mut prover_state, &mut instance);
 
@@ -1336,11 +1359,8 @@ mod tests {
             initial_size: 4,
             rounds: vec![],
         };
-        let ds = domain_separator!("whir::protocols::sumcheck_single").session(session!(
-            "Test at {}:{}",
-            file!(),
-            line!()
-        ));
+        let ds =
+            DomainSeparator::protocol(&config).session(&format!("Test at {}:{}", file!(), line!()));
 
         // Multilinear polynomial with 2 variables:
         // f(X1, X2) = 1 + 2*X1 + 3*X2 + 4*X1*X2
@@ -1355,7 +1375,7 @@ mod tests {
         let ds = ds.instance(&c1);
 
         // No domain separator logic needed since we don't fold
-        let mut prover_state = ds.std_prover();
+        let mut prover_state = crate::transcript::ProverState::new_std(&ds);
 
         let result = config.prove(&mut prover_state, &mut instance);
 

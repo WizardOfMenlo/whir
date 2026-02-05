@@ -1,5 +1,5 @@
 use divan::{black_box, AllocProfiler, Bencher};
-use whir::{crypto::fields::Field64, ntt};
+use whir::algebra::{fields::Field64, ntt};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
@@ -31,7 +31,11 @@ fn interleaved_rs_encode(bencher: Bencher, case: &(u32, usize, usize)) {
             (coeffs, expansion, coset_sz)
         })
         .bench_values(|(coeffs, expansion, coset_sz)| {
-            black_box(ntt::interleaved_rs_encode(&coeffs, expansion, coset_sz))
+            black_box(ntt::interleaved_rs_encode(
+                &coeffs,
+                expansion,
+                1 << coset_sz,
+            ))
         });
 }
 

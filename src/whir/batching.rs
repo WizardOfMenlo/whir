@@ -28,23 +28,21 @@ mod batching_tests {
     use std::sync::Arc;
 
     use ark_std::UniformRand;
-    use spongefish::{domain_separator, session};
 
     use crate::{
-        crypto::fields::Field64,
-        hash,
-        ntt::RSDefault,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        algebra::{
+            fields::Field64,
+            ntt::RSDefault,
+            poly_utils::{
+                coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+            },
         },
-        transcript::{codecs::Empty, ProverState, VerifierState},
+        hash,
+        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         whir::{
-            committer::{reader::CommitmentReader, CommitmentWriter},
-            parameters::WhirConfig,
-            prover::Prover,
+            config::WhirConfig,
             statement::{Statement, Weights},
-            verifier::Verifier,
         },
     };
 
@@ -75,13 +73,14 @@ mod batching_tests {
         soundness_type: SoundnessType,
         pow_bits: usize,
     ) {
-        println!("Test parameters: ");
-        println!("  num_polynomials: {batch_size}");
-        println!("  num_variables  : {num_variables}");
-        println!("  folding_factor : {:?}", &folding_factor);
-        println!("  num_points     : {num_points:?}");
-        println!("  soundness_type : {soundness_type:?}");
-        println!("  pow_bits       : {pow_bits}");
+        eprintln!("\n---------------------");
+        eprintln!("Test parameters: ");
+        eprintln!("  num_polynomials: {batch_size}");
+        eprintln!("  num_variables  : {num_variables}");
+        eprintln!("  folding_factor : {:?}", &folding_factor);
+        eprintln!("  num_points     : {num_points:?}");
+        eprintln!("  soundness_type : {soundness_type:?}");
+        eprintln!("  pow_bits       : {pow_bits}");
 
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -126,69 +125,66 @@ mod batching_tests {
             .collect();
 
         // Define the Fiat-Shamir IOPattern for committing and proving
-        let ds = domain_separator!("🌪️")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
         // Initialize the Merlin transcript from the domain separator
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let committer = CommitmentWriter::new(params.clone());
-        let batched_witness =
-            committer.commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>());
+        let poly_refs = poly_list.iter().collect::<Vec<_>>();
+        let batched_witness = params.commit(&mut prover_state, &poly_refs);
 
-        // Get the batched polynomial
-        let batched_poly = batched_witness.batched_poly();
+        // Create a statement for each polynomial
+        let mut statements = Vec::new();
+        for poly in &poly_list {
+            // Initialize a statement with no constraints yet
+            let mut statement = Statement::new(num_variables);
 
-        // Initialize a statement with no constraints yet
-        let mut statement = Statement::new(num_variables);
+            // For each random point, evaluate the polynomial and create a constraint
+            for point in &points {
+                let eval = poly.evaluate(point);
+                let weights = Weights::evaluation(point.clone());
+                statement.add_constraint(weights, eval);
+            }
 
-        // For each random point, evaluate the polynomial and create a constraint
-        for point in &points {
-            let eval = batched_poly.evaluate(point);
-            let weights = Weights::evaluation(point.clone());
-            statement.add_constraint(weights, eval);
+            // Define weights for linear combination
+            let linear_claim_weight = Weights::linear(weight_poly.clone().into());
+
+            // Convert polynomial to extension field representation
+            let poly = EvaluationsList::from(poly.clone().to_extension());
+
+            // Compute the weighted sum of the polynomial (for sumcheck)
+            let sum = linear_claim_weight.weighted_sum(&poly);
+
+            // Add linear constraint to the statement
+            statement.add_constraint(linear_claim_weight, sum);
+
+            statements.push(statement);
         }
-
-        // Define weights for linear combination
-        let linear_claim_weight = Weights::linear(weight_poly.into());
-
-        // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(batched_poly.clone().to_extension());
-
-        // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.weighted_sum(&poly);
-
-        // Add linear constraint to the statement
-        statement.add_constraint(linear_claim_weight, sum);
-
-        // Instantiate the prover with the given parameters
-        let prover = Prover::new(params.clone());
+        let statement_refs = statements.iter().collect::<Vec<_>>();
 
         // Extract verifier-side version of the statement (only public data)
 
         // Generate a STARK proof for the given statement and witness
-        prover.prove(&mut prover_state, statement.clone(), batched_witness);
-
-        // Create a verifier with matching parameters
-        let verifier = Verifier::new(&params);
+        params.prove(
+            &mut prover_state,
+            &poly_refs,
+            &[&batched_witness],
+            &statement_refs,
+        );
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let proof = prover_state.proof();
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        // Create a commitment reader
-        let commitment_reader = CommitmentReader::new(&params);
-
-        let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
-            .unwrap();
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement,)
+        let statement_refs = statements.iter().collect::<Vec<_>>();
+        assert!(params
+            .verify(&mut verifier_state, &[&commitment], &statement_refs)
             .is_ok());
     }
 
@@ -217,7 +213,6 @@ mod batching_tests {
                                     num_points,
                                     soundness_type,
                                     pow_bits,
-                                    // FoldType::Naive,
                                 );
                             }
                         }

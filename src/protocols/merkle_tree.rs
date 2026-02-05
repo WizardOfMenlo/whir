@@ -1,21 +1,26 @@
 //! Protocol for committing to a vector of [`Hash`]es.
+//!
+//! See <https://eprint.iacr.org/2026/089> for analysis when used with truncated permutation
+//! node hashes.
 
-use std::mem::swap;
+use std::{fmt, mem::swap};
 
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 #[cfg(feature = "tracing")]
 use tracing::{instrument, span, Level};
 use zerocopy::IntoBytes;
 
 use crate::{
-    ensure,
     hash::{self, Engine, Hash, ENGINES},
-    transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+    transcript::{
+        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
+        VerificationResult, VerifierState,
+    },
+    verify,
 };
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 pub struct Config {
     /// Number of leaves in the Merkle tree.
     pub num_leaves: usize,
@@ -24,20 +29,30 @@ pub struct Config {
     pub layers: Vec<LayerConfig>,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Debug, Serialize, Deserialize)]
+#[derive(
+    Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Debug, Hash, Default, Serialize, Deserialize,
+)]
 pub struct LayerConfig {
     /// The engine used to hash siblings.
     pub hash_id: ProtocolId,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Debug)]
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MerkleTree(num_leaves: {})", self.num_leaves)
+    }
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize,
+)]
 #[must_use]
 pub struct Commitment {
     /// The commitment root hash.
     hash: Hash,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 #[must_use]
 pub struct Witness {
     /// The nodes in the Merkle tree, starting with the leaf hash layer.
@@ -61,7 +76,7 @@ impl Config {
         (1 << (self.layers.len() + 1)) - 1
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves)))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves), fields(self = %self)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, leaves: Vec<Hash>) -> Witness
     where
         H: DuplexSpongeInterface,
@@ -79,7 +94,7 @@ impl Config {
         // Allocate nodes and fill with leaf layer. This implicitely pads the first layer.
         let mut nodes = leaves;
         nodes.resize(self.num_nodes(), Hash::default());
-        let (mut previous, mut remaining) = nodes.split_at_mut(self.num_leaves.next_power_of_two());
+        let (mut previous, mut remaining) = nodes.split_at_mut(1 << self.layers.len());
 
         // Compute merkle tree nodes.
         for layer in self.layers.iter().rev() {
@@ -91,7 +106,7 @@ impl Config {
             let _span = span!(
                 Level::INFO,
                 "layer",
-                engine = &*engine.name(),
+                engine = engine.name().as_ref(),
                 count = current.len()
             )
             .entered();
@@ -124,7 +139,7 @@ impl Config {
     /// Opens the commitment at the provided indices.
     ///
     /// Indices can be in any order and may contain duplicates.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness)))]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, indices), fields( num_indices = indices.len())))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -142,8 +157,7 @@ impl Config {
         let mut indices = indices.to_vec();
         indices.sort_unstable();
         indices.dedup();
-        let (mut layer, mut remaining) =
-            witness.nodes.split_at(self.num_leaves.next_power_of_two());
+        let (mut layer, mut remaining) = witness.nodes.split_at(1 << self.layers.len());
         while layer.len() > 1 {
             let mut next_indices = Vec::with_capacity(indices.len());
             let mut iter = indices.iter().copied().peekable();
@@ -172,7 +186,7 @@ impl Config {
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: Commitment,
+        commitment: &Commitment,
         indices: &[usize],
         leaf_hashes: &[Hash],
     ) -> VerificationResult<()>
@@ -181,10 +195,11 @@ impl Config {
         Hash: ProverMessage<[H::U]>,
     {
         // Validate indices.
-        ensure!(
-            indices.iter().all(|&i| i < self.num_leaves),
-            VerificationError
-        );
+        verify!(indices.len() == leaf_hashes.len());
+        verify!(indices.iter().all(|&i| i < self.num_leaves));
+        if indices.is_empty() {
+            return Ok(());
+        }
 
         // Sort indices and leaf hashes.
         let mut layer = indices
@@ -197,7 +212,7 @@ impl Config {
         // Check duplicate leaf consistency and deduplicate.
         for i in 1..layer.len() {
             if layer[i - 1].0 == layer[i].0 {
-                ensure!(layer[i - 1].1 == layer[i].1, VerificationError);
+                verify!(layer[i - 1].1 == layer[i].1);
             }
         }
         layer.dedup_by_key(|(i, _)| *i);
@@ -252,8 +267,8 @@ impl Config {
         }
 
         // We should be left with a single root hash, matching the commitment.
-        ensure!(indices == [0], VerificationError);
-        ensure!(hashes == [commitment.hash], VerificationError);
+        verify!(indices == [0]);
+        verify!(hashes == [commitment.hash]);
         Ok(())
     }
 }
@@ -276,6 +291,7 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 #[cfg(feature = "parallel")]
 fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
     use crate::utils::workload_size;
+    assert_eq!(input.len(), size * output.len());
     if input.len() > workload_size::<u8>() && input.len() / size >= 2 {
         let (input_a, input_b) = input.split_at(input.len() / 2);
         let (output_a, output_b) = output.split_at_mut(output.len() / 2);
@@ -289,14 +305,27 @@ fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [H
 }
 
 #[cfg(test)]
-mod tests {
-    use spongefish::{domain_separator, session};
+pub(crate) mod tests {
+    use proptest::{collection::vec, prelude::Strategy};
 
     use super::*;
-    use crate::{hash::BLAKE3, transcript::codecs::Empty};
+    use crate::{
+        hash::{tests::hash_for_size, BLAKE3},
+        transcript::{codecs::Empty, DomainSeparator},
+    };
+
+    pub fn config(num_leaves: usize) -> impl Strategy<Value = Config> {
+        let min_layers = layers_for_size(num_leaves);
+        // Add up to three unnecessary layers
+        let num_layers = min_layers..=min_layers + 3;
+        // Each layer gets its own choice of hash function
+        let layer = hash_for_size(64).prop_map(|hash_id| LayerConfig { hash_id });
+        vec(layer, num_layers).prop_map(move |layers| Config { num_leaves, layers })
+    }
 
     #[test]
     fn test_merkle_tree() {
+        crate::tests::init();
         let config = Config {
             num_leaves: 256,
             layers: vec![LayerConfig { hash_id: BLAKE3 }; 8],
@@ -306,24 +335,23 @@ mod tests {
             .map(|i| Hash([i as u8; 32]))
             .collect::<Vec<_>>();
 
-        let ds = domain_separator!("whir::protocols::merkle_tree")
-            .session(session!("Test at {}:{}", file!(), line!()))
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
         // Prover
-        let mut prover_state = ProverState::from(ds.std_prover());
+        let mut prover_state = ProverState::new_std(&ds);
         let tree = config.commit(&mut prover_state, leaves);
         config.open(&mut prover_state, &tree, &[13, 42]);
         let proof = prover_state.proof();
 
         // Verifier
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let root = config.receive_commitment(&mut verifier_state).unwrap();
         config
             .verify(
                 &mut verifier_state,
-                root,
+                &root,
                 &[13, 42],
                 &[Hash([13; 32]), Hash([42; 32])],
             )

@@ -1,12 +1,12 @@
 use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
-use spongefish::{Codec, Decoding, DuplexSpongeInterface, ProverState};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use crate::{
-    poly_utils::multilinear::MultilinearPoint, protocols::challenge_indices::challenge_indices,
-    transcript::VerifierMessage,
+    algebra::poly_utils::multilinear::MultilinearPoint,
+    protocols::challenge_indices::challenge_indices,
+    transcript::{Codec, Decoding, DuplexSpongeInterface, ProverState, VerifierMessage},
 };
 
 ///
@@ -40,7 +40,9 @@ where
         }));
 
         // Commit the answers to the narg_string
-        prover_state.prover_messages(&ood_answers);
+        for answer in &ood_answers {
+            prover_state.prover_message(answer);
+        }
     }
 
     ood_answers
@@ -92,10 +94,7 @@ where
 {
     let folded_domain_size = domain_size >> folding_factor;
 
-    let mut indices = challenge_indices(transcript, folded_domain_size, num_queries);
-    indices.sort_unstable();
-    indices.dedup();
-    indices
+    challenge_indices(transcript, folded_domain_size, num_queries, true)
 }
 
 pub(crate) fn rlc_batched_leaves<F: Field>(
@@ -122,10 +121,9 @@ pub(crate) fn rlc_batched_leaves<F: Field>(
 
 #[cfg(test)]
 mod tests {
-    use spongefish::{domain_separator, session};
 
     use super::*;
-    use crate::transcript::codecs::Empty;
+    use crate::transcript::{codecs::Empty, DomainSeparator, ProverState};
 
     #[derive(Clone, Debug)]
     struct MockSponge<'a> {
@@ -168,6 +166,9 @@ mod tests {
         let folding_factor = 1;
         let num_queries = 5;
 
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         // Mock transcript with fixed bytes (ensuring reproducibility)
         let sponge = MockSponge {
             absorb: None, // Anything is fine
@@ -179,10 +180,7 @@ mod tests {
                 0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
             ],
         };
-        let mut prover_state = domain_separator!("whir::utils")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty)
-            .to_prover(sponge);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
@@ -212,6 +210,9 @@ mod tests {
         let folding_factor = 3; // 2^3 = 8
         let num_queries = 5;
 
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         // Expected `folded_domain_size = 65536 / 8 = 8192`
         let sponge = MockSponge {
             absorb: None,
@@ -223,10 +224,7 @@ mod tests {
                 0x55, 0x66, 0x77, 0x88, 0x99, // Query 5
             ],
         };
-        let mut prover_state = domain_separator!("whir::utils")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty)
-            .to_prover(sponge);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
@@ -257,6 +255,9 @@ mod tests {
         let num_queries = 4;
 
         // Expected `folded_domain_size = 2^24 / 16 = 2^20 = 1,048,576`
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
         let sponge = MockSponge {
             absorb: None,
             squeeze: &[
@@ -266,10 +267,7 @@ mod tests {
                 0x22, 0x33, 0x44, // Query 4
             ],
         };
-        let mut prover_state = domain_separator!("whir::utils")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty)
-            .to_prover(sponge);
+        let mut prover_state = ProverState::new(&ds, sponge);
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);
@@ -299,16 +297,18 @@ mod tests {
         let num_queries = 5;
 
         // Mock narg_string where some indices will collide
-        let sponge = MockSponge {
-            absorb: None,
-            squeeze: &[
-                0x20, 0x40, 0x20, 0x60, 0x40, // Duplicate indices 0x20 and 0x40
-            ],
-        };
-        let mut prover_state = domain_separator!("whir::utils")
-            .session(session!("Test at {}:{}", file!(), line!()))
-            .instance(&Empty)
-            .to_prover(sponge);
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut prover_state = ProverState::new(
+            &ds,
+            MockSponge {
+                absorb: None,
+                squeeze: &[
+                    0x20, 0x40, 0x20, 0x60, 0x40, // Duplicate indices 0x20 and 0x40
+                ],
+            },
+        );
 
         let result =
             get_challenge_stir_queries(&mut prover_state, domain_size, folding_factor, num_queries);

@@ -3,21 +3,21 @@ use std::{sync::Arc, time::Instant};
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
-use spongefish::{domain_separator, session, Codec};
 use whir::{
+    algebra::{
+        fields,
+        ntt::{RSDefault, ReedSolomon},
+        poly_utils::{
+            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
+        },
+    },
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
-    crypto::fields,
     hash::HASH_COUNTER,
-    ntt::{RSDefault, ReedSolomon},
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
-    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
-    transcript::{codecs::Empty, ProverState, VerifierState},
-    whir::{
-        committer::CommitmentReader,
-        statement::{Statement, Weights},
-    },
+    transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
+    whir::statement::{Statement, Weights},
 };
 
 #[derive(Parser, Debug)]
@@ -110,9 +110,7 @@ fn run_whir_as_ldt<F>(
 ) where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::{
-        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, verifier::Verifier,
-    };
+    use whir::whir::config::WhirConfig;
 
     // Runs as a LDT
     let security_level = args.security_level;
@@ -154,11 +152,11 @@ fn run_whir_as_ldt<F>(
         &whir_params,
     );
 
-    let ds = domain_separator!("🌪️")
-        .session(session!("Example at {}:{}", file!(), line!()))
+    let ds = DomainSeparator::protocol(&params)
+        .session(&format!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover());
+    let mut prover_state = ProverState::new_std(&ds);
 
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
@@ -176,13 +174,15 @@ fn run_whir_as_ldt<F>(
 
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, &polynomial);
-
-    let prover = Prover::new(params.clone());
+    let witness = params.commit(&mut prover_state, &[&polynomial]);
 
     let statement = Statement::new(num_variables);
-    prover.prove(&mut prover_state, statement.clone(), witness);
+    params.prove(
+        &mut prover_state,
+        &[&polynomial],
+        &[&witness],
+        &[&statement],
+    );
 
     // Serialize proof
     let proof = prover_state.proof();
@@ -190,21 +190,14 @@ fn run_whir_as_ldt<F>(
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
     println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
 
-    // Just not to count that initial inversion (which could be precomputed)
-    let commitment_reader = CommitmentReader::new(&params);
-    let verifier = Verifier::new(&params);
-
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
-            .unwrap();
-        verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+        params
+            .verify(&mut verifier_state, &[&commitment], &[&statement])
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -219,10 +212,7 @@ fn run_whir_pcs<F>(
 ) where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::{
-        committer::CommitmentWriter, parameters::WhirConfig, prover::Prover, statement::Statement,
-        verifier::Verifier,
-    };
+    use whir::whir::{config::WhirConfig, statement::Statement};
 
     // Runs as a PCS
     let security_level = args.security_level;
@@ -266,11 +256,11 @@ fn run_whir_pcs<F>(
         &whir_params,
     );
 
-    let ds = domain_separator!("🌪️")
-        .session(session!("Example at {}:{}", file!(), line!()))
+    let ds = DomainSeparator::protocol(&params)
+        .session(&format!("Example at {}:{}", file!(), line!()))
         .instance(&Empty);
 
-    let mut prover_state = ProverState::from(ds.std_prover());
+    let mut prover_state = ProverState::new_std(&ds);
 
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
@@ -287,8 +277,7 @@ fn run_whir_pcs<F>(
     );
     let whir_prover_time = Instant::now();
 
-    let committer = CommitmentWriter::new(params.clone());
-    let witness = committer.commit(&mut prover_state, &polynomial);
+    let witness = params.commit(&mut prover_state, &[&polynomial]);
 
     let mut statement: Statement<F> = Statement::<F>::new(num_variables);
 
@@ -315,9 +304,12 @@ fn run_whir_pcs<F>(
         statement.add_constraint(linear_claim_weight, sum);
     }
 
-    let prover = Prover::new(params.clone());
-
-    prover.prove(&mut prover_state, statement.clone(), witness);
+    params.prove(
+        &mut prover_state,
+        &[&polynomial],
+        &[&witness],
+        &[&statement],
+    );
 
     let proof = prover_state.proof();
     println!("Prover time: {:.1?}", whir_prover_time.elapsed());
@@ -326,21 +318,14 @@ fn run_whir_pcs<F>(
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
 
-    // Just not to count that initial inversion (which could be precomputed)
-    let commitment_reader = CommitmentReader::new(&params);
-    let verifier = Verifier::new(&params);
-
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
-        let mut verifier_state =
-            VerifierState::from(ds.std_verifier(&proof.narg_string), &proof.hints);
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        let parsed_commitment = commitment_reader
-            .parse_commitment(&mut verifier_state)
-            .unwrap();
-        verifier
-            .verify(&mut verifier_state, &parsed_commitment, &statement)
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+        params
+            .verify(&mut verifier_state, &[&commitment], &[&statement])
             .unwrap();
     }
     println!(

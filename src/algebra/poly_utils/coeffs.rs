@@ -8,7 +8,9 @@ use {
 };
 
 use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
-use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
+use crate::algebra::{
+    embedding::Embedding, ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint,
+};
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -26,7 +28,7 @@ use crate::{ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint};
 /// - `coeffs[1]` → Coefficient of `X₂`
 /// - `coeffs[2]` → Coefficient of `X₁`
 /// - `coeffs[3]` → Coefficient of `X₀`
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct CoefficientList<F> {
     /// List of coefficients, stored in **lexicographic order**.
     /// For `n` variables, `coeffs.len() == 2^n`.
@@ -39,6 +41,13 @@ impl<F> CoefficientList<F>
 where
     F: Field,
 {
+    pub fn lift<M: Embedding<Source = F>>(&self, embedding: &M) -> CoefficientList<M::Target> {
+        CoefficientList {
+            coeffs: self.coeffs.iter().map(|c| embedding.map(*c)).collect(),
+            num_variables: self.num_variables,
+        }
+    }
+
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field
@@ -286,7 +295,7 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::crypto::fields::{Field64, Field64_2};
+    use crate::algebra::fields::{Field64, Field64_2};
 
     type F = Field64;
     type E = Field64_2;

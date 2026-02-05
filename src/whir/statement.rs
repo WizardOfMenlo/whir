@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::poly_utils::{
+use crate::algebra::poly_utils::{
     coeffs::CoefficientList,
     evals::{geometric_till, EvaluationsList},
     multilinear::MultilinearPoint,
@@ -267,6 +267,10 @@ impl<F: Field> Statement<F> {
         self.num_variables
     }
 
+    pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
+        self.constraints.iter().all(|c| c.verify(poly))
+    }
+
     /// Adds a constraint `(w(X), s)` to the system.
     ///
     /// **Precondition:**
@@ -299,6 +303,10 @@ impl<F: Field> Statement<F> {
                 defer_evaluation,
             },
         );
+    }
+
+    pub fn prepend_constraints(&mut self, constraints: Vec<Constraint<F>>) {
+        self.constraints.splice(0..0, constraints);
     }
 
     /// Inserts multiple constraints at the front of the system.
@@ -363,7 +371,7 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::{crypto::fields::Field64, utils::eval_eq};
+    use crate::{algebra::fields::Field64, utils::eval_eq};
 
     #[test]
     fn test_weights_evaluation() {

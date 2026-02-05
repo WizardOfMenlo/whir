@@ -4,10 +4,6 @@ use core::slice;
 
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use spongefish::{
-    Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationError, VerificationResult,
-    VerifierState,
-};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 use zerocopy::IntoBytes;
@@ -15,7 +11,11 @@ use zerocopy::IntoBytes;
 use crate::{
     bits::Bits,
     hash::{Hash, BLAKE3, ENGINES},
-    transcript::{codecs::U64, ProtocolId},
+    transcript::{
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProtocolId, ProverState,
+        VerificationResult, VerifierMessage, VerifierState,
+    },
+    verify,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ impl Config {
             .retrieve(self.hash_id)
             .expect("Hash Engine not found");
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &*engine.name());
+        tracing::Span::current().record("engine", engine.name().as_ref());
         let batch_size = engine.preferred_batch_size();
 
         let challenge: [u8; 32] = prover_state.verifier_message();
@@ -157,7 +157,9 @@ impl Config {
         if self.threshold == u64::MAX {
             return Ok(());
         }
-        let engine = ENGINES.retrieve(self.hash_id).ok_or(VerificationError)?;
+        let engine = ENGINES.retrieve(self.hash_id);
+        verify!(engine.is_some());
+        let engine = engine.unwrap();
         let challenge: [u8; 32] = verifier_state.verifier_message();
         let nonce: U64 = verifier_state.prover_message()?;
 
@@ -167,9 +169,7 @@ impl Config {
         let mut output = Hash::default();
         engine.hash_many(64, &input, slice::from_mut(&mut output));
         let value = u64::from_le_bytes(output.0[..8].try_into().unwrap());
-        if value > self.threshold {
-            return Err(VerificationError);
-        }
+        verify!(value <= self.threshold);
         Ok(())
     }
 }
@@ -192,11 +192,9 @@ mod tests {
     #[test]
     fn test_threshold_fractional() {
         proptest!(|(bits in 0.0..=60.0)| {
-            dbg!(bits);
             let t = threshold(Bits::new(bits));
             let min = threshold(Bits::new(bits.ceil()));
             let max = threshold(Bits::new(bits.floor()));
-            dbg!(t, min, max);
             assert!((min..=max).contains(&t));
         });
     }

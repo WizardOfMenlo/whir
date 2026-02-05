@@ -117,6 +117,30 @@ where
         acc
     }
 
+    /// Computes eq(c, p) on the hypercube for all p.
+    pub fn eq_weights(&self) -> Vec<F> {
+        (0..1 << self.0.len())
+            .map(BinaryHypercubePoint)
+            .map(|point| self.eq_poly(point))
+            .collect()
+    }
+
+    pub fn coeff_weights(&self, reversed: bool) -> Vec<F> {
+        let max_bit = self.num_variables() - 1;
+        (0..1 << self.0.len())
+            .map(|point| {
+                let mut value = F::ONE;
+                for (i, coeff) in self.0.iter().enumerate() {
+                    let bit = 1 << if reversed { max_bit - i } else { i };
+                    if point & bit != 0 {
+                        value *= *coeff;
+                    }
+                }
+                value
+            })
+            .collect()
+    }
+
     /// Computes `eq(c, p)`, where `p` is a general `MultilinearPoint` (not necessarily binary).
     ///
     /// The **equality polynomial** for two `MultilinearPoint`s `c` and `p` is:
@@ -196,7 +220,7 @@ mod tests {
     use ark_std::rand::thread_rng;
 
     use super::*;
-    use crate::crypto::fields::Field64;
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_n_variables() {

@@ -1,21 +1,26 @@
 //! Protocol for committing to rows of a matrix of some type <code>T: [Encodable]</code>.
 
+use std::fmt;
+
 use ark_ff::{Field, PrimeField};
 use ark_std::rand::{CryptoRng, RngCore};
+use derive_where::derive_where;
 use serde::{Deserialize, Serialize};
-use spongefish::{DuplexSpongeInterface, VerificationError, VerificationResult};
 use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 use zerocopy::{Immutable, IntoBytes};
 
 use crate::{
-    ensure,
     hash::{self, Hash},
     protocols::merkle_tree,
-    transcript::{ProtocolId, ProverMessage, ProverState, VerifierState},
+    transcript::{
+        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
+        VerificationResult, VerifierState,
+    },
     type_info::{Type, TypeInfo},
     utils::workload_size,
+    verify,
 };
 
 /// Trait for types that can be encoded into a byte slice.
@@ -85,7 +90,8 @@ pub struct ZeroCopyEncoder;
 /// Configuration for the matrix commit protocol.
 ///
 /// Commits row-wise to a matrix of field elements using a merkle tree.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive_where(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(Serialize, Deserialize)]
 #[serde(bound = "T: TypeInfo")]
 pub struct Config<T>
 where
@@ -195,11 +201,12 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         self.merkle_tree.num_leaves
     }
 
+    pub const fn size(&self) -> usize {
+        self.num_rows() * self.num_cols
+    }
+
     /// Commit the matrix (in row-major order).
-    #[cfg_attr(
-        feature = "tracing",
-        instrument(skip(self, prover_state, matrix), fields(size = matrix.len(), engine))
-    )]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self, size = matrix.len(), engine)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, matrix: &[T]) -> Witness
     where
         H: DuplexSpongeInterface,
@@ -212,7 +219,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
             .retrieve(self.leaf_hash_id)
             .expect("Failed to retrieve hash engine");
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &*engine.name());
+        tracing::Span::current().record("engine", engine.name().as_ref());
 
         // Compute leaf hashes
         let mut leaves = Vec::with_capacity(self.merkle_tree.num_nodes());
@@ -223,6 +230,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         self.merkle_tree.commit(prover_state, leaves)
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
@@ -238,10 +246,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(
-        feature = "tracing",
-        instrument(skip(self, prover_state, witness), fields(num_indices = indices.len()))
-    )]
+    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, indices), fields(self = %self, num_indices = indices.len())))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -259,17 +264,11 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
     ///
     /// Indices can be in any order and may contain duplicates. The row values are not provided by
     /// this protocol, it is up to the caller to provide them to the verifier.
-    #[cfg_attr(
-        feature = "tracing",
-        instrument(
-            skip(self, verifier_state, commitment, indices, matrix),
-            fields(engine, num_indices = indices.len())
-        )
-    )]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self, engine, num_indices = indices.len())))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitment: Commitment,
+        commitment: &Commitment,
         indices: &[usize],
         matrix: &[T],
     ) -> VerificationResult<()>
@@ -277,21 +276,24 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
     {
-        ensure!(
-            matrix.len() == self.num_cols * indices.len(),
-            VerificationError
-        );
+        verify!(matrix.len() == self.num_cols * indices.len());
 
         let engine = hash::ENGINES
             .retrieve(self.leaf_hash_id)
             .ok_or(VerificationError)?;
         #[cfg(feature = "tracing")]
-        tracing::Span::current().record("engine", &*engine.name());
+        tracing::Span::current().record("engine", engine.name().as_ref());
 
         let mut leaf_hashes = vec![Hash::default(); indices.len()];
         hash_rows(&*engine, matrix, &mut leaf_hashes);
         self.merkle_tree
             .verify(verifier_state, commitment, indices, &leaf_hashes)
+    }
+}
+
+impl<T: TypeInfo + Encodable + Send + Sync> fmt::Display for Config<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MatrixCommit({} x {})", self.num_rows(), self.num_cols)
     }
 }
 
@@ -339,6 +341,11 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
         return;
     };
     let message_size = T::encoded_size() * cols;
+    if message_size == 0 {
+        // Empty message
+        engine.hash_many(0, &[], out);
+        return;
+    }
     let mut encoder = T::encoder();
     if encoder.is_buffered() {
         // Buffered encoder, find some optimal size.
@@ -356,5 +363,155 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
         // Unbuffered, encode everything in one go
         let bytes = encoder.encode(matrix);
         engine.hash_many(message_size, bytes, out);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use ark_std::rand::{
+        distributions::{Distribution, Standard},
+        rngs::StdRng,
+        Rng, SeedableRng,
+    };
+    use proptest::{prop_assume, proptest, strategy::Strategy};
+
+    use super::*;
+    use crate::{
+        algebra::fields,
+        hash::{self, tests::hash_for_size},
+        transcript::{codecs::Empty, DomainSeparator},
+    };
+
+    pub fn config<T>(num_rows: usize, num_cols: usize) -> impl Strategy<Value = Config<T>>
+    where
+        T: TypeInfo + Encodable + Send + Sync,
+    {
+        let leaf_hash = hash_for_size(T::encoded_size() * num_cols);
+        let merkle_tree = merkle_tree::tests::config(num_rows);
+        (leaf_hash, merkle_tree).prop_map(move |(leaf_hash_id, merkle_tree)| Config {
+            element_type: Type::new(),
+            num_cols,
+            leaf_hash_id,
+            merkle_tree,
+        })
+    }
+
+    fn test<T>(
+        mut rng: impl RngCore,
+        leaf_hash: ProtocolId,
+        node_hash: ProtocolId,
+        layers: usize,
+        num_rows: usize,
+        num_cols: usize,
+        indices: &[usize],
+    ) where
+        T: Clone + TypeInfo + Encodable + Send + Sync,
+        Standard: Distribution<T>,
+    {
+        crate::tests::init();
+        assert!(layers >= merkle_tree::layers_for_size(num_rows));
+        assert!(indices.iter().all(|&index| index < num_rows));
+
+        // Config
+        let config = Config {
+            element_type: Type::<T>::new(),
+            num_cols,
+            leaf_hash_id: leaf_hash,
+            merkle_tree: merkle_tree::Config {
+                num_leaves: num_rows,
+                layers: vec![merkle_tree::LayerConfig { hash_id: node_hash }; layers],
+            },
+        };
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        // Instance
+        let matrix: Vec<T> = (0..config.size()).map(|_| rng.gen()).collect();
+        let submatrix: Vec<T> = if num_cols > 0 {
+            indices
+                .iter()
+                .flat_map(|&index| {
+                    matrix
+                        .chunks_exact(num_cols)
+                        .nth(index)
+                        .unwrap()
+                        .iter()
+                        .cloned()
+                })
+                .collect::<Vec<T>>()
+        } else {
+            Vec::new()
+        };
+
+        // Prover
+        let mut prover_state = ProverState::new_std(&ds);
+        let tree = config.commit(&mut prover_state, &matrix);
+        config.open(&mut prover_state, &tree, indices);
+        let proof = prover_state.proof();
+
+        // Verifier
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let commitment = config.receive_commitment(&mut verifier_state).unwrap();
+        config
+            .verify(&mut verifier_state, &commitment, indices, &submatrix)
+            .unwrap();
+        verifier_state.check_eof().unwrap();
+    }
+
+    fn proptest<T>()
+    where
+        T: Clone + TypeInfo + Encodable + Send + Sync,
+        Standard: Distribution<T>,
+    {
+        let hashes = [hash::COPY, hash::SHA2, hash::SHA3, hash::BLAKE3];
+        proptest!(|(
+            seed: u64,
+            leaf_hash in 0_usize..hashes.len(),
+            node_hash in 1_usize..hashes.len(),
+            layers in 0_usize..10,
+            num_rows in 0_usize..100,
+            num_cols in 0_usize..100,
+            num_indices in 0_usize..100,
+        )| {
+            // There are no valid indices without rows.
+            let num_indices = if num_rows == 0 { 0 } else { num_indices };
+
+            // We need at least enough layers to cover the number of rows.
+            let layers = layers + merkle_tree::layers_for_size(num_rows);
+
+            let leaf_hash = hashes[leaf_hash];
+            let node_hash = hashes[node_hash];
+            prop_assume!(hash::ENGINES.retrieve(leaf_hash).unwrap().supports_size(T::encoded_size() * num_cols));
+            prop_assume!(hash::ENGINES.retrieve(node_hash).unwrap().supports_size(64));
+
+            let mut rng = StdRng::seed_from_u64(seed);
+            let indices = (0..num_indices).map(|_| rng.gen_range(0..num_rows)).collect::<Vec<_>>();
+
+            test::<T>(rng, leaf_hash, node_hash, layers, num_rows, num_cols, &indices);
+        });
+    }
+
+    #[test]
+    fn test_field64() {
+        proptest::<fields::Field64>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field128() {
+        proptest::<fields::Field128>();
+    }
+
+    #[test]
+    fn test_field64_3() {
+        // A non-power of two sized type.
+        proptest::<fields::Field64_3>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field256() {
+        proptest::<fields::Field256>();
     }
 }
