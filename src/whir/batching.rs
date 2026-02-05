@@ -25,14 +25,13 @@
 ///
 #[cfg(test)]
 mod batching_tests {
-    use std::{iter, sync::Arc};
+    use std::iter;
 
     use ark_std::UniformRand;
 
     use crate::{
         algebra::{
             fields::Field64,
-            ntt::RSDefault,
             poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         },
         hash,
@@ -96,16 +95,9 @@ mod batching_tests {
             batch_size,
             hash_id: hash::SHA2,
         };
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
 
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = WhirConfig::new(mv_params, &whir_params);
 
         let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
 

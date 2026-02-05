@@ -9,14 +9,11 @@ pub use committer::{Commitment, Witness};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use ark_ff::Field;
 
     use crate::{
         algebra::{
             fields::{Field64, Field64_2},
-            ntt::RSDefault,
             poly_utils::{
                 coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
             },
@@ -70,15 +67,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = WhirConfig::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -311,14 +301,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = WhirConfig::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Create N different polynomials
@@ -483,14 +466,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = WhirConfig::new(mv_params, &whir_params);
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
@@ -583,14 +559,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = WhirConfig::new(mv_params, &whir_params);
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together
