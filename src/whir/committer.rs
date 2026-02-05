@@ -6,7 +6,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 use tracing::instrument;
 
 use crate::{
-    algebra::poly_utils::coeffs::CoefficientList,
+    algebra::polynomials::CoefficientList,
     hash::Hash,
     protocols::irs_commit,
     transcript::{

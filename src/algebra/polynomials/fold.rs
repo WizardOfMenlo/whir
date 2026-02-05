@@ -75,7 +75,7 @@ mod tests {
     use crate::algebra::{
         fields::Field64,
         ntt::{test_utils::transform_evaluations, transpose},
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        polynomials::{coeffs::CoefficientList, multilinear::MultilinearPoint},
     };
 
     type F = Field64;

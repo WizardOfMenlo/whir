@@ -11,11 +11,7 @@ use tracing::instrument;
 use crate::algebra::{
     embedding::{Embedding, Identity},
     mixed_dot,
-    poly_utils::{
-        coeffs::CoefficientList,
-        evals::{geometric_till, EvaluationsList},
-        multilinear::MultilinearPoint,
-    },
+    polynomials::{geometric_till, CoefficientList, EvaluationsList, MultilinearPoint},
 };
 
 /// Represents a weight function used in polynomial evaluations.

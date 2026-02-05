@@ -5,10 +5,9 @@ use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use whir::{
     algebra::{
+        embedding::Basefield,
         fields,
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-        },
+        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -277,7 +276,7 @@ where
         .collect();
 
     for point in &points {
-        let eval = polynomial.evaluate_at_extension(point);
+        let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
         let weight = Weights::evaluation(point.clone());
         weights.push(weight);
         evaluations.push(eval);
@@ -289,7 +288,7 @@ where
         let input: EvaluationsList<F> = input.clone().into();
 
         let linear_claim_weight = Weights::linear(input.clone());
-        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
 
         let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
         weights.push(linear_claim_weight);
