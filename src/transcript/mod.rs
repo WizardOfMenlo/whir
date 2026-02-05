@@ -4,9 +4,7 @@
 //! would roughly double the verifier cost.
 
 pub mod codecs;
-mod engines;
 mod mock_sponge;
-mod protocol_id;
 
 #[cfg(debug_assertions)]
 use std::any::type_name;
@@ -24,10 +22,6 @@ pub use spongefish::{
 
 #[cfg(test)]
 pub use self::mock_sponge::MockSponge;
-pub use self::{
-    engines::Engines,
-    protocol_id::{Protocol, ProtocolId, NONE},
-};
 
 #[macro_export]
 macro_rules! verify {

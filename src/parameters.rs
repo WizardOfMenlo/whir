@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::transcript::ProtocolId;
+use crate::engines::EngineId;
 
 /// Computes the default maximum proof-of-work (PoW) bits.
 ///
@@ -223,7 +223,7 @@ pub struct ProtocolParameters {
     /// Number of polynomials committed in the batch.
     pub batch_size: usize,
     /// Hash function identifier.
-    pub hash_id: ProtocolId,
+    pub hash_id: EngineId,
 }
 
 impl Display for ProtocolParameters {
