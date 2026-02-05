@@ -12,11 +12,12 @@ use tracing::instrument;
 use zerocopy::{Immutable, IntoBytes};
 
 use crate::{
+    engines::EngineId,
     hash::{self, Hash},
     protocols::merkle_tree,
     transcript::{
-        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
-        VerificationResult, VerifierState,
+        DuplexSpongeInterface, ProverMessage, ProverState, VerificationError, VerificationResult,
+        VerifierState,
     },
     type_info::{Type, TypeInfo},
     utils::{workload_size, zip_strict},
@@ -104,7 +105,7 @@ where
     pub num_cols: usize,
 
     /// The hash function used for rows of the matrix.
-    pub leaf_hash_id: ProtocolId,
+    pub leaf_hash_id: EngineId,
 
     /// Merkle tree configuration for the matrix.
     pub merkle_tree: merkle_tree::Config,
@@ -188,7 +189,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
         }
     }
 
-    pub fn with_hash(hash_id: ProtocolId, num_rows: usize, num_cols: usize) -> Self {
+    pub fn with_hash(hash_id: EngineId, num_rows: usize, num_cols: usize) -> Self {
         Self {
             element_type: Type::new(),
             num_cols,
@@ -299,7 +300,7 @@ impl<T: TypeInfo + Encodable + Send + Sync> fmt::Display for Config<T> {
 
 #[cfg(not(feature = "parallel"))]
 fn hash_rows<T: Encodable + Send + Sync>(
-    engine: &dyn hash::Engine,
+    engine: &dyn hash::HashEngine,
     matrix: &[T],
     out: &mut [Hash],
 ) {
@@ -308,7 +309,7 @@ fn hash_rows<T: Encodable + Send + Sync>(
 
 #[cfg(feature = "parallel")]
 fn hash_rows<T: Encodable + Send + Sync>(
-    engine: &dyn hash::Engine,
+    engine: &dyn hash::HashEngine,
     matrix: &[T],
     out: &mut [Hash],
 ) {
@@ -331,7 +332,7 @@ fn hash_rows<T: Encodable + Send + Sync>(
 }
 
 fn hash_rows_serial<T: Encodable + Send + Sync>(
-    engine: &dyn hash::Engine,
+    engine: &dyn hash::HashEngine,
     matrix: &[T],
     out: &mut [Hash],
 ) {
@@ -397,8 +398,8 @@ pub(crate) mod tests {
 
     fn test<T>(
         mut rng: impl RngCore,
-        leaf_hash: ProtocolId,
-        node_hash: ProtocolId,
+        leaf_hash: EngineId,
+        node_hash: EngineId,
         layers: usize,
         num_rows: usize,
         num_cols: usize,

@@ -10,10 +10,11 @@ use zerocopy::IntoBytes;
 
 use crate::{
     bits::Bits,
+    engines::EngineId,
     hash::{Hash, BLAKE3, ENGINES},
     transcript::{
-        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProtocolId, ProverState,
-        VerificationResult, VerifierMessage, VerifierState,
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
+        VerifierMessage, VerifierState,
     },
     utils::zip_strict,
     verify,
@@ -21,7 +22,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Config {
-    pub hash_id: ProtocolId,
+    pub hash_id: EngineId,
     pub threshold: u64,
 }
 

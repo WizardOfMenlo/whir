@@ -12,10 +12,11 @@ use tracing::{instrument, span, Level};
 use zerocopy::IntoBytes;
 
 use crate::{
-    hash::{self, Engine, Hash, ENGINES},
+    engines::EngineId,
+    hash::{self, Hash, HashEngine, ENGINES},
     transcript::{
-        DuplexSpongeInterface, ProtocolId, ProverMessage, ProverState, VerificationError,
-        VerificationResult, VerifierState,
+        DuplexSpongeInterface, ProverMessage, ProverState, VerificationError, VerificationResult,
+        VerifierState,
     },
     utils::zip_strict,
     verify,
@@ -35,7 +36,7 @@ pub struct Config {
 )]
 pub struct LayerConfig {
     /// The engine used to hash siblings.
-    pub hash_id: ProtocolId,
+    pub hash_id: EngineId,
 }
 
 impl fmt::Display for Config {
@@ -66,7 +67,7 @@ impl Config {
         Self::with_hash(hash::BLAKE3, num_leaves)
     }
 
-    pub fn with_hash(hash_id: ProtocolId, num_leaves: usize) -> Self {
+    pub fn with_hash(hash_id: EngineId, num_leaves: usize) -> Self {
         Self {
             num_leaves,
             layers: vec![LayerConfig { hash_id }; layers_for_size(num_leaves)],
@@ -282,12 +283,12 @@ pub const fn layers_for_size(size: usize) -> usize {
 }
 
 #[cfg(not(feature = "parallel"))]
-fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
+fn parallel_hash(engine: &dyn HashEngine, size: usize, input: &[u8], output: &mut [Hash]) {
     engine.hash_many(size, input, output);
 }
 
 #[cfg(feature = "parallel")]
-fn parallel_hash(engine: &dyn Engine, size: usize, input: &[u8], output: &mut [Hash]) {
+fn parallel_hash(engine: &dyn HashEngine, size: usize, input: &[u8], output: &mut [Hash]) {
     use crate::utils::workload_size;
     assert_eq!(input.len(), size * output.len());
     if input.len() > workload_size::<u8>() && input.len() / size >= 2 {
