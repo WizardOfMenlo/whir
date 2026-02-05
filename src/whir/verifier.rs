@@ -2,7 +2,7 @@ use ark_ff::FftField;
 
 use super::{
     config::WhirConfig,
-    statement::{Constraint, Statement, Weights},
+    statement::{Constraint, Weights},
 };
 use crate::{
     algebra::{
@@ -46,7 +46,8 @@ impl<F: FftField> WhirConfig<F> {
         &self,
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<F>],
-        statements: &[&Statement<F>],
+        weights: &[&Weights<F>],
+        evaluations: &[F],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
         H: DuplexSpongeInterface,
@@ -56,82 +57,45 @@ impl<F: FftField> WhirConfig<F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert!(!commitments.is_empty());
-        assert_eq!(
-            commitments.len() * self.initial_committer.num_polynomials,
-            statements.len()
-        );
+        let num_polynomials = commitments.len() * self.initial_committer.num_polynomials;
+        verify!(weights.len() * num_polynomials == evaluations.len());
+        if num_polynomials == 0 {
+            return Ok((MultilinearPoint::default(), Vec::new()));
+        }
         let embedding = self.initial_committer.embedding();
 
-        // Step 1: Read the N×M constraint evaluation matrix from the transcript
+        // Complete the constraint and evaluation matrix with OODs and their cross-terms.
+        let (constraint_weights, constraints_matrix) = {
+            let mut all_weights = Vec::new();
+            let mut matrix = Vec::new();
 
-        // Collect all constraint weights to determine matrix dimensions
-        let mut all_constraints_info: Vec<(Weights<F>, bool)> = Vec::new();
-
-        // OOD constraints from each commitment
-        for commitment in commitments {
-            for point in &commitment.out_of_domain().points {
-                let ml_point = MultilinearPoint::expand_from_univariate(
-                    *point,
-                    self.mv_parameters.num_variables,
-                );
-                all_constraints_info.push((Weights::evaluation(ml_point), false));
-            }
-        }
-
-        // Statement constraints
-        for statement in statements {
-            for constraint in &statement.constraints {
-                all_constraints_info
-                    .push((constraint.weights.clone(), constraint.defer_evaluation));
-            }
-        }
-
-        // Construct the N×M evaluation matrix.
-        let num_polynomials = commitments.len() * self.initial_committer.num_polynomials;
-        let num_constraints = all_constraints_info.len();
-        let mut constraint_evals_matrix = vec![None; num_polynomials * num_constraints];
-        // Add the claimed OODs values
-        let mut polynomial_offset = 0;
-        let mut constraint_offset = 0;
-        for commitment in commitments {
-            for row in commitment.out_of_domain().rows() {
-                let mut index = polynomial_offset + constraint_offset;
-                for value in row {
-                    assert!(constraint_evals_matrix[index].is_none());
-                    constraint_evals_matrix[index] = Some(*value);
-                    index += num_constraints;
+            // OOD weights from each commitment, evaluated for each polynomial
+            let mut polynomial_offset = 0;
+            for commitment in commitments {
+                for (weights, oods_row) in zip_strict(
+                    commitment
+                        .out_of_domain()
+                        .weights(self.initial_num_variables()),
+                    commitment.out_of_domain().rows(),
+                ) {
+                    for j in 0..num_polynomials {
+                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
+                            matrix.push(oods_row[j - polynomial_offset]);
+                        } else {
+                            matrix.push(verifier_state.prover_message()?);
+                        }
+                    }
+                    all_weights.push(weights);
                 }
-                constraint_offset += 1;
+                polynomial_offset += commitment.num_polynomials();
             }
-            polynomial_offset += commitment.out_of_domain().num_columns() * num_constraints;
-        }
-        // Add the claimed statement values
-        let mut index = commitments
-            .iter()
-            .map(|c| c.out_of_domain().num_points())
-            .sum::<usize>();
-        for statement in statements {
-            for constraint in &statement.constraints {
-                assert!(constraint_evals_matrix[index].is_none());
-                constraint_evals_matrix[index] = Some(constraint.sum);
-                index += 1;
-            }
-            index += num_constraints;
-        }
 
-        transpose(
-            constraint_evals_matrix.as_mut_slice(),
-            num_polynomials,
-            num_constraints,
-        );
-
-        // Complete using prover claimed values
-        for cell in &mut constraint_evals_matrix {
-            if cell.is_none() {
-                *cell = Some(verifier_state.prover_message()?);
-            }
-        }
+            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            matrix.extend_from_slice(evaluations);
+            (all_weights, matrix)
+        };
+        let num_constraints = constraint_weights.len();
+        let mut constraint_evals_matrix = constraints_matrix;
 
         transpose(
             constraint_evals_matrix.as_mut_slice(),
@@ -139,10 +103,6 @@ impl<F: FftField> WhirConfig<F> {
             num_polynomials,
         );
 
-        let constraint_evals_matrix: Vec<F> = constraint_evals_matrix
-            .into_iter()
-            .map(|e| e.unwrap())
-            .collect();
         // Reinterpret as rows for easier indexing: rows = num_polynomials, cols = num_constraints
         let constraint_evals_matrix: Vec<&[F]> = constraint_evals_matrix
             .chunks_exact(num_constraints)
@@ -167,18 +127,16 @@ impl<F: FftField> WhirConfig<F> {
             InitialSumcheck::Full(config) => {
                 let mut all_constraints = Vec::new();
 
-                for (constraint_idx, (weights, defer_evaluation)) in
-                    all_constraints_info.into_iter().enumerate()
-                {
+                for (constraint_idx, weights) in constraint_weights.iter().enumerate() {
                     let mut combined_eval = F::ZERO;
                     for (row, weight) in batching_weights.iter().enumerate() {
                         combined_eval += *weight * constraint_evals_matrix[row][constraint_idx];
                     }
 
                     all_constraints.push(Constraint {
-                        weights,
+                        weights: weights.clone(),
                         sum: combined_eval,
-                        defer_evaluation,
+                        defer_evaluation: weights.deffered(),
                     });
                 }
 
@@ -193,9 +151,6 @@ impl<F: FftField> WhirConfig<F> {
             InitialSumcheck::Abridged { folding_size, pow } => {
                 for commitment in commitments {
                     assert_eq!(commitment.out_of_domain().points.len(), 0);
-                }
-                for statement in statements {
-                    assert!(statement.constraints.is_empty());
                 }
                 round_constraints.push((vec![], vec![]));
 

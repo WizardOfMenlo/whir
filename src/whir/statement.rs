@@ -94,6 +94,10 @@ impl<F: Field> Weights<F> {
         }
     }
 
+    pub fn deffered(&self) -> bool {
+        matches!(self, Self::Linear { .. })
+    }
+
     pub fn mixed_evaluate<M>(&self, embedding: &M, poly: &CoefficientList<M::Source>) -> M::Target
     where
         M: Embedding<Target = F>,
@@ -216,35 +220,6 @@ impl<F: Field> Weights<F> {
     }
 }
 
-/// Represents a system of weighted polynomial constraints.
-///
-/// Each constraint enforces a relationship between a `Weights<F>` function and a target sum.
-/// Constraints can be combined using a random challenge into a single aggregated polynomial.
-///
-/// **Mathematical Definition:**
-/// Given constraints:
-///
-/// \begin{equation}
-/// w_1(X) = s_1, \quad w_2(X) = s_2, \quad \dots, \quad w_k(X) = s_k
-/// \end{equation}
-///
-/// The combined polynomial under challenge $\gamma$ is:
-///
-/// \begin{equation}
-/// W(X) = w_1(X) + \gamma w_2(X) + \gamma^2 w_3(X) + \dots + \gamma^{k-1} w_k(X)
-/// \end{equation}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
-pub struct Statement<F> {
-    /// Number of variables defining the polynomial space.
-    num_variables: usize,
-
-    /// Constraints represented as pairs `(w(X), s)`, where
-    /// - `w(X)` is a weighted polynomial function
-    /// - `s` is the expected sum.
-    pub constraints: Vec<Constraint<F>>,
-}
-
 /// A constraint as a weight function and a target sum.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
@@ -265,119 +240,6 @@ impl<F: Field> Constraint<F> {
     /// Verify if a polynomial (in coefficient form) satisfies the constraint.
     pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
         self.weights.evaluate(poly) == self.sum
-    }
-}
-
-impl<F: Field> Statement<F> {
-    /// Creates an empty `Statement<F>` for polynomials with `num_variables` variables.
-    pub const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            constraints: Vec::new(),
-        }
-    }
-
-    /// Returns the number of variables defining the polynomial space.
-    pub const fn num_variables(&self) -> usize {
-        self.num_variables
-    }
-
-    pub fn verify(&self, poly: &CoefficientList<F>) -> bool {
-        self.constraints.iter().all(|c| c.verify(poly))
-    }
-
-    /// Adds a constraint `(w(X), s)` to the system.
-    ///
-    /// **Precondition:**
-    /// The number of variables in `w(X)` must match `self.num_variables`.
-    pub fn add_constraint(&mut self, weights: Weights<F>, sum: F) {
-        assert_eq!(weights.num_variables(), self.num_variables());
-        let defer_evaluation = match &weights {
-            Weights::Evaluation { .. } => false,
-            Weights::Linear { .. } | Weights::Geometric { .. } => true,
-        };
-        self.constraints.push(Constraint {
-            weights,
-            sum,
-            defer_evaluation,
-        });
-    }
-
-    /// Inserts a constraint `(w(X), s)` at the front of the system.
-    pub fn add_constraint_in_front(&mut self, weights: Weights<F>, sum: F) {
-        assert_eq!(weights.num_variables(), self.num_variables());
-        let defer_evaluation = match &weights {
-            Weights::Evaluation { .. } => false,
-            Weights::Linear { .. } | Weights::Geometric { .. } => true,
-        };
-        self.constraints.insert(
-            0,
-            Constraint {
-                weights,
-                sum,
-                defer_evaluation,
-            },
-        );
-    }
-
-    pub fn prepend_constraints(&mut self, constraints: Vec<Constraint<F>>) {
-        self.constraints.splice(0..0, constraints);
-    }
-
-    /// Inserts multiple constraints at the front of the system.
-    pub fn add_constraints_in_front(&mut self, constraints: Vec<(Weights<F>, F)>) {
-        for (weights, _) in &constraints {
-            assert_eq!(weights.num_variables(), self.num_variables());
-        }
-        self.constraints.splice(
-            0..0,
-            constraints.into_iter().map(|(weights, sum)| {
-                let defer_evaluation = match &weights {
-                    Weights::Evaluation { .. } => false,
-                    Weights::Linear { .. } | Weights::Geometric { .. } => true,
-                };
-                Constraint {
-                    weights,
-                    sum,
-                    defer_evaluation,
-                }
-            }),
-        );
-    }
-
-    /// Combines all constraints into a single aggregated polynomial using a challenge.
-    ///
-    /// Given a random challenge $\gamma$, the new polynomial is:
-    ///
-    /// \begin{equation}
-    /// W(X) = w_1(X) + \gamma w_2(X) + \gamma^2 w_3(X) + \dots + \gamma^{k-1} w_k(X)
-    /// \end{equation}
-    ///
-    /// with the combined sum:
-    ///
-    /// \begin{equation}
-    /// S = s_1 + \gamma s_2 + \gamma^2 s_3 + \dots + \gamma^{k-1} s_k
-    /// \end{equation}
-    ///
-    /// **Returns:**
-    /// - `EvaluationsList<F>`: The combined polynomial `W(X)`.
-    /// - `F`: The combined sum `S`.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables(), num_constraints = self.constraints.len())))]
-    pub fn combine(&self, challenge: F) -> (EvaluationsList<F>, F) {
-        let evaluations_vec = vec![F::ZERO; 1 << self.num_variables];
-        let mut combined_evals = EvaluationsList::new(evaluations_vec);
-        let (combined_sum, _) = self.constraints.iter().fold(
-            (F::ZERO, F::ONE),
-            |(mut acc_sum, gamma_pow), constraint| {
-                constraint
-                    .weights
-                    .accumulate(&mut combined_evals, gamma_pow);
-                acc_sum += constraint.sum * gamma_pow;
-                (acc_sum, gamma_pow * challenge)
-            },
-        );
-
-        (combined_evals, combined_sum)
     }
 }
 
@@ -552,110 +414,6 @@ mod tests {
         ];
 
         assert_eq!(accumulator.evals(), &expected);
-    }
-
-    #[test]
-    fn test_statement_combine() {
-        // Create a new statement with 1 variable
-        let mut statement = Statement::new(1);
-
-        // Define weights
-        let w0 = Field64::from(3);
-        let w1 = Field64::from(5);
-        let weight_list = EvaluationsList::new(vec![w0, w1]);
-        let weight = Weights::linear(weight_list);
-
-        // Define sum constraint
-        let sum = Field64::from(7);
-        statement.add_constraint(weight, sum);
-
-        // Define a challenge factor
-        let challenge = Field64::from(2);
-
-        // Compute combined evaluations and sum
-        let (combined_evals, combined_sum) = statement.combine(challenge);
-
-        // Expected evaluations should match the accumulated weights
-        let expected_combined_evals = vec![
-            w0, // 3
-            w1, // 5
-        ];
-
-        // Expected sum remains unchanged since there is only one constraint
-        let expected_combined_sum = sum;
-
-        assert_eq!(combined_evals.evals(), &expected_combined_evals);
-        assert_eq!(combined_sum, expected_combined_sum);
-    }
-
-    #[test]
-    fn test_statement_with_multiple_constraints() {
-        // Create a new statement with 2 variables
-        let mut statement = Statement::new(2);
-
-        // Define weights for first constraint (2 variables => 4 evaluations)
-        let w0 = Field64::from(1);
-        let w1 = Field64::from(2);
-        let w2 = Field64::from(3);
-        let w3 = Field64::from(4);
-        let weight_list1 = EvaluationsList::new(vec![w0, w1, w2, w3]);
-        let weight1 = Weights::linear(weight_list1);
-
-        // Define weights for second constraint (also 2 variables => 4 evaluations)
-        let w4 = Field64::from(5);
-        let w5 = Field64::from(6);
-        let w6 = Field64::from(7);
-        let w7 = Field64::from(8);
-        let weight_list2 = EvaluationsList::new(vec![w4, w5, w6, w7]);
-        let weight2 = Weights::linear(weight_list2);
-
-        // Define weights for third constraint (also 2 variables => 4 evaluations)
-        let a = Field64::from(2);
-        let n = 3;
-        let weight_list3 = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
-        let weight3 = Weights::geometric(a, n, weight_list3);
-
-        // Define sum constraints
-        let sum1 = Field64::from(5);
-        let sum2 = Field64::from(7);
-        let sum3 = Field64::from(9);
-
-        // Ensure both weight lists match the expected number of variables
-        assert_eq!(weight1.num_variables(), 2);
-        assert_eq!(weight2.num_variables(), 2);
-        assert_eq!(weight3.num_variables(), 2);
-
-        // Add constraints to the statement
-        statement.add_constraint(weight1, sum1);
-        statement.add_constraint(weight2, sum2);
-        statement.add_constraint(weight3, sum3);
-
-        // Define a challenge factor
-        let challenge = Field64::from(2);
-
-        // Compute combined evaluations and sum
-        let (combined_evals, combined_sum) = statement.combine(challenge);
-
-        // Expected evaluations:
-        //
-        // \begin{equation}
-        // combined = weight_1 + challenge \cdot weight_2 + challenge^2 \cdot weight_3
-        // \end{equation}
-        let expected_combined_evals = vec![
-            w0 + challenge * w4 + challenge * challenge * Field64::ONE, // 1 + 2 * 5 + 2^2 * 1 = 15
-            w1 + challenge * w5 + challenge * challenge * a,            // 2 + 2 * 6 + 2^2 * 2 = 22
-            w2 + challenge * w6 + challenge * challenge * a * a, // 3 + 2 * 7 + 2^2 * 2 * 2 = 33
-            w3 + challenge * w7 + challenge * challenge * Field64::ZERO, // 4 + 2 * 8 + 2^2 * 0 = 20
-        ];
-        // Expected sum:
-        //
-        // \begin{equation}
-        // S_{combined} = S_1 + challenge \cdot S_2
-        // \end{equation}
-        let expected_combined_sum = sum1 + challenge * sum2 + challenge * challenge * sum3; // 5 + 2 * 7 + 2^2 * 9 = 19 + 36 = 55
-
-        assert_eq!(combined_evals.evals(), &expected_combined_evals);
-        assert_eq!(combined_sum, expected_combined_sum);
     }
 
     #[test]
