@@ -34,14 +34,8 @@ where
     pub security_level: usize,
     pub max_pow_bits: usize,
 
-    // The WHIR protocol can prove either:
-    // 1. The commitment is a valid low degree polynomial. In that case, the
-    //    initial statement is set to false.
-    // 2. The commitment is a valid folded polynomial, and an additional
-    //    polynomial evaluation statement. In that case, the initial statement
-    //    is set to true.
     pub initial_committer: irs_commit::BasefieldConfig<F>,
-    pub initial_sumcheck: InitialSumcheck<F>,
+    pub initial_sumcheck: sumcheck::Config<F>,
     pub round_configs: Vec<RoundConfig<F>>,
     pub final_sumcheck: sumcheck::Config<F>,
     pub final_pow: proof_of_work::Config,
@@ -51,17 +45,6 @@ where
     pub reed_solomon: Arc<dyn ReedSolomon<F>>,
     #[serde(skip, default = "default_rs")]
     pub basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField")]
-pub enum InitialSumcheck<F: FftField> {
-    Full(sumcheck::Config<F>),
-    // Low-degree-test mode: only draw folding randomness.
-    Abridged {
-        folding_size: usize,
-        pow: proof_of_work::Config,
-    },
 }
 
 fn default_rs<F: FftField>() -> Arc<dyn ReedSolomon<F>> {
@@ -290,18 +273,11 @@ where
                 out_domain_samples: commitment_ood_samples,
                 deduplicate_in_domain: true,
             },
-            initial_sumcheck: if whir_parameters.initial_statement {
-                InitialSumcheck::Full(sumcheck::Config {
-                    field: Type::<F>::new(),
-                    initial_size: 1 << mv_parameters.num_variables,
-                    round_pow: pow(starting_folding_pow_bits),
-                    num_rounds: whir_parameters.folding_factor.at_round(0),
-                })
-            } else {
-                InitialSumcheck::Abridged {
-                    folding_size: whir_parameters.folding_factor.at_round(0),
-                    pow: pow(starting_folding_pow_bits),
-                }
+            initial_sumcheck: sumcheck::Config {
+                field: Type::<F>::new(),
+                initial_size: 1 << mv_parameters.num_variables,
+                round_pow: pow(starting_folding_pow_bits),
+                num_rounds: whir_parameters.folding_factor.at_round(0),
             },
             round_configs: round_parameters,
             final_sumcheck: sumcheck::Config {
@@ -320,8 +296,9 @@ where
         self.initial_committer.embedding()
     }
 
+    #[deprecated]
     pub fn allows_statement(&self) -> bool {
-        matches!(self.initial_sumcheck, InitialSumcheck::Full(_))
+        true
     }
 
     pub fn initial_size(&self) -> usize {
@@ -359,17 +336,8 @@ where
 
     pub fn check_pow_bits(&self) -> bool {
         let max_bits = Bits::new(self.max_pow_bits as f64);
-        match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                if config.round_pow.difficulty() > max_bits {
-                    return false;
-                }
-            }
-            InitialSumcheck::Abridged { pow, .. } => {
-                if pow.difficulty() > max_bits {
-                    return false;
-                }
-            }
+        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
         }
         for round_config in &self.round_configs {
             if round_config.pow.difficulty() > max_bits {
@@ -603,19 +571,7 @@ impl<F: FftField> Display for WhirConfig<F> {
             self.security_level, self.soundness_type, self.max_pow_bits
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
-        write!(f, "  sumcheck ")?;
-        match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                writeln!(f, "{config}")?;
-            }
-            InitialSumcheck::Abridged { folding_size, pow } => {
-                writeln!(
-                    f,
-                    "(abridged) folding size {folding_size} pow {:.2}",
-                    pow.difficulty()
-                )?;
-            }
-        }
+        write!(f, "  sumcheck {}", self.initial_sumcheck)?;
         for (i, r) in self.round_configs.iter().enumerate() {
             write!(f, "Round {i}:\n{r}")?;
         }
@@ -670,14 +626,14 @@ impl<F: FftField> Display for WhirConfig<F> {
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
             prox_gaps_error.min(sumcheck_error)
-                + f64::from(self.initial_sumcheck.pow().difficulty()),
-            self.initial_sumcheck.num_rounds(),
+                + f64::from(self.initial_sumcheck.round_pow.difficulty()),
+            self.initial_sumcheck.num_rounds,
             prox_gaps_error,
             sumcheck_error,
-            self.initial_sumcheck.pow().difficulty(),
+            self.initial_sumcheck.round_pow.difficulty(),
         )?;
 
-        num_variables -= self.initial_sumcheck.num_rounds();
+        num_variables -= self.initial_sumcheck.num_rounds;
 
         for r in &self.round_configs {
             let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
@@ -778,25 +734,6 @@ impl<F: FftField> Display for WhirConfig<F> {
     }
 }
 
-impl<F: FftField> InitialSumcheck<F> {
-    pub fn num_rounds(&self) -> usize {
-        match self {
-            Self::Full(config) => config.num_rounds,
-            Self::Abridged { folding_size, .. } => {
-                assert!(folding_size.is_power_of_two());
-                folding_size.ilog2() as usize
-            }
-        }
-    }
-
-    pub fn pow(&self) -> &proof_of_work::Config {
-        match self {
-            Self::Full(config) => &config.round_pow,
-            Self::Abridged { pow, .. } => pow,
-        }
-    }
-}
-
 impl<F: FftField> RoundConfig<F> {
     pub fn log_inv_rate(&self) -> usize {
         assert!(self.irs_committer.expansion.is_power_of_two());
@@ -858,7 +795,6 @@ mod tests {
         assert_eq!(config.security_level, 100);
         assert_eq!(config.max_pow_bits, 20);
         assert_eq!(config.soundness_type, SoundnessType::ConjectureList);
-        assert!(config.allows_statement());
     }
 
     #[test]
@@ -1005,14 +941,7 @@ mod tests {
 
         // Set all values within limits
         config.max_pow_bits = 20;
-        match &mut config.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                config.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
-            }
-            InitialSumcheck::Abridged { pow, .. } => {
-                *pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
-            }
-        }
+        config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
         config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 
@@ -1076,14 +1005,7 @@ mod tests {
             WhirConfig::<Field64>::new(reed_solomon, basefield_reed_solomon, mv_params, &params);
 
         config.max_pow_bits = 20;
-        match &mut config.initial_sumcheck {
-            InitialSumcheck::Full(config) => {
-                config.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
-            }
-            InitialSumcheck::Abridged { pow, .. } => {
-                *pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
-            }
-        }
+        config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
         config.final_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(19.5));
 

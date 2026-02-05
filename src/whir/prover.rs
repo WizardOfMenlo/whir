@@ -3,10 +3,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{
-    committer::Witness,
-    config::{InitialSumcheck, WhirConfig},
-};
+use super::{committer::Witness, config::WhirConfig, statement::Weights};
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
@@ -22,7 +19,6 @@ use crate::{
         VerifierMessage,
     },
     utils::zip_strict,
-    whir::statement::Weights,
 };
 
 enum RoundWitness<'a, F: FftField> {
@@ -158,26 +154,27 @@ impl<F: FftField> WhirConfig<F> {
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Run initial sumcheck on batched polynomial with combined statement
-        // TODO: Instead of `self.initial_sumcheck` we can branch on `constraint_weights.is_empty.`.
-        let mut folding_randomness = match &self.initial_sumcheck {
-            InitialSumcheck::Full(config) => config.prove(
+        let mut folding_randomness = if constraint_rlc_coeffs.is_empty() {
+            // There are no constraints yet, so we can skip the sumcheck.
+            // (If we did run it, all sumcheck polynomials would be constant zero)
+            // TODO: Don't compute evaluations and constraints in the first place.
+            let folding_randomness = (0..self.initial_sumcheck.num_rounds)
+                .map(|_| prover_state.verifier_message())
+                .collect();
+            self.initial_sumcheck.round_pow.prove(prover_state);
+            constraints = EvaluationsList::new(vec![F::ZERO; self.initial_sumcheck.final_size()]);
+            MultilinearPoint(folding_randomness)
+        } else {
+            self.initial_sumcheck.prove(
                 prover_state,
                 &mut evaluations,
                 &mut constraints,
                 &mut the_sum,
-            ),
-            InitialSumcheck::Abridged { folding_size, pow } => {
-                let folding_randomness = (0..*folding_size)
-                    .map(|_| prover_state.verifier_message())
-                    .collect();
-                pow.prove(prover_state);
-                constraints =
-                    EvaluationsList::new(vec![F::ZERO; constraints.num_evals() >> folding_size]);
-                MultilinearPoint(folding_randomness)
-            }
+            )
         };
         coefficients = coefficients.fold(&folding_randomness);
-        if !self.allows_statement() {
+        if constraint_rlc_coeffs.is_empty() {
+            // We didn't fold evaluations, so compute it here.
             evaluations = EvaluationsList::from(coefficients.clone());
         }
         let mut randomness_vec = Vec::with_capacity(self.mv_parameters.num_variables);
