@@ -57,7 +57,7 @@ fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<'_, F>, mut dst: Matrix
     let (rows, cols) = (src.rows(), src.cols());
 
     // Direct element-wise transposition for small matrices (avoids recursion overhead)
-    if rows * cols <= 64 {
+    if rows * cols * 2 <= workload_size::<F>() {
         unsafe {
             for i in 0..rows {
                 for j in 0..cols {
