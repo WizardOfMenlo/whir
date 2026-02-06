@@ -65,7 +65,8 @@ divan = { version = "4.2", package = "codspeed-divan-compat" }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
-debug = true
+debug = "line-tables-only"
+lto = "fat"
 
 [features]
 default = ["parallel"]

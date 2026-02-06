@@ -4,6 +4,7 @@ use ark_std::rand::{distributions::Standard, prelude::Distribution, Rng, RngCore
 use serde::{Deserialize, Serialize};
 
 use super::hypercube::BinaryHypercubePoint;
+use crate::utils::zip_strict;
 
 /// A point `(x_1, ..., x_n)` in `F^n` for some field `F`.
 ///
@@ -150,7 +151,7 @@ where
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
     pub fn eq_poly_outside(&self, point: &Self) -> F {
         assert_eq!(self.num_variables(), point.num_variables());
-        self.0.iter().zip(&point.0).fold(F::ONE, |acc, (&l, &r)| {
+        zip_strict(self.0.iter(), &point.0).fold(F::ONE, |acc, (&l, &r)| {
             acc * (l * r + (F::ONE - l) * (F::ONE - r))
         })
     }

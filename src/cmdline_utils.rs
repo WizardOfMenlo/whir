@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use serde::Serialize;
 
-use crate::{hash, transcript::ProtocolId};
+use crate::{engines::EngineId, hash};
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum WhirType {
@@ -57,7 +57,7 @@ pub enum AvailableHash {
 }
 
 impl AvailableHash {
-    pub const fn hash_id(&self) -> ProtocolId {
+    pub const fn hash_id(&self) -> EngineId {
         match self {
             Self::Sha2 => hash::SHA2,
             Self::Sha3 => hash::SHA3,

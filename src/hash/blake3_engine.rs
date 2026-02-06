@@ -13,10 +13,10 @@ use hex_literal::hex;
 use static_assertions::const_assert_eq;
 use zerocopy::{transmute_mut, FromBytes};
 
-use super::{Engine, Hash, HASH_COUNTER};
-use crate::transcript::ProtocolId;
+use super::{Hash, HashEngine, HASH_COUNTER};
+use crate::engines::EngineId;
 
-pub const BLAKE3: ProtocolId = ProtocolId::new(hex!(
+pub const BLAKE3: EngineId = EngineId::new(hex!(
     "03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c"
 ));
 
@@ -62,7 +62,7 @@ impl Blake3 {
     }
 }
 
-impl Engine for Blake3 {
+impl HashEngine for Blake3 {
     fn name(&self) -> Cow<'_, str> {
         "Blake3".into()
     }
@@ -134,6 +134,7 @@ fn hash_many_const<const N: usize>(platform: Platform, inputs: &[u8], output: &m
         <[[u8; N]]>::ref_from_bytes(inputs).expect("Input length is not a multiple of N");
 
     // Process up to MAX_SIMD_DEGREE messages in parallel.
+    assert_eq!(inputs.len() * OUT_LEN, output.len());
     for (inputs, out) in inputs
         .chunks(MAX_SIMD_DEGREE)
         .zip(output.chunks_mut(OUT_LEN * MAX_SIMD_DEGREE))
@@ -161,11 +162,11 @@ fn hash_many_const<const N: usize>(platform: Platform, inputs: &[u8], output: &m
 #[cfg(test)]
 mod tests {
     use super::{super::DigestEngine, *};
-    use crate::transcript::Protocol;
+    use crate::{engines::Engine as _, hash::HashEngine};
 
     #[test]
     fn test_protocol_id() {
-        assert_eq!(Blake3::detect().protocol_id(), BLAKE3);
+        assert_eq!(Blake3::detect().engine_id(), BLAKE3);
     }
 
     #[test]

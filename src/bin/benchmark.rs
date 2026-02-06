@@ -1,7 +1,6 @@
 use std::{
     fs::OpenOptions,
     io::Write,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -11,17 +10,18 @@ use clap::Parser;
 use serde::Serialize;
 use whir::{
     algebra::{
+        embedding::Basefield,
         fields,
-        ntt::RSDefault,
-        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+        polynomials::{CoefficientList, MultilinearPoint},
+        Weights,
     },
+    bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::{Statement, Weights},
 };
 
 #[derive(Parser, Debug)]
@@ -156,21 +156,14 @@ where
         whir_ldt_verifier_hashes,
     ) = {
         // Run LDT
-        use whir::whir::config::WhirConfig;
+        use whir::protocols::whir::Config;
 
         let whir_params = ProtocolParameters {
             initial_statement: false,
             ..whir_params
         };
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::<F>::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
-        if !params.check_pow_bits() {
+        let params = Config::<F>::new(mv_params, &whir_params);
+        if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
 
@@ -186,13 +179,16 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-        let statement_new = Statement::<F>::new(num_variables);
+        let weights: Vec<Weights<F>> = Vec::new();
+        let evaluations: Vec<F> = Vec::new();
+        let weight_refs = weights.iter().collect::<Vec<_>>();
 
         params.prove(
             &mut prover_state,
             &[&polynomial],
             &[&witness],
-            &[&statement_new],
+            &weight_refs,
+            &evaluations,
         );
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -207,7 +203,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             params
-                .verify(&mut verifier_state, &[&commitment], &[&statement_new])
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &weight_refs,
+                    &evaluations,
+                )
                 .unwrap();
         }
 
@@ -231,13 +232,10 @@ where
         whir_verifier_hashes,
     ) = {
         // Run PCS
-        use whir::whir::config::WhirConfig;
+        use whir::protocols::whir::Config;
 
-        let reed_solomon = Arc::new(RSDefault);
-
-        let params =
-            WhirConfig::<F>::new(reed_solomon.clone(), reed_solomon, mv_params, &whir_params);
-        if !params.check_pow_bits() {
+        let params = Config::<F>::new(mv_params, &whir_params);
+        if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
 
@@ -251,12 +249,14 @@ where
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
             .collect();
 
-        let mut statement = Statement::<F>::new(num_variables);
+        let mut weights = Vec::new();
+        let mut evaluations = Vec::new();
 
         for point in &points {
-            let eval = polynomial.evaluate_at_extension(point);
-            let weights = Weights::evaluation(point.clone());
-            statement.add_constraint(weights, eval);
+            let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
+            let weight = Weights::evaluation(point.clone());
+            weights.push(weight);
+            evaluations.push(eval);
         }
 
         HASH_COUNTER.reset();
@@ -264,11 +264,13 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
+        let weight_refs = weights.iter().collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &[&polynomial],
             &[&witness],
-            &[&statement],
+            &weight_refs,
+            &evaluations,
         );
 
         let whir_prover_time = whir_prover_time.elapsed();
@@ -283,7 +285,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             params
-                .verify(&mut verifier_state, &[&commitment], &[&statement])
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &weight_refs,
+                    &evaluations,
+                )
                 .unwrap();
         }
 

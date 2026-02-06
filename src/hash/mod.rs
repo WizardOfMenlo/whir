@@ -20,13 +20,13 @@ pub use self::{
     digest_engine::{DigestEngine, Keccak, Sha2, Sha3, KECCAK, SHA2, SHA3},
     hash_counter::HASH_COUNTER,
 };
-use crate::transcript::{
-    Encoding, Engines, NargDeserialize, Protocol, ProtocolId, ProverMessage, VerificationError,
-    VerificationResult,
+use crate::{
+    engines::{self, EngineId, Engines},
+    transcript::{Encoding, NargDeserialize, ProverMessage, VerificationError, VerificationResult},
 };
 
-pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
-    let engines = Engines::<dyn Engine>::new();
+pub static ENGINES: LazyLock<Engines<dyn HashEngine>> = LazyLock::new(|| {
+    let engines = Engines::<dyn HashEngine>::new();
     engines.register(Arc::new(Copy::new()));
     engines.register(Arc::new(Sha2::new()));
     engines.register(Arc::new(Keccak::new()));
@@ -55,7 +55,7 @@ pub static ENGINES: LazyLock<Engines<dyn Engine>> = LazyLock::new(|| {
 #[repr(transparent)]
 pub struct Hash(pub [u8; 32]);
 
-pub trait Engine: Send + Sync {
+pub trait HashEngine: Send + Sync {
     fn name(&self) -> Cow<'_, str>;
 
     fn oid(&self) -> Option<ObjectIdentifier> {
@@ -85,8 +85,8 @@ pub trait Engine: Send + Sync {
     fn hash_many(&self, size: usize, input: &[u8], output: &mut [Hash]);
 }
 
-impl<E: Engine + ?Sized> Protocol for E {
-    fn protocol_id(&self) -> ProtocolId {
+impl<E: HashEngine + ?Sized> engines::Engine for E {
+    fn engine_id(&self) -> EngineId {
         use digest::Digest;
         use sha3::Sha3_256;
 
@@ -102,7 +102,7 @@ impl<E: Engine + ?Sized> Protocol for E {
     }
 }
 
-assert_obj_safe!(Engine);
+assert_obj_safe!(HashEngine);
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -135,13 +135,13 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
+        engines::EngineId,
         hash::{BLAKE3, KECCAK},
-        transcript::ProtocolId,
     };
 
-    const HASHES: [ProtocolId; 5] = [COPY, SHA2, SHA3, KECCAK, BLAKE3];
+    const HASHES: [EngineId; 5] = [COPY, SHA2, SHA3, KECCAK, BLAKE3];
 
-    pub fn hash_for_size(size: usize) -> impl Strategy<Value = ProtocolId> {
+    pub fn hash_for_size(size: usize) -> impl Strategy<Value = EngineId> {
         let suitable = HASHES
             .iter()
             .copied()

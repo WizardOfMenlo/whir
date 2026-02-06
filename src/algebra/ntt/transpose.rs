@@ -38,9 +38,10 @@ pub fn transpose<F: Sized + Copy + Send>(matrix: &mut [F], rows: usize, cols: us
     } else {
         // TODO: Special case for rows = 2 * cols and cols = 2 * rows.
         // TODO: Special case for very wide matrices (e.g. n x 16).
-        let mut scratch = vec![matrix[0]; rows * cols];
+        let mut scratch = Vec::with_capacity(rows * cols);
         for matrix in matrix.chunks_exact_mut(rows * cols) {
-            scratch.copy_from_slice(matrix);
+            scratch.clear();
+            scratch.extend_from_slice(matrix);
             let src = MatrixMut::from_mut_slice(scratch.as_mut_slice(), rows, cols);
             let dst = MatrixMut::from_mut_slice(matrix, cols, rows);
             transpose_copy(src, dst);
@@ -56,7 +57,7 @@ fn transpose_copy<F: Sized + Copy + Send>(src: MatrixMut<'_, F>, mut dst: Matrix
     let (rows, cols) = (src.rows(), src.cols());
 
     // Direct element-wise transposition for small matrices (avoids recursion overhead)
-    if rows * cols <= 64 {
+    if rows * cols * 2 <= workload_size::<F>() {
         unsafe {
             for i in 0..rows {
                 for j in 0..cols {

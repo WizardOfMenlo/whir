@@ -1,35 +1,30 @@
-pub mod batching;
+mod batching;
 mod committer;
-pub mod config;
-pub mod prover;
-pub mod statement;
-pub mod utils;
-pub mod verifier;
+mod config;
+mod prover;
+mod verifier;
 
-pub use committer::{Commitment, Witness};
+pub use self::{
+    committer::{Commitment, Witness},
+    config::{Config, RoundConfig},
+};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use ark_ff::Field;
 
+    use super::*;
     use crate::{
         algebra::{
+            embedding::Basefield,
             fields::{Field64, Field64_2},
-            ntt::RSDefault,
-            poly_utils::{
-                coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-            },
+            polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            Weights,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
-        whir::{
-            config::WhirConfig,
-            statement::{Statement, Weights},
-        },
     };
 
     /// Field type used in the tests.
@@ -74,15 +69,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
         // Build global configuration from multivariate + protocol parameters
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = Config::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -97,13 +85,13 @@ mod tests {
             .collect();
 
         // Initialize a statement with no constraints yet
-        let mut statement = Statement::new(num_variables);
+        let mut weights = Vec::new();
+        let mut evaluations = Vec::new();
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            let eval = polynomial.evaluate_at_extension(point);
-            let weights = Weights::evaluation(point.clone());
-            statement.add_constraint(weights, eval);
+            weights.push(Weights::evaluation(point.clone()));
+            evaluations.push(polynomial.mixed_evaluate(&Basefield::new(), point));
         }
 
         // Construct a coefficient vector for linear sumcheck constraint
@@ -117,13 +105,14 @@ mod tests {
         let linear_claim_weight = Weights::linear(input.into());
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
 
         // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.weighted_sum(&poly);
+        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
 
         // Add linear constraint to the statement
-        statement.add_constraint(linear_claim_weight, sum);
+        weights.push(linear_claim_weight);
+        evaluations.push(sum);
 
         // Base of the geometric progression [1, 2, 4, 8, 0, ...]
         let geometric_base = F::from(2u64);
@@ -153,10 +142,11 @@ mod tests {
         let poly_base = EvaluationsList::from(polynomial.clone());
 
         // Compute the weighted sum for geometric constraint
-        let geometric_sum = geometric_claim_weight.weighted_sum(&poly_base);
+        let geometric_sum = geometric_claim_weight.evaluate(&poly_base.to_coeffs());
 
         // Add geometric constraint to statement
-        statement.add_constraint(geometric_claim_weight, geometric_sum);
+        weights.push(geometric_claim_weight);
+        evaluations.push(geometric_sum);
 
         // Define the Fiat-Shamir domain separator for committing and proving
         let ds = DomainSeparator::protocol(&params)
@@ -170,11 +160,13 @@ mod tests {
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
         // Generate a STARK proof for the given statement and witness
+        let weight_refs = weights.iter().collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &[&polynomial],
             &[&witness],
-            &[&statement],
+            &weight_refs,
+            &evaluations,
         );
 
         // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
@@ -186,7 +178,12 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         params
-            .verify(&mut verifier_state, &[&commitment], &[&statement])
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weight_refs,
+                &evaluations,
+            )
             .unwrap();
     }
 
@@ -228,6 +225,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_fail() {
+        make_whir_things(
+            3,
+            FoldingFactor::Constant(2),
+            0,
+            SoundnessType::ConjectureList,
+            0,
+        );
     }
 
     #[test]
@@ -295,14 +303,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = Config::new(mv_params, &whir_params);
         eprintln!("{params}");
 
         // Create N different polynomials
@@ -314,34 +315,27 @@ mod tests {
             .collect();
         let poly_refs = polynomials.iter().collect::<Vec<_>>();
 
-        // Create N statements, one for each polynomial
-        let mut statements = Vec::new();
-        for poly in &polynomials {
-            let mut statement = Statement::new(num_variables);
-
-            // Add random point constraints
-            for _ in 0..num_points_per_poly {
-                let point = MultilinearPoint::rand(&mut rng, num_variables);
-                let eval = poly.evaluate_at_extension(&point);
-                statement.add_constraint(Weights::evaluation(point), eval);
-            }
-
-            // Add linear constraint
-            let input = CoefficientList::new(
-                (0..1 << num_variables)
-                    .map(<EF as Field>::BasePrimeField::from)
-                    .collect(),
-            );
-            let linear_claim_weight = Weights::linear(input.into());
-            let poly_evals = EvaluationsList::from(poly.clone().to_extension());
-            let sum = linear_claim_weight.weighted_sum(&poly_evals);
-            statement.add_constraint(linear_claim_weight, sum);
-
-            assert!(statement.verify(poly));
-
-            statements.push(statement);
+        // Create weights to constraint the polynomials with.
+        // Add random point constraints
+        let mut weights = Vec::new();
+        for _ in 0..num_points_per_poly {
+            let point = MultilinearPoint::rand(&mut rng, num_variables);
+            weights.push(Weights::evaluation(point));
         }
-        let statement_refs = statements.iter().collect::<Vec<_>>();
+        // Add linear constraint
+        let input = CoefficientList::new(
+            (0..1 << num_variables)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        weights.push(Weights::linear(input.into()));
+        let weights_refs = weights.iter().collect::<Vec<_>>();
+
+        // Evaluate all polys on all weights to get constraints
+        let evaluations = weights
+            .iter()
+            .flat_map(|weights| poly_refs.iter().map(|poly| weights.evaluate(poly)))
+            .collect::<Vec<_>>();
 
         // Set up domain separator for batch proving
         // Each polynomial needs its own commitment phase
@@ -363,7 +357,8 @@ mod tests {
             &mut prover_state,
             &poly_refs,
             &witness_refs,
-            &statement_refs,
+            &weights_refs,
+            &evaluations,
         );
 
         // Reconstruct verifier's transcript view
@@ -380,7 +375,12 @@ mod tests {
 
         // Verify the batched proof
         params
-            .verify(&mut verifier_state, &commitment_refs, &statement_refs)
+            .verify(
+                &mut verifier_state,
+                &commitment_refs,
+                &weights_refs,
+                &evaluations,
+            )
             .unwrap();
     }
 
@@ -468,30 +468,25 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = Config::new(mv_params, &whir_params);
 
         // Create test polynomials
         let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
         let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
         let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
 
-        // Create valid statements for poly1 and poly2
-        let mut statement1 = Statement::new(num_variables);
-        let point1 = MultilinearPoint::rand(&mut rng, num_variables);
-        let eval1 = poly1.evaluate_at_extension(&point1);
-        statement1.add_constraint(Weights::evaluation(point1), eval1);
+        // Create test weights
+        let weights = [
+            Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
+            Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
+        ];
+        let weights_ref = weights.iter().collect::<Vec<_>>();
 
-        let mut statement2 = Statement::new(num_variables);
-        let point2 = MultilinearPoint::rand(&mut rng, num_variables);
-        let eval2 = poly2.evaluate_at_extension(&point2);
-        statement2.add_constraint(Weights::evaluation(point2), eval2);
+        // Create valid evaluations for (poly1, polywrong)
+        let evaluations = weights
+            .iter()
+            .flat_map(|weights| [&poly1, &poly_wrong].map(|poly| weights.evaluate(poly)))
+            .collect::<Vec<_>>();
 
         // Commit to the correct polynomials
         let ds = DomainSeparator::protocol(&params)
@@ -508,7 +503,8 @@ mod tests {
             &mut prover_state,
             &[&poly1, &poly_wrong],
             &[&witness1, &witness2],
-            &[&statement1, &statement2],
+            &weights_ref,
+            &evaluations,
         );
 
         // Verification should fail because the cross-terms don't match the commitment
@@ -524,7 +520,8 @@ mod tests {
         let verify_result = params.verify(
             &mut verifier_state,
             &[&commitments[0], &commitments[1]],
-            &[&statement1, &statement2],
+            &weights_ref,
+            &evaluations,
         );
         assert!(
             verify_result.is_err(),
@@ -564,14 +561,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let reed_solomon = Arc::new(RSDefault);
-        let basefield_reed_solomon = reed_solomon.clone();
-        let params = WhirConfig::new(
-            reed_solomon,
-            basefield_reed_solomon,
-            mv_params,
-            &whir_params,
-        );
+        let params = Config::new(mv_params, &whir_params);
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together
@@ -593,33 +583,28 @@ mod tests {
             .flat_map(|ps| ps.iter())
             .collect::<Vec<_>>();
 
-        // Create statements - one per polynomial
-        let mut statements = Vec::new();
-        for witness_polys in &all_polynomials {
-            for poly in witness_polys {
-                let mut statement = Statement::new(num_variables);
-
-                for _ in 0..num_points_per_poly {
-                    let point = MultilinearPoint::rand(&mut rng, num_variables);
-                    let eval = poly.evaluate_at_extension(&point);
-                    statement.add_constraint(Weights::evaluation(point), eval);
-                }
-
-                // Add a linear constraint
-                let input = CoefficientList::new(
-                    (0..1 << num_variables)
-                        .map(<EF as Field>::BasePrimeField::from)
-                        .collect(),
-                );
-                let linear_claim_weight = Weights::linear(input.into());
-                let poly_evals = EvaluationsList::from(poly.clone().to_extension());
-                let sum = linear_claim_weight.weighted_sum(&poly_evals);
-                statement.add_constraint(linear_claim_weight, sum);
-
-                statements.push(statement);
-            }
+        // Create weights for constraints
+        let mut weights = Vec::new();
+        for _ in 0..num_points_per_poly {
+            weights.push(Weights::evaluation(MultilinearPoint::rand(
+                &mut rng,
+                num_variables,
+            )));
         }
-        let statement_refs = statements.iter().collect::<Vec<_>>();
+        // Add a linear constraint
+        let input = CoefficientList::new(
+            (0..1 << num_variables)
+                .map(<EF as Field>::BasePrimeField::from)
+                .collect(),
+        );
+        weights.push(Weights::linear(input.into()));
+        let weights_ref = weights.iter().collect::<Vec<_>>();
+
+        // Create evaluations for each constraint and polynomial
+        let evaluations = weights
+            .iter()
+            .flat_map(|weights| polynomial_refs.iter().map(|poly| weights.evaluate(poly)))
+            .collect::<Vec<_>>();
 
         // Set up domain separator
         let ds = DomainSeparator::protocol(&params)
@@ -641,7 +626,8 @@ mod tests {
             &mut prover_state,
             &polynomial_refs,
             &witness_refs,
-            &statement_refs,
+            &weights_ref,
+            &evaluations,
         );
 
         // Verify
@@ -655,7 +641,12 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let verify_result = params.verify(&mut verifier_state, &commitment_refs, &statement_refs);
+        let verify_result = params.verify(
+            &mut verifier_state,
+            &commitment_refs,
+            &weights_ref,
+            &evaluations,
+        );
         assert!(
             verify_result.is_ok(),
             "Batch verification with batch_size={} failed: {:?}",

@@ -135,7 +135,7 @@ mod tests {
     use super::*;
     use crate::algebra::{
         fields::Field64,
-        poly_utils::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
+        polynomials::{hypercube::BinaryHypercubePoint, multilinear::MultilinearPoint},
     };
 
     type F = Field64;
