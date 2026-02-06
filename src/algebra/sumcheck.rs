@@ -40,7 +40,7 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
     result
 }
 
-/// Computes the constant and quadratic coefficient of the sumcheck polynomial.
+/// Folds evaluations by linear interpolation at the given weight.
 pub fn fold<F: Field>(weight: F, values: &[F]) -> Vec<F> {
     assert!(values.len().is_multiple_of(2));
 
