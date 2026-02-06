@@ -711,7 +711,7 @@ impl<F: FftField> RoundConfig<F> {
     }
 
     pub fn final_num_variables(&self) -> usize {
-        self.initial_num_variables() - self.log_inv_rate()
+        self.initial_num_variables() - self.sumcheck.num_rounds
     }
 }
 

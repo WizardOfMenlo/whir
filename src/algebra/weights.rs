@@ -87,7 +87,7 @@ impl<F: Field> Weights<F> {
         }
     }
 
-    pub const fn deffered(&self) -> bool {
+    pub const fn deferred(&self) -> bool {
         matches!(self, Self::Linear { .. })
     }
 
