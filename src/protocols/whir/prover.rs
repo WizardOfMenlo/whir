@@ -252,13 +252,11 @@ impl<F: FftField> Config<F> {
         // PoW
         self.final_pow.prove(prover_state);
 
-        // Open previous witness, but ignore the in-domain samepls.
+        // Open previous witness, but ignore the in-domain samples.
         // The verifier will directly test these on the final polynomial without our help.
         match &prev_witness {
             RoundWitness::Initial(witnesses) => {
-                for witness in *witnesses {
-                    let _in_domain = self.initial_committer.open(prover_state, &[witness]);
-                }
+                let _in_domain = self.initial_committer.open(prover_state, witnesses);
             }
             RoundWitness::Round(witness) => {
                 let prev_config = self.round_configs.last().unwrap();
@@ -279,7 +277,7 @@ impl<F: FftField> Config<F> {
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
         let deferred = weights
             .iter()
-            .filter(|w| w.deffered())
+            .filter(|w| w.deferred())
             .map(|w| w.compute(&constraint_eval))
             .collect();
         prover_state.prover_hint_ark(&deferred);

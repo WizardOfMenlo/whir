@@ -239,7 +239,7 @@ impl<F: FftField> Config<F> {
             );
             let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                let eval = if weights.deffered() {
+                let eval = if weights.deferred() {
                     let deferred = deferred_iter.next();
                     verify!(deferred.is_some());
                     deferred.unwrap()
@@ -249,6 +249,7 @@ impl<F: FftField> Config<F> {
                 weight_eval += *rlc_coeff * eval;
             }
         }
+        verify!(deferred_iter.next().is_none());
 
         // Check the final sumcheck equation
         let poly_eval = final_coefficients.evaluate(&final_sumcheck_randomness);
