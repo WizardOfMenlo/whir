@@ -128,7 +128,7 @@ mod batching_tests {
         let weights = points
             .iter()
             .map(|point| Weights::evaluation(point.clone()))
-            .chain(iter::once(Weights::linear(weight_poly.clone().into())))
+            .chain(iter::once(Weights::linear(weight_poly.into())))
             .collect::<Vec<_>>();
         let weights_refs = weights.iter().collect::<Vec<_>>();
         let values = weights
