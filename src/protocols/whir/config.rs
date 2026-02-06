@@ -279,11 +279,11 @@ where
     }
 
     #[deprecated]
-    pub fn allows_statement(&self) -> bool {
+    pub const fn allows_statement(&self) -> bool {
         true
     }
 
-    pub fn initial_size(&self) -> usize {
+    pub const fn initial_size(&self) -> usize {
         self.initial_committer.polynomial_size
     }
 
@@ -292,7 +292,7 @@ where
         self.initial_size().trailing_zeros() as usize
     }
 
-    pub fn final_size(&self) -> usize {
+    pub const fn final_size(&self) -> usize {
         self.final_sumcheck.final_size()
     }
 
@@ -301,19 +301,18 @@ where
     }
 
     pub fn final_rate(&self) -> f64 {
-        if let Some(round_config) = self.round_configs.last() {
-            round_config.irs_committer.rate()
-        } else {
-            self.initial_committer.rate()
-        }
+        self.round_configs.last().map_or_else(
+            || self.initial_committer.rate(),
+            |round_config| round_config.irs_committer.rate(),
+        )
     }
 
     pub fn final_in_domain_samples(&self) -> usize {
-        if let Some(round_config) = self.round_configs.last() {
-            round_config.irs_committer.in_domain_samples
-        } else {
-            self.initial_committer.in_domain_samples
-        }
+        self.round_configs
+            .last()
+            .map_or(self.initial_committer.in_domain_samples, |round_config| {
+                round_config.irs_committer.in_domain_samples
+            })
     }
 
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
@@ -413,9 +412,7 @@ where
         // Recall, at each round we are only folding by two at a time
         let error = match soundness_type {
             SoundnessType::ConjectureList => num_variables as f64 + log_inv_rate - log_eta,
-            SoundnessType::ProvableList => {
-                LOG2_10 + 3.5 * log_inv_rate as f64 + 2. * num_variables as f64
-            }
+            SoundnessType::ProvableList => LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64,
             SoundnessType::UniqueDecoding => num_variables as f64 + log_inv_rate,
         };
 
@@ -974,17 +971,17 @@ mod tests {
         // ProvableList: list_size_bits = (log_inv_rate / 2) - (1 + log_eta)
 
         let cases = vec![
-            (10, 8, 2.0, 1.0),   // Basic case
-            (10, 0, 2.0, -3.0),  // Edge case: log_inv_rate = 0
-            (10, 8, 0.0, 3.0),   // Edge case: log_eta = 0
-            (10, 8, 10.0, -7.0), // High log_eta
+            (10, 8.0, 2.0, 1.0),   // Basic case
+            (10, 0.0, 2.0, -3.0),  // Edge case: log_inv_rate = 0
+            (10, 8.0, 0.0, 3.0),   // Edge case: log_eta = 0
+            (10, 8.0, 10.0, -7.0), // High log_eta
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
             let result = Config::<Field64>::list_size_bits(
                 SoundnessType::ProvableList,
                 num_variables,
-                log_inv_rate as f64,
+                log_inv_rate,
                 log_eta,
             );
             assert!(
@@ -1000,18 +997,18 @@ mod tests {
         // UniqueDecoding: always returns 0.0
 
         let cases = vec![
-            (10, 5, 2.0),
-            (0, 5, 2.0),
-            (10, 0, 2.0),
-            (10, 5, 0.0),
-            (10, 5, 10.0),
+            (10, 5.0, 2.0),
+            (0, 5.0, 2.0),
+            (10, 0.0, 2.0),
+            (10, 5.0, 0.0),
+            (10, 5.0, 10.0),
         ];
 
         for (num_variables, log_inv_rate, log_eta) in cases {
             let result = Config::<Field64>::list_size_bits(
                 SoundnessType::UniqueDecoding,
                 num_variables,
-                log_inv_rate as f64,
+                log_inv_rate,
                 log_eta,
             );
             assert!(

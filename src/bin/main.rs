@@ -172,8 +172,8 @@ where
     let proof = prover_state.proof();
     let proof_size = proof.narg_string.len() + proof.hints.len();
     println!(
-        "Prover time: {:.1?} + {:.1?}",
-        whir_commit_time, whir_prove_time
+        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
+        whir_commit_time + whir_prove_time,
     );
     println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
 
@@ -300,10 +300,8 @@ where
 
     let proof = prover_state.proof();
     println!(
-        "Prover time: {:.1?} + {:.1?} = {:.1?}",
-        whir_commit_time,
-        whir_prove_time,
-        whir_prove_time + whir_commit_time
+        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
+        whir_commit_time + whir_prove_time,
     );
     println!(
         "Proof size: {:.1} KiB",

@@ -17,7 +17,7 @@ use crate::{
     verify,
 };
 
-pub(crate) enum RoundCommitment<'a, F: FftField> {
+enum RoundCommitment<'a, F: FftField> {
     Initial {
         commitments: &'a [&'a irs_commit::Commitment<F>],
         batching_weights: Vec<F>,
@@ -36,6 +36,7 @@ impl<F: FftField> Config<F> {
     /// N original commitment trees, while subsequent rounds verify the single batched polynomial.
     ///
     /// Returns the constraint evaluation point and values of deferred constraints.
+    #[allow(clippy::too_many_lines)]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,

@@ -40,6 +40,7 @@ impl<F: FftField> Config<F> {
     /// `polynomials.len()`.
     ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    #[allow(clippy::too_many_lines)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -136,7 +137,7 @@ impl<F: FftField> Config<F> {
             geometric_challenge(prover_state, constraint_weights.len());
         let mut constraints = EvaluationsList::new(vec![F::ZERO; self.initial_size()]);
         for (rlc_coeff, constraint) in zip_strict(&constraint_rlc_coeffs, constraint_weights) {
-            constraint.accumulate(&mut constraints, *rlc_coeff)
+            constraint.accumulate(&mut constraints, *rlc_coeff);
         }
 
         // Compute "The Sum"
@@ -200,7 +201,7 @@ impl<F: FftField> Config<F> {
                     let prev_round_config = &self.round_configs[round_index - 1];
                     prev_round_config
                         .irs_committer
-                        .open(prover_state, &[&witness])
+                        .open(prover_state, &[witness])
                 }
             };
 
@@ -261,7 +262,7 @@ impl<F: FftField> Config<F> {
             }
             RoundWitness::Round(witness) => {
                 let prev_config = self.round_configs.last().unwrap();
-                let _in_domain = prev_config.irs_committer.open(prover_state, &[&witness]);
+                let _in_domain = prev_config.irs_committer.open(prover_state, &[witness]);
             }
         }
 

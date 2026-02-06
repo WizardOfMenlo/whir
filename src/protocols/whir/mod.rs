@@ -105,7 +105,7 @@ mod tests {
         let linear_claim_weight = Weights::linear(input.into());
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(polynomial.clone().lift(&Basefield::new()));
+        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
 
         // Compute the weighted sum of the polynomial (for sumcheck)
         let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
@@ -476,7 +476,7 @@ mod tests {
         let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
 
         // Create test weights
-        let weights = vec![
+        let weights = [
             Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
             Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
         ];
