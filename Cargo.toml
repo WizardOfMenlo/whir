@@ -86,6 +86,10 @@ name = "expand_from_coeff"
 harness = false
 
 [[bench]]
+name = "whir_zk"
+harness = false
+
+[[bench]]
 name = "sumcheck"
 harness = false
 
