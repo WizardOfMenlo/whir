@@ -10,6 +10,7 @@ mod mock_sponge;
 use std::any::type_name;
 use std::fmt::Debug;
 
+use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,67 @@ pub use spongefish::{
     Codec, Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, NargSerialize,
     VerificationError, VerificationResult,
 };
+
+/// Zero-allocation wrapper for pre-encoded bytes.
+///
+/// Used by [`ProverState::prover_messages_bytes`] to send a pre-serialized
+/// byte buffer as a single transcript message, avoiding the per-element
+/// allocation overhead of [`Encoding::encode`] on individual field elements.
+pub struct RawBytes<'a>(pub &'a [u8]);
+
+impl Encoding<[u8]> for RawBytes<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0
+    }
+}
+// NargSerialize is provided by the blanket impl:
+//   impl<T: Encoding<[u8]>> NargSerialize for T
+
+/// Encode a single field element into `dst` without heap allocations.
+///
+/// Produces the same byte representation as [`Encoding<[u8]>::encode`] on
+/// ark-ff field elements: each base-prime-field coefficient is written in
+/// little-endian limb order, truncated/padded to `base_field_size` bytes.
+#[inline]
+pub fn encode_field_element_into<F: Field>(f: &F, dst: &mut Vec<u8>) {
+    let base_field_size = (F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8)) as usize;
+    for base_element in f.to_base_prime_field_elements() {
+        let bigint = base_element.into_bigint();
+        let limbs: &[u64] = bigint.as_ref();
+        let start = dst.len();
+        for limb in limbs {
+            dst.extend_from_slice(&limb.to_le_bytes());
+        }
+        // Match spongefish's encode: resize to exactly base_field_size bytes
+        // (truncate high zero bytes if N*8 > base_field_size, pad if less).
+        dst.resize(start + base_field_size, 0);
+    }
+}
+
+/// Decode field elements from a byte buffer produced by [`encode_field_element_into`].
+///
+/// Returns `count` field elements, advancing `src` past the consumed bytes.
+pub fn decode_field_elements_from_bytes<F: Field>(src: &mut &[u8], count: usize) -> Option<Vec<F>> {
+    let base_field_size = (F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8)) as usize;
+    let ext_degree = F::extension_degree() as usize;
+    let elem_bytes = base_field_size * ext_degree;
+    let total = count * elem_bytes;
+    if src.len() < total {
+        return None;
+    }
+
+    let mut result = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut base_elems = Vec::with_capacity(ext_degree);
+        for _ in 0..ext_degree {
+            let (chunk, rest) = src.split_at(base_field_size);
+            *src = rest;
+            base_elems.push(F::BasePrimeField::from_le_bytes_mod_order(chunk));
+        }
+        result.push(F::from_base_prime_field_elems(base_elems)?);
+    }
+    Some(result)
+}
 
 #[cfg(test)]
 pub use self::mock_sponge::MockSponge;
@@ -217,6 +279,27 @@ where
             .expect("Failed to serialize hint");
     }
 
+    /// Send `count` pre-encoded field elements as a **single** transcript message.
+    ///
+    /// `encoded` must contain the exact same bytes that `count` individual
+    /// `prover_message::<T>()` calls would produce (use [`encode_field_element_into`]).
+    ///
+    /// This reduces allocations from O(count) to O(1) because the sponge
+    /// absorbs the whole buffer at once via [`RawBytes`] (zero-alloc Encoding).
+    ///
+    /// Requires a byte-oriented sponge (`H::U = u8`).
+    #[cfg_attr(test, track_caller)]
+    pub fn prover_messages_bytes<T>(&mut self, _count: usize, encoded: &[u8])
+    where
+        H: DuplexSpongeInterface<U = u8>,
+    {
+        #[cfg(debug_assertions)]
+        for _ in 0.._count {
+            self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
+        }
+        self.inner.prover_message(&RawBytes(encoded));
+    }
+
     pub fn proof(self) -> Proof {
         Proof {
             narg_string: self.inner.narg_string().to_owned(),
@@ -300,6 +383,35 @@ where
         T: Encoding<[H::U]> + NargDeserialize,
     {
         (0..len).map(|_| self.prover_message()).collect()
+    }
+
+    /// Read `count` field elements that were sent via
+    /// [`ProverState::prover_messages_bytes`].
+    ///
+    /// Internally this still calls `prover_message::<T>()` per element
+    /// (spongefish doesn't expose a raw-byte batch read), but it collects
+    /// into a single pre-allocated `Vec` rather than creating many small
+    /// intermediate vectors.
+    ///
+    /// The Fiat-Shamir transcript is byte-identical regardless of whether
+    /// the prover used individual `prover_message` calls or a single
+    /// `prover_messages_bytes` batch — the sponge absorbs the same bytes
+    /// in both cases.
+    #[cfg_attr(test, track_caller)]
+    pub fn read_prover_messages_bytes<T>(&mut self, count: usize) -> VerificationResult<Vec<T>>
+    where
+        T: Encoding<[H::U]> + NargDeserialize,
+    {
+        #[cfg(debug_assertions)]
+        for _ in 0..count {
+            self.pop_pattern(&Interaction::ProverMessage(type_name::<T>().to_owned()));
+        }
+
+        let mut result = Vec::with_capacity(count);
+        for _ in 0..count {
+            result.push(self.inner.prover_message()?);
+        }
+        Ok(result)
     }
 
     #[cfg_attr(test, track_caller)]

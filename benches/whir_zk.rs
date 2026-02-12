@@ -7,8 +7,6 @@
 //!   cargo bench --bench whir_zk -- zk_v1
 //!   cargo bench --bench whir_zk -- zk_v2
 
-use std::sync::Arc;
-
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
@@ -19,9 +17,9 @@ use whir::{
     },
     hash,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-    protocols::whir::{
-        zk::{ZkParams, ZkPreprocessingPolynomials},
-        Config,
+    protocols::{
+        whir::Config,
+        whir_zk::{utils::ZkPreprocessingPolynomials, ZkParams},
     },
     transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
 };
@@ -33,7 +31,7 @@ type F = Field64;
 type EF = Field64_2;
 
 /// Polynomial sizes to benchmark (log₂ of number of coefficients).
-const SIZES: &[usize] = &[16, 18, 20];
+const SIZES: &[usize] = &[20];
 
 /// Number of polynomials for batched benchmarks.
 const NUM_POLYS: usize = 2;
@@ -74,15 +72,10 @@ fn make_weights_and_evaluations_multi(
 }
 
 /// Build N independent ZK preprocessing polynomials.
-fn make_preprocessings(n: usize, zk_params: &ZkParams) -> Vec<Arc<ZkPreprocessingPolynomials<EF>>> {
+fn make_preprocessings(n: usize, zk_params: &ZkParams) -> Vec<ZkPreprocessingPolynomials<EF>> {
     let mut rng = StdRng::seed_from_u64(42);
     (0..n)
-        .map(|_| {
-            Arc::new(ZkPreprocessingPolynomials::<EF>::sample(
-                &mut rng,
-                zk_params.clone(),
-            ))
-        })
+        .map(|_| ZkPreprocessingPolynomials::<EF>::sample(&mut rng, zk_params.clone()))
         .collect()
 }
 
@@ -351,14 +344,18 @@ fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
         .session(&format!("bench-zk-v2-commit-{num_variables}"))
         .instance(&Empty);
 
+    let preproc_refs: Vec<&ZkPreprocessingPolynomials<EF>> = preprocessings.iter().collect();
+
     bencher
-        .with_inputs(|| {
-            let prover_state = ProverState::new_std(&ds);
-            (prover_state, preprocessings.clone())
-        })
-        .bench_values(|(mut prover_state, preprocs)| {
+        .with_inputs(|| ProverState::new_std(&ds))
+        .bench_values(|mut prover_state| {
             let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-            black_box(config.commit_zk(&mut prover_state, &poly_refs, &helper_config, preprocs));
+            black_box(config.commit_zk(
+                &mut prover_state,
+                &poly_refs,
+                &helper_config,
+                &preproc_refs,
+            ));
         });
 }
 
@@ -378,16 +375,14 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
         .session(&format!("bench-zk-v2-prove-{num_variables}"))
         .instance(&Empty);
 
+    let preproc_refs: Vec<&ZkPreprocessingPolynomials<EF>> = preprocessings.iter().collect();
+
     bencher
         .with_inputs(|| {
             let mut prover_state = ProverState::new_std(&ds);
             let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-            let zk_witness = config.commit_zk(
-                &mut prover_state,
-                &poly_refs,
-                &helper_config,
-                preprocessings.clone(),
-            );
+            let zk_witness =
+                config.commit_zk(&mut prover_state, &poly_refs, &helper_config, &preproc_refs);
             (prover_state, zk_witness)
         })
         .bench_values(|(mut prover_state, zk_witness)| {
@@ -419,12 +414,13 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         .session(&format!("bench-zk-v2-verify-{num_variables}"))
         .instance(&Empty);
 
+    let preproc_refs: Vec<&ZkPreprocessingPolynomials<EF>> = preprocessings.iter().collect();
+
     // Generate a proof once (outside the benchmark loop).
     let proof = {
         let mut ps = ProverState::new_std(&ds);
         let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-        let zk_witness =
-            config.commit_zk(&mut ps, &poly_refs, &helper_config, preprocessings.clone());
+        let zk_witness = config.commit_zk(&mut ps, &poly_refs, &helper_config, &preproc_refs);
         config.prove_zk(
             &mut ps,
             &poly_refs,
