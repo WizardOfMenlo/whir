@@ -34,7 +34,7 @@ mod batching_tests {
         algebra::{
             fields::Field64,
             polynomials::{CoefficientList, MultilinearPoint},
-            Weights,
+            OldWeights,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -127,8 +127,8 @@ mod batching_tests {
         // Create a weights matrix and evaluations for each polynomial
         let weights = points
             .iter()
-            .map(|point| Weights::evaluation(point.clone()))
-            .chain(iter::once(Weights::linear(weight_poly.into())))
+            .map(|point| OldWeights::evaluation(point.clone()))
+            .chain(iter::once(OldWeights::linear(weight_poly.into())))
             .collect::<Vec<_>>();
         let weights_refs = weights.iter().collect::<Vec<_>>();
         let values = weights

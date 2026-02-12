@@ -19,7 +19,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_2},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-            Weights,
+            OldWeights,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -90,7 +90,7 @@ mod tests {
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            weights.push(Weights::evaluation(point.clone()));
+            weights.push(OldWeights::evaluation(point.clone()));
             evaluations.push(polynomial.mixed_evaluate(&Basefield::new(), point));
         }
 
@@ -102,7 +102,7 @@ mod tests {
         );
 
         // Define weights for linear combination
-        let linear_claim_weight = Weights::linear(input.into());
+        let linear_claim_weight = OldWeights::linear(input.into());
 
         // Convert polynomial to extension field representation
         let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
@@ -136,7 +136,7 @@ mod tests {
 
         // Create geometric weight function
         let geometric_claim_weight =
-            Weights::geometric(geometric_base, geometric_n, geometric_weight_list);
+            OldWeights::geometric(geometric_base, geometric_n, geometric_weight_list);
 
         // Convert polynomial to base field evaluation form for weighted_sum
         let poly_base = EvaluationsList::from(polynomial.clone());
@@ -320,7 +320,7 @@ mod tests {
         let mut weights = Vec::new();
         for _ in 0..num_points_per_poly {
             let point = MultilinearPoint::rand(&mut rng, num_variables);
-            weights.push(Weights::evaluation(point));
+            weights.push(OldWeights::evaluation(point));
         }
         // Add linear constraint
         let input = CoefficientList::new(
@@ -328,7 +328,7 @@ mod tests {
                 .map(<EF as Field>::BasePrimeField::from)
                 .collect(),
         );
-        weights.push(Weights::linear(input.into()));
+        weights.push(OldWeights::linear(input.into()));
         let weights_refs = weights.iter().collect::<Vec<_>>();
 
         // Evaluate all polys on all weights to get constraints
@@ -477,8 +477,8 @@ mod tests {
 
         // Create test weights
         let weights = [
-            Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
-            Weights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
+            OldWeights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
+            OldWeights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
         ];
         let weights_ref = weights.iter().collect::<Vec<_>>();
 
@@ -586,7 +586,7 @@ mod tests {
         // Create weights for constraints
         let mut weights = Vec::new();
         for _ in 0..num_points_per_poly {
-            weights.push(Weights::evaluation(MultilinearPoint::rand(
+            weights.push(OldWeights::evaluation(MultilinearPoint::rand(
                 &mut rng,
                 num_variables,
             )));
@@ -597,7 +597,7 @@ mod tests {
                 .map(<EF as Field>::BasePrimeField::from)
                 .collect(),
         );
-        weights.push(Weights::linear(input.into()));
+        weights.push(OldWeights::linear(input.into()));
         let weights_ref = weights.iter().collect::<Vec<_>>();
 
         // Create evaluations for each constraint and polynomial

@@ -1,3 +1,9 @@
+mod matrix_program;
+mod multilinear_evaluation;
+mod source_vector;
+mod target_vector;
+mod univariate_evaluation;
+
 use std::{fmt::Debug, ops::Index};
 
 use ark_ff::Field;
@@ -5,14 +11,55 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+pub use self::{
+    source_vector::SourceVector, target_vector::TargetVector,
+    univariate_evaluation::UnivariateEvaluation,
+};
 use crate::algebra::{
-    embedding::{Embedding, Identity},
-    mixed_dot,
+    embedding::{self, Embedding, Identity},
+    fields, mixed_dot,
     polynomials::{geometric_till, CoefficientList, EvaluationsList, MultilinearPoint},
 };
+
+/// Represents a weight vector used in WHIR openings.
+pub trait Weights<M: Embedding> {
+    /// The embedding this weights vector uses.
+    fn embedding(&self) -> &M;
+
+    /// Indicate if the verifier should evaluate this directly or defer it to the caller.
+    fn deferred(&self) -> bool;
+
+    /// The number of coefficients in the vector.
+    fn size(&self) -> usize;
+
+    /// Evaluate the weights vector as a multi-linear extension in a random point.
+    ///
+    /// Used by the verifier for non-deferred weights.
+    ///
+    /// Should be such that evaluating on the boolean hypercube (TODO: In what order?)
+    /// recovers the weights vector.
+    ///
+    /// See e.g. <https://eprint.iacr.org/2024/1103.pdf>
+    fn mle_evaluate(&self, point: MultilinearPoint<M::Target>) -> M::Target;
+
+    /// Compute the inner product with a vector.
+    ///
+    /// Only used by the prover. (and then only for testing?)
+    fn inner_product(&self, vector: &[M::Source]) -> M::Target;
+
+    /// Accumulate the scaled weights.
+    ///
+    /// This can also be used to retrieve the concrete weight vector (see [`TargetVector::from`]).
+    ///
+    /// Only used by the prover.
+    fn accumulate(&self, accumulator: &mut [M::Target], scalar: M::Target);
+}
+
+assert_obj_safe!(Weights<embedding::Identity<fields::Field64>>);
 
 /// Represents a weight function used in polynomial evaluations.
 ///
@@ -23,7 +70,7 @@ use crate::algebra::{
 /// - Linear mode: Represents a set of per-corner weights stored as `EvaluationsList<F>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
-pub enum Weights<F> {
+pub enum OldWeights<F> {
     /// Represents a weight function that enforces equality constraints at a specific point.
     Evaluation { point: MultilinearPoint<F> },
     /// Represents a weight function defined as a precomputed set of evaluations.
@@ -40,7 +87,7 @@ pub enum Weights<F> {
     },
 }
 
-impl<F: Field> Weights<F> {
+impl<F: Field> OldWeights<F> {
     /// Constructs a weight in evaluation mode, enforcing an equality constraint at `point`.
     ///
     /// Given a multilinear polynomial `p(X)`, this weight evaluates:
@@ -177,7 +224,7 @@ mod tests {
     fn test_weights_evaluation() {
         // Define a point in the multilinear space
         let point = MultilinearPoint(vec![Field64::ONE, Field64::ZERO]);
-        let weight = Weights::evaluation(point);
+        let weight = OldWeights::evaluation(point);
 
         // The number of variables in the weight should match the number of variables in the point
         assert_eq!(weight.num_variables(), 2);
@@ -192,7 +239,7 @@ mod tests {
             Field64::from(3),
             Field64::from(3),
         ]);
-        let weight = Weights::linear(evals);
+        let weight = OldWeights::linear(evals);
 
         // The number of variables in the weight should match the number of variables in evals
         assert_eq!(weight.num_variables(), 2);
@@ -204,7 +251,7 @@ mod tests {
         let a = Field64::from(2);
         let n = 2;
         let evals = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
-        let weight = Weights::geometric(a, n, evals);
+        let weight = OldWeights::geometric(a, n, evals);
 
         // The number of variables in the weight should match the number of variables in evals
         assert_eq!(weight.num_variables(), 2);
@@ -219,7 +266,7 @@ mod tests {
 
         // Define an evaluation weight at a specific point
         let point = MultilinearPoint(vec![Field64::ONE]);
-        let weight = Weights::evaluation(point);
+        let weight = OldWeights::evaluation(point);
 
         // Expected result: polynomial evaluation at the given point
         let expected = e1;
@@ -238,7 +285,7 @@ mod tests {
         let w0 = Field64::from(2);
         let w1 = Field64::from(3);
         let weight_list = EvaluationsList::new(vec![w0, w1]);
-        let weight = Weights::linear(weight_list);
+        let weight = OldWeights::linear(weight_list);
 
         // Compute expected result manually
         //
@@ -259,7 +306,7 @@ mod tests {
         let w0 = Field64::from(2);
         let w1 = Field64::from(3);
         let weight_list = EvaluationsList::new(vec![w0, w1]);
-        let weight = Weights::linear(weight_list);
+        let weight = OldWeights::linear(weight_list);
 
         // Define a multiplication factor
         let factor = Field64::from(4);
@@ -287,7 +334,7 @@ mod tests {
 
         // Define an evaluation point
         let point = MultilinearPoint(vec![Field64::ONE]);
-        let weight = Weights::evaluation(point.clone());
+        let weight = OldWeights::evaluation(point.clone());
 
         // Define a multiplication factor
         let factor = Field64::from(5);
@@ -316,7 +363,7 @@ mod tests {
         let a = Field64::from(2);
         let n = 3;
         let weight_list = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
-        let weight = Weights::geometric(a, n, weight_list);
+        let weight = OldWeights::geometric(a, n, weight_list);
 
         // Define a multiplication factor
         let factor = Field64::from(4);
@@ -343,7 +390,7 @@ mod tests {
     fn test_compute_evaluation_weight() {
         // Define an evaluation weight at a specific point
         let point = MultilinearPoint(vec![Field64::from(3)]);
-        let weight = Weights::evaluation(point.clone());
+        let weight = OldWeights::evaluation(point.clone());
 
         // Define a randomness point for folding
         let folding_randomness = MultilinearPoint(vec![Field64::from(2)]);
@@ -362,7 +409,7 @@ mod tests {
 
         // Folding randomness is the same as the point itself
         let folding_randomness = point.clone();
-        let weight = Weights::evaluation(point.clone());
+        let weight = OldWeights::evaluation(point.clone());
 
         // Expected result should be identity for equality polynomial
         let expected = point.eq_poly_outside(&folding_randomness);
@@ -375,7 +422,7 @@ mod tests {
         let a = Field64::from(2);
         let n = 3;
         let weight_list = EvaluationsList::new(vec![Field64::ONE, a, a * a, Field64::ZERO]);
-        let weight = Weights::geometric(a, n, weight_list.clone());
+        let weight = OldWeights::geometric(a, n, weight_list.clone());
 
         // Define a randomness point for folding
         let folding_randomness = MultilinearPoint(vec![Field64::from(2), Field64::from(3)]);

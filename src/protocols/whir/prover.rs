@@ -8,7 +8,7 @@ use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        tensor_product, Weights,
+        tensor_product, OldWeights,
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -46,7 +46,7 @@ impl<F: FftField> Config<F> {
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
         witnesses: &[&Witness<F>],
-        weights: &[&Weights<F>],
+        weights: &[&OldWeights<F>],
         evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where

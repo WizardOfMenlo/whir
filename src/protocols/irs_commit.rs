@@ -41,7 +41,7 @@ use crate::{
         embedding::{Basefield, Embedding, Identity},
         lift, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
-        Weights,
+        OldWeights,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -439,10 +439,10 @@ impl<F: Field> Evaluations<F> {
         }
     }
 
-    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = Weights<F>> {
+    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = OldWeights<F>> {
         self.points
             .iter()
-            .map(move |point| Weights::univariate(*point, num_variables))
+            .map(move |point| OldWeights::univariate(*point, num_variables))
     }
 
     pub fn values<'a>(&'a self, weights: &'a [F]) -> impl 'a + Iterator<Item = F> {

@@ -4,14 +4,14 @@ pub mod fields;
 pub mod ntt;
 pub mod polynomials;
 pub mod sumcheck;
-mod weights;
+pub mod weights;
 
 use ark_ff::{AdditiveGroup, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use self::embedding::Embedding;
-pub use self::weights::Weights;
+pub use self::weights::OldWeights;
 #[cfg(feature = "parallel")]
 use crate::utils::workload_size;
 

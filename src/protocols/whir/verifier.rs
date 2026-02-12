@@ -5,7 +5,7 @@ use crate::{
     algebra::{
         dot,
         polynomials::{CoefficientList, MultilinearPoint},
-        tensor_product, Weights,
+        tensor_product, OldWeights,
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -41,7 +41,7 @@ impl<F: FftField> Config<F> {
         &self,
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<F>],
-        weights: &[&Weights<F>],
+        weights: &[&OldWeights<F>],
         evaluations: &[F],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
