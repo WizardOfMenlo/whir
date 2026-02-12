@@ -118,12 +118,31 @@ where
         acc
     }
 
-    /// Computes eq(c, p) on the hypercube for all p.
+    /// Computes eq(self, z) for every z ∈ {0,1}ⁿ using a butterfly expansion.
+    ///
+    /// Returns a `Vec` of length `2^n` where entry `z` (in lexicographic
+    /// order) is `eq(self, z)`.
+    ///
+    /// Runs in O(2ⁿ) time and O(2ⁿ) space.
     pub fn eq_weights(&self) -> Vec<F> {
-        (0..1 << self.0.len())
-            .map(BinaryHypercubePoint)
-            .map(|point| self.eq_poly(point))
-            .collect()
+        let n = self.num_variables();
+        let size = 1 << n;
+        let mut evals = Vec::with_capacity(size);
+        evals.push(F::ONE);
+        // Process coordinates in storage order (big-endian: x_{n-1}, …, x_0).
+        // Each step doubles the vector via the identity:
+        //   eq(c, z||0) = eq(c', z) · (1 − cᵢ)
+        //   eq(c, z||1) = eq(c', z) · cᵢ
+        for &ci in &self.0 {
+            let len = evals.len();
+            let one_minus_ci = F::ONE - ci;
+            evals.resize(2 * len, F::ZERO);
+            for j in (0..len).rev() {
+                evals[2 * j + 1] = evals[j] * ci;
+                evals[2 * j] = evals[j] * one_minus_ci;
+            }
+        }
+        evals
     }
 
     pub fn coeff_weights(&self, reversed: bool) -> Vec<F> {

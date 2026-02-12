@@ -80,6 +80,26 @@ impl<F: Field> CoefficientList<F> {
         }
     }
 
+    /// Embed an ℓ-variate polynomial into an n-variate polynomial (n ≥ ℓ)
+    /// by treating the extra variables as having zero contribution.
+    ///
+    /// Coefficient at index `i` in the ℓ-variate maps to index `i * 2^(n-ℓ)`
+    /// in the n-variate, with all other coefficients set to zero.
+    pub fn embed_into_variables(&self, n: usize) -> Self {
+        let ell = self.num_variables;
+        assert!(n >= ell);
+
+        let factor = 1 << (n - ell);
+        let new_size = 1 << n;
+        let mut coeffs = vec![F::ZERO; new_size];
+
+        for (i, &c) in self.coeffs.iter().enumerate() {
+            coeffs[i * factor] = c;
+        }
+
+        Self::new(coeffs)
+    }
+
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field
