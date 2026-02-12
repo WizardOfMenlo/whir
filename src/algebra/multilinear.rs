@@ -1,13 +1,5 @@
-mod coeffs;
-mod evals;
-pub mod fold;
-pub mod hypercube;
-pub mod lagrange_iterator;
-mod multilinear;
-
 use ark_ff::Field;
 
-pub use self::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint};
 use crate::algebra::embedding::{Embedding, Identity};
 
 /// Evaluate the multi-linear extension of `evals` in `point`.
@@ -87,26 +79,34 @@ pub fn mixed_multilinear_extend<M: Embedding>(
     }
 }
 
-/// Evaluates the mle of a polynomial from evaluations in a geometric progression.
+/// Accumulates a scaled evaluation of the equality function.
 ///
-/// The evaluation list is of the form [1,a,a^2,a^3,...,a^{n-1},0,...,0]
-/// a is the base of the geometric progression.
-/// n is the number of non-zero terms in the progression.
-pub fn geometric_till<F: Field>(mut a: F, n: usize, x: &[F]) -> F {
-    let k = x.len();
-    assert!(n > 0 && n < (1 << k));
-    let mut borrow_0 = F::one();
-    let mut borrow_1 = F::zero();
-    for (i, &x) in x.iter().rev().enumerate() {
-        let bn = ((n - 1) >> i) & 1;
-        let b0 = F::one() - x;
-        let b1 = a * x;
-        (borrow_0, borrow_1) = if bn == 0 {
-            (b0 * borrow_0, (b0 + b1) * borrow_1 + b1 * borrow_0)
-        } else {
-            ((b0 + b1) * borrow_0 + b0 * borrow_1, b1 * borrow_1)
-        };
-        a = a.square();
+/// Given an evaluation point `point`, the function computes
+/// the equality polynomial recursively using the formula:
+///
+/// ```text
+/// eq(X) = ∏ (1 - X_i + 2X_i z_i)
+/// ```
+///
+/// where `z_i` are the  points.
+pub fn eval_eq<F: Field>(accumulator: &mut [F], point: &[F], scalar: F) {
+    assert_eq!(accumulator.len(), 1 << point.len());
+    if let [x0, xs @ ..] = point {
+        let (acc_0, acc_1) = accumulator.split_at_mut(1 << xs.len());
+        let s1 = scalar * x0; // Contribution when `X_i = 1`
+        let s0 = scalar - s1; // Contribution when `X_i = 0`
+
+        #[cfg(feature = "parallel")]
+        {
+            use crate::utils::workload_size;
+            if acc_0.len() > workload_size::<F>() {
+                rayon::join(|| eval_eq(acc_0, xs, s0), || eval_eq(acc_1, xs, s1));
+                return;
+            }
+        }
+        eval_eq(acc_0, xs, s0);
+        eval_eq(acc_1, xs, s1);
+    } else {
+        accumulator[0] += scalar;
     }
-    borrow_0
 }

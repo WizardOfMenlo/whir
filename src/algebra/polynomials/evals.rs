@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use crate::{algebra::polynomials::eval_multilinear, utils::zip_strict};
+use crate::{algebra::polynomials::multilinear_extend, utils::zip_strict};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -78,7 +78,7 @@ where
         if let Some(point) = point.to_hypercube() {
             return self.evals[point.0];
         }
-        eval_multilinear(&self.evals, &point.0)
+        multilinear_extend(&self.evals, &point.0)
     }
 
     /// Returns an immutable reference to the evaluations vector.
@@ -305,7 +305,7 @@ mod tests {
         let result = evals.eval_extension(&point);
 
         // Expected result using `eval_multilinear`
-        let expected = eval_multilinear(evals.evals(), &point.0);
+        let expected = multilinear_extend(evals.evals(), &point.0);
 
         assert_eq!(result, expected);
     }
@@ -320,7 +320,7 @@ mod tests {
         let x = Field64::from(1) / Field64::from(2);
         let expected = a + (b - a) * x;
 
-        assert_eq!(eval_multilinear(&evals, &[x]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x]), expected);
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
             + x * (Field64::ONE - y) * b
             + x * y * d;
 
-        assert_eq!(eval_multilinear(&evals, &[x, y]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y]), expected);
     }
 
     #[test]
@@ -378,7 +378,7 @@ mod tests {
             + x * y * (Field64::ONE - z) * g
             + x * y * z * h;
 
-        assert_eq!(eval_multilinear(&evals, &[x, y, z]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y, z]), expected);
     }
 
     #[test]
@@ -428,6 +428,6 @@ mod tests {
                 + x * y * z * w * p;
 
         // Validate against the function output
-        assert_eq!(eval_multilinear(&evals, &[x, y, z, w]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y, z, w]), expected);
     }
 }

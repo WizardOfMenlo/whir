@@ -95,63 +95,6 @@ pub fn expand_randomness<F: Field>(base: F, len: usize) -> Vec<F> {
     res
 }
 
-// FIXME(Gotti): comment does not match what function does (due to mismatch between folding_factor and folding_factor_exp)
-// Also, k should be defined: k = evals.len() / 2^{folding_factor}, I guess.
-
-/// Computes the equality polynomial evaluations efficiently.
-///
-/// Given an evaluation point vector `eval`, the function computes
-/// the equality polynomial recursively using the formula:
-///
-/// ```text
-/// eq(X) = ∏ (1 - X_i + 2X_i z_i)
-/// ```
-///
-/// where `z_i` are the constraint points.
-///
-/// - If compiled with the `parallel` feature flag, it will execute in parallel
-///   when `eval.len()` exceeds the **parallel threshold**.
-/// - Otherwise, it executes sequentially.
-pub(crate) fn eval_eq<F: Field>(eval: &[F], out: &mut [F], scalar: F) {
-    // Ensure that the output buffer size is correct:
-    // It should be of size `2^n`, where `n` is the number of variables.
-    debug_assert_eq!(out.len(), 1 << eval.len());
-
-    // Base case: When there are no more variables to process, update the final value.
-    if let Some((&x, tail)) = eval.split_first() {
-        // Divide the output buffer into two halves: one for `X_i = 0` and one for `X_i = 1`
-        let (low, high) = out.split_at_mut(out.len() / 2);
-
-        // Compute weight updates for the two branches:
-        // - `s0` corresponds to the case when `X_i = 0`
-        // - `s1` corresponds to the case when `X_i = 1`
-        //
-        // Mathematically, this follows the recurrence:
-        // ```text
-        // eq_{X1, ..., Xn}(X) = (1 - X_1) * eq_{X2, ..., Xn}(X) + X_1 * eq_{X2, ..., Xn}(X)
-        // ```
-        let s1 = scalar * x; // Contribution when `X_i = 1`
-        let s0 = scalar - s1; // Contribution when `X_i = 0`
-
-        // Use parallel execution if the number of remaining variables is large.
-        #[cfg(feature = "parallel")]
-        {
-            const PARALLEL_THRESHOLD: usize = 10;
-            if tail.len() > PARALLEL_THRESHOLD {
-                rayon::join(|| eval_eq(tail, low, s0), || eval_eq(tail, high, s1));
-                return;
-            }
-        }
-
-        // Default sequential execution
-        eval_eq(tail, low, s0);
-        eval_eq(tail, high, s1);
-    } else {
-        // Leaf case: Add the accumulated scalar to the final output slot.
-        out[0] += scalar;
-    }
-}
-
 #[cfg(test)]
 #[track_caller]
 pub fn test_serde<T: Debug + PartialEq + Serialize + for<'a> Deserialize<'a>>(value: &T) {
@@ -178,6 +121,7 @@ mod tests {
 
     use super::*;
     use crate::algebra::{
+        eval_eq,
         fields::Field64,
         polynomials::{lagrange_iterator::LagrangePolynomialIterator, MultilinearPoint},
     };
@@ -294,7 +238,7 @@ mod tests {
     fn test_eval_eq() {
         let eval = vec![Field64::from(3), Field64::from(5)];
         let mut out = vec![Field64::ZERO; 4];
-        eval_eq(&eval, &mut out, Field64::ONE);
+        eval_eq(&mut out, &eval, Field64::ONE);
 
         let point = MultilinearPoint(eval);
         let mut expected = vec![Field64::ZERO; 4];

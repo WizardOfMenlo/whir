@@ -2,7 +2,9 @@ use ark_ff::Field;
 
 use super::Weights;
 use crate::{
-    algebra::{polynomials::MultilinearPoint, weights::UnivariateEvaluation, Embedding},
+    algebra::{
+        eval_eq, polynomials::mixed_multilinear_extend, weights::UnivariateEvaluation, Embedding,
+    },
     utils::zip_strict,
 };
 
@@ -28,18 +30,18 @@ impl<M: Embedding> Weights<M> for MultilinearEvaluation<M> {
         1 << self.point.len()
     }
 
-    fn mle_evaluate(&self, point: MultilinearPoint<M::Target>) -> <M as Embedding>::Target {
-        zip_strict(&self.point, &point.0).fold(M::Target::ONE, |acc, (&l, &r)| {
+    fn mle_evaluate(&self, point: &[M::Target]) -> <M as Embedding>::Target {
+        zip_strict(&self.point, point).fold(M::Target::ONE, |acc, (&l, &r)| {
             acc * (l * r + (M::Target::ONE - l) * (M::Target::ONE - r))
         })
     }
 
     fn inner_product(&self, vector: &[M::Source]) -> M::Target {
-        todo!()
+        mixed_multilinear_extend(&self.embedding, vector, &self.point)
     }
 
     fn accumulate(&self, accumulator: &mut [M::Target], scalar: M::Target) {
-        todo!()
+        eval_eq(accumulator, &self.point, scalar)
     }
 }
 

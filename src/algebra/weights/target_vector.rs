@@ -4,7 +4,7 @@ use super::Weights;
 use crate::algebra::{
     embedding::{Embedding, Identity},
     mixed_dot, mixed_scalar_mul_add,
-    polynomials::{eval_multilinear, MultilinearPoint},
+    polynomials::multilinear_extend,
 };
 
 /// Weights as an explicit vector in the target field.
@@ -27,8 +27,8 @@ impl<M: Embedding> Weights<M> for TargetVector<M> {
         self.vector.len()
     }
 
-    fn mle_evaluate(&self, point: MultilinearPoint<M::Target>) -> M::Target {
-        eval_multilinear(&self.vector, &point.0)
+    fn mle_evaluate(&self, point: &[M::Target]) -> M::Target {
+        multilinear_extend(&self.vector, &point)
     }
 
     fn inner_product(&self, vector: &[M::Source]) -> M::Target {
