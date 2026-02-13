@@ -1,6 +1,6 @@
 mod covector;
 // mod matrix_program;
-// mod multilinear_evaluation;
+mod multilinear_evaluation;
 // mod source_vector;
 mod subfield_univariate_evaluation;
 mod univariate_evaluation;

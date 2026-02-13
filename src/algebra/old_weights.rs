@@ -24,7 +24,7 @@ use crate::algebra::{
 /// - Linear mode: Represents a set of per-corner weights stored as `EvaluationsList<F>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "F: Field + CanonicalSerialize + CanonicalDeserialize")]
-// TODO: #[deprecated]
+#[deprecated]
 pub enum OldWeights<F> {
     /// Represents a weight function that enforces equality constraints at a specific point.
     Evaluation { point: MultilinearPoint<F> },

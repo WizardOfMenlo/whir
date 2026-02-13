@@ -1,6 +1,6 @@
 use ark_ff::Field;
 
-use super::Weights;
+use super::{Evaluate, Weights};
 use crate::{
     algebra::{eval_eq, mixed_multilinear_extend, weights::UnivariateEvaluation, Embedding},
     utils::zip_strict,
@@ -10,16 +10,11 @@ use crate::{
 ///
 /// Specifically the weights are $w_i = prod_j x_j^bit(i, j)$ where $bit(i, j)$
 /// represents wheter the binary decomposition of $i$ has a $2^j$ term.
-pub struct MultilinearEvaluation<M: Embedding> {
-    pub embedding: M,
-    pub point: Vec<M::Target>,
+pub struct MultilinearEvaluation<F: Field> {
+    pub point: Vec<F>,
 }
 
-impl<M: Embedding> Weights<M> for MultilinearEvaluation<M> {
-    fn embedding(&self) -> &M {
-        &self.embedding
-    }
-
+impl<F: Field> Weights<F> for MultilinearEvaluation<F> {
     fn deferred(&self) -> bool {
         false
     }
@@ -28,34 +23,30 @@ impl<M: Embedding> Weights<M> for MultilinearEvaluation<M> {
         1 << self.point.len()
     }
 
-    fn mle_evaluate(&self, point: &[M::Target]) -> <M as Embedding>::Target {
-        zip_strict(&self.point, point).fold(M::Target::ONE, |acc, (&l, &r)| {
-            acc * (l * r + (M::Target::ONE - l) * (M::Target::ONE - r))
+    fn mle_evaluate(&self, point: &[F]) -> F {
+        zip_strict(&self.point, point).fold(F::ONE, |acc, (&l, &r)| {
+            acc * (l * r + (F::ONE - l) * (F::ONE - r))
         })
     }
 
-    fn inner_product(&self, vector: &[M::Source]) -> M::Target {
-        mixed_multilinear_extend(&self.embedding, vector, &self.point)
-    }
-
-    fn accumulate(&self, accumulator: &mut [M::Target], scalar: M::Target) {
+    fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         eval_eq(accumulator, &self.point, scalar)
     }
 }
 
-impl<M: Embedding> MultilinearEvaluation<M> {
-    pub fn new(point: Vec<M::Target>) -> Self
-    where
-        M: Default,
-    {
-        Self {
-            embedding: M::default(),
-            point,
-        }
+impl<M: Embedding> Evaluate<M> for MultilinearEvaluation<M::Target> {
+    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        mixed_multilinear_extend(embedding, vector, &self.point)
+    }
+}
+
+impl<F: Field> MultilinearEvaluation<F> {
+    pub fn new(point: Vec<F>) -> Self {
+        Self { point }
     }
 
     /// A [`UnivariateEvaluation`] can be represented as a [`MultilinearEvaluation`].
-    pub fn from_univariate(univariate: &UnivariateEvaluation<M>) -> Self {
+    pub fn from_univariate(univariate: &UnivariateEvaluation<F>) -> Self {
         assert!(univariate.size().is_power_of_two());
         let num_variables = univariate.size().trailing_zeros() as usize;
         let mut point = Vec::with_capacity(num_variables);
@@ -64,9 +55,7 @@ impl<M: Embedding> MultilinearEvaluation<M> {
             point.push(pow2k);
             pow2k.square_in_place(); // Compute x^(2^k) at each step
         }
-        Self {
-            embedding: univariate.embedding.clone(),
-            point,
-        }
+        point.reverse(); // Match big-endian convention used by multilinear evaluations.
+        Self { point }
     }
 }

@@ -19,8 +19,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_2},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-            weights::{Evaluate, Weights},
-            OldWeights,
+            weights::{Evaluate, UnivariateEvaluation, Weights},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -91,7 +90,7 @@ mod tests {
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            weights.push(OldWeights::evaluation(point.clone()));
+            weights.push(MultilinearEvaluation::new(point.0.clone()));
             evaluations.push(polynomial.mixed_evaluate(&Basefield::new(), point));
         }
 
