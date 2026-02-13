@@ -1,6 +1,10 @@
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use rayon::{join, prelude::*};
+
+use crate::algebra::embedding::Embedding;
+#[cfg(feature = "parallel")]
+use crate::utils::workload_size;
 
 /// Computes the constant and quadratic coefficient of the sumcheck polynomial.
 pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
@@ -57,4 +61,31 @@ pub fn fold<F: Field>(weight: F, values: &[F]) -> Vec<F> {
         .collect();
 
     result
+}
+
+/// Evaluate a coefficient vector at a multilinear point in the target field.
+pub fn mixed_eval<M: Embedding>(
+    embedding: &M,
+    coeff: &[M::Source],
+    eval: &[M::Target],
+    scalar: M::Target,
+) -> M::Target {
+    debug_assert_eq!(coeff.len(), 1 << eval.len());
+
+    if let Some((&x, tail)) = eval.split_first() {
+        let (low, high) = coeff.split_at(coeff.len() / 2);
+
+        #[cfg(feature = "parallel")]
+        if low.len() > workload_size::<M::Source>() {
+            let (a, b) = join(
+                || mixed_eval(embedding, low, tail, scalar),
+                || mixed_eval(embedding, high, tail, scalar * x),
+            );
+            return a + b;
+        }
+
+        mixed_eval(embedding, low, tail, scalar) + mixed_eval(embedding, high, tail, scalar * x)
+    } else {
+        embedding.mixed_mul(scalar, coeff[0])
+    }
 }

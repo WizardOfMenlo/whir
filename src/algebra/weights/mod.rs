@@ -9,7 +9,8 @@ use ark_ff::Field;
 use static_assertions::assert_obj_safe;
 
 pub use self::{
-    covector::Covector, subfield_univariate_evaluation::SubfieldUnivariateEvaluation,
+    covector::Covector, multilinear_evaluation::MultilinearEvaluation,
+    subfield_univariate_evaluation::SubfieldUnivariateEvaluation,
     univariate_evaluation::UnivariateEvaluation,
 };
 use crate::algebra::{

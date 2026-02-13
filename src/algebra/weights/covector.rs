@@ -1,7 +1,9 @@
 use ark_ff::Field;
 
-use super::Weights;
-use crate::algebra::{multilinear_extend, scalar_mul_add};
+use super::{Evaluate, Weights};
+use crate::algebra::{
+    mixed_dot, multilinear_extend, ntt::wavelet_transform, scalar_mul_add, Embedding,
+};
 
 /// Weights as an explicit (co)vector in the field.
 pub struct Covector<F: Field> {
@@ -43,5 +45,14 @@ impl<F: Field> Covector<F> {
             deferred: true,
             vector,
         }
+    }
+}
+
+impl<M: Embedding> Evaluate<M> for Covector<M::Target> {
+    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        assert_eq!(self.vector.len(), vector.len());
+        let mut evals = vector.to_vec();
+        wavelet_transform(&mut evals);
+        mixed_dot(embedding, &self.vector, &evals)
     }
 }

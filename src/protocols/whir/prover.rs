@@ -11,7 +11,7 @@ use crate::{
         mixed_scalar_mul_add,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product,
-        weights::{Evaluate, UnivariateEvaluation, Weights},
+        weights::{Evaluate, UnivariateEvaluation},
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},

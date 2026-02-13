@@ -13,7 +13,7 @@ use whir::{
         embedding::Basefield,
         fields,
         polynomials::{CoefficientList, MultilinearPoint},
-        Weights,
+        weights::{Evaluate, MultilinearEvaluation, Weights},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -179,9 +179,12 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-        let weights: Vec<Weights<F>> = Vec::new();
+        let weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         let evaluations: Vec<F> = Vec::new();
-        let weight_refs = weights.iter().collect::<Vec<_>>();
+        let weight_refs = weights
+            .iter()
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .collect::<Vec<_>>();
 
         params.prove(
             &mut prover_state,
@@ -198,6 +201,10 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
+        let weight_refs = weights
+            .iter()
+            .map(|w| w.as_ref() as &dyn Weights<F>)
+            .collect::<Vec<_>>();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
@@ -249,13 +256,13 @@ where
             .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
             .collect();
 
-        let mut weights = Vec::new();
+        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         let mut evaluations = Vec::new();
 
         for point in &points {
             let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
-            let weight = Weights::evaluation(point.clone());
-            weights.push(weight);
+            let weight = MultilinearEvaluation::new(point.0.clone());
+            weights.push(Box::new(weight));
             evaluations.push(eval);
         }
 
@@ -264,7 +271,10 @@ where
 
         let witness = params.commit(&mut prover_state, &[&polynomial]);
 
-        let weight_refs = weights.iter().collect::<Vec<_>>();
+        let weight_refs = weights
+            .iter()
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &[&polynomial],
@@ -280,6 +290,10 @@ where
 
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
+        let weight_refs = weights
+            .iter()
+            .map(|w| w.as_ref() as &dyn Weights<F>)
+            .collect::<Vec<_>>();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 

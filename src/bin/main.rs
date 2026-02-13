@@ -8,8 +8,7 @@ use whir::{
         embedding::Basefield,
         fields,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        weights::{Evaluate, Weights},
-        OldWeights,
+        weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -260,8 +259,9 @@ where
     let witness = params.commit(&mut prover_state, &[&polynomial]);
     let whir_commit_time = whir_commit_time.elapsed();
 
-    let mut weights = Vec::new();
+    let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
     let mut evaluations = Vec::new();
+    let embedding = Basefield::new();
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
@@ -269,9 +269,9 @@ where
         .collect();
 
     for point in &points {
-        let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
-        let weight = OldWeights::evaluation(point.clone());
-        weights.push(weight);
+        let eval = polynomial.mixed_evaluate(&embedding, point);
+        let weight = MultilinearEvaluation::new(point.0.clone());
+        weights.push(Box::new(weight));
         evaluations.push(eval);
     }
 
@@ -280,17 +280,15 @@ where
         let input = CoefficientList::new((0..num_coeffs).map(F::from).collect());
         let input: EvaluationsList<F> = input.clone().into();
 
-        let linear_claim_weight = OldWeights::linear(input.clone());
-        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
-
-        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
-        weights.push(linear_claim_weight);
+        let linear_claim_weight = Covector::new(input.evals().to_vec());
+        let sum = linear_claim_weight.evaluate(&embedding, polynomial.coeffs());
+        weights.push(Box::new(linear_claim_weight));
         evaluations.push(sum);
     }
 
     let weight_dyn_refs = weights
         .iter()
-        .map(|w| w as &dyn Evaluate<Basefield<F>>)
+        .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
         .collect::<Vec<_>>();
     let whir_prove_time = Instant::now();
     params.prove(
@@ -314,7 +312,7 @@ where
 
     let weight_dyn_refs = weights
         .iter()
-        .map(|w| w as &dyn Weights<F>)
+        .map(|w| w.as_ref() as &dyn Weights<F>)
         .collect::<Vec<_>>();
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();

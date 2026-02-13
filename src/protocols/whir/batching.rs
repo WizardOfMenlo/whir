@@ -34,9 +34,8 @@ mod batching_tests {
         algebra::{
             embedding::Basefield,
             fields::Field64,
-            polynomials::{CoefficientList, MultilinearPoint},
-            weights::{Evaluate, Weights},
-            OldWeights,
+            polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -126,22 +125,34 @@ mod batching_tests {
         let poly_refs = poly_list.iter().collect::<Vec<_>>();
         let batched_witness = params.commit(&mut prover_state, &poly_refs);
 
+        let embedding = Basefield::new();
+
         // Create a weights matrix and evaluations for each polynomial
-        let weights = points
+        let linear_weight_list: EvaluationsList<F> = weight_poly.into();
+        let weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = points
             .iter()
-            .map(|point| OldWeights::evaluation(point.clone()))
-            .chain(iter::once(OldWeights::linear(weight_poly.into())))
-            .collect::<Vec<_>>();
-        let weights_refs = weights.iter().collect::<Vec<_>>();
+            .map(|point| {
+                Box::new(MultilinearEvaluation::new(point.0.clone()))
+                    as Box<dyn Evaluate<Basefield<F>>>
+            })
+            .chain(iter::once(
+                Box::new(Covector::new(linear_weight_list.evals().to_vec()))
+                    as Box<dyn Evaluate<Basefield<F>>>,
+            ))
+            .collect();
         let values = weights
             .iter()
-            .flat_map(|weights| poly_list.iter().map(|poly| weights.evaluate(poly)))
+            .flat_map(|weights| {
+                poly_list
+                    .iter()
+                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+            })
             .collect::<Vec<_>>();
 
         // Generate a STARK proof for the given statement and witness
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
@@ -160,7 +171,7 @@ mod batching_tests {
         // Verify that the generated proof satisfies the statement
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn Weights<F>)
             .collect::<Vec<_>>();
         assert!(params
             .verify(

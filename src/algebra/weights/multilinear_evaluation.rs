@@ -2,7 +2,7 @@ use ark_ff::Field;
 
 use super::{Evaluate, Weights};
 use crate::{
-    algebra::{eval_eq, mixed_multilinear_extend, weights::UnivariateEvaluation, Embedding},
+    algebra::{eval_eq, sumcheck::mixed_eval, weights::UnivariateEvaluation, Embedding},
     utils::zip_strict,
 };
 
@@ -36,7 +36,7 @@ impl<F: Field> Weights<F> for MultilinearEvaluation<F> {
 
 impl<M: Embedding> Evaluate<M> for MultilinearEvaluation<M::Target> {
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
-        mixed_multilinear_extend(embedding, vector, &self.point)
+        mixed_eval(embedding, vector, &self.point, M::Target::ONE)
     }
 }
 

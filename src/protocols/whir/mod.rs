@@ -19,7 +19,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_2},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-            weights::{Evaluate, UnivariateEvaluation, Weights},
+            weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -85,13 +85,15 @@ mod tests {
             .collect();
 
         // Initialize a statement with no constraints yet
-        let mut weights = Vec::new();
+        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         let mut evaluations = Vec::new();
+
+        let embedding = Basefield::new();
 
         // For each random point, evaluate the polynomial and create a constraint
         for point in &points {
-            weights.push(MultilinearEvaluation::new(point.0.clone()));
-            evaluations.push(polynomial.mixed_evaluate(&Basefield::new(), point));
+            weights.push(Box::new(MultilinearEvaluation::new(point.0.clone())));
+            evaluations.push(polynomial.mixed_evaluate(&embedding, point));
         }
 
         // Construct a coefficient vector for linear sumcheck constraint
@@ -102,13 +104,14 @@ mod tests {
         );
 
         // Define weights for linear combination
-        let linear_claim_weight = OldWeights::linear(input.into());
+        let linear_weight_list: EvaluationsList<F> = input.into();
+        let linear_claim_weight = Box::new(Covector::new(linear_weight_list.evals().to_vec()));
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
+        let poly = EvaluationsList::from(polynomial.lift(&embedding));
 
         // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
+        let sum = linear_claim_weight.evaluate(&embedding, poly.to_coeffs().coeffs());
 
         // Add linear constraint to the statement
         weights.push(linear_claim_weight);
@@ -136,13 +139,14 @@ mod tests {
 
         // Create geometric weight function
         let geometric_claim_weight =
-            OldWeights::geometric(geometric_base, geometric_n, geometric_weight_list);
+            Box::new(Covector::new(geometric_weight_list.evals().to_vec()));
 
         // Convert polynomial to base field evaluation form for weighted_sum
         let poly_base = EvaluationsList::from(polynomial.clone());
 
         // Compute the weighted sum for geometric constraint
-        let geometric_sum = geometric_claim_weight.evaluate(&poly_base.to_coeffs());
+        let geometric_sum =
+            geometric_claim_weight.evaluate(&embedding, poly_base.to_coeffs().coeffs());
 
         // Add geometric constraint to statement
         weights.push(geometric_claim_weight);
@@ -162,7 +166,7 @@ mod tests {
         // Generate a STARK proof for the given statement and witness
         let weight_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
@@ -182,7 +186,7 @@ mod tests {
         // Verify that the generated proof satisfies the statement
         let weight_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn Weights<F>)
             .collect::<Vec<_>>();
         params
             .verify(
@@ -322,12 +326,14 @@ mod tests {
             .collect();
         let poly_refs = polynomials.iter().collect::<Vec<_>>();
 
+        let embedding = Basefield::new();
+
         // Create weights to constraint the polynomials with.
         // Add random point constraints
-        let mut weights = Vec::new();
+        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
             let point = MultilinearPoint::rand(&mut rng, num_variables);
-            weights.push(OldWeights::evaluation(point));
+            weights.push(Box::new(MultilinearEvaluation::new(point.0)));
         }
         // Add linear constraint
         let input = CoefficientList::new(
@@ -335,13 +341,17 @@ mod tests {
                 .map(<EF as Field>::BasePrimeField::from)
                 .collect(),
         );
-        weights.push(OldWeights::linear(input.into()));
-        let weights_refs = weights.iter().collect::<Vec<_>>();
+        let linear_weight_list: EvaluationsList<F> = input.into();
+        weights.push(Box::new(Covector::new(linear_weight_list.evals().to_vec())));
 
         // Evaluate all polys on all weights to get constraints
         let evaluations = weights
             .iter()
-            .flat_map(|weights| poly_refs.iter().map(|poly| weights.evaluate(poly)))
+            .flat_map(|weights| {
+                poly_refs
+                    .iter()
+                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+            })
             .collect::<Vec<_>>();
 
         // Set up domain separator for batch proving
@@ -362,7 +372,7 @@ mod tests {
         // Batch prove all polynomials together
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
@@ -387,7 +397,7 @@ mod tests {
         // Verify the batched proof
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn Weights<F>)
             .collect::<Vec<_>>();
         params
             .verify(
@@ -490,17 +500,23 @@ mod tests {
         let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
         let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
 
-        // Create test weights
-        let weights = [
-            OldWeights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
-            OldWeights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
-        ];
-        let weights_ref = weights.iter().collect::<Vec<_>>();
+        let embedding = Basefield::new();
 
+        // Create test weights
+        let weights: [Box<dyn Evaluate<Basefield<F>>>; 2] = [
+            Box::new(MultilinearEvaluation::new(
+                MultilinearPoint::rand(&mut rng, num_variables).0,
+            )),
+            Box::new(MultilinearEvaluation::new(
+                MultilinearPoint::rand(&mut rng, num_variables).0,
+            )),
+        ];
         // Create valid evaluations for (poly1, polywrong)
         let evaluations = weights
             .iter()
-            .flat_map(|weights| [&poly1, &poly_wrong].map(|poly| weights.evaluate(poly)))
+            .flat_map(|weights| {
+                [&poly1, &poly_wrong].map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+            })
             .collect::<Vec<_>>();
 
         // Commit to the correct polynomials
@@ -516,7 +532,7 @@ mod tests {
         // The prover will compute cross-terms using poly_wrong, not poly2
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
             .collect::<Vec<_>>();
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
@@ -538,7 +554,7 @@ mod tests {
 
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn Weights<F>)
             .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,
@@ -607,11 +623,12 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Create weights for constraints
-        let mut weights = Vec::new();
+        let embedding = Basefield::new();
+
+        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
-            weights.push(OldWeights::evaluation(MultilinearPoint::rand(
-                &mut rng,
-                num_variables,
+            weights.push(Box::new(MultilinearEvaluation::new(
+                MultilinearPoint::rand(&mut rng, num_variables).0,
             )));
         }
         // Add a linear constraint
@@ -620,12 +637,17 @@ mod tests {
                 .map(<EF as Field>::BasePrimeField::from)
                 .collect(),
         );
-        weights.push(OldWeights::linear(input.into()));
+        let linear_weight_list: EvaluationsList<F> = input.into();
+        weights.push(Box::new(Covector::new(linear_weight_list.evals().to_vec())));
 
         // Create evaluations for each constraint and polynomial
         let evaluations = weights
             .iter()
-            .flat_map(|weights| polynomial_refs.iter().map(|poly| weights.evaluate(poly)))
+            .flat_map(|weights| {
+                polynomial_refs
+                    .iter()
+                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+            })
             .collect::<Vec<_>>();
 
         // Set up domain separator
@@ -646,7 +668,7 @@ mod tests {
         // Batch prove all witnesses together
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
@@ -669,7 +691,7 @@ mod tests {
 
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn Weights<F>)
             .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,

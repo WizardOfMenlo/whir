@@ -4,9 +4,10 @@ use super::{config::Config, Commitment};
 use crate::{
     algebra::{
         dot,
+        embedding::Identity,
         polynomials::{CoefficientList, MultilinearPoint},
         tensor_product,
-        weights::Weights,
+        weights::{Evaluate, Weights},
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -209,13 +210,13 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.old_weights(final_coefficients.num_variables()),
+            in_domain.weights(final_coefficients.num_variables()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
                 &round_folding_randomness.last().unwrap().coeff_weights(true),
             )),
         ) {
-            verify!(weights.evaluate(&final_coefficients) == evals);
+            verify!(weights.evaluate(&Identity::<F>::new(), final_coefficients.coeffs()) == evals);
         }
 
         // Final sumcheck

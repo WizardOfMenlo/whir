@@ -3,7 +3,6 @@ pub mod embedding;
 pub mod fields;
 mod multilinear;
 pub mod ntt;
-mod old_weights;
 pub mod polynomials;
 pub mod sumcheck;
 pub mod weights;
@@ -14,7 +13,6 @@ pub use multilinear::{eval_eq, mixed_multilinear_extend, multilinear_extend};
 use rayon::prelude::*;
 
 use self::embedding::Embedding;
-pub use self::old_weights::OldWeights;
 #[cfg(feature = "parallel")]
 use crate::utils::workload_size;
 

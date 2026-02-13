@@ -10,9 +10,8 @@ use {
 use super::evals::EvaluationsList;
 use crate::algebra::{
     embedding::Embedding, lift, ntt::wavelet_transform, polynomials::MultilinearPoint,
+    sumcheck::mixed_eval,
 };
-#[cfg(feature = "parallel")]
-use crate::utils::workload_size;
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -205,33 +204,6 @@ where
         let mut evals = value.coeffs;
         wavelet_transform(&mut evals);
         Self::new(evals)
-    }
-}
-
-fn mixed_eval<M: Embedding>(
-    embedding: &M,
-    coeff: &[M::Source],
-    eval: &[M::Target],
-    scalar: M::Target,
-) -> M::Target {
-    debug_assert_eq!(coeff.len(), 1 << eval.len());
-
-    if let Some((&x, tail)) = eval.split_first() {
-        let (low, high) = coeff.split_at(coeff.len() / 2);
-
-        #[cfg(feature = "parallel")]
-        if low.len() > workload_size::<M::Source>() {
-            let (a, b) = rayon::join(
-                || mixed_eval(embedding, low, tail, scalar),
-                || mixed_eval(embedding, high, tail, scalar * x),
-            );
-            return a + b;
-        }
-
-        // Default non-parallel execution
-        mixed_eval(embedding, low, tail, scalar) + mixed_eval(embedding, high, tail, scalar * x)
-    } else {
-        embedding.mixed_mul(scalar, coeff[0])
     }
 }
 
