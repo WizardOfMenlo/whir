@@ -25,7 +25,7 @@ use tracing::instrument;
 /// - \( o^{-1} \) is the inverse coset offset
 /// - \( g^{-i} \) is the inverse generator raised to index \( i \)
 /// - The function is recursively applied until the vector reduces to size 1.
-#[cfg_attr(feature = "tracing", instrument(skip_all))]
+#[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all))]
 pub fn compute_fold<F: Field>(
     answers: &[F],
     folding_randomness: &[F],

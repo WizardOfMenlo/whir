@@ -106,7 +106,7 @@ impl Config {
                 .expect("Hash Engine not found");
             #[cfg(feature = "tracing")]
             let _span = span!(
-                Level::INFO,
+                Level::DEBUG,
                 "layer",
                 engine = engine.name().as_ref(),
                 count = current.len()
@@ -141,7 +141,7 @@ impl Config {
     /// Opens the commitment at the provided indices.
     ///
     /// Indices can be in any order and may contain duplicates.
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state, witness, indices), fields( num_indices = indices.len())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_indices = indices.len())))]
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
