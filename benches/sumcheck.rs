@@ -21,8 +21,8 @@ fn sumcheck_first_round(bencher: Bencher, size: u64) {
         })
         .bench_values(|(mut a, mut b, folding_randomness)| {
             let poly = compute_sumcheck_polynomial(&a, &b);
-            let a = fold(&mut a, folding_randomness);
-            let b = fold(&mut b, folding_randomness);
+            fold(&mut a, folding_randomness);
+            fold(&mut b, folding_randomness);
             black_box((poly, a, b))
         });
 }

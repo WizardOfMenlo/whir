@@ -85,7 +85,7 @@ mod tests {
         let num_coeffs = 1 << num_variables;
 
         // Folding factor determines how many variables are folded (3)
-        let folding_factor = 3;
+        let folding_factor = 3_usize;
 
         // Create a simple multilinear polynomial with deterministic coefficients.
         let poly = CoefficientList::new((0..num_coeffs).map(F::from).collect());
