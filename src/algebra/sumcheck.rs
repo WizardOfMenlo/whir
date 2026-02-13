@@ -8,9 +8,6 @@ use crate::utils::workload_size;
 
 /// Computes the constant and quadratic coefficient of the sumcheck polynomial.
 pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
-    assert_eq!(a.len(), b.len());
-    let half = a.len() / 2;
-
     fn recurse<F: Field>(a0: &[F], a1: &[F], b0: &[F], b1: &[F]) -> (F, F) {
         debug_assert_eq!(a0.len(), a1.len());
         debug_assert_eq!(b0.len(), b1.len());
@@ -39,6 +36,9 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
         (acc0, acc2)
     }
 
+    assert_eq!(a.len(), b.len());
+    let half = a.len() / 2;
+
     let (a0, a1) = a.split_at(half);
     let (b0, b1) = b.split_at(half);
     recurse(a0, a1, b0, b1)
@@ -46,9 +46,6 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
 
 /// Folds evaluations by linear interpolation at the given weight, in place.
 pub fn fold<F: Field>(values: &mut Vec<F>, weight: F) {
-    assert!(values.len().is_multiple_of(2));
-    let half = values.len() / 2;
-
     fn recurse<F: Field>(low: &mut [F], high: &[F], weight: F) {
         #[cfg(feature = "parallel")]
         if low.len() > workload_size::<F>() {
@@ -63,6 +60,9 @@ pub fn fold<F: Field>(values: &mut Vec<F>, weight: F) {
             *low += (*high - *low) * weight;
         }
     }
+
+    assert!(values.len().is_multiple_of(2));
+    let half = values.len() / 2;
 
     let (low, high) = values.split_at_mut(half);
     recurse(low, high, weight);

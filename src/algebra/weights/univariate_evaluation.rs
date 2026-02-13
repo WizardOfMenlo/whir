@@ -1,10 +1,9 @@
 use ark_ff::Field;
 
 use super::Weights;
-use crate::{
-    algebra::{embedding::Embedding, mixed_univariate_evaluate, weights::Evaluate},
-    utils::zip_strict,
-};
+use crate::algebra::{embedding::Embedding, mixed_univariate_evaluate, weights::Evaluate};
+#[cfg(feature = "parallel")]
+use crate::utils::zip_strict;
 
 /// Weights vector to represent univariate polynomial evaluation.
 ///
@@ -18,7 +17,7 @@ pub struct UnivariateEvaluation<F: Field> {
 }
 
 impl<F: Field> UnivariateEvaluation<F> {
-    pub fn new(point: F, size: usize) -> Self {
+    pub const fn new(point: F, size: usize) -> Self {
         Self { size, point }
     }
 

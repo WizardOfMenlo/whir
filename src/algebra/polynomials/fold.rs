@@ -32,13 +32,11 @@ pub fn compute_fold<F: Field>(
     mut coset_offset_inv: F,
     mut coset_gen_inv: F,
     two_inv: F,
-    folding_factor: usize,
 ) -> F {
     let mut answers = answers.to_vec();
 
     // Perform the folding process `folding_factor` times.
-    for rec in 0..folding_factor {
-        let r = folding_randomness[rec];
+    for &r in folding_randomness {
         let offset = answers.len() / 2;
         let mut coset_index_inv = F::ONE;
 
@@ -183,7 +181,6 @@ mod tests {
                 offset_inv,
                 coset_gen_inv,
                 F::from(2).inverse().unwrap(),
-                folding_factor,
             );
 
             // Compute folded value using the processed evaluation and standard evaluation
@@ -224,7 +221,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            1,
         );
         assert_eq!(result, expected);
     }
@@ -297,7 +293,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            2,
         );
 
         // Assert that the result matches the manually computed expected value
@@ -328,7 +323,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            1,
         );
 
         assert_eq!(result, expected);
@@ -352,7 +346,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            3,
         );
 
         assert_eq!(result, expected);

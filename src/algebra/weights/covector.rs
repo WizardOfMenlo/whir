@@ -21,7 +21,7 @@ impl<F: Field> Weights<F> for Covector<F> {
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
-        multilinear_extend(&self.vector, &point)
+        multilinear_extend(&self.vector, point)
     }
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
@@ -30,7 +30,7 @@ impl<F: Field> Weights<F> for Covector<F> {
 }
 
 impl<F: Field> Covector<F> {
-    pub fn new(weights: Vec<F>) -> Self {
+    pub const fn new(weights: Vec<F>) -> Self {
         Self {
             deferred: true,
             vector: weights,

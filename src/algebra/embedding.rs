@@ -111,11 +111,11 @@ where
     }
 
     pub fn inner(&self) -> &A {
-        &*self.inner
+        &self.inner
     }
 
     pub fn outer(&self) -> &B {
-        &*self.outer
+        &self.outer
     }
 }
 

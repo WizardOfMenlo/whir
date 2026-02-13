@@ -30,7 +30,7 @@ impl<F: Field> Weights<F> for MultilinearEvaluation<F> {
     }
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
-        eval_eq(accumulator, &self.point, scalar)
+        eval_eq(accumulator, &self.point, scalar);
     }
 }
 
@@ -41,7 +41,7 @@ impl<M: Embedding> Evaluate<M> for MultilinearEvaluation<M::Target> {
 }
 
 impl<F: Field> MultilinearEvaluation<F> {
-    pub fn new(point: Vec<F>) -> Self {
+    pub const fn new(point: Vec<F>) -> Self {
         Self { point }
     }
 

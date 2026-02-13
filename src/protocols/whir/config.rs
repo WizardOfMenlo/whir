@@ -708,7 +708,7 @@ impl<F: FftField> RoundConfig<F> {
         self.sumcheck.initial_size
     }
 
-    pub fn final_size(&self) -> usize {
+    pub const fn final_size(&self) -> usize {
         self.sumcheck.final_size()
     }
 
