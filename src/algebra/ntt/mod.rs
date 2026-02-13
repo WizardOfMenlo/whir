@@ -101,7 +101,7 @@ pub fn interleaved_rs_encode<F: 'static>(
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
-#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
+#[cfg_attr(feature = "tracing", instrument(level = "debug", skip(coeffs), fields(size = coeffs.len())))]
 fn ark_ntt<F: FftField>(coeffs: &[F], expansion: usize, interleaving_depth: usize) -> Vec<F> {
     assert!(expansion > 0);
     assert!(coeffs.len().is_multiple_of(interleaving_depth));

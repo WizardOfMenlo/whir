@@ -125,7 +125,7 @@ impl<F: Field> Weights<F> {
     ///
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all, fields(num_variables = self.num_variables())))]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         use crate::utils::eval_eq;
 
