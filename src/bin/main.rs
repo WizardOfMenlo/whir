@@ -8,7 +8,8 @@ use whir::{
         embedding::Basefield,
         fields,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        Weights,
+        weights::{Evaluate, Weights},
+        OldWeights,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -269,7 +270,7 @@ where
 
     for point in &points {
         let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
-        let weight = Weights::evaluation(point.clone());
+        let weight = OldWeights::evaluation(point.clone());
         weights.push(weight);
         evaluations.push(eval);
     }
@@ -279,21 +280,24 @@ where
         let input = CoefficientList::new((0..num_coeffs).map(F::from).collect());
         let input: EvaluationsList<F> = input.clone().into();
 
-        let linear_claim_weight = Weights::linear(input.clone());
+        let linear_claim_weight = OldWeights::linear(input.clone());
         let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
 
         let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
         weights.push(linear_claim_weight);
         evaluations.push(sum);
     }
-    let weight_refs = weights.iter().collect::<Vec<_>>();
 
+    let weight_dyn_refs = weights
+        .iter()
+        .map(|w| w as &dyn Evaluate<Basefield<F>>)
+        .collect::<Vec<_>>();
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
         &[&polynomial],
         &[&witness],
-        &weight_refs,
+        &weight_dyn_refs,
         &evaluations,
     );
     let whir_prove_time = whir_prove_time.elapsed();
@@ -308,6 +312,10 @@ where
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
 
+    let weight_dyn_refs = weights
+        .iter()
+        .map(|w| w as &dyn Weights<F>)
+        .collect::<Vec<_>>();
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
@@ -318,7 +326,7 @@ where
             .verify(
                 &mut verifier_state,
                 &[&commitment],
-                &weight_refs,
+                &weight_dyn_refs,
                 &evaluations,
             )
             .unwrap();

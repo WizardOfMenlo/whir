@@ -2,10 +2,7 @@ use ark_ff::Field;
 
 use super::Weights;
 use crate::{
-    algebra::{
-        embedding::Embedding, eval_eq, mixed_univariate_evaluate, polynomials::MultilinearPoint,
-        weights::Evaluate,
-    },
+    algebra::{embedding::Embedding, mixed_univariate_evaluate, weights::Evaluate},
     utils::zip_strict,
 };
 
@@ -69,18 +66,19 @@ impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
 
     /// See also [`accumulate_many`] for a more efficient batched version.
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
-        let point = MultilinearPoint::expand_from_univariate(
-            self.point,
-            self.size.trailing_zeros() as usize,
-        );
+        assert_eq!(accumulator.len(), self.size);
+        assert!(self.size.is_power_of_two());
+        let num_variables = self.size.trailing_zeros() as usize;
+        let mut point = Vec::with_capacity(num_variables);
+        let mut pow2k = self.point;
+        point.push(pow2k);
+        for _ in 1..num_variables {
+            pow2k.square_in_place();
+            point.push(pow2k);
+        }
+        point.reverse();
 
-        eval_eq(accumulator, &point.0, scalar);
-
-        // let mut power = scalar;
-        // for accumulator in accumulator {
-        //     *accumulator += power;
-        //     power *= self.point;
-        // }
+        eval_eq(accumulator, point.as_slice(), scalar);
     }
 }
 
@@ -88,5 +86,27 @@ impl<M: Embedding> Evaluate<M> for UnivariateEvaluation<M::Target> {
     // Evaluate a vector in coefficient form.
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         mixed_univariate_evaluate(embedding, vector, self.point)
+    }
+}
+
+fn eval_eq<F: Field>(accumulator: &mut [F], point: &[F], scalar: F) {
+    assert_eq!(accumulator.len(), 1 << point.len());
+    if let [x0, xs @ ..] = point {
+        let (acc_0, acc_1) = accumulator.split_at_mut(1 << xs.len());
+        let s1 = scalar * x0; // Contribution when `X_i = 1`
+        let s0 = scalar - s1; // Contribution when `X_i = 0`
+
+        #[cfg(feature = "parallel")]
+        {
+            use crate::utils::workload_size;
+            if acc_0.len() > workload_size::<F>() {
+                rayon::join(|| eval_eq(acc_0, xs, s0), || eval_eq(acc_1, xs, s1));
+                return;
+            }
+        }
+        eval_eq(acc_0, xs, s0);
+        eval_eq(acc_1, xs, s1);
+    } else {
+        accumulator[0] += scalar;
     }
 }

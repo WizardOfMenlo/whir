@@ -37,7 +37,7 @@ pub trait Weights<F: Field> {
     /// See e.g. <https://eprint.iacr.org/2024/1103.pdf>
     fn mle_evaluate(&self, point: &[F]) -> F;
 
-    /// Accumulate the scaled weights.
+    /// Accumulate the scaled weights *in evaluation basis*.
     ///
     /// This can also be used to retrieve the concrete weight vector (see [`TargetVector::from`]).
     ///
