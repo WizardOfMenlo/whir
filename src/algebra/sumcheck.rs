@@ -9,15 +9,18 @@ use crate::utils::workload_size;
 /// Computes the constant and quadratic coefficient of the sumcheck polynomial.
 pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
     assert_eq!(a.len(), b.len());
+    let half = a.len() / 2;
 
     #[cfg(not(feature = "parallel"))]
     let result = a
-        .chunks_exact(2)
-        .zip(b.chunks_exact(2))
-        .map(|(p_at, eq_at)| {
+        .iter()
+        .take(half)
+        .zip(a.iter().skip(half))
+        .zip(b.iter().take(half).zip(b.iter().skip(half)))
+        .map(|((p0, p1), (eq0, eq1))| {
             // Convert evaluations to coefficients for the linear fns p and eq.
-            let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
-            let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
+            let (p_0, p_1) = (*p0, *p1 - *p0);
+            let (eq_0, eq_1) = (*eq0, *eq1 - *eq0);
 
             // Now we need to add the contribution of p(x) * eq(x)
             (p_0 * eq_0, p_1 * eq_1)
@@ -26,12 +29,14 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
 
     #[cfg(feature = "parallel")]
     let result = a
-        .par_chunks_exact(2)
-        .zip(b.par_chunks_exact(2))
-        .map(|(p_at, eq_at)| {
+        .par_iter()
+        .take(half)
+        .zip(a.par_iter().skip(half))
+        .zip(b.par_iter().take(half).zip(b.par_iter().skip(half)))
+        .map(|((p0, p1), (eq0, eq1))| {
             // Convert evaluations to coefficients for the linear fns p and eq.
-            let (p_0, p_1) = (p_at[0], p_at[1] - p_at[0]);
-            let (eq_0, eq_1) = (eq_at[0], eq_at[1] - eq_at[0]);
+            let (p_0, p_1) = (*p0, *p1 - *p0);
+            let (eq_0, eq_1) = (*eq0, *eq1 - *eq0);
 
             // Now we need to add the contribution of p(x) * eq(x)
             (p_0 * eq_0, p_1 * eq_1)
@@ -47,17 +52,22 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
 /// Folds evaluations by linear interpolation at the given weight.
 pub fn fold<F: Field>(weight: F, values: &[F]) -> Vec<F> {
     assert!(values.len().is_multiple_of(2));
+    let half = values.len() / 2;
 
     #[cfg(not(feature = "parallel"))]
     let result = values
-        .chunks_exact(2)
-        .map(|w| (w[1] - w[0]) * weight + w[0])
+        .iter()
+        .take(half)
+        .zip(values.iter().skip(half))
+        .map(|(a, b)| (*b - *a) * weight + *a)
         .collect();
 
     #[cfg(feature = "parallel")]
     let result = values
-        .par_chunks_exact(2)
-        .map(|w| (w[1] - w[0]) * weight + w[0])
+        .par_iter()
+        .take(half)
+        .zip(values.par_iter().skip(half))
+        .map(|(a, b)| (*b - *a) * weight + *a)
         .collect();
 
     result

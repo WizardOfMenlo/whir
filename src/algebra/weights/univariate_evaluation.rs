@@ -54,7 +54,7 @@ impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
     fn mle_evaluate(&self, point: &[F]) -> F {
         point
             .iter()
-            .rev() // TODO: Change variable order convention
+            .rev()
             .fold((F::ONE, self.point), |(acc, pow2k), &r| {
                 (
                     acc * (pow2k * r + (F::ONE - pow2k) * (F::ONE - r)),

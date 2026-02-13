@@ -213,7 +213,17 @@ impl<F: FftField> Config<F> {
             in_domain.weights(final_coefficients.num_variables()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
-                &round_folding_randomness.last().unwrap().coeff_weights(true),
+                &MultilinearPoint(
+                    round_folding_randomness
+                        .last()
+                        .unwrap()
+                        .0
+                        .iter()
+                        .rev()
+                        .copied()
+                        .collect(),
+                )
+                .coeff_weights(false),
             )),
         ) {
             verify!(weights.evaluate(&Identity::<F>::new(), final_coefficients.coeffs()) == evals);
@@ -227,7 +237,6 @@ impl<F: FftField> Config<F> {
         let folding_randomness = MultilinearPoint(
             round_folding_randomness
                 .into_iter()
-                .rev()
                 .flat_map(|poly| poly.0.into_iter())
                 .collect(),
         );
@@ -239,9 +248,9 @@ impl<F: FftField> Config<F> {
                 || self.initial_num_variables(),
                 |p| self.round_configs[p].initial_num_variables(),
             );
+            let start = folding_randomness.0.len().saturating_sub(num_variables);
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                weight_eval +=
-                    rlc_coeff * weights.mle_evaluate(&folding_randomness.0[..num_variables]);
+                weight_eval += rlc_coeff * weights.mle_evaluate(&folding_randomness.0[start..]);
             }
         }
 

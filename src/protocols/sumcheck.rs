@@ -104,7 +104,6 @@ impl<F: Field> Config<F> {
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
-        res.reverse();
         MultilinearPoint(res)
     }
 
@@ -140,7 +139,6 @@ impl<F: Field> Config<F> {
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
-        res.reverse();
         Ok(MultilinearPoint(res))
     }
 }

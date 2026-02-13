@@ -68,6 +68,7 @@ impl<M: Embedding> Weights<M::Target> for SubfieldUnivariateEvaluation<M> {
     fn mle_evaluate(&self, point: &[M::Target]) -> M::Target {
         point
             .iter()
+            .rev()
             .fold((M::Target::ONE, self.point), |(acc, pow2k), &r| {
                 (
                     acc * (self.embedding.mixed_mul(r, pow2k)

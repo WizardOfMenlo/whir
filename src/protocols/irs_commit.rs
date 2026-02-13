@@ -614,6 +614,7 @@ mod tests {
             in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
         );
         if config.num_polynomials > 0 {
+            let base = config.polynomial_size / config.interleaving_depth;
             for (point, evals) in zip_strict(
                 &in_domain_evals.points,
                 in_domain_evals
@@ -622,13 +623,9 @@ mod tests {
             ) {
                 let expected_iter = polynomials.iter().flat_map(|poly| {
                     (0..config.interleaving_depth).map(|j| {
-                        // coefficients at positions j, j+d, j+2d, ...
-                        let coeffs: Vec<_> = poly
-                            .iter()
-                            .copied()
-                            .skip(j)
-                            .step_by(config.interleaving_depth)
-                            .collect();
+                        // coefficients in the contiguous block for this interleaving index
+                        let start = j * base;
+                        let coeffs: Vec<_> = poly.iter().copied().skip(start).take(base).collect();
                         univariate_evaluate(&coeffs, *point)
                     })
                 });

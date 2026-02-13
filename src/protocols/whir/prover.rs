@@ -195,7 +195,7 @@ impl<F: FftField> Config<F> {
             evaluations = EvaluationsList::from(coefficients.clone());
         }
         let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
-        randomness_vec.extend(folding_randomness.0.iter().rev().copied());
+        randomness_vec.extend(folding_randomness.0.iter().copied());
         debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
@@ -255,7 +255,7 @@ impl<F: FftField> Config<F> {
                 &mut the_sum,
             );
             coefficients = coefficients.fold(&folding_randomness);
-            randomness_vec.extend(folding_randomness.0.iter().rev());
+            randomness_vec.extend(folding_randomness.0.iter().copied());
             debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
@@ -291,10 +291,10 @@ impl<F: FftField> Config<F> {
             &mut constraints,
             &mut the_sum,
         );
-        randomness_vec.extend(final_folding_randomness.0.iter().rev());
+        randomness_vec.extend(final_folding_randomness.0.iter().copied());
 
         // Hints for deferred constraints
-        let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
+        let constraint_eval = MultilinearPoint(randomness_vec);
         let deferred = weights
             .iter()
             .filter(|w| w.deferred())
