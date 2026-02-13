@@ -2,9 +2,7 @@ use ark_ff::Field;
 
 use super::Weights;
 use crate::{
-    algebra::{
-        eval_eq, polynomials::mixed_multilinear_extend, weights::UnivariateEvaluation, Embedding,
-    },
+    algebra::{eval_eq, mixed_multilinear_extend, weights::UnivariateEvaluation, Embedding},
     utils::zip_strict,
 };
 

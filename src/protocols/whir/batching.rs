@@ -34,6 +34,7 @@ mod batching_tests {
         algebra::{
             fields::Field64,
             polynomials::{CoefficientList, MultilinearPoint},
+            weights::Weights,
             OldWeights,
         },
         hash,
@@ -131,6 +132,10 @@ mod batching_tests {
             .chain(iter::once(OldWeights::linear(weight_poly.into())))
             .collect::<Vec<_>>();
         let weights_refs = weights.iter().collect::<Vec<_>>();
+        let weights_dyn_refs = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
         let values = weights
             .iter()
             .flat_map(|weights| poly_list.iter().map(|poly| weights.evaluate(poly)))
@@ -153,7 +158,12 @@ mod batching_tests {
 
         // Verify that the generated proof satisfies the statement
         assert!(params
-            .verify(&mut verifier_state, &[&commitment], &weights_refs, &values)
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weights_dyn_refs,
+                &values
+            )
             .is_ok());
     }
 

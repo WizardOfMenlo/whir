@@ -93,7 +93,7 @@ impl<F: FftField> Config<F> {
                 for (weights, oods_row) in zip_strict(
                     witness
                         .out_of_domain()
-                        .weights(self.initial_num_variables()),
+                        .old_weights(self.initial_num_variables()),
                     witness.out_of_domain().rows(),
                 ) {
                     for (j, polynomial) in polynomials.iter().enumerate() {
@@ -208,8 +208,8 @@ impl<F: FftField> Config<F> {
             // Collect constraints for this round and RLC them in
             let stir_challenges = witness
                 .out_of_domain()
-                .weights(round_config.initial_num_variables())
-                .chain(in_domain.weights(round_config.initial_num_variables()))
+                .old_weights(round_config.initial_num_variables())
+                .chain(in_domain.old_weights(round_config.initial_num_variables()))
                 .collect::<Vec<_>>();
             let stir_evaluations = witness
                 .out_of_domain()

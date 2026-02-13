@@ -700,6 +700,18 @@ impl<F: FftField> Display for Config<F> {
 }
 
 impl<F: FftField> RoundConfig<F> {
+    pub fn initial_size(&self) -> usize {
+        assert_eq!(
+            self.irs_committer.polynomial_size,
+            self.sumcheck.initial_size
+        );
+        self.sumcheck.initial_size
+    }
+
+    pub fn final_size(&self) -> usize {
+        self.sumcheck.final_size()
+    }
+
     pub fn log_inv_rate(&self) -> usize {
         assert!(self.irs_committer.expansion.is_power_of_two());
         self.irs_committer.expansion.ilog2() as usize

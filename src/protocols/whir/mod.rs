@@ -19,6 +19,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_2},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            weights::Weights,
             OldWeights,
         },
         hash,
@@ -161,6 +162,10 @@ mod tests {
 
         // Generate a STARK proof for the given statement and witness
         let weight_refs = weights.iter().collect::<Vec<_>>();
+        let weight_dyn_refs = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &[&polynomial],
@@ -181,7 +186,7 @@ mod tests {
             .verify(
                 &mut verifier_state,
                 &[&commitment],
-                &weight_refs,
+                &weight_dyn_refs,
                 &evaluations,
             )
             .unwrap();
@@ -330,6 +335,10 @@ mod tests {
         );
         weights.push(OldWeights::linear(input.into()));
         let weights_refs = weights.iter().collect::<Vec<_>>();
+        let weights_dyn_refs = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
 
         // Evaluate all polys on all weights to get constraints
         let evaluations = weights
@@ -378,7 +387,7 @@ mod tests {
             .verify(
                 &mut verifier_state,
                 &commitment_refs,
-                &weights_refs,
+                &weights_dyn_refs,
                 &evaluations,
             )
             .unwrap();
@@ -481,6 +490,10 @@ mod tests {
             OldWeights::evaluation(MultilinearPoint::rand(&mut rng, num_variables)),
         ];
         let weights_ref = weights.iter().collect::<Vec<_>>();
+        let weights_dyn_ref = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
 
         // Create valid evaluations for (poly1, polywrong)
         let evaluations = weights
@@ -520,7 +533,7 @@ mod tests {
         let verify_result = params.verify(
             &mut verifier_state,
             &[&commitments[0], &commitments[1]],
-            &weights_ref,
+            &weights_dyn_ref,
             &evaluations,
         );
         assert!(
@@ -599,6 +612,10 @@ mod tests {
         );
         weights.push(OldWeights::linear(input.into()));
         let weights_ref = weights.iter().collect::<Vec<_>>();
+        let weights_dyn_ref = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
 
         // Create evaluations for each constraint and polynomial
         let evaluations = weights
@@ -644,7 +661,7 @@ mod tests {
         let verify_result = params.verify(
             &mut verifier_state,
             &commitment_refs,
-            &weights_ref,
+            &weights_dyn_ref,
             &evaluations,
         );
         assert!(

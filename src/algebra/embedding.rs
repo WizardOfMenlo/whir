@@ -18,7 +18,7 @@ use crate::type_info::{Type, TypeInfo, Typed};
 /// - `e.mixed_mul(a, b) == a * e.map(b)`
 ///
 pub trait Embedding:
-    Clone + Debug + TypeInfo + Serialize + for<'de> Deserialize<'de> + Send + Sync
+    Clone + PartialEq + Eq + Debug + TypeInfo + Serialize + for<'de> Deserialize<'de> + Send + Sync
 {
     type Source: Field;
     type Target: Field;
@@ -108,6 +108,14 @@ where
             inner: Typed::new(inner),
             outer: Typed::new(outer),
         }
+    }
+
+    pub fn inner(&self) -> &A {
+        &*self.inner
+    }
+
+    pub fn outer(&self) -> &B {
+        &*self.outer
     }
 }
 

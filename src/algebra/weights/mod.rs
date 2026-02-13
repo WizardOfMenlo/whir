@@ -1,13 +1,15 @@
-mod matrix_program;
-mod multilinear_evaluation;
-mod source_vector;
-mod target_vector;
+mod covector;
+// mod matrix_program;
+// mod multilinear_evaluation;
+// mod source_vector;
+mod subfield_univariate_evaluation;
 mod univariate_evaluation;
 
+use ark_ff::Field;
 use static_assertions::assert_obj_safe;
 
 pub use self::{
-    source_vector::SourceVector, target_vector::TargetVector,
+    covector::Covector, subfield_univariate_evaluation::SubfieldUnivariateEvaluation,
     univariate_evaluation::UnivariateEvaluation,
 };
 use crate::algebra::{
@@ -15,11 +17,10 @@ use crate::algebra::{
     fields,
 };
 
-/// Represents a weight vector used in WHIR openings.
-pub trait Weights<M: Embedding> {
-    /// The embedding this weights vector uses.
-    fn embedding(&self) -> &M;
-
+/// Represents a linear functional used in WHIR openings.
+///
+/// It is some linear functional $𝔽^n → 𝔽$.
+pub trait Weights<F: Field> {
     /// Indicate if the verifier should evaluate this directly or defer it to the caller.
     fn deferred(&self) -> bool;
 
@@ -34,19 +35,20 @@ pub trait Weights<M: Embedding> {
     /// recovers the weights vector.
     ///
     /// See e.g. <https://eprint.iacr.org/2024/1103.pdf>
-    fn mle_evaluate(&self, point: &[M::Target]) -> M::Target;
-
-    /// Compute the inner product with a vector.
-    ///
-    /// Only used by the prover. (and then only for testing?)
-    fn inner_product(&self, vector: &[M::Source]) -> M::Target;
+    fn mle_evaluate(&self, point: &[F]) -> F;
 
     /// Accumulate the scaled weights.
     ///
     /// This can also be used to retrieve the concrete weight vector (see [`TargetVector::from`]).
     ///
     /// Only used by the prover.
-    fn accumulate(&self, accumulator: &mut [M::Target], scalar: M::Target);
+    fn accumulate(&self, accumulator: &mut [F], scalar: F);
 }
 
-assert_obj_safe!(Weights<embedding::Identity<fields::Field64>>);
+pub trait Evaluate<M: Embedding>: Weights<M::Target> {
+    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target;
+}
+
+assert_obj_safe!(Weights<fields::Field64>);
+
+assert_obj_safe!(Evaluate<embedding::Basefield<fields::Field64_2>>);

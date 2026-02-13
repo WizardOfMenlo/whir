@@ -1,7 +1,5 @@
 use super::Weights;
-use crate::algebra::{
-    dot, embedding::Embedding, mixed_scalar_mul_add, polynomials::mixed_multilinear_extend,
-};
+use crate::algebra::{dot, embedding::Embedding, mixed_multilinear_extend, mixed_scalar_mul_add};
 
 /// Weights as an explicit vector in the source field.
 pub struct SourceVector<M: Embedding> {

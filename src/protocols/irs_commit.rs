@@ -41,6 +41,7 @@ use crate::{
         embedding::{Basefield, Embedding, Identity},
         lift, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
+        weights::{SubfieldUnivariateEvaluation, UnivariateEvaluation},
         OldWeights,
     },
     hash::Hash,
@@ -439,7 +440,26 @@ impl<F: Field> Evaluations<F> {
         }
     }
 
-    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = OldWeights<F>> {
+    pub fn weights(&self, size: usize) -> impl '_ + Iterator<Item = UnivariateEvaluation<F>> {
+        self.points
+            .iter()
+            .map(move |&point| UnivariateEvaluation::new(point, size))
+    }
+
+    pub fn subfield_weights<'a, M>(
+        &'a self,
+        embedding: &'a M,
+        size: usize,
+    ) -> impl 'a + Iterator<Item = SubfieldUnivariateEvaluation<M>>
+    where
+        M: Embedding<Source = F>,
+    {
+        self.points
+            .iter()
+            .map(move |&point| SubfieldUnivariateEvaluation::new(embedding, point, size))
+    }
+
+    pub fn old_weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = OldWeights<F>> {
         self.points
             .iter()
             .map(move |point| OldWeights::univariate(*point, num_variables))

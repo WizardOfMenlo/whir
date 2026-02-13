@@ -12,6 +12,7 @@ use crate::algebra::{
     embedding::{Embedding, Identity},
     eval_eq, mixed_dot,
     polynomials::{geometric_till, CoefficientList, EvaluationsList, MultilinearPoint},
+    weights::Weights,
 };
 
 /// Represents a weight function used in polynomial evaluations.
@@ -39,6 +40,28 @@ pub enum OldWeights<F> {
         /// Represents the geometric progression as a set of evaluations.
         weight: EvaluationsList<F>, // TODO: Why do we need this?
     },
+}
+
+// (Very inefficient) Compatibility layer.
+impl<F: Field> Weights<F> for OldWeights<F> {
+    fn deferred(&self) -> bool {
+        OldWeights::deferred(self)
+    }
+
+    fn size(&self) -> usize {
+        1 << self.num_variables()
+    }
+
+    fn mle_evaluate(&self, point: &[F]) -> F {
+        let point = MultilinearPoint(point.to_vec());
+        self.compute(&point)
+    }
+
+    fn accumulate(&self, accumulator: &mut [F], scalar: F) {
+        let mut evals = EvaluationsList::new(accumulator.to_vec());
+        OldWeights::accumulate(self, &mut evals, scalar);
+        accumulator.copy_from_slice(evals.evals());
+    }
 }
 
 impl<F: Field> OldWeights<F> {

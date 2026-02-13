@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use crate::{algebra::polynomials::multilinear_extend, utils::zip_strict};
+use crate::{algebra::multilinear_extend, utils::zip_strict};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
