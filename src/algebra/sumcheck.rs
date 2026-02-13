@@ -1,6 +1,6 @@
 use ark_ff::Field;
 #[cfg(feature = "parallel")]
-use rayon::{join, prelude::*};
+use rayon::join;
 
 use crate::algebra::embedding::Embedding;
 #[cfg(feature = "parallel")]
@@ -11,66 +11,62 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
     assert_eq!(a.len(), b.len());
     let half = a.len() / 2;
 
-    #[cfg(not(feature = "parallel"))]
-    let result = a
-        .iter()
-        .take(half)
-        .zip(a.iter().skip(half))
-        .zip(b.iter().take(half).zip(b.iter().skip(half)))
-        .map(|((p0, p1), (eq0, eq1))| {
-            // Convert evaluations to coefficients for the linear fns p and eq.
-            let (p_0, p_1) = (*p0, *p1 - *p0);
-            let (eq_0, eq_1) = (*eq0, *eq1 - *eq0);
+    fn recurse<F: Field>(a0: &[F], a1: &[F], b0: &[F], b1: &[F]) -> (F, F) {
+        debug_assert_eq!(a0.len(), a1.len());
+        debug_assert_eq!(b0.len(), b1.len());
+        debug_assert_eq!(a0.len(), b0.len());
 
-            // Now we need to add the contribution of p(x) * eq(x)
-            (p_0 * eq_0, p_1 * eq_1)
-        })
-        .fold((F::ZERO, F::ZERO), |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2));
+        #[cfg(feature = "parallel")]
+        if a0.len() * 4 > workload_size::<F>() {
+            let mid = a0.len() / 2;
+            let (a0l, a0r) = a0.split_at(mid);
+            let (a1l, a1r) = a1.split_at(mid);
+            let (b0l, b0r) = b0.split_at(mid);
+            let (b1l, b1r) = b1.split_at(mid);
+            let (left, right) = join(
+                || recurse(a0l, a1l, b0l, b1l),
+                || recurse(a0r, a1r, b0r, b1r),
+            );
+            return (left.0 + right.0, left.1 + right.1);
+        }
 
-    #[cfg(feature = "parallel")]
-    let result = a
-        .par_iter()
-        .take(half)
-        .zip(a.par_iter().skip(half))
-        .zip(b.par_iter().take(half).zip(b.par_iter().skip(half)))
-        .map(|((p0, p1), (eq0, eq1))| {
-            // Convert evaluations to coefficients for the linear fns p and eq.
-            let (p_0, p_1) = (*p0, *p1 - *p0);
-            let (eq_0, eq_1) = (*eq0, *eq1 - *eq0);
+        let mut acc0 = F::ZERO;
+        let mut acc2 = F::ZERO;
+        for ((&p0, &p1), (&eq0, &eq1)) in a0.iter().zip(a1).zip(b0.iter().zip(b1)) {
+            acc0 += p0 * eq0;
+            acc2 += (p1 - p0) * (eq1 - eq0);
+        }
+        (acc0, acc2)
+    }
 
-            // Now we need to add the contribution of p(x) * eq(x)
-            (p_0 * eq_0, p_1 * eq_1)
-        })
-        .reduce(
-            || (F::ZERO, F::ZERO),
-            |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
-        );
-
-    result
+    let (a0, a1) = a.split_at(half);
+    let (b0, b1) = b.split_at(half);
+    recurse(a0, a1, b0, b1)
 }
 
-/// Folds evaluations by linear interpolation at the given weight.
-pub fn fold<F: Field>(weight: F, values: &[F]) -> Vec<F> {
+/// Folds evaluations by linear interpolation at the given weight, in place.
+pub fn fold<F: Field>(values: &mut Vec<F>, weight: F) {
     assert!(values.len().is_multiple_of(2));
     let half = values.len() / 2;
 
-    #[cfg(not(feature = "parallel"))]
-    let result = values
-        .iter()
-        .take(half)
-        .zip(values.iter().skip(half))
-        .map(|(a, b)| (*b - *a) * weight + *a)
-        .collect();
+    fn recurse<F: Field>(low: &mut [F], high: &[F], weight: F) {
+        #[cfg(feature = "parallel")]
+        if low.len() > workload_size::<F>() {
+            let split = low.len() / 2;
+            let (ll, lr) = low.split_at_mut(split);
+            let (hl, hr) = high.split_at(split);
+            rayon::join(|| recurse(ll, hl, weight), || recurse(lr, hr, weight));
+            return;
+        }
 
-    #[cfg(feature = "parallel")]
-    let result = values
-        .par_iter()
-        .take(half)
-        .zip(values.par_iter().skip(half))
-        .map(|(a, b)| (*b - *a) * weight + *a)
-        .collect();
+        for (low, high) in low.iter_mut().zip(high) {
+            *low += (*high - *low) * weight;
+        }
+    }
 
-    result
+    let (low, high) = values.split_at_mut(half);
+    recurse(low, high, weight);
+    values.truncate(half);
 }
 
 /// Evaluate a coefficient vector at a multilinear point in the target field.

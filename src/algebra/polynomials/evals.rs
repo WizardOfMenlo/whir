@@ -5,7 +5,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use crate::{algebra::multilinear_extend, utils::zip_strict};
+use crate::{
+    algebra::{multilinear_extend, sumcheck::fold},
+    utils::zip_strict,
+};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -106,6 +109,12 @@ where
     /// Returns the number of variables in the multilinear polynomial.
     pub const fn num_variables(&self) -> usize {
         self.num_variables
+    }
+
+    /// Folds evaluations in place by linear interpolation at the given weight.
+    pub fn fold_in_place(&mut self, weight: F) {
+        fold(&mut self.evals, weight);
+        self.num_variables -= 1;
     }
 
     pub fn to_coeffs(&self) -> crate::algebra::polynomials::coeffs::CoefficientList<F> {
