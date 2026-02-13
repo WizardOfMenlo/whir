@@ -5,7 +5,7 @@ use tracing::instrument;
 
 use super::utils::{
     compute_per_polynomial_claims, construct_batched_eq_weights, interleave_helper_poly_refs,
-    HelperEvaluations, IrsDomainParams, ZkWitness,
+    IrsDomainParams, ZkWitness,
 };
 use crate::{
     algebra::{
@@ -251,7 +251,7 @@ impl<F: FftField> Config<F> {
     /// Build the blinding polynomial g(X) = g₀(X) + Σᵢ₌₁^μ βⁱ · X^(2^(i-1)) · ĝᵢ(X)
     ///
     /// Returns the blinding polynomial g as a `CoefficientList<F>`.
-    fn build_blinding_polynomial(
+    pub(crate) fn build_blinding_polynomial(
         &self,
         preprocessing: &super::utils::ZkPreprocessingPolynomials<F>,
         mu: usize,
@@ -275,7 +275,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Transform g → P = ρ·f + g in-place: P(X) = ρ·embed(f(X)) + g(X).
-    fn build_blinded_polynomial_p(
+    pub(crate) fn build_blinded_polynomial_p(
         &self,
         g_poly: CoefficientList<F>,
         polynomial: &CoefficientList<F::BasePrimeField>,
@@ -384,13 +384,8 @@ impl<F: FftField> Config<F> {
 
     /// Prove helper polynomial evaluations for the ZK virtual oracle.
     ///
-    /// Given the IRS opening of f̂, this:
-    /// 1. Computes gamma points (coset elements) for each query
-    /// 2. For each polynomial, batch-evaluates M, ĝ₁, ..., ĝμ at all gamma points
-    /// 3. Sends evaluations to the verifier (gamma-major, polynomial-minor order)
-    /// 4. Runs a helper WHIR proof to bind evaluations to committed polynomials
-    ///
-    /// For N polynomials, the helper WHIR covers N×(μ+1) polynomials in one batch.
+    /// Thin wrapper around [`prove_helper_evaluations`] that derives the IRS
+    /// domain from this config's initial committer.
     fn prove_zk_helper_evaluations<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -407,90 +402,132 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        #[cfg(feature = "alloc-track")]
-        let mut __snap = crate::alloc_snap!();
-
-        let num_polys = witness.preprocessings.len();
-        let mu = witness.preprocessings[0].params.mu;
-        let ell = witness.preprocessings[0].params.ell;
         let domain = IrsDomainParams::<F>::from_config(self);
+        prove_helper_evaluations(
+            prover_state,
+            &domain,
+            in_domain_base,
+            witness,
+            helper_config,
+            rho,
+            self.embedding(),
+        );
+    }
+}
 
-        // Compute gammas: for each query point, produce k coset elements
-        // These are the SAME for all polynomials (derived from IRS domain structure).
-        let gammas = domain.all_gammas(&in_domain_base.points, self.embedding());
+/// Prove helper polynomial evaluations for the ZK virtual oracle.
+///
+/// This is the shared implementation used by both the main ZK prover
+/// (via `Config::prove_zk_helper_evaluations`) and the prefold prover.
+///
+/// Given the IRS opening of f̂, this:
+/// 1. Computes gamma points (coset elements) for each query
+/// 2. For each polynomial, batch-evaluates M, ĝ₁, ..., ĝμ at all gamma points
+/// 3. Sends evaluations to the verifier (gamma-major, polynomial-minor order)
+/// 4. Runs a helper WHIR proof to bind evaluations to committed polynomials
+///
+/// For N polynomials, the helper WHIR covers N×(μ+1) polynomials in one batch.
+pub(crate) fn prove_helper_evaluations<F, H, R, M>(
+    prover_state: &mut ProverState<H, R>,
+    domain: &IrsDomainParams<F>,
+    in_domain_base: &irs_commit::Evaluations<F::BasePrimeField>,
+    witness: &ZkWitness<F>,
+    helper_config: &Config<F>,
+    rho: F,
+    embedding: &M,
+) where
+    F: FftField,
+    H: DuplexSpongeInterface<U = u8>,
+    R: RngCore + CryptoRng,
+    F: Codec<[H::U]>,
+    [u8; 32]: Decoding<[H::U]>,
+    U64: Codec<[H::U]>,
+    u8: Decoding<[H::U]>,
+    Hash: ProverMessage<[H::U]>,
+    M: crate::algebra::embedding::Embedding<Source = F::BasePrimeField, Target = F>,
+{
+    #[cfg(feature = "alloc-track")]
+    let mut __snap = crate::alloc_snap!();
 
-        // For each polynomial, batch-evaluate all helper polynomials at all gamma points
-        let helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = witness
-            .preprocessings
-            .iter()
-            .map(|preprocessing| preprocessing.batch_evaluate_helpers(&gammas, rho))
-            .collect();
+    let num_polys = witness.preprocessings.len();
+    let mu = witness.preprocessings[0].params.mu;
+    let ell = witness.preprocessings[0].params.ell;
 
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::batch_evaluate", __snap);
+    // Compute gammas: for each query point, produce k coset elements
+    // These are the SAME for all polynomials (derived from IRS domain structure).
+    let gammas = domain.all_gammas(&in_domain_base.points, embedding);
 
-        // Send helper evaluations as a single batch message.
-        // Order: for each gamma, for each polynomial: m_eval, then mu g_hat_evals.
-        // This groups all polynomial data per-gamma for natural virtual oracle reconstruction.
-        let evals_per_point = 1 + mu; // m_eval + mu g_hat_evals
-        let total_evals = gammas.len() * num_polys * evals_per_point;
-        let base_field_size = (F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8)) as usize;
-        let elem_bytes = base_field_size * F::extension_degree() as usize;
-        let mut encoded = Vec::with_capacity(total_evals * elem_bytes);
-        for gamma_idx in 0..gammas.len() {
-            for poly_idx in 0..num_polys {
-                let helper_eval = &helper_evals_per_poly[poly_idx][gamma_idx];
-                transcript::encode_field_element_into(&helper_eval.m_eval, &mut encoded);
-                for g_hat_eval in &helper_eval.g_hat_evals {
-                    transcript::encode_field_element_into(g_hat_eval, &mut encoded);
-                }
+    // For each polynomial, batch-evaluate all helper polynomials at all gamma points
+    let helper_evals_per_poly: Vec<Vec<super::utils::HelperEvaluations<F>>> = witness
+        .preprocessings
+        .iter()
+        .map(|preprocessing| preprocessing.batch_evaluate_helpers(&gammas, rho))
+        .collect();
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  helper_evals::batch_evaluate", __snap);
+
+    // Send helper evaluations as a single batch message.
+    // Order: for each gamma, for each polynomial: m_eval, then mu g_hat_evals.
+    // This groups all polynomial data per-gamma for natural virtual oracle reconstruction.
+    let evals_per_point = 1 + mu; // m_eval + mu g_hat_evals
+    let total_evals = gammas.len() * num_polys * evals_per_point;
+    let base_field_size = (F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8)) as usize;
+    let elem_bytes = base_field_size * F::extension_degree() as usize;
+    let mut encoded = Vec::with_capacity(total_evals * elem_bytes);
+    for gamma_idx in 0..gammas.len() {
+        for poly_idx in 0..num_polys {
+            let helper_eval = &helper_evals_per_poly[poly_idx][gamma_idx];
+            transcript::encode_field_element_into(&helper_eval.m_eval, &mut encoded);
+            for g_hat_eval in &helper_eval.g_hat_evals {
+                transcript::encode_field_element_into(g_hat_eval, &mut encoded);
             }
         }
-        prover_state.prover_messages_bytes::<F>(total_evals, &encoded);
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::send_to_verifier", __snap);
-
-        // Sample τ₂ for combining query points
-        let tau2: F = prover_state.verifier_message();
-
-        // Construct batched eq weights (uses gammas which are same for all polynomials)
-        let beq_weights = construct_batched_eq_weights(&helper_evals_per_poly[0], rho, tau2, ell);
-
-        // Compute per-polynomial claims and collect evaluations
-        // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
-        let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + mu));
-        for poly_idx in 0..num_polys {
-            let (m_claim, g_hat_claims) =
-                compute_per_polynomial_claims(&helper_evals_per_poly[poly_idx], tau2);
-            all_evaluations.push(m_claim);
-            all_evaluations.extend_from_slice(&g_hat_claims);
-        }
-
-        // Collect all helper polynomials (base-field):
-        // [M₁, ĝ₁₁, ..., ĝ₁μ, M₂, ĝ₂₁, ..., ĝ₂μ, ...]
-        let all_polynomials =
-            interleave_helper_poly_refs::<F>(&witness.m_polys_base, &witness.g_hats_embedded_bases);
-
-        // Single batch witness (helper_config.batch_size = N×(μ+1))
-        let all_witnesses: Vec<&irs_commit::Witness<F::BasePrimeField, F>> =
-            vec![&witness.helper_witness];
-
-        let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::build_weights_claims", __snap);
-
-        // Run helper WHIR proof with existing batch commitment
-        helper_config.prove(
-            prover_state,
-            &all_polynomials,
-            &all_witnesses,
-            &weight_refs,
-            &all_evaluations,
-        );
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::helper_whir_prove", __snap);
     }
+    prover_state.prover_messages_bytes::<F>(total_evals, &encoded);
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  helper_evals::send_to_verifier", __snap);
+
+    // Sample τ₂ for combining query points
+    let tau2: F = prover_state.verifier_message();
+
+    // Construct batched eq weights (uses gammas which are same for all polynomials)
+    let beq_weights = construct_batched_eq_weights(&helper_evals_per_poly[0], rho, tau2, ell);
+
+    // Compute per-polynomial claims and collect evaluations
+    // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
+    let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + mu));
+    for poly_idx in 0..num_polys {
+        let (m_claim, g_hat_claims) =
+            compute_per_polynomial_claims(&helper_evals_per_poly[poly_idx], tau2);
+        all_evaluations.push(m_claim);
+        all_evaluations.extend_from_slice(&g_hat_claims);
+    }
+
+    // Collect all helper polynomials (base-field):
+    // [M₁, ĝ₁₁, ..., ĝ₁μ, M₂, ĝ₂₁, ..., ĝ₂μ, ...]
+    let all_polynomials =
+        interleave_helper_poly_refs::<F>(&witness.m_polys_base, &witness.g_hats_embedded_bases);
+
+    // Single batch witness (helper_config.batch_size = N×(μ+1))
+    let all_witnesses: Vec<&irs_commit::Witness<F::BasePrimeField, F>> =
+        vec![&witness.helper_witness];
+
+    let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  helper_evals::build_weights_claims", __snap);
+
+    // Run helper WHIR proof with existing batch commitment
+    helper_config.prove(
+        prover_state,
+        &all_polynomials,
+        &all_witnesses,
+        &weight_refs,
+        &all_evaluations,
+    );
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  helper_evals::helper_whir_prove", __snap);
 }

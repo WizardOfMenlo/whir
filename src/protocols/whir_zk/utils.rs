@@ -7,10 +7,12 @@ use ark_std::{
 use crate::{
     algebra::{
         embedding::Embedding,
+        fields::FieldWithSize,
         ntt,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        Weights,
+        project_all_to_base, Weights,
     },
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::{irs_commit, whir::Config},
 };
 
@@ -35,13 +37,20 @@ pub(crate) struct IrsDomainParams<F: FftField> {
 impl<F: FftField> IrsDomainParams<F> {
     /// Compute domain parameters from a WHIR config's initial committer.
     pub fn from_config(config: &Config<F>) -> Self {
-        let k = config.initial_committer.interleaving_depth;
-        let num_rows = config.initial_committer.num_rows();
+        Self::from_irs_committer(&config.initial_committer)
+    }
+
+    /// Compute domain parameters from an arbitrary IRS basefield committer.
+    pub fn from_irs_committer(
+        committer: &crate::protocols::irs_commit::BasefieldConfig<F>,
+    ) -> Self {
+        let k = committer.interleaving_depth;
+        let num_rows = committer.num_rows();
         let full_domain_size = num_rows * k;
 
         let omega_full: F::BasePrimeField =
             ntt::generator(full_domain_size).expect("Full IRS domain should have primitive root");
-        let omega_sub: F::BasePrimeField = config.initial_committer.generator();
+        let omega_sub: F::BasePrimeField = committer.generator();
         let zeta: F::BasePrimeField = omega_full.pow([num_rows as u64]);
 
         let omega_powers = crate::algebra::geometric_sequence(omega_sub, num_rows);
@@ -132,6 +141,29 @@ impl ZkParams {
 
     pub fn helper_batch_size(&self, number_of_polynomials: usize) -> usize {
         number_of_polynomials * (self.mu + 1)
+    }
+
+    /// Build the helper WHIR config for proving helper polynomial evaluations.
+    ///
+    /// This config covers `num_polynomials × (μ+1)` helper polynomials
+    /// (one M and μ embedded ĝ per polynomial) at `ℓ+1` variables.
+    pub fn build_helper_config<F: FftField + FieldWithSize>(
+        &self,
+        num_polynomials: usize,
+        whir_params: &ProtocolParameters,
+    ) -> Config<F> {
+        let helper_mv = MultivariateParameters::new(self.ell + 1);
+        let helper_whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: whir_params.security_level,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(1),
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: whir_params.starting_log_inv_rate,
+            batch_size: self.helper_batch_size(num_polynomials),
+            hash_id: whir_params.hash_id,
+        };
+        Config::new(helper_mv, &helper_whir_params)
     }
 }
 
@@ -379,6 +411,44 @@ pub(crate) fn construct_batched_eq_weights<F: FftField>(
     }
 
     Weights::linear(EvaluationsList::new(weight_evals))
+}
+
+/// Prepare helper polynomials for batch commitment.
+///
+/// For each preprocessing, projects M to base field and embeds each ĝⱼ
+/// from ℓ-variate to (ℓ+1)-variate in base field representation.
+///
+/// Returns `(m_polys_base, g_hats_embedded_bases)`.
+pub(crate) fn prepare_helper_polynomials<F: FftField>(
+    preprocessings: &[&ZkPreprocessingPolynomials<F>],
+) -> (
+    Vec<CoefficientList<F::BasePrimeField>>,
+    Vec<Vec<CoefficientList<F::BasePrimeField>>>,
+) {
+    let mut m_polys_base = Vec::new();
+    let mut g_hats_embedded_bases = Vec::new();
+
+    for preprocessing in preprocessings {
+        let m_base = CoefficientList::new(project_all_to_base(preprocessing.m_poly.coeffs()));
+        let embed_g_hat = |g_hat: &CoefficientList<F>| -> CoefficientList<F::BasePrimeField> {
+            let embedded = g_hat.embed_into_variables(preprocessing.params.ell + 1);
+            CoefficientList::new(project_all_to_base(embedded.coeffs()))
+        };
+
+        #[cfg(feature = "parallel")]
+        let g_hats_base: Vec<CoefficientList<F::BasePrimeField>> = {
+            use rayon::prelude::*;
+            preprocessing.g_hats.par_iter().map(embed_g_hat).collect()
+        };
+        #[cfg(not(feature = "parallel"))]
+        let g_hats_base: Vec<CoefficientList<F::BasePrimeField>> =
+            preprocessing.g_hats.iter().map(embed_g_hat).collect();
+
+        m_polys_base.push(m_base);
+        g_hats_embedded_bases.push(g_hats_base);
+    }
+
+    (m_polys_base, g_hats_embedded_bases)
 }
 
 /// Helper evaluations at a single query point γ

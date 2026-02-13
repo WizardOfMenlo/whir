@@ -5,9 +5,11 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::utils::{interleave_helper_poly_refs, ZkPreprocessingPolynomials, ZkWitness};
+use super::utils::{
+    interleave_helper_poly_refs, prepare_helper_polynomials, ZkPreprocessingPolynomials, ZkWitness,
+};
 use crate::{
-    algebra::{add_base_with_projection, polynomials::CoefficientList, project_all_to_base},
+    algebra::{add_base_with_projection, polynomials::CoefficientList},
     hash::Hash,
     protocols::whir::Config,
     transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState},
@@ -52,31 +54,7 @@ impl<F: FftField> Config<F> {
         crate::alloc_report!("commit_zk::f_hat_commit", __snap);
 
         // 3. Prepare all helper polynomials in base field for batch commitment
-        //    Order: [M, ĝ₁_embedded, ..., ĝμ_embedded]
-        //    For each polynomial, we commit to the M polynomial and the ĝ polynomials
-        let mut g_hats_embedded_bases = Vec::new();
-        let mut m_polys_base = Vec::new();
-        for (_, preprocessing) in zip_strict(polynomials, preprocessings) {
-            // Convert M polynomial to base field
-            let m_base_field_polynomial =
-                CoefficientList::new(project_all_to_base(preprocessing.m_poly.coeffs()));
-
-            // Embed each ĝⱼ from ℓ to (ℓ+1) variables, then convert to base field
-            let embed_g_hat = |g_hat: &CoefficientList<F>| -> CoefficientList<F::BasePrimeField> {
-                let embedded = g_hat.embed_into_variables(preprocessing.params.ell + 1);
-                CoefficientList::new(project_all_to_base(embedded.coeffs()))
-            };
-            #[cfg(feature = "parallel")]
-            let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> = {
-                use rayon::prelude::*;
-                preprocessing.g_hats.par_iter().map(embed_g_hat).collect()
-            };
-            #[cfg(not(feature = "parallel"))]
-            let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> =
-                preprocessing.g_hats.iter().map(embed_g_hat).collect();
-            m_polys_base.push(m_base_field_polynomial);
-            g_hats_embedded_bases.push(g_hats_embedded_base);
-        }
+        let (m_polys_base, g_hats_embedded_bases) = prepare_helper_polynomials(preprocessings);
 
         #[cfg(feature = "alloc-track")]
         crate::alloc_report!("commit_zk::prepare_helper_polys", __snap);

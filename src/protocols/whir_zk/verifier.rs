@@ -1,8 +1,7 @@
 use ark_ff::{FftField, Field};
 
 use super::utils::{
-    compute_per_polynomial_claims, construct_batched_eq_weights, HelperEvaluations,
-    IrsDomainParams, ZkParams,
+    compute_per_polynomial_claims, construct_batched_eq_weights, IrsDomainParams, ZkParams,
 };
 use crate::{
     algebra::{
@@ -394,15 +393,10 @@ impl<F: FftField> Config<F> {
         Ok(())
     }
 
-    /// Verify the ZK initial commitment opening: verify [[f̂]], read + verify helper
-    /// evaluations, and reconstruct virtual oracle constraint values.
+    /// Verify the ZK initial commitment opening.
     ///
-    /// For N committed polynomials, reads N helper evaluation sets per gamma point,
-    /// verifies them via a nested WHIR proof, then reconstructs per-polynomial virtual
-    /// oracle values L_p(γ) and combines them via polynomial RLC.
-    ///
-    /// Returns the virtual oracle folded values for each query point (to use as
-    /// STIR in-domain constraint values).
+    /// Thin wrapper around [`verify_helper_evaluations`] that derives the IRS
+    /// domain from this config's initial committer.
     #[allow(clippy::too_many_arguments)]
     fn verify_zk_helper_evaluations<H>(
         &self,
@@ -425,159 +419,209 @@ impl<F: FftField> Config<F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        use crate::algebra::polynomials::fold::compute_fold;
-
-        #[cfg(feature = "alloc-track")]
-        let mut __snap = crate::alloc_snap!();
-
-        let embedding = self.embedding();
-        let mu = zk_params.mu;
         let domain = IrsDomainParams::<F>::from_config(self);
-        let k = domain.k;
-        let fold_factor = k.trailing_zeros() as usize; // log2(k)
+        verify_helper_evaluations(
+            verifier_state,
+            &domain,
+            in_domain_base,
+            helper_commitment,
+            helper_config,
+            zk_params,
+            rho,
+            beta,
+            folding_randomness,
+            num_polys,
+            polynomial_rlc_coeffs,
+            self.embedding(),
+        )
+    }
+}
 
-        // Precompute inverses for compute_fold (lifted to extension field)
-        let zeta_ext_inv: F = embedding
-            .map(domain.zeta)
-            .inverse()
-            .expect("coset generator invertible");
-        let two_inv = F::from(2u64).inverse().expect("char ≠ 2");
+/// Verify helper polynomial evaluations for the ZK virtual oracle.
+///
+/// This is the shared implementation used by both the main ZK verifier
+/// (via `Config::verify_zk_helper_evaluations`) and the prefold verifier.
+///
+/// For N committed polynomials, reads N helper evaluation sets per gamma point,
+/// verifies them via a nested WHIR proof, then reconstructs per-polynomial virtual
+/// oracle values L_p(γ) and combines them via polynomial RLC.
+///
+/// Returns the virtual oracle folded values for each query point.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_helper_evaluations<F, H, M>(
+    verifier_state: &mut VerifierState<'_, H>,
+    domain: &IrsDomainParams<F>,
+    in_domain_base: &irs_commit::Evaluations<F::BasePrimeField>,
+    helper_commitment: &Commitment<F>,
+    helper_config: &Config<F>,
+    zk_params: &ZkParams,
+    rho: F,
+    beta: F,
+    folding_randomness: &MultilinearPoint<F>,
+    num_polys: usize,
+    polynomial_rlc_coeffs: &[F],
+    embedding: &M,
+) -> VerificationResult<Vec<F>>
+where
+    F: FftField,
+    H: DuplexSpongeInterface,
+    F: Codec<[H::U]>,
+    u8: Decoding<[H::U]>,
+    [u8; 32]: Decoding<[H::U]>,
+    U64: Codec<[H::U]>,
+    Hash: ProverMessage<[H::U]>,
+    M: Embedding<Source = F::BasePrimeField, Target = F>,
+{
+    use super::utils::HelperEvaluations;
+    use crate::algebra::polynomials::fold::compute_fold;
 
-        // Read ALL helper evaluations from transcript in one batch.
-        // Prover sends: for each gamma, for each polynomial p:
-        //   m_eval_p, ĝ₁(pow(γ))_p, ..., ĝμ(pow(γ))_p
-        let q = in_domain_base.points.len();
-        let evals_per_point = 1 + mu; // m_eval + mu g_hat_evals
-        let num_gammas = q * k;
-        let total_evals = num_gammas * num_polys * evals_per_point;
-        let all_evals: Vec<F> = verifier_state.read_prover_messages_bytes(total_evals)?;
+    #[cfg(feature = "alloc-track")]
+    let mut __snap = crate::alloc_snap!();
 
-        // Parse the flat eval vector into per-polynomial HelperEvaluations.
-        let mut helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = (0..num_polys)
-            .map(|_| Vec::with_capacity(num_gammas))
-            .collect();
-        let mut query_indices: Vec<usize> = Vec::with_capacity(q);
-        let mut eval_cursor = 0;
+    let mu = zk_params.mu;
+    let k = domain.k;
+    let fold_factor = k.trailing_zeros() as usize; // log2(k)
 
-        for &alpha_base in &in_domain_base.points {
-            let idx = domain.query_index(alpha_base);
-            query_indices.push(idx);
-            let coset_gammas = domain.coset_gammas(alpha_base, embedding);
+    // Precompute inverses for compute_fold (lifted to extension field)
+    let zeta_ext_inv: F = embedding
+        .map(domain.zeta)
+        .inverse()
+        .expect("coset generator invertible");
+    let two_inv = F::from(2u64).inverse().expect("char ≠ 2");
 
-            for gamma in coset_gammas {
-                for p in 0..num_polys {
-                    let m_eval = all_evals[eval_cursor];
-                    eval_cursor += 1;
-                    let g_hat_evals = all_evals[eval_cursor..eval_cursor + mu].to_vec();
-                    eval_cursor += mu;
-                    helper_evals_per_poly[p].push(HelperEvaluations {
-                        gamma,
-                        m_eval,
-                        g_hat_evals,
-                    });
-                }
+    // Read ALL helper evaluations from transcript in one batch.
+    // Prover sends: for each gamma, for each polynomial p:
+    //   m_eval_p, ĝ₁(pow(γ))_p, ..., ĝμ(pow(γ))_p
+    let q = in_domain_base.points.len();
+    let evals_per_point = 1 + mu; // m_eval + mu g_hat_evals
+    let num_gammas = q * k;
+    let total_evals = num_gammas * num_polys * evals_per_point;
+    let all_evals: Vec<F> = verifier_state.read_prover_messages_bytes(total_evals)?;
+
+    // Parse the flat eval vector into per-polynomial HelperEvaluations.
+    let mut helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = (0..num_polys)
+        .map(|_| Vec::with_capacity(num_gammas))
+        .collect();
+    let mut query_indices: Vec<usize> = Vec::with_capacity(q);
+    let mut eval_cursor = 0;
+
+    for &alpha_base in &in_domain_base.points {
+        let idx = domain.query_index(alpha_base);
+        query_indices.push(idx);
+        let coset_gammas = domain.coset_gammas(alpha_base, embedding);
+
+        for gamma in coset_gammas {
+            for p in 0..num_polys {
+                let m_eval = all_evals[eval_cursor];
+                eval_cursor += 1;
+                let g_hat_evals = all_evals[eval_cursor..eval_cursor + mu].to_vec();
+                eval_cursor += mu;
+                helper_evals_per_poly[p].push(HelperEvaluations {
+                    gamma,
+                    m_eval,
+                    g_hat_evals,
+                });
             }
         }
-        debug_assert_eq!(eval_cursor, total_evals);
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_helper::read_transcript", __snap);
-
-        // Sample τ₂ (query-batching challenge)
-        let tau2: F = verifier_state.verifier_message();
-
-        // Construct batched eq weights (gammas are shared across polynomials)
-        let beq_weights =
-            construct_batched_eq_weights(&helper_evals_per_poly[0], rho, tau2, zk_params.ell);
-
-        // Compute per-polynomial claims and collect evaluations
-        // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
-        let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + mu));
-        for p in 0..num_polys {
-            let (m_claim, g_hat_claims) =
-                compute_per_polynomial_claims(&helper_evals_per_poly[p], tau2);
-            all_evaluations.push(m_claim);
-            all_evaluations.extend_from_slice(&g_hat_claims);
-        }
-
-        let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_helper::build_weights_claims", __snap);
-
-        // Verify helper WHIR proof (single batch commitment for all N×(μ+1) helper polys)
-        helper_config.verify(
-            verifier_state,
-            &[helper_commitment],
-            &weight_refs,
-            &all_evaluations,
-        )?;
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_helper::helper_whir_verify", __snap);
-
-        // Reconstruct virtual oracle values from IRS opening + verified helper evaluations.
-        // For N polynomials: compute per-polynomial L_p(γ_j), RLC across polynomials,
-        // then fold the combined coset values.
-        let num_cols = in_domain_base.num_columns();
-        let k_per_poly = k; // columns per committed polynomial (batch_size=1 for ZK)
-
-        let virtual_values: Vec<F> = in_domain_base
-            .points
-            .iter()
-            .enumerate()
-            .map(|(qi, &alpha_base)| {
-                let idx = query_indices[qi];
-                let coset_offset = domain.omega_full.pow([idx as u64]);
-                let coset_offset_ext_inv: F =
-                    embedding.map(coset_offset).inverse().unwrap_or(F::ZERO);
-
-                let row = &in_domain_base.matrix[qi * num_cols..(qi + 1) * num_cols];
-
-                // Compute L_combined(γ_j) = Σ_p α_p · L_p(γ_j) for each coset element j
-                let coset_gammas = domain.coset_gammas(alpha_base, embedding);
-                let l_coset_values: Vec<F> = coset_gammas
-                    .iter()
-                    .enumerate()
-                    .map(|(j, &gamma_ext)| {
-                        let mut l_combined = F::ZERO;
-                        for p in 0..num_polys {
-                            // f̂_p(γ_j) = Σ_{l=0}^{k-1} embed(row[p*k + l]) · γ^l
-                            let f_hat_slice = &row[p * k_per_poly..(p + 1) * k_per_poly];
-                            let f_hat_p_at_gamma = crate::algebra::mixed_univariate_evaluate(
-                                embedding,
-                                f_hat_slice,
-                                gamma_ext,
-                            );
-
-                            // h_p(γ_j) from verified per-polynomial helper evaluations
-                            let h_p_at_gamma =
-                                helper_evals_per_poly[p][qi * k + j].compute_h_value(beta);
-
-                            // L_p(γ_j) = ρ·f̂_p(γ_j) + h_p(γ_j)
-                            let l_p = rho * f_hat_p_at_gamma + h_p_at_gamma;
-
-                            l_combined += polynomial_rlc_coeffs[p] * l_p;
-                        }
-                        l_combined
-                    })
-                    .collect();
-
-                // Fold the k combined coset values
-                compute_fold(
-                    &l_coset_values,
-                    &folding_randomness.0,
-                    coset_offset_ext_inv,
-                    zeta_ext_inv,
-                    two_inv,
-                    fold_factor,
-                )
-            })
-            .collect();
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_helper::reconstruct_virtual_oracle", __snap);
-
-        Ok(virtual_values)
     }
+    debug_assert_eq!(eval_cursor, total_evals);
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  verify_helper::read_transcript", __snap);
+
+    // Sample τ₂ (query-batching challenge)
+    let tau2: F = verifier_state.verifier_message();
+
+    // Construct batched eq weights (gammas are shared across polynomials)
+    let beq_weights =
+        construct_batched_eq_weights(&helper_evals_per_poly[0], rho, tau2, zk_params.ell);
+
+    // Compute per-polynomial claims and collect evaluations
+    // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
+    let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + mu));
+    for p in 0..num_polys {
+        let (m_claim, g_hat_claims) =
+            compute_per_polynomial_claims(&helper_evals_per_poly[p], tau2);
+        all_evaluations.push(m_claim);
+        all_evaluations.extend_from_slice(&g_hat_claims);
+    }
+
+    let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  verify_helper::build_weights_claims", __snap);
+
+    // Verify helper WHIR proof (single batch commitment for all N×(μ+1) helper polys)
+    helper_config.verify(
+        verifier_state,
+        &[helper_commitment],
+        &weight_refs,
+        &all_evaluations,
+    )?;
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  verify_helper::helper_whir_verify", __snap);
+
+    // Reconstruct virtual oracle values from IRS opening + verified helper evaluations.
+    // For N polynomials: compute per-polynomial L_p(γ_j), RLC across polynomials,
+    // then fold the combined coset values.
+    let num_cols = in_domain_base.num_columns();
+    let k_per_poly = k; // columns per committed polynomial (batch_size=1 for ZK)
+
+    let virtual_values: Vec<F> = in_domain_base
+        .points
+        .iter()
+        .enumerate()
+        .map(|(qi, &alpha_base)| {
+            let idx = query_indices[qi];
+            let coset_offset = domain.omega_full.pow([idx as u64]);
+            let coset_offset_ext_inv: F = embedding.map(coset_offset).inverse().unwrap_or(F::ZERO);
+
+            let row = &in_domain_base.matrix[qi * num_cols..(qi + 1) * num_cols];
+
+            // Compute L_combined(γ_j) = Σ_p α_p · L_p(γ_j) for each coset element j
+            let coset_gammas = domain.coset_gammas(alpha_base, embedding);
+            let l_coset_values: Vec<F> = coset_gammas
+                .iter()
+                .enumerate()
+                .map(|(j, &gamma_ext)| {
+                    let mut l_combined = F::ZERO;
+                    for p in 0..num_polys {
+                        // f̂_p(γ_j) = Σ_{l=0}^{k-1} embed(row[p*k + l]) · γ^l
+                        let f_hat_slice = &row[p * k_per_poly..(p + 1) * k_per_poly];
+                        let f_hat_p_at_gamma = crate::algebra::mixed_univariate_evaluate(
+                            embedding,
+                            f_hat_slice,
+                            gamma_ext,
+                        );
+
+                        // h_p(γ_j) from verified per-polynomial helper evaluations
+                        let h_p_at_gamma =
+                            helper_evals_per_poly[p][qi * k + j].compute_h_value(beta);
+
+                        // L_p(γ_j) = ρ·f̂_p(γ_j) + h_p(γ_j)
+                        let l_p = rho * f_hat_p_at_gamma + h_p_at_gamma;
+
+                        l_combined += polynomial_rlc_coeffs[p] * l_p;
+                    }
+                    l_combined
+                })
+                .collect();
+
+            // Fold the k combined coset values
+            compute_fold(
+                &l_coset_values,
+                &folding_randomness.0,
+                coset_offset_ext_inv,
+                zeta_ext_inv,
+                two_inv,
+                fold_factor,
+            )
+        })
+        .collect();
+
+    #[cfg(feature = "alloc-track")]
+    crate::alloc_report!("  verify_helper::reconstruct_virtual_oracle", __snap);
+
+    Ok(virtual_values)
 }
