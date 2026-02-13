@@ -25,20 +25,28 @@ impl<F: Field> UnivariateEvaluation<F> {
     /// Same as [`Weights::accumulate`], but batches many [`UnivariateEvaluation`]s together
     /// in a single pass.
     pub fn accumulate_many(weights: &[Self], accumulator: &mut [F], scalars: &[F]) {
-        for (weights, &scalar) in zip_strict(weights, scalars) {
-            weights.accumulate(accumulator, scalar);
+        assert_eq!(weights.len(), scalars.len());
+        if weights.is_empty() {
+            return;
         }
 
-        /*
-        assert_eq!(weights.len(), scalars.len());
-        let mut powers = scalars.to_vec();
-        for accumulator in accumulator {
-            for (power, weights) in zip_strict(&mut powers, weights) {
-                *accumulator += *power;
-                *power *= weights.point;
+        let size = weights[0].size;
+        assert_eq!(accumulator.len(), size);
+        assert!(size.is_power_of_two());
+        let num_variables = size.trailing_zeros() as usize;
+
+        // Create a matrix of pow2k
+        let mut points = vec![F::ZERO; scalars.len() * num_variables];
+        for j in 0..scalars.len() {
+            points[scalars.len() * (num_variables - 1) + j] = weights[j].point;
+        }
+        for i in (0..num_variables - 1).rev() {
+            for j in 0..scalars.len() {
+                points[scalars.len() * i + j] = points[scalars.len() * (i + 1) + j].square();
             }
         }
-        */
+
+        eval_eq_batch(accumulator, &points, scalars);
     }
 }
 
@@ -69,6 +77,8 @@ impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
         assert_eq!(accumulator.len(), self.size);
         assert!(self.size.is_power_of_two());
         let num_variables = self.size.trailing_zeros() as usize;
+
+        // Compute x^2^k
         let mut point = Vec::with_capacity(num_variables);
         let mut pow2k = self.point;
         point.push(pow2k);
@@ -78,6 +88,7 @@ impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
         }
         point.reverse();
 
+        // Evaluate multilinear
         eval_eq(accumulator, point.as_slice(), scalar);
     }
 }
@@ -90,7 +101,8 @@ impl<M: Embedding> Evaluate<M> for UnivariateEvaluation<M::Target> {
 }
 
 fn eval_eq<F: Field>(accumulator: &mut [F], point: &[F], scalar: F) {
-    assert_eq!(accumulator.len(), 1 << point.len());
+    debug_assert_eq!(accumulator.len(), 1 << point.len());
+
     if let [x0, xs @ ..] = point {
         let (acc_0, acc_1) = accumulator.split_at_mut(1 << xs.len());
         let s1 = scalar * x0; // Contribution when `X_i = 1`
@@ -99,7 +111,7 @@ fn eval_eq<F: Field>(accumulator: &mut [F], point: &[F], scalar: F) {
         #[cfg(feature = "parallel")]
         {
             use crate::utils::workload_size;
-            if acc_0.len() > workload_size::<F>() {
+            if 2 * acc_0.len() > workload_size::<F>() {
                 rayon::join(|| eval_eq(acc_0, xs, s0), || eval_eq(acc_1, xs, s1));
                 return;
             }
@@ -108,5 +120,39 @@ fn eval_eq<F: Field>(accumulator: &mut [F], point: &[F], scalar: F) {
         eval_eq(acc_1, xs, s1);
     } else {
         accumulator[0] += scalar;
+    }
+}
+
+fn eval_eq_batch<F: Field>(accumulator: &mut [F], points: &[F], scalars: &[F]) {
+    let num_variables = points.len() / scalars.len();
+
+    #[cfg(feature = "parallel")]
+    {
+        use crate::utils::workload_size;
+        if num_variables >= 1 && accumulator.len() > workload_size::<F>() {
+            let (acc_0, acc_1) = accumulator.split_at_mut(1 << (num_variables - 1));
+            let (x0, xs) = points.split_at(scalars.len());
+
+            let scalars_1 = zip_strict(scalars, x0)
+                .map(|(&x0, &scalar)| scalar * x0)
+                .collect::<Vec<_>>();
+            let scalars_0 = zip_strict(scalars, &scalars_1)
+                .map(|(&scalar, &scalars_1): _| scalar - scalars_1)
+                .collect::<Vec<_>>();
+
+            rayon::join(
+                || eval_eq_batch(acc_0, xs, &scalars_0),
+                || eval_eq_batch(acc_1, xs, &scalars_1),
+            );
+            return;
+        }
+    }
+
+    let mut point = vec![F::ZERO; num_variables];
+    for i in 0..scalars.len() {
+        for j in 0..num_variables {
+            point[j] = points[j * scalars.len() + i];
+        }
+        eval_eq(accumulator, &point, scalars[i]);
     }
 }
