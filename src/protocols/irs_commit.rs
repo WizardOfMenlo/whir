@@ -190,23 +190,8 @@ where
         assert_eq!(polynomials.len(), self.num_polynomials);
         assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
 
-        // TODO: If only one polynomial, we can skip the copying.
-        let mut matrix = vec![F::ZERO; self.size()];
-        for (i, polynomial) in polynomials.iter().enumerate() {
-            // Interleaved RS encode
-            let evals = interleaved_rs_encode(polynomial, self.expansion, self.interleaving_depth);
-
-            // Stack evaluations leaf-wise
-            let dst = matrix.chunks_exact_mut(self.num_cols()).map(|leave| {
-                leave
-                    .chunks_exact_mut(self.interleaving_depth)
-                    .nth(i)
-                    .unwrap()
-            });
-            for (evals, leaves) in zip_strict(evals.chunks_exact(self.interleaving_depth), dst) {
-                leaves.copy_from_slice(evals);
-            }
-        }
+        // Interleaved RS Encode the polynomials
+        let matrix = interleaved_rs_encode(polynomials, self.expansion, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
