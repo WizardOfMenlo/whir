@@ -5,16 +5,16 @@ use digest::{const_oid::AssociatedOid, consts::U32, Digest};
 use hex_literal::hex;
 use zerocopy::IntoBytes;
 
-use super::{Engine, Hash, HASH_COUNTER};
-use crate::transcript::ProtocolId;
+use super::{Hash, HashEngine, HASH_COUNTER};
+use crate::{engines::EngineId, utils::zip_strict};
 
-pub const SHA2: ProtocolId = ProtocolId::new(hex!(
+pub const SHA2: EngineId = EngineId::new(hex!(
     "018eaa247cb8957ab1e9fdac885450403c5e7bda1acaaa504e4cc8f2f76bb076"
 ));
-pub const SHA3: ProtocolId = ProtocolId::new(hex!(
+pub const SHA3: EngineId = EngineId::new(hex!(
     "aa802dcdabad8ea8a1430919893b96c30e31ff5734b385999108aa202d27dc12"
 ));
-pub const KECCAK: ProtocolId = ProtocolId::new(hex!(
+pub const KECCAK: EngineId = EngineId::new(hex!(
     "ddd248964e320312a66775aee8e16c88c927734be59aca09b7af6deb0ad00e8c"
 ));
 
@@ -99,7 +99,7 @@ impl Keccak {
     }
 }
 
-impl<D> Engine for DigestEngine<D>
+impl<D> HashEngine for DigestEngine<D>
 where
     D: Digest<OutputSize = U32> + Send + Sync,
 {
@@ -131,7 +131,7 @@ where
         if size == 0 {
             output.fill(Hash(D::digest([]).into()));
         } else {
-            for (input, out) in input.chunks_exact(size).zip(output.iter_mut()) {
+            for (input, out) in zip_strict(input.chunks_exact(size), output.iter_mut()) {
                 let input = input.as_bytes();
                 let hash = D::digest(input);
                 out.as_mut_bytes().copy_from_slice(hash.as_ref());
@@ -145,12 +145,12 @@ where
 mod tests {
 
     use super::*;
-    use crate::transcript::Protocol;
+    use crate::engines::Engine;
 
     #[test]
     fn test_protocol_ids() {
-        assert_eq!(Sha2::new().protocol_id(), SHA2);
-        assert_eq!(Sha3::new().protocol_id(), SHA3);
-        assert_eq!(Keccak::new().protocol_id(), KECCAK);
+        assert_eq!(Sha2::new().engine_id(), SHA2);
+        assert_eq!(Sha3::new().engine_id(), SHA3);
+        assert_eq!(Keccak::new().engine_id(), KECCAK);
     }
 }

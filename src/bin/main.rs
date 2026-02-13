@@ -1,23 +1,22 @@
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use whir::{
     algebra::{
+        embedding::Basefield,
         fields,
-        ntt::{RSDefault, ReedSolomon},
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-        },
+        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        Weights,
     },
+    bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     hash::HASH_COUNTER,
     parameters::{
         default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
     },
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
-    whir::statement::{Statement, Weights},
 };
 
 #[derive(Parser, Debug)]
@@ -90,27 +89,21 @@ fn run_whir<F>(args: &Args)
 where
     F: FftField + CanonicalSerialize + Codec,
 {
-    let reed_solomon = Arc::new(RSDefault);
-    let basefield_reed_solomon = reed_solomon.clone();
-
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F>(args, reed_solomon, basefield_reed_solomon);
+            run_whir_pcs::<F>(args);
         }
         WhirType::LDT => {
-            run_whir_as_ldt::<F>(args, reed_solomon, basefield_reed_solomon);
+            run_whir_as_ldt::<F>(args);
         }
     }
 }
 
-fn run_whir_as_ldt<F>(
-    args: &Args,
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
-    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-) where
+fn run_whir_as_ldt<F>(args: &Args)
+where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::config::WhirConfig;
+    use whir::protocols::whir::Config;
 
     // Runs as a LDT
     let security_level = args.security_level;
@@ -145,12 +138,7 @@ fn run_whir_as_ldt<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(
-        reed_solomon,
-        basefield_reed_solomon,
-        mv_params,
-        &whir_params,
-    );
+    let params = Config::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -162,7 +150,7 @@ fn run_whir_as_ldt<F>(
     println!("Whir (LDT) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
-    if !params.check_pow_bits() {
+    if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
 
@@ -172,22 +160,21 @@ fn run_whir_as_ldt<F>(
             .collect(),
     );
 
-    let whir_prover_time = Instant::now();
-
+    let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[&polynomial]);
+    let whir_commit_time = whir_commit_time.elapsed();
 
-    let statement = Statement::new(num_variables);
-    params.prove(
-        &mut prover_state,
-        &[&polynomial],
-        &[&witness],
-        &[&statement],
-    );
+    let whir_prove_time = Instant::now();
+    params.prove(&mut prover_state, &[&polynomial], &[&witness], &[], &[]);
+    let whir_prove_time = whir_prove_time.elapsed();
 
     // Serialize proof
     let proof = prover_state.proof();
     let proof_size = proof.narg_string.len() + proof.hints.len();
-    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!(
+        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
+        whir_commit_time + whir_prove_time,
+    );
     println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
 
     HASH_COUNTER.reset();
@@ -197,7 +184,7 @@ fn run_whir_as_ldt<F>(
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         params
-            .verify(&mut verifier_state, &[&commitment], &[&statement])
+            .verify(&mut verifier_state, &[&commitment], &[], &[])
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -205,14 +192,11 @@ fn run_whir_as_ldt<F>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir_pcs<F>(
-    args: &Args,
-    reed_solomon: Arc<dyn ReedSolomon<F>>,
-    basefield_reed_solomon: Arc<dyn ReedSolomon<F::BasePrimeField>>,
-) where
+fn run_whir_pcs<F>(args: &Args)
+where
     F: FftField + CanonicalSerialize + Codec,
 {
-    use whir::whir::{config::WhirConfig, statement::Statement};
+    use whir::protocols::whir::Config;
 
     // Runs as a PCS
     let security_level = args.security_level;
@@ -249,12 +233,7 @@ fn run_whir_pcs<F>(
         hash_id,
     };
 
-    let params = WhirConfig::<F>::new(
-        reed_solomon,
-        basefield_reed_solomon,
-        mv_params,
-        &whir_params,
-    );
+    let params = Config::<F>::new(mv_params, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -266,7 +245,7 @@ fn run_whir_pcs<F>(
     println!("Whir (PCS) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
-    if !params.check_pow_bits() {
+    if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
 
@@ -275,11 +254,13 @@ fn run_whir_pcs<F>(
             .map(<F as Field>::BasePrimeField::from)
             .collect(),
     );
-    let whir_prover_time = Instant::now();
 
+    let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[&polynomial]);
+    let whir_commit_time = whir_commit_time.elapsed();
 
-    let mut statement: Statement<F> = Statement::<F>::new(num_variables);
+    let mut weights = Vec::new();
+    let mut evaluations = Vec::new();
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
@@ -287,9 +268,10 @@ fn run_whir_pcs<F>(
         .collect();
 
     for point in &points {
-        let eval = polynomial.evaluate_at_extension(point);
-        let weights = Weights::evaluation(point.clone());
-        statement.add_constraint(weights, eval);
+        let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
+        let weight = Weights::evaluation(point.clone());
+        weights.push(weight);
+        evaluations.push(eval);
     }
 
     // Linear constraint
@@ -298,21 +280,29 @@ fn run_whir_pcs<F>(
         let input: EvaluationsList<F> = input.clone().into();
 
         let linear_claim_weight = Weights::linear(input.clone());
-        let poly = EvaluationsList::from(polynomial.clone().to_extension());
+        let poly = EvaluationsList::from(polynomial.lift(&Basefield::new()));
 
-        let sum = linear_claim_weight.weighted_sum(&poly);
-        statement.add_constraint(linear_claim_weight, sum);
+        let sum = linear_claim_weight.evaluate(&poly.to_coeffs());
+        weights.push(linear_claim_weight);
+        evaluations.push(sum);
     }
+    let weight_refs = weights.iter().collect::<Vec<_>>();
 
+    let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
         &[&polynomial],
         &[&witness],
-        &[&statement],
+        &weight_refs,
+        &evaluations,
     );
+    let whir_prove_time = whir_prove_time.elapsed();
 
     let proof = prover_state.proof();
-    println!("Prover time: {:.1?}", whir_prover_time.elapsed());
+    println!(
+        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
+        whir_commit_time + whir_prove_time,
+    );
     println!(
         "Proof size: {:.1} KiB",
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
@@ -325,7 +315,12 @@ fn run_whir_pcs<F>(
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         params
-            .verify(&mut verifier_state, &[&commitment], &[&statement])
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weight_refs,
+                &evaluations,
+            )
             .unwrap();
     }
     println!(

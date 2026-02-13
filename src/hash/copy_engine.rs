@@ -3,10 +3,10 @@ use std::borrow::Cow;
 use const_oid::ObjectIdentifier;
 use hex_literal::hex;
 
-use super::{Engine, Hash};
-use crate::transcript::ProtocolId;
+use super::{Hash, HashEngine};
+use crate::engines::EngineId;
 
-pub const COPY: ProtocolId = ProtocolId::new(hex!(
+pub const COPY: EngineId = EngineId::new(hex!(
     "09459020f451874a1b399819d079632cc0f9263b1486c423173c6e15d8e2d61d"
 ));
 
@@ -22,7 +22,7 @@ impl Copy {
     }
 }
 
-impl Engine for Copy {
+impl HashEngine for Copy {
     fn name(&self) -> Cow<'_, str> {
         "copy".into()
     }
@@ -63,10 +63,10 @@ impl Engine for Copy {
 mod tests {
 
     use super::*;
-    use crate::transcript::Protocol;
+    use crate::engines::Engine;
 
     #[test]
     fn test_protocol_ids() {
-        assert_eq!(Copy::new().protocol_id(), COPY);
+        assert_eq!(Copy::new().engine_id(), COPY);
     }
 }

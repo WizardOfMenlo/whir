@@ -5,20 +5,20 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use super::Config;
 use crate::{
-    algebra::poly_utils::coeffs::CoefficientList,
+    algebra::polynomials::CoefficientList,
     hash::Hash,
     protocols::irs_commit,
     transcript::{
         Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
     },
-    whir::config::WhirConfig,
 };
 
 pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
 pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
-impl<F: FftField> WhirConfig<F> {
+impl<F: FftField> Config<F> {
     /// Commit to one or more polynomials in coefficient form.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
     pub fn commit<H, R>(

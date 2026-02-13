@@ -29,7 +29,7 @@
 
 use std::fmt;
 
-use ark_ff::{AdditiveGroup, FftField, Field};
+use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -37,10 +37,11 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
+        dot,
         embedding::{Basefield, Embedding, Identity},
-        mixed_dot, mixed_univariate_evaluate,
+        lift, mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
-        poly_utils::multilinear::MultilinearPoint,
+        Weights,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -51,7 +52,6 @@ use crate::{
     type_info::{TypeInfo, Typed},
     utils::zip_strict,
     verify,
-    whir::statement::{Constraint, Weights},
 };
 
 /// Specialization of [`Config`] for commiting with identity embedding.
@@ -156,6 +156,10 @@ where
         ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
     }
 
+    pub fn rate(&self) -> f64 {
+        1.0 / self.expansion as f64
+    }
+
     /// Commit to one or more polynomials.
     ///
     /// Polynomials are given in coefficient form.
@@ -199,7 +203,7 @@ where
                     .nth(i)
                     .unwrap()
             });
-            for (evals, leaves) in evals.chunks_exact(self.interleaving_depth).zip(dst) {
+            for (evals, leaves) in zip_strict(evals.chunks_exact(self.interleaving_depth), dst) {
                 leaves.copy_from_slice(evals);
             }
         }
@@ -425,70 +429,24 @@ impl<F: Field> Evaluations<F> {
         (0..self.num_points()).map(move |i| &self.matrix[i * cols..(i + 1) * cols])
     }
 
-    // TODO: points, weights and constraints are redudant.
-
-    pub fn points<M>(&self, embedding: &M, num_variables: usize) -> Vec<MultilinearPoint<M::Target>>
+    pub fn lift<M>(&self, embedding: &M) -> Evaluations<M::Target>
     where
         M: Embedding<Source = F>,
     {
-        self.points
-            .iter()
-            .map(|point| {
-                MultilinearPoint::expand_from_univariate(embedding.map(*point), num_variables)
-            })
-            .collect()
-    }
-
-    pub fn weights<M>(&self, embedding: &M, num_variables: usize) -> Vec<Weights<M::Target>>
-    where
-        M: Embedding<Source = F>,
-    {
-        self.points
-            .iter()
-            .map(|point| Weights::univariate(embedding.map(*point), num_variables))
-            .collect()
-    }
-
-    pub fn values<M>(&self, embedding: &M, weights: &[M::Target]) -> Vec<M::Target>
-    where
-        M: Embedding<Source = F>,
-    {
-        assert_eq!(weights.len(), self.num_columns());
-        self.rows()
-            .map(|row| mixed_dot(embedding, weights, row))
-            .collect()
-    }
-
-    pub fn constraints<M>(
-        &self,
-        embedding: &M,
-        weights: &[M::Target],
-        num_variables: usize,
-    ) -> Vec<Constraint<M::Target>>
-    where
-        M: Embedding<Source = F>,
-    {
-        if self.matrix.is_empty() {
-            self.points
-                .iter()
-                .map(|point| Constraint {
-                    weights: Weights::univariate(embedding.map(*point), num_variables),
-                    sum: M::Target::ZERO,
-                    defer_evaluation: false,
-                })
-                .collect()
-        } else {
-            assert_eq!(weights.len(), self.num_columns());
-            self.points
-                .iter()
-                .zip(self.matrix.chunks_exact(self.num_columns()))
-                .map(|(point, row)| Constraint {
-                    weights: Weights::univariate(embedding.map(*point), num_variables),
-                    sum: mixed_dot(embedding, weights, row),
-                    defer_evaluation: false,
-                })
-                .collect()
+        Evaluations {
+            points: lift(embedding, &self.points),
+            matrix: lift(embedding, &self.matrix),
         }
+    }
+
+    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = Weights<F>> {
+        self.points
+            .iter()
+            .map(move |point| Weights::univariate(*point, num_variables))
+    }
+
+    pub fn values<'a>(&'a self, weights: &'a [F]) -> impl 'a + Iterator<Item = F> {
+        self.rows().map(|row| dot(weights, row))
     }
 }
 
@@ -501,12 +459,18 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "IRSCommit(count: {}, size: {}, interleaving: {}, samples: ({}, {}))",
-            self.num_polynomials,
-            self.polynomial_size,
-            self.interleaving_depth,
-            self.in_domain_samples,
-            self.out_domain_samples
+            "size {}×{}/{}",
+            self.num_polynomials, self.polynomial_size, self.interleaving_depth,
+        )?;
+        if self.expansion.is_power_of_two() {
+            write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
+        } else {
+            write!(f, " rate 1/{}", self.expansion,)?;
+        }
+        write!(
+            f,
+            " samples {} in- {} out-domain",
+            self.in_domain_samples, self.out_domain_samples
         )
     }
 }
@@ -617,13 +581,14 @@ mod tests {
             config.out_domain_samples * config.num_polynomials
         );
         if config.num_polynomials > 0 {
-            for (point, evals) in witness.out_of_domain().points.iter().zip(
+            for (point, evals) in zip_strict(
+                witness.out_of_domain().points.iter(),
                 witness
                     .out_of_domain()
                     .matrix
                     .chunks_exact(config.num_polynomials),
             ) {
-                for (polynomial, expected) in polynomials.iter().zip(evals.iter()) {
+                for (polynomial, expected) in zip_strict(polynomials.iter(), evals.iter()) {
                     assert_eq!(
                         mixed_univariate_evaluate(config.embedding(), polynomial, *point),
                         *expected
@@ -667,7 +632,7 @@ mod tests {
                         univariate_evaluate(&coeffs, *point)
                     })
                 });
-                for (expected, got) in expected_iter.zip(evals.iter()) {
+                for (expected, got) in zip_strict(expected_iter, evals.iter()) {
                     assert_eq!(expected, *got);
                 }
             }

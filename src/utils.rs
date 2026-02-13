@@ -179,9 +179,7 @@ mod tests {
     use super::*;
     use crate::algebra::{
         fields::Field64,
-        poly_utils::{
-            lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint,
-        },
+        polynomials::{lagrange_iterator::LagrangePolynomialIterator, MultilinearPoint},
     };
 
     #[test]

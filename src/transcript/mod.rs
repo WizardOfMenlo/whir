@@ -4,8 +4,7 @@
 //! would roughly double the verifier cost.
 
 pub mod codecs;
-mod engines;
-mod protocol_id;
+mod mock_sponge;
 
 #[cfg(debug_assertions)]
 use std::any::type_name;
@@ -21,10 +20,8 @@ pub use spongefish::{
     VerificationError, VerificationResult,
 };
 
-pub use self::{
-    engines::Engines,
-    protocol_id::{Protocol, ProtocolId, NONE},
-};
+#[cfg(test)]
+pub use self::mock_sponge::MockSponge;
 
 #[macro_export]
 macro_rules! verify {
@@ -232,7 +229,6 @@ where
 
     #[cfg(debug_assertions)]
     fn push(&mut self, interaction: Interaction) {
-        eprintln!("Prover: {interaction:?}");
         self.pattern.push(interaction);
     }
 }
@@ -329,7 +325,6 @@ where
     #[cfg(debug_assertions)]
     #[track_caller]
     fn pop_pattern(&mut self, interaction: &Interaction) {
-        eprintln!("Verifier: {interaction:?}");
         assert!(!self.pattern.is_empty());
         let (expected, tail) = self.pattern.split_first().unwrap();
         assert_eq!(

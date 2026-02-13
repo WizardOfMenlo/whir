@@ -10,9 +10,13 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use std::{fmt::Debug, sync::LazyLock};
+use std::{
+    fmt::Debug,
+    marker::PhantomData,
+    sync::{Arc, LazyLock},
+};
 
-use ark_ff::FftField;
+use ark_ff::{FftField, Field};
 use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -23,9 +27,29 @@ pub use self::{
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
-use crate::type_map::{self, TypeMap};
+use crate::{
+    algebra::fields,
+    type_map::{self, TypeMap},
+};
 
-pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(TypeMap::default);
+pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(|| {
+    let map = TypeMap::new();
+    map.insert(Arc::new(ArkNtt::<fields::Field64>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(ArkNtt::<fields::Field128>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(ArkNtt::<fields::Field192>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(ArkNtt::<fields::Field256>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(ArkNtt::<fields::Field64_2>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(ArkNtt::<fields::Field64_3>::default()) as Arc<dyn ReedSolomon<_>>);
+    map.insert(
+        Arc::new(ArkNtt::<<fields::Field64_2 as Field>::BasePrimeField>::default())
+            as Arc<dyn ReedSolomon<_>>,
+    );
+    map.insert(
+        Arc::new(ArkNtt::<<fields::Field64_3 as Field>::BasePrimeField>::default())
+            as Arc<dyn ReedSolomon<_>>,
+    );
+    map
+});
 
 #[derive(Default)]
 pub struct NttFamily;
@@ -40,20 +64,34 @@ pub trait ReedSolomon<F>: Debug + Send + Sync {
         &self,
         interleaved_coeffs: &[F],
         expansion: usize,
-        fold_factor: usize,
+        interleaving_depth: usize,
     ) -> Vec<F>;
 }
 
 assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
 
-// pub fn interleaved_rs_encode<F>(
-//     interleaved_coeffs: &[F],
-//     expansion: usize,
-//     fold_factor: usize,
-// ) -> Vec<F> {
-//     let engine = NTT.get::<F>().expect("Unsupported field");
-//     engine.interleaved_encode(interleaved_coeffs, expansion, fold_factor)
-// }
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ArkNtt<F: FftField>(PhantomData<F>);
+
+impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
+    fn interleaved_encode(
+        &self,
+        interleaved_coeffs: &[F],
+        expansion: usize,
+        interleaving_depth: usize,
+    ) -> Vec<F> {
+        ark_ntt(interleaved_coeffs, expansion, interleaving_depth)
+    }
+}
+
+pub fn interleaved_rs_encode<F: 'static>(
+    interleaved_coeffs: &[F],
+    expansion: usize,
+    interleaving_depth: usize,
+) -> Vec<F> {
+    let engine = NTT.get::<F>().expect("Unsupported field");
+    engine.interleaved_encode(interleaved_coeffs, expansion, interleaving_depth)
+}
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
@@ -63,19 +101,16 @@ assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
-#[cfg_attr(feature = "tracing", instrument(skip(coeffs), fields(size = coeffs.len())))]
-pub fn interleaved_rs_encode<F: FftField>(
-    coeffs: &[F],
-    expansion: usize,
-    interleaving_depth: usize,
-) -> Vec<F> {
+#[cfg_attr(feature = "tracing", instrument(level = "debug", skip(coeffs), fields(size = coeffs.len())))]
+fn ark_ntt<F: FftField>(coeffs: &[F], expansion: usize, interleaving_depth: usize) -> Vec<F> {
     assert!(expansion > 0);
     assert!(coeffs.len().is_multiple_of(interleaving_depth));
     let expanded_size = coeffs.len() * expansion;
 
     // 1. Create zero-padded message of appropriate size
-    let mut result = vec![F::zero(); expanded_size];
-    result[..coeffs.len()].copy_from_slice(coeffs);
+    let mut result = Vec::with_capacity(expanded_size);
+    result.extend_from_slice(coeffs);
+    result.resize(expanded_size, F::ZERO);
 
     let rows = expanded_size / interleaving_depth;
     let columns = interleaving_depth;
@@ -89,21 +124,6 @@ pub fn interleaved_rs_encode<F: FftField>(
     ntt_batch(&mut result, rows);
     transpose(&mut result, columns, rows);
     result
-}
-
-/// Tag to select the built-in Reed Solomon Encoding
-#[derive(Clone, Copy, Debug)]
-pub struct RSDefault;
-
-impl<F: FftField> ReedSolomon<F> for RSDefault {
-    fn interleaved_encode(
-        &self,
-        interleaved_coeffs: &[F],
-        expansion: usize,
-        fold_factor: usize,
-    ) -> Vec<F> {
-        interleaved_rs_encode(interleaved_coeffs, expansion, 1 << fold_factor)
-    }
 }
 
 #[cfg(test)]
@@ -307,10 +327,8 @@ mod tests {
             folding_factor,
         );
 
-        let rs = RSDefault;
-
         // Compute things the new way
-        let interleaved_ntt = rs.interleaved_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, 1 << folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

@@ -7,10 +7,12 @@ use {
     std::mem::size_of,
 };
 
-use super::{dense::WhirDensePolynomial, evals::EvaluationsList};
+use super::evals::EvaluationsList;
 use crate::algebra::{
-    embedding::Embedding, ntt::wavelet_transform, poly_utils::multilinear::MultilinearPoint,
+    embedding::Embedding, lift, ntt::wavelet_transform, polynomials::MultilinearPoint,
 };
+#[cfg(feature = "parallel")]
+use crate::utils::workload_size;
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -37,13 +39,43 @@ pub struct CoefficientList<F> {
     num_variables: usize,
 }
 
-impl<F> CoefficientList<F>
-where
-    F: Field,
-{
+impl<F: Field> CoefficientList<F> {
+    pub fn new(coeffs: Vec<F>) -> Self {
+        let len = coeffs.len();
+        assert!(len.is_power_of_two());
+        let num_variables = len.ilog2();
+
+        Self {
+            coeffs,
+            num_variables: num_variables as usize,
+        }
+    }
+
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn coeffs(&self) -> &[F] {
+        &self.coeffs
+    }
+
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn coeffs_mut(&mut self) -> &mut [F] {
+        &mut self.coeffs
+    }
+
+    pub fn into_coeffs(self) -> Vec<F> {
+        self.coeffs
+    }
+
+    pub const fn num_variables(&self) -> usize {
+        self.num_variables
+    }
+
+    pub const fn num_coeffs(&self) -> usize {
+        self.coeffs.len()
+    }
+
     pub fn lift<M: Embedding<Source = F>>(&self, embedding: &M) -> CoefficientList<M::Target> {
         CoefficientList {
-            coeffs: self.coeffs.iter().map(|c| embedding.map(*c)).collect(),
+            coeffs: lift(embedding, self.coeffs()),
             num_variables: self.num_variables,
         }
     }
@@ -63,31 +95,12 @@ where
         eval_multivariate(&self.coeffs, &point.0)
     }
 
-    /// Evaluate self at `point`, where `point` is from a field extension extending the field over which the polynomial `self` is defined.
-    ///
-    /// Note that we only support the case where F is a prime field.
-    pub fn evaluate_at_extension<E: Field<BasePrimeField = F>>(
-        &self,
-        point: &MultilinearPoint<E>,
-    ) -> E {
+    pub fn mixed_evaluate<M>(&self, embedding: &M, point: &MultilinearPoint<M::Target>) -> M::Target
+    where
+        M: Embedding<Source = F>,
+    {
         assert_eq!(self.num_variables, point.num_variables());
-        eval_extension(&self.coeffs, &point.0, E::ONE)
-    }
-
-    /// Interprets self as a univariate polynomial (with coefficients of X^i in order of ascending i) and evaluates it at each point in `points`.
-    /// We return the vector of evaluations.
-    ///
-    /// NOTE: For the `usual` mapping between univariate and multilinear polynomials, the coefficient ordering is such that
-    /// for a single point x, we have (extending notation to a single point)
-    /// self.evaluate_at_univariate(x) == self.evaluate([x^(2^n), x^(2^{n-1}), ..., x^2, x])
-    pub fn evaluate_at_univariate(&self, points: &[F]) -> Vec<F> {
-        // WhirDensePolynomial::from_coefficients_slice converts to a dense univariate polynomial.
-        // The coefficient order is "coefficient of 1 first".
-        let univariate = WhirDensePolynomial::from_coefficients_slice(&self.coeffs);
-        points
-            .iter()
-            .map(|point| univariate.evaluate(point))
-            .collect()
+        mixed_eval(embedding, &self.coeffs, &point.0, M::Target::ONE)
     }
 
     /// Folds the polynomial along high-indexed variables, reducing its dimensionality.
@@ -103,7 +116,7 @@ where
     /// - The number of variables decreases: `m = n - k`
     /// - Uses multivariate evaluation over chunks of coefficients.
     #[must_use]
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.coeffs.len())))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all, fields(size = self.coeffs.len())))]
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
@@ -123,49 +136,6 @@ where
             coeffs,
             num_variables: self.num_variables() - folding_factor,
         }
-    }
-}
-
-impl<F> CoefficientList<F> {
-    pub fn new(coeffs: Vec<F>) -> Self {
-        let len = coeffs.len();
-        assert!(len.is_power_of_two());
-        let num_variables = len.ilog2();
-
-        Self {
-            coeffs,
-            num_variables: num_variables as usize,
-        }
-    }
-
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn coeffs(&self) -> &[F] {
-        &self.coeffs
-    }
-
-    pub fn into_coeffs(self) -> Vec<F> {
-        self.coeffs
-    }
-
-    pub const fn num_variables(&self) -> usize {
-        self.num_variables
-    }
-
-    pub const fn num_coeffs(&self) -> usize {
-        self.coeffs.len()
-    }
-
-    /// Map the polynomial `self` from F[X_1,...,X_n] to E[X_1,...,X_n], where E is a field extension of F.
-    ///
-    /// Note that this is currently restricted to the case where F is a prime field.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.coeffs.len())))]
-    pub fn to_extension<E: Field<BasePrimeField = F>>(self) -> CoefficientList<E> {
-        CoefficientList::new(
-            self.coeffs
-                .into_iter()
-                .map(E::from_base_prime_field)
-                .collect(),
-        )
     }
 }
 
@@ -227,15 +197,6 @@ fn eval_multivariate<F: Field>(coeffs: &[F], point: &[F]) -> F {
     }
 }
 
-impl<F> From<WhirDensePolynomial<F>> for CoefficientList<F>
-where
-    F: Field,
-{
-    fn from(value: WhirDensePolynomial<F>) -> Self {
-        Self::new(value.coeffs)
-    }
-}
-
 impl<F> From<CoefficientList<F>> for EvaluationsList<F>
 where
     F: Field,
@@ -247,46 +208,30 @@ where
     }
 }
 
-// NOTE (Gotti): This algorithm uses 2^{n+1}-1 multiplications for a polynomial in n variables.
-// You could do with 2^{n}-1 by just doing a + x * b (and not forwarding scalar through the recursion at all).
-// The difference comes from multiplications by E::ONE at the leaves of the recursion tree.
-
-// recursive helper function for polynomial evaluation:
-// Note that eval(coeffs, [X_0, X1,...]) = eval(coeffs_left, [X_1,...]) + X_0 * eval(coeffs_right, [X_1,...])
-
-/// Recursively evaluates a multilinear polynomial at an extension field point.
-///
-/// Given `coeffs` in lexicographic order, this computes:
-/// ```ignore
-/// eval_poly(X_0, ..., X_n) = sum(coeffs[i] * product(X_j for j in S(i)))
-/// ```
-/// where `S(i)` is the set of variables active in term `i` (based on its binary representation).
-///
-/// - Uses divide-and-conquer recursion:
-///   - Splits `coeffs` into two halves for `X_0 = 0` and `X_0 = 1`.
-///   - Recursively evaluates each half.
-fn eval_extension<F: Field, E: Field<BasePrimeField = F>>(coeff: &[F], eval: &[E], scalar: E) -> E {
+fn mixed_eval<M: Embedding>(
+    embedding: &M,
+    coeff: &[M::Source],
+    eval: &[M::Target],
+    scalar: M::Target,
+) -> M::Target {
     debug_assert_eq!(coeff.len(), 1 << eval.len());
 
     if let Some((&x, tail)) = eval.split_first() {
         let (low, high) = coeff.split_at(coeff.len() / 2);
 
         #[cfg(feature = "parallel")]
-        {
-            const PARALLEL_THRESHOLD: usize = 10;
-            if tail.len() > PARALLEL_THRESHOLD {
-                let (a, b) = rayon::join(
-                    || eval_extension(low, tail, scalar),
-                    || eval_extension(high, tail, scalar * x),
-                );
-                return a + b;
-            }
+        if low.len() > workload_size::<M::Source>() {
+            let (a, b) = rayon::join(
+                || mixed_eval(embedding, low, tail, scalar),
+                || mixed_eval(embedding, high, tail, scalar * x),
+            );
+            return a + b;
         }
 
         // Default non-parallel execution
-        eval_extension(low, tail, scalar) + eval_extension(high, tail, scalar * x)
+        mixed_eval(embedding, low, tail, scalar) + mixed_eval(embedding, high, tail, scalar * x)
     } else {
-        scalar.mul_by_base_prime_field(&coeff[0])
+        embedding.mixed_mul(scalar, coeff[0])
     }
 }
 
@@ -295,7 +240,10 @@ mod tests {
     use ark_ff::AdditiveGroup;
 
     use super::*;
-    use crate::algebra::fields::{Field64, Field64_2};
+    use crate::algebra::{
+        embedding::Basefield,
+        fields::{Field64, Field64_2},
+    };
 
     type F = Field64;
     type E = Field64_2;
@@ -459,7 +407,7 @@ mod tests {
 
         let x = E::from(2); // Evaluation at x = 2 in extension field
         let expected_value = E::from(3) + E::from(7) * x; // f(2) = 3 + 7 * 2
-        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x]));
+        let eval_result = coeff_list.mixed_evaluate(&Basefield::new(), &MultilinearPoint(vec![x]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -478,7 +426,8 @@ mod tests {
         let x0 = E::from(2);
         let x1 = E::from(3);
         let expected_value = E::from(2) + E::from(5) * x1 + E::from(3) * x0 + E::from(7) * x0 * x1;
-        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+        let eval_result =
+            coeff_list.mixed_evaluate(&Basefield::new(), &MultilinearPoint(vec![x0, x1]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -512,7 +461,8 @@ mod tests {
             + E::from(7) * x0 * x1
             + E::from(8) * x0 * x1 * x2;
 
-        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1, x2]));
+        let eval_result =
+            coeff_list.mixed_evaluate(&Basefield::new(), &MultilinearPoint(vec![x0, x1, x2]));
 
         assert_eq!(eval_result, expected_value);
     }
@@ -524,84 +474,9 @@ mod tests {
 
         let x0 = E::from(5);
         let x1 = E::from(7);
-        let eval_result = coeff_list.evaluate_at_extension(&MultilinearPoint(vec![x0, x1]));
+        let eval_result =
+            coeff_list.mixed_evaluate(&Basefield::new(), &MultilinearPoint(vec![x0, x1]));
 
         assert_eq!(eval_result, E::ZERO);
-    }
-
-    #[test]
-    fn test_evaluate_at_univariate_degree_one() {
-        // Polynomial: f(x) = 3 + 4x
-        let c0 = F::from(3);
-        let c1 = F::from(4);
-        let coeffs = vec![c0, c1];
-        let poly = CoefficientList::new(coeffs);
-
-        let p0 = F::from(0);
-        let p1 = F::from(1);
-        let p2 = F::from(2);
-        let p3 = F::from(5);
-        let points = vec![p0, p1, p2, p3];
-
-        // Manually compute expected values from coeffs
-        // f(x) = coeffs[0] + coeffs[1] * x
-        let expected = vec![
-            c0 + c1 * p0, // 3 + 4 * 0
-            c0 + c1 * p1, // 3 + 4 * 1
-            c0 + c1 * p2, // 3 + 4 * 2
-            c0 + c1 * p3, // 3 + 4 * 5
-        ];
-
-        let result = poly.evaluate_at_univariate(&points);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_evaluate_at_univariate_degree_three_multiple_points() {
-        // Polynomial: f(x) = 1 + 2x + 3x² + 4x³
-        let c0 = F::from(1);
-        let c1 = F::from(2);
-        let c2 = F::from(3);
-        let c3 = F::from(4);
-        let coeffs = vec![c0, c1, c2, c3];
-        let poly = CoefficientList::new(coeffs);
-
-        let p0 = F::from(0);
-        let p1 = F::from(1);
-        let p2 = F::from(2);
-        let points = vec![p0, p1, p2];
-
-        // f(x) = c0 + c1*x + c2*x² + c3*x³
-        let expected = vec![
-            c0 + c1 * p0 + c2 * p0.square() + c3 * p0.square() * p0,
-            c0 + c1 * p1 + c2 * p1.square() + c3 * p1.square() * p1,
-            c0 + c1 * p2 + c2 * p2.square() + c3 * p2.square() * p2,
-        ];
-
-        let result = poly.evaluate_at_univariate(&points);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_evaluate_at_univariate_equivalence_to_multilinear() {
-        // Polynomial: f(x) = 5 + 6x + 7x² + 8x³
-        let c0 = F::from(5);
-        let c1 = F::from(6);
-        let c2 = F::from(7);
-        let c3 = F::from(8);
-        let coeffs = vec![c0, c1, c2, c3];
-        let poly = CoefficientList::new(coeffs);
-
-        let x = F::from(2);
-
-        let expected = c0 + c1 * x + c2 * x.square() + c3 * x.square() * x;
-
-        let result_univariate = poly.evaluate_at_univariate(&[x])[0];
-
-        let ml_point = MultilinearPoint::expand_from_univariate(x, 2);
-        let result_multilinear = poly.evaluate(&ml_point);
-
-        assert_eq!(result_univariate, expected);
-        assert_eq!(result_multilinear, expected);
     }
 }
