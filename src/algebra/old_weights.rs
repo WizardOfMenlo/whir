@@ -155,7 +155,7 @@ impl<F: Field> OldWeights<F> {
     ///
     /// **Precondition:**
     /// `accumulator.num_variables()` must match `self.num_variables()`.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_variables = self.num_variables())))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all, fields(num_variables = self.num_variables())))]
     pub fn accumulate(&self, accumulator: &mut EvaluationsList<F>, factor: F) {
         assert_eq!(accumulator.num_variables(), self.num_variables());
         match self {
