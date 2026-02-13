@@ -6,9 +6,12 @@ use tracing::instrument;
 use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
-        dot, mixed_scalar_mul_add,
+        dot,
+        embedding::Basefield,
+        mixed_scalar_mul_add,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        tensor_product, OldWeights,
+        tensor_product,
+        weights::{Evaluate, UnivariateEvaluation, Weights},
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -46,8 +49,8 @@ impl<F: FftField> Config<F> {
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
         witnesses: &[&Witness<F>],
-        weights: &[&OldWeights<F>],
-        evaluations: &[F],
+        weights: &[&dyn Evaluate<Basefield<F>>],
+        weight_evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
         H: DuplexSpongeInterface,
@@ -67,53 +70,52 @@ impl<F: FftField> Config<F> {
             assert_eq!(polynomial.num_coeffs(), self.initial_size());
         }
         for (weight, evaluations) in
-            zip_strict(weights, evaluations.chunks_exact(polynomials.len()))
+            zip_strict(weights, weight_evaluations.chunks_exact(polynomials.len()))
         {
-            assert_eq!(weight.num_variables(), self.initial_num_variables());
-            for (polynomial, evaluation) in zip_strict(polynomials, evaluations) {
+            assert_eq!(weight.size(), self.initial_size());
+            for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
                 debug_assert_eq!(
-                    weight.mixed_evaluate(self.embedding(), polynomial),
+                    weight.evaluate(self.embedding(), polynomial.coeffs()),
                     *evaluation
                 );
             }
         }
         if polynomials.is_empty() {
-            // TODO: Should we draw a random evaluation point?
+            // TODO: Should we draw a random evaluation point of the right size?
             return (MultilinearPoint::default(), Vec::new());
         }
 
         // Complete evaluations of EVERY polynomial at EVERY OOD/Statement constraint.
-        let (constraint_weights, constraint_matrix) = {
-            let mut all_weights = Vec::new();
-            let mut matrix = Vec::new();
+        let (oods_weights, oods_matrix) = {
+            let mut oods_weights = Vec::new();
+            let mut oods_matrix = Vec::new();
 
             // Out of domain samples. Compute missing cross-terms and send to verifier.
             let mut polynomial_offset = 0;
             for witness in witnesses {
                 for (weights, oods_row) in zip_strict(
-                    witness
-                        .out_of_domain()
-                        .old_weights(self.initial_num_variables()),
+                    witness.out_of_domain().weights(self.initial_size()),
                     witness.out_of_domain().rows(),
                 ) {
-                    for (j, polynomial) in polynomials.iter().enumerate() {
+                    for (j, &polynomial) in polynomials.iter().enumerate() {
                         if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                            debug_assert_eq!(
+                                oods_row[j - polynomial_offset],
+                                weights.evaluate(self.embedding(), polynomial.coeffs())
+                            );
+
+                            oods_matrix.push(oods_row[j - polynomial_offset]);
                         } else {
-                            let eval = weights.mixed_evaluate(self.embedding(), polynomial);
+                            let eval = weights.evaluate(self.embedding(), polynomial.coeffs());
                             prover_state.prover_message(&eval);
-                            matrix.push(eval);
+                            oods_matrix.push(eval);
                         }
                     }
-                    all_weights.push(weights);
+                    oods_weights.push(weights);
                 }
                 polynomial_offset += witness.num_polynomials();
             }
-
-            // Add caller provided weights and evaluations.
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
-            matrix.extend_from_slice(evaluations);
-            (all_weights, matrix)
+            (oods_weights, oods_matrix)
         };
 
         // Random linear combination of the polynomials.
@@ -134,19 +136,35 @@ impl<F: FftField> Config<F> {
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
-            geometric_challenge(prover_state, constraint_weights.len());
+            geometric_challenge(prover_state, weights.len() + oods_weights.len());
+        // TODO: Flip order.
+        let (oods_rlc_coeffs, intial_weights_rlc_coeffs) =
+            constraint_rlc_coeffs.split_at(oods_weights.len());
         let mut constraints = EvaluationsList::new(vec![F::ZERO; self.initial_size()]);
-        for (rlc_coeff, constraint) in zip_strict(&constraint_rlc_coeffs, constraint_weights) {
-            constraint.accumulate(&mut constraints, *rlc_coeff);
+        for (rlc_coeff, weights) in zip_strict(intial_weights_rlc_coeffs, weights) {
+            weights.accumulate(constraints.evals_mut(), *rlc_coeff);
         }
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(
-            &constraint_rlc_coeffs,
-            constraint_matrix.chunks_exact(polynomials.len()),
+            intial_weights_rlc_coeffs,
+            weight_evaluations.chunks_exact(polynomials.len()),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
         .sum();
+
+        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+
+        // Add OODS constraints
+        UnivariateEvaluation::accumulate_many(
+            &oods_weights,
+            constraints.evals_mut(),
+            oods_rlc_coeffs,
+        );
+        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(polynomials.len()))
+            .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
+            .sum::<F>();
 
         // These invariants are maintained throughout the proof.
         debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
@@ -208,8 +226,8 @@ impl<F: FftField> Config<F> {
             // Collect constraints for this round and RLC them in
             let stir_challenges = witness
                 .out_of_domain()
-                .old_weights(round_config.initial_num_variables())
-                .chain(in_domain.old_weights(round_config.initial_num_variables()))
+                .weights(round_config.initial_size())
+                .chain(in_domain.weights(round_config.initial_size()))
                 .collect::<Vec<_>>();
             let stir_evaluations = witness
                 .out_of_domain()
@@ -220,9 +238,11 @@ impl<F: FftField> Config<F> {
                 )))
                 .collect::<Vec<_>>();
             let stir_rlc_coeffs = geometric_challenge(prover_state, stir_challenges.len());
-            for (coeff, weights) in zip_strict(&stir_rlc_coeffs, stir_challenges) {
-                weights.accumulate(&mut constraints, *coeff);
-            }
+            UnivariateEvaluation::accumulate_many(
+                &stir_challenges,
+                constraints.evals_mut(),
+                &stir_rlc_coeffs,
+            );
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
             debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
@@ -278,7 +298,7 @@ impl<F: FftField> Config<F> {
         let deferred = weights
             .iter()
             .filter(|w| w.deferred())
-            .map(|w| w.compute(&constraint_eval))
+            .map(|w| w.mle_evaluate(&constraint_eval.0))
             .collect();
         prover_state.prover_hint_ark(&deferred);
 

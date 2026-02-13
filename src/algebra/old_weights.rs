@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::algebra::{
-    embedding::{Embedding, Identity},
+    embedding::{Basefield, Embedding, Identity},
     eval_eq, mixed_dot,
     polynomials::{geometric_till, CoefficientList, EvaluationsList, MultilinearPoint},
-    weights::Weights,
+    weights::{Evaluate, Weights},
 };
 
 /// Represents a weight function used in polynomial evaluations.
@@ -61,6 +61,12 @@ impl<F: Field> Weights<F> for OldWeights<F> {
         let mut evals = EvaluationsList::new(accumulator.to_vec());
         OldWeights::accumulate(self, &mut evals, scalar);
         accumulator.copy_from_slice(evals.evals());
+    }
+}
+
+impl<F: Field> Evaluate<Basefield<F>> for OldWeights<F> {
+    fn evaluate(&self, embedding: &Basefield<F>, vector: &[F::BasePrimeField]) -> F {
+        OldWeights::mixed_evaluate(&self, embedding, &CoefficientList::new(vector.to_vec()))
     }
 }
 

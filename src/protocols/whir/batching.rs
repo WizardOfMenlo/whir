@@ -32,9 +32,10 @@ mod batching_tests {
     use super::super::Config;
     use crate::{
         algebra::{
+            embedding::Basefield,
             fields::Field64,
             polynomials::{CoefficientList, MultilinearPoint},
-            weights::Weights,
+            weights::{Evaluate, Weights},
             OldWeights,
         },
         hash,
@@ -132,21 +133,21 @@ mod batching_tests {
             .chain(iter::once(OldWeights::linear(weight_poly.into())))
             .collect::<Vec<_>>();
         let weights_refs = weights.iter().collect::<Vec<_>>();
-        let weights_dyn_refs = weights
-            .iter()
-            .map(|w| w as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         let values = weights
             .iter()
             .flat_map(|weights| poly_list.iter().map(|poly| weights.evaluate(poly)))
             .collect::<Vec<_>>();
 
         // Generate a STARK proof for the given statement and witness
+        let weights_dyn_refs = weights
+            .iter()
+            .map(|w| w as &dyn Evaluate<Basefield<F>>)
+            .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
             &poly_refs,
             &[&batched_witness],
-            &weights_refs,
+            &weights_dyn_refs,
             &values,
         );
 
@@ -157,6 +158,10 @@ mod batching_tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
+        let weights_dyn_refs = weights
+            .iter()
+            .map(|w| w as &dyn Weights<F>)
+            .collect::<Vec<_>>();
         assert!(params
             .verify(
                 &mut verifier_state,

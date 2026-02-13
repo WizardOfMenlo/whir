@@ -2,7 +2,10 @@ use ark_ff::Field;
 
 use super::Weights;
 use crate::{
-    algebra::{embedding::Embedding, mixed_univariate_evaluate, weights::Evaluate},
+    algebra::{
+        embedding::Embedding, eval_eq, mixed_univariate_evaluate, polynomials::MultilinearPoint,
+        weights::Evaluate,
+    },
     utils::zip_strict,
 };
 
@@ -24,15 +27,21 @@ impl<F: Field> UnivariateEvaluation<F> {
 
     /// Same as [`Weights::accumulate`], but batches many [`UnivariateEvaluation`]s together
     /// in a single pass.
-    pub fn accumulate_many(weights: &[Self], accumulator: &mut [F], scalars: Vec<F>) {
+    pub fn accumulate_many(weights: &[Self], accumulator: &mut [F], scalars: &[F]) {
+        for (weights, &scalar) in zip_strict(weights, scalars) {
+            weights.accumulate(accumulator, scalar);
+        }
+
+        /*
         assert_eq!(weights.len(), scalars.len());
-        let mut powers = scalars;
+        let mut powers = scalars.to_vec();
         for accumulator in accumulator {
             for (power, weights) in zip_strict(&mut powers, weights) {
                 *accumulator += *power;
                 *power *= weights.point;
             }
         }
+        */
     }
 }
 
@@ -60,15 +69,23 @@ impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
 
     /// See also [`accumulate_many`] for a more efficient batched version.
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
-        let mut power = scalar;
-        for accumulator in accumulator {
-            *accumulator += scalar;
-            power *= self.point;
-        }
+        let point = MultilinearPoint::expand_from_univariate(
+            self.point,
+            self.size.trailing_zeros() as usize,
+        );
+
+        eval_eq(accumulator, &point.0, scalar);
+
+        // let mut power = scalar;
+        // for accumulator in accumulator {
+        //     *accumulator += power;
+        //     power *= self.point;
+        // }
     }
 }
 
 impl<M: Embedding> Evaluate<M> for UnivariateEvaluation<M::Target> {
+    // Evaluate a vector in coefficient form.
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         mixed_univariate_evaluate(embedding, vector, self.point)
     }
