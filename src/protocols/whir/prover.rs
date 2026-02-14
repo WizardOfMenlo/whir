@@ -4,10 +4,11 @@ use ark_std::rand::{CryptoRng, RngCore};
 use tracing::instrument;
 
 use super::{committer::Witness, config::Config};
+use crate::algebra::polynomials::spot_check_evals_eq;
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
-        polynomials::{spot_check_evals_eq, CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product, Weights,
     },
     hash::Hash,
@@ -246,7 +247,10 @@ impl<F: FftField> Config<F> {
         }
 
         // Directly send coefficients of the polynomial to the verifier.
-        self.send_final_coefficients(prover_state, &coefficients);
+        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
+        for coeff in coefficients.coeffs() {
+            prover_state.prover_message(coeff);
+        }
 
         // PoW
         self.final_pow.prove(prover_state);
@@ -273,39 +277,6 @@ impl<F: FftField> Config<F> {
         randomness_vec.extend(final_folding_randomness.0.iter().rev());
 
         // Hints for deferred constraints
-        self.compute_deferred_hints(prover_state, weights, &randomness_vec)
-    }
-
-    /// Send final polynomial coefficients to verifier.
-    pub(crate) fn send_final_coefficients<H, R>(
-        &self,
-        prover_state: &mut ProverState<H, R>,
-        coefficients: &CoefficientList<F>,
-    ) where
-        H: DuplexSpongeInterface,
-        R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
-    {
-        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
-        for coeff in coefficients.coeffs() {
-            prover_state.prover_message(coeff);
-        }
-    }
-
-    /// Compute deferred constraint hints and write them to the transcript.
-    ///
-    /// Returns `(constraint_evaluation_point, deferred_values)`.
-    pub(crate) fn compute_deferred_hints<H, R>(
-        &self,
-        prover_state: &mut ProverState<H, R>,
-        weights: &[&Weights<F>],
-        randomness_vec: &[F],
-    ) -> (MultilinearPoint<F>, Vec<F>)
-    where
-        H: DuplexSpongeInterface,
-        R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
-    {
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
         let deferred: Vec<F> = weights
             .iter()

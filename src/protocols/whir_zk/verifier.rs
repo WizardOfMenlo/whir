@@ -2,7 +2,6 @@ use ark_ff::{FftField, Field};
 
 use super::utils::{
     compute_per_polynomial_claims, construct_batched_eq_weights, BlindingEvaluations,
-    IrsDomainParams,
 };
 use super::Config;
 use crate::{
@@ -46,8 +45,7 @@ impl<F: FftField> Config<F> {
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
-        f_hat_commitments: &[&Commitment<F>],
-        blinding_commitment: &Commitment<F>,
+        commitment: &super::Commitment<F>,
         weights: &[&Weights<F>],
         evaluations: &[F],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
@@ -59,13 +57,12 @@ impl<F: FftField> Config<F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        #[cfg(feature = "alloc-track")]
-        let mut __snap = crate::alloc_snap!();
-
         // ====================================================================
         // Phase 1: ZK transcript header — read blinding challenges and build
         //          modified evaluations for P = masking·f + g
         // ====================================================================
+        let f_hat_commitments = commitment.f_hat_commitments();
+        let blinding_commitment = commitment.blinding_commitment();
         let num_polys = f_hat_commitments.len();
         let (blinding_challenge, masking_challenge, modified_evaluations) =
             self.read_header(verifier_state, weights, evaluations, num_polys)?;
@@ -94,21 +91,19 @@ impl<F: FftField> Config<F> {
 
         let folding_randomness = if constraint_rlc_coeffs.is_empty() {
             assert_eq!(the_sum, F::ZERO);
-            let fr = verifier_state.verifier_message_vec(self.main.initial_sumcheck.num_rounds);
-            self.main
+            let fr = verifier_state
+                .verifier_message_vec(self.blinded_commitment.initial_sumcheck.num_rounds);
+            self.blinded_commitment
                 .initial_sumcheck
                 .round_pow
                 .verify(verifier_state)?;
             MultilinearPoint(fr)
         } else {
-            self.main
+            self.blinded_commitment
                 .initial_sumcheck
                 .verify(verifier_state, &mut the_sum)?
         };
         round_folding_randomness.push(folding_randomness);
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("verify::phase1_header_initial_sumcheck", __snap);
 
         // ====================================================================
         // Phase 2: WHIR round loop
@@ -116,7 +111,8 @@ impl<F: FftField> Config<F> {
         let mut prev_is_initial = true;
         let mut prev_round_commitment: Option<irs_commit::Commitment<F>> = None;
 
-        for (round_index, round_config) in self.main.round_configs.iter().enumerate() {
+        for (round_index, round_config) in self.blinded_commitment.round_configs.iter().enumerate()
+        {
             let commitment = round_config
                 .irs_committer
                 .receive_commitment(verifier_state)?;
@@ -127,7 +123,7 @@ impl<F: FftField> Config<F> {
             let (stir_weights, stir_values) = if prev_is_initial {
                 self.verify_initial_round(
                     verifier_state,
-                    f_hat_commitments,
+                    &f_hat_commitments,
                     blinding_commitment,
                     &zk_challenges,
                     &commitment,
@@ -156,21 +152,19 @@ impl<F: FftField> Config<F> {
             prev_round_commitment = Some(commitment);
         }
 
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("verify::phase2_whir_rounds", __snap);
-
         // ====================================================================
         // Phase 3: Final round — read polynomial, verify last commitment
         // ====================================================================
         let final_coefficients = CoefficientList::new(
-            verifier_state.prover_messages_vec(self.main.final_sumcheck.initial_size)?,
+            verifier_state
+                .prover_messages_vec(self.blinded_commitment.final_sumcheck.initial_size)?,
         );
-        self.main.final_pow.verify(verifier_state)?;
+        self.blinded_commitment.final_pow.verify(verifier_state)?;
 
         self.verify_final_opening(
             verifier_state,
             prev_is_initial,
-            f_hat_commitments,
+            &f_hat_commitments,
             blinding_commitment,
             &zk_challenges,
             prev_round_commitment.as_ref(),
@@ -178,19 +172,16 @@ impl<F: FftField> Config<F> {
             &final_coefficients,
         )?;
 
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("verify::phase3_final_opening", __snap);
-
         // ====================================================================
         // Phase 4: Final sumcheck + consistency check
         // ====================================================================
         let final_sumcheck_randomness = self
-            .main
+            .blinded_commitment
             .final_sumcheck
             .verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
-        let result = self.main.verify_final_consistency(
+        let result = self.verify_final_consistency(
             verifier_state,
             &round_constraints,
             &round_folding_randomness,
@@ -198,9 +189,6 @@ impl<F: FftField> Config<F> {
             &final_sumcheck_randomness,
             the_sum,
         );
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("verify::phase4_final_sumcheck_consistency", __snap);
 
         result
     }
@@ -254,7 +242,7 @@ impl<F: FftField> Config<F> {
         Hash: ProverMessage<[H::U]>,
     {
         let in_domain_base = self
-            .main
+            .blinded_commitment
             .initial_committer
             .verify(verifier_state, f_hat_commitments)?;
 
@@ -266,7 +254,7 @@ impl<F: FftField> Config<F> {
             folding_randomness,
             f_hat_commitments.len(),
         )?;
-        let in_domain = in_domain_base.lift(self.main.embedding());
+        let in_domain = in_domain_base.lift(self.blinded_commitment.embedding());
         Ok((in_domain, virtual_oracle_values))
     }
 
@@ -338,7 +326,7 @@ impl<F: FftField> Config<F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let prev_round_config = &self.main.round_configs[round_index - 1];
+        let prev_round_config = &self.blinded_commitment.round_configs[round_index - 1];
         let in_domain = prev_round_config
             .irs_committer
             .verify(verifier_state, &[prev_commitment])?;
@@ -398,7 +386,7 @@ impl<F: FftField> Config<F> {
                 verify!(weights.evaluate(final_coefficients) == value);
             }
         } else {
-            let prev_round_config = self.main.round_configs.last().unwrap();
+            let prev_round_config = self.blinded_commitment.round_configs.last().unwrap();
             let in_domain = prev_round_config
                 .irs_committer
                 .verify(verifier_state, &[prev_round_commitment.unwrap()])?;
@@ -441,18 +429,16 @@ impl<F: FftField> Config<F> {
     {
         use crate::algebra::polynomials::fold::compute_fold;
 
-        #[cfg(feature = "alloc-track")]
-        let mut __snap = crate::alloc_snap!();
-
-        let embedding = self.main.embedding();
+        let embedding = self.blinded_commitment.embedding();
         let num_witness_vars = self.num_witness_variables();
-        let domain = IrsDomainParams::from_config(&self.main);
-        let interleaving_depth = domain.interleaving_depth;
+        let interleaving_depth = self.interleaving_depth();
         let fold_factor = interleaving_depth.trailing_zeros() as usize; // log2(interleaving_depth)
+        let omega_full = self.omega_full();
+        let omega_powers = self.omega_powers();
 
         // Precompute inverses for compute_fold (lifted to extension field)
         let zeta_ext_inv: F = embedding
-            .map(domain.zeta)
+            .map(self.zeta())
             .inverse()
             .expect("coset generator invertible");
         let two_inv = F::from(2u64).inverse().expect("char ≠ 2");
@@ -474,9 +460,9 @@ impl<F: FftField> Config<F> {
         let mut eval_cursor = 0;
 
         for &alpha_base in &in_domain_base.points {
-            let domain_position = domain.query_index(alpha_base);
+            let domain_position = self.query_index(alpha_base, &omega_powers);
             query_indices.push(domain_position);
-            let coset_gammas = domain.coset_gammas(alpha_base, embedding);
+            let coset_gammas = self.coset_gammas(alpha_base, &omega_powers);
 
             for gamma in coset_gammas {
                 for poly_idx in 0..num_polys {
@@ -494,9 +480,6 @@ impl<F: FftField> Config<F> {
             }
         }
         debug_assert_eq!(eval_cursor, total_evals);
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_blinding::read_transcript", __snap);
 
         // Sample query-batching challenge
         let query_batching_challenge: F = verifier_state.verifier_message();
@@ -524,19 +507,13 @@ impl<F: FftField> Config<F> {
 
         let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
 
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_blinding::build_weights_claims", __snap);
-
         // Verify blinding WHIR proof (single batch commitment for all N×(μ+1) blinding polys)
-        self.blinding_poly_commitment.verify(
+        self.blinding_commitment.verify(
             verifier_state,
             &[blinding_commitment],
             &weight_refs,
             &all_evaluations,
         )?;
-
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_blinding::blinding_whir_verify", __snap);
 
         // Reconstruct virtual oracle values from IRS opening + verified blinding evaluations.
         // For N polynomials: compute per-polynomial L_p(γ_j), RLC across polynomials,
@@ -550,14 +527,14 @@ impl<F: FftField> Config<F> {
             .enumerate()
             .map(|(query_idx, &alpha_base)| {
                 let domain_position = query_indices[query_idx];
-                let coset_offset = domain.omega_full.pow([domain_position as u64]);
+                let coset_offset = omega_full.pow([domain_position as u64]);
                 let coset_offset_ext_inv: F =
                     embedding.map(coset_offset).inverse().unwrap_or(F::ZERO);
 
                 let row = &in_domain_base.matrix[query_idx * num_cols..(query_idx + 1) * num_cols];
 
                 // Compute L_combined(γ_j) = Σ_p α_p · L_p(γ_j) for each coset element j
-                let coset_gammas = domain.coset_gammas(alpha_base, embedding);
+                let coset_gammas = self.coset_gammas(alpha_base, &omega_powers);
                 let combined_coset_values: Vec<F> = coset_gammas
                     .iter()
                     .enumerate()
@@ -601,9 +578,61 @@ impl<F: FftField> Config<F> {
             })
             .collect();
 
-        #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  verify_blinding::reconstruct_virtual_oracle", __snap);
-
         Ok(virtual_oracle_values)
+    }
+
+    /// Verify the final consistency check: compute folding randomness, read deferred
+    /// hints, evaluate weight functions, and check the final sumcheck equation.
+    fn verify_final_consistency<H>(
+        &self,
+        verifier_state: &mut VerifierState<'_, H>,
+        round_constraints: &[(Vec<F>, Vec<Weights<F>>)],
+        round_folding_randomness: &[MultilinearPoint<F>],
+        final_coefficients: &CoefficientList<F>,
+        final_sumcheck_randomness: &MultilinearPoint<F>,
+        the_sum: F,
+    ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
+    where
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+    {
+        let folding_randomness = MultilinearPoint(
+            round_folding_randomness
+                .iter()
+                .rev()
+                .flat_map(|poly| poly.0.iter().copied())
+                .collect(),
+        );
+
+        let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
+        let mut deferred_iter = deferred.iter().copied();
+        let mut weight_eval = F::ZERO;
+
+        for (round, (weights_rlc_coeffs, round_weights)) in round_constraints.iter().enumerate() {
+            let num_variables = round.checked_sub(1).map_or_else(
+                || self.blinded_commitment.initial_num_variables(),
+                |prev_round| {
+                    self.blinded_commitment.round_configs[prev_round].initial_num_variables()
+                },
+            );
+            let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+            for (rlc_coeff, weight) in zip_strict(weights_rlc_coeffs, round_weights) {
+                let eval = if weight.deferred() {
+                    let deferred_value = deferred_iter.next();
+                    verify!(deferred_value.is_some());
+                    deferred_value.unwrap()
+                } else {
+                    weight.compute(&point)
+                };
+                weight_eval += *rlc_coeff * eval;
+            }
+        }
+        verify!(deferred_iter.next().is_none());
+
+        let poly_eval = final_coefficients.evaluate(final_sumcheck_randomness);
+        verify!(poly_eval * weight_eval == the_sum);
+
+        Ok((folding_randomness, deferred))
     }
 }

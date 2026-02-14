@@ -207,7 +207,7 @@ fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, Protocol
 /// Build a complete ZK v2 config for the given variable count and polynomial count.
 fn make_zk_v2_config(num_variables: usize, num_polynomials: usize) -> whir_zk::Config<EF> {
     let (main_mv, main_params) = zk_main_params(num_variables);
-    whir_zk::Config::with_auto_helper(
+    whir_zk::Config::new(
         main_mv,
         &main_params,
         FoldingFactor::Constant(1),
@@ -354,8 +354,11 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
     let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
 
-    let (weights, evaluations) =
-        make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
+    let (weights, evaluations) = make_weights_and_evaluations_multi(
+        &polynomials,
+        &zk_config.blinded_commitment,
+        num_variables,
+    );
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
     let ds = DomainSeparator::protocol(&zk_config)
@@ -386,8 +389,11 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
     let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
 
-    let (weights, evaluations) =
-        make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
+    let (weights, evaluations) = make_weights_and_evaluations_multi(
+        &polynomials,
+        &zk_config.blinded_commitment,
+        num_variables,
+    );
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
     let ds = DomainSeparator::protocol(&zk_config)
@@ -412,27 +418,18 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
     bencher
         .with_inputs(|| {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let (f_hat_commitments, blinding_commitment) = zk_config
+            let commitment = zk_config
                 .receive_commitments(&mut verifier_state, NUM_POLYS)
                 .unwrap();
-            (verifier_state, f_hat_commitments, blinding_commitment)
+            (verifier_state, commitment)
         })
-        .bench_values(
-            |(mut verifier_state, f_hat_commitments, blinding_commitment)| {
-                let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
-                black_box(
-                    zk_config
-                        .verify(
-                            &mut verifier_state,
-                            &f_hat_refs,
-                            &blinding_commitment,
-                            &weight_refs,
-                            &evaluations,
-                        )
-                        .unwrap(),
-                );
-            },
-        );
+        .bench_values(|(mut verifier_state, commitment)| {
+            black_box(
+                zk_config
+                    .verify(&mut verifier_state, &commitment, &weight_refs, &evaluations)
+                    .unwrap(),
+            );
+        });
 }
 
 fn main() {
