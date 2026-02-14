@@ -57,7 +57,7 @@ impl Config {
         difficulty(self.threshold)
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip(prover_state), fields(engine)))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(engine)))]
     pub fn prove<H, R>(&self, prover_state: &mut ProverState<H, R>)
     where
         H: DuplexSpongeInterface,

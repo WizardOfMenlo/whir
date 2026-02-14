@@ -136,7 +136,7 @@ impl<F: Field> CoefficientList<F> {
     /// - The number of variables decreases: `m = n - k`
     /// - Uses multivariate evaluation over chunks of coefficients.
     #[must_use]
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = self.coeffs.len())))]
+    #[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all, fields(size = self.coeffs.len())))]
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.num_variables();
         #[cfg(not(feature = "parallel"))]
