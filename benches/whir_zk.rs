@@ -19,7 +19,7 @@ use whir::{
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::{
         whir::Config,
-        whir_zk::{utils::ZkPreprocessingPolynomials, ZkParams},
+        whir_zk::{self, ZkParams, ZkPreprocessingPolynomials},
     },
     transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
 };
@@ -40,14 +40,14 @@ const NUM_POLYS: usize = 2;
 //  Shared setup helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Build `n` deterministic polynomials with distinct coefficients.
-fn make_polynomials(num_variables: usize, n: usize) -> Vec<CoefficientList<F>> {
+/// Build `num_polynomials` deterministic polynomials with distinct coefficients.
+fn make_polynomials(num_variables: usize, num_polynomials: usize) -> Vec<CoefficientList<F>> {
     let num_coeffs = 1usize << num_variables;
-    (0..n)
-        .map(|i| {
+    (0..num_polynomials)
+        .map(|poly_idx| {
             CoefficientList::new(
                 (0..num_coeffs)
-                    .map(|j| F::from((i * num_coeffs + j + 1) as u64))
+                    .map(|coeff_idx| F::from((poly_idx * num_coeffs + coeff_idx + 1) as u64))
                     .collect(),
             )
         })
@@ -72,9 +72,12 @@ fn make_weights_and_evaluations_multi(
 }
 
 /// Build N independent ZK preprocessing polynomials.
-fn make_preprocessings(n: usize, zk_params: &ZkParams) -> Vec<ZkPreprocessingPolynomials<EF>> {
+fn make_preprocessings(
+    num_polynomials: usize,
+    zk_params: &ZkParams,
+) -> Vec<ZkPreprocessingPolynomials<EF>> {
     let mut rng = StdRng::seed_from_u64(42);
-    (0..n)
+    (0..num_polynomials)
         .map(|_| ZkPreprocessingPolynomials::<EF>::sample(&mut rng, zk_params.clone()))
         .collect()
 }
@@ -126,44 +129,44 @@ struct ZkV1Polys {
     p_poly: CoefficientList<F>,
 }
 
-/// Build N v1 polynomial bundles: for each i, f̂_i, g_i, P_i = ρ·f̂_i + g_i.
-fn make_zk_v1_polys(num_variables: usize, n: usize) -> Vec<ZkV1Polys> {
+/// Build N v1 polynomial bundles: for each polynomial, f̂, g, P = masking·f̂ + g.
+fn make_zk_v1_polys(num_variables: usize, num_polynomials: usize) -> Vec<ZkV1Polys> {
     use ark_std::UniformRand;
 
     let mut rng = StdRng::seed_from_u64(0xCAFE);
     let num_coeffs = 1usize << num_variables;
     let extended_num_coeffs = 1usize << (num_variables + 1);
-    let rho = F::rand(&mut rng);
+    let masking_challenge = F::rand(&mut rng);
 
-    (0..n)
-        .map(|i| {
-            // Deterministic base polynomial (distinct per i).
+    (0..num_polynomials)
+        .map(|poly_idx| {
+            // Deterministic base polynomial (distinct per polynomial).
             let base_coeffs: Vec<F> = (0..num_coeffs)
-                .map(|j| F::from((i * num_coeffs + j + 1) as u64))
+                .map(|coeff_idx| F::from((poly_idx * num_coeffs + coeff_idx + 1) as u64))
                 .collect();
 
-            // f̂_i(x,y) = base_i(x) + y·msk_i(x)
+            // f̂(x,y) = base(x) + y·msk(x)
             let mut f_hat_coeffs = vec![F::from(0u64); extended_num_coeffs];
-            for (j, &c) in base_coeffs.iter().enumerate() {
-                f_hat_coeffs[j] = c;
+            for (coeff_idx, &coeff) in base_coeffs.iter().enumerate() {
+                f_hat_coeffs[coeff_idx] = coeff;
             }
-            for j in 0..num_coeffs {
-                f_hat_coeffs[num_coeffs + j] = F::rand(&mut rng);
+            for coeff_idx in 0..num_coeffs {
+                f_hat_coeffs[num_coeffs + coeff_idx] = F::rand(&mut rng);
             }
             let f_hat = CoefficientList::new(f_hat_coeffs);
 
-            // Random g_i(x,y)
+            // Random g(x,y)
             let g_coeffs: Vec<F> = (0..extended_num_coeffs)
                 .map(|_| F::rand(&mut rng))
                 .collect();
             let g_poly = CoefficientList::new(g_coeffs);
 
-            // P_i = ρ·f̂_i + g_i
+            // P = masking·f̂ + g
             let p_coeffs: Vec<F> = f_hat
                 .coeffs()
                 .iter()
                 .zip(g_poly.coeffs().iter())
-                .map(|(&fh, &gv)| rho * fh + gv)
+                .map(|(&f_hat_coeff, &g_coeff)| masking_challenge * f_hat_coeff + g_coeff)
                 .collect();
             let p_poly = CoefficientList::new(p_coeffs);
 
@@ -189,8 +192,8 @@ fn make_zk_v1_weights_and_evaluations(
     coords.push(EF::from(0u64)); // y = 0
     let extended_point = MultilinearPoint(coords);
     let mut evaluations = Vec::with_capacity(p_polys.len());
-    for p in p_polys {
-        evaluations.push(p.mixed_evaluate(config.embedding(), &extended_point));
+    for p_poly in p_polys {
+        evaluations.push(p_poly.mixed_evaluate(config.embedding(), &extended_point));
     }
     (vec![Weights::evaluation(extended_point)], evaluations)
 }
@@ -199,8 +202,8 @@ fn make_zk_v1_weights_and_evaluations(
 //  ZK v2 helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-/// ZK v2 main WHIR configuration (round-0 fold = 2 for small k).
-fn zk_main_config(num_variables: usize) -> Config<EF> {
+/// ZK v2 main WHIR parameters (round-0 fold = 2 for small k).
+fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, ProtocolParameters) {
     let mv = MultivariateParameters::new(num_variables);
     let params = ProtocolParameters {
         initial_statement: true,
@@ -212,12 +215,15 @@ fn zk_main_config(num_variables: usize) -> Config<EF> {
         batch_size: 1,
         hash_id: hash::SHA2,
     };
-    Config::new(mv, &params)
+    (mv, params)
 }
 
-/// ZK v2 helper WHIR configuration, tuned for the given ZK params and number of polynomials.
-fn zk_helper_config(zk_params: &ZkParams, num_polynomials: usize) -> Config<EF> {
-    let helper_vars = zk_params.ell + 1;
+/// ZK v2 helper WHIR parameters, tuned for the given ZK params and number of polynomials.
+fn zk_helper_params(
+    zk_params: &ZkParams,
+    num_polynomials: usize,
+) -> (MultivariateParameters<EF>, ProtocolParameters) {
+    let helper_vars = zk_params.num_helper_variables + 1;
     let mv = MultivariateParameters::new(helper_vars);
     let params = ProtocolParameters {
         initial_statement: true,
@@ -229,7 +235,15 @@ fn zk_helper_config(zk_params: &ZkParams, num_polynomials: usize) -> Config<EF> 
         batch_size: zk_params.helper_batch_size(num_polynomials),
         hash_id: hash::SHA2,
     };
-    Config::new(mv, &params)
+    (mv, params)
+}
+
+/// Build a complete ZK v2 config for the given variable count and polynomial count.
+fn make_zk_v2_config(num_variables: usize, num_polynomials: usize) -> whir_zk::Config<EF> {
+    let (main_mv, main_params) = zk_main_params(num_variables);
+    let zk_params = ZkParams::from_whir_params(&Config::new(main_mv, &main_params));
+    let (helper_mv, helper_params) = zk_helper_params(&zk_params, num_polynomials);
+    whir_zk::Config::new(main_mv, &main_params, helper_mv, &helper_params)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -246,8 +260,10 @@ fn zk_v1_commit(bencher: Bencher, num_variables: usize) {
         .instance(&Empty);
 
     // Flatten: [f̂₁, g₁, f̂₂, g₂]
-    let commit_polys: Vec<&CoefficientList<F>> =
-        bundles.iter().flat_map(|b| [&b.f_hat, &b.g_poly]).collect();
+    let commit_polys: Vec<&CoefficientList<F>> = bundles
+        .iter()
+        .flat_map(|bundle| [&bundle.f_hat, &bundle.g_poly])
+        .collect();
 
     bencher
         .with_inputs(|| ProverState::new_std(&ds))
@@ -261,7 +277,8 @@ fn zk_v1_commit(bencher: Bencher, num_variables: usize) {
 fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
-    let p_polys: Vec<CoefficientList<F>> = bundles.iter().map(|b| b.p_poly.clone()).collect();
+    let p_polys: Vec<CoefficientList<F>> =
+        bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
     let (weights, evaluations) =
         make_zk_v1_weights_and_evaluations(&p_polys, &prove_config, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
@@ -294,7 +311,8 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
 fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
-    let p_polys: Vec<CoefficientList<F>> = bundles.iter().map(|b| b.p_poly.clone()).collect();
+    let p_polys: Vec<CoefficientList<F>> =
+        bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
     let (weights, evaluations) =
         make_zk_v1_weights_and_evaluations(&p_polys, &prove_config, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
@@ -307,22 +325,28 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
 
     // Generate a proof once.
     let proof = {
-        let mut ps = ProverState::new_std(&ds);
-        let w = prove_config.commit(&mut ps, &p_refs);
-        prove_config.prove(&mut ps, &p_refs, &[&w], &weight_refs, &evaluations);
-        ps.proof()
+        let mut prover_state = ProverState::new_std(&ds);
+        let witness = prove_config.commit(&mut prover_state, &p_refs);
+        prove_config.prove(
+            &mut prover_state,
+            &p_refs,
+            &[&witness],
+            &weight_refs,
+            &evaluations,
+        );
+        prover_state.proof()
     };
 
     bencher
         .with_inputs(|| {
-            let mut vs = VerifierState::new_std(&ds, &proof);
-            let commitment = prove_config.receive_commitment(&mut vs).unwrap();
-            (vs, commitment)
+            let mut verifier_state = VerifierState::new_std(&ds, &proof);
+            let commitment = prove_config.receive_commitment(&mut verifier_state).unwrap();
+            (verifier_state, commitment)
         })
-        .bench_values(|(mut vs, commitment)| {
+        .bench_values(|(mut verifier_state, commitment)| {
             black_box(
                 prove_config
-                    .verify(&mut vs, &[&commitment], &weight_refs, &evaluations)
+                    .verify(&mut verifier_state, &[&commitment], &weight_refs, &evaluations)
                     .unwrap(),
             );
         });
@@ -335,12 +359,10 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
 #[divan::bench(args = SIZES)]
 fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
-    let config = zk_main_config(num_variables);
-    let zk_params = ZkParams::from_whir_params(&config);
-    let helper_config = zk_helper_config(&zk_params, NUM_POLYS);
-    let preprocessings = make_preprocessings(NUM_POLYS, &zk_params);
+    let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
+    let preprocessings = make_preprocessings(NUM_POLYS, &zk_config.zk_params);
 
-    let ds = DomainSeparator::protocol(&config)
+    let ds = zk_config.domain_separator()
         .session(&format!("bench-zk-v2-commit-{num_variables}"))
         .instance(&Empty);
 
@@ -350,10 +372,9 @@ fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
         .with_inputs(|| ProverState::new_std(&ds))
         .bench_values(|mut prover_state| {
             let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-            black_box(config.commit_zk(
+            black_box(zk_config.commit(
                 &mut prover_state,
                 &poly_refs,
-                &helper_config,
                 &preproc_refs,
             ));
         });
@@ -362,16 +383,14 @@ fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
 #[divan::bench(args = SIZES)]
 fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
-    let config = zk_main_config(num_variables);
-    let zk_params = ZkParams::from_whir_params(&config);
-    let helper_config = zk_helper_config(&zk_params, NUM_POLYS);
-    let preprocessings = make_preprocessings(NUM_POLYS, &zk_params);
+    let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
+    let preprocessings = make_preprocessings(NUM_POLYS, &zk_config.zk_params);
 
     let (weights, evaluations) =
-        make_weights_and_evaluations_multi(&polynomials, &config, num_variables);
+        make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = DomainSeparator::protocol(&config)
+    let ds = zk_config.domain_separator()
         .session(&format!("bench-zk-v2-prove-{num_variables}"))
         .instance(&Empty);
 
@@ -382,16 +401,15 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
             let mut prover_state = ProverState::new_std(&ds);
             let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
             let zk_witness =
-                config.commit_zk(&mut prover_state, &poly_refs, &helper_config, &preproc_refs);
+                zk_config.commit(&mut prover_state, &poly_refs, &preproc_refs);
             (prover_state, zk_witness)
         })
         .bench_values(|(mut prover_state, zk_witness)| {
             let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-            black_box(config.prove_zk(
+            black_box(zk_config.prove(
                 &mut prover_state,
                 &poly_refs,
                 &zk_witness,
-                &helper_config,
                 &weight_refs,
                 &evaluations,
             ));
@@ -401,16 +419,14 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
 #[divan::bench(args = SIZES)]
 fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
-    let config = zk_main_config(num_variables);
-    let zk_params = ZkParams::from_whir_params(&config);
-    let helper_config = zk_helper_config(&zk_params, NUM_POLYS);
-    let preprocessings = make_preprocessings(NUM_POLYS, &zk_params);
+    let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
+    let preprocessings = make_preprocessings(NUM_POLYS, &zk_config.zk_params);
 
     let (weights, evaluations) =
-        make_weights_and_evaluations_multi(&polynomials, &config, num_variables);
+        make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = DomainSeparator::protocol(&config)
+    let ds = zk_config.domain_separator()
         .session(&format!("bench-zk-v2-verify-{num_variables}"))
         .instance(&Empty);
 
@@ -418,40 +434,36 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
 
     // Generate a proof once (outside the benchmark loop).
     let proof = {
-        let mut ps = ProverState::new_std(&ds);
+        let mut prover_state = ProverState::new_std(&ds);
         let poly_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
-        let zk_witness = config.commit_zk(&mut ps, &poly_refs, &helper_config, &preproc_refs);
-        config.prove_zk(
-            &mut ps,
+        let zk_witness =
+            zk_config.commit(&mut prover_state, &poly_refs, &preproc_refs);
+        zk_config.prove(
+            &mut prover_state,
             &poly_refs,
             &zk_witness,
-            &helper_config,
             &weight_refs,
             &evaluations,
         );
-        ps.proof()
+        prover_state.proof()
     };
 
     bencher
         .with_inputs(|| {
-            let mut vs = VerifierState::new_std(&ds, &proof);
-            let mut f_hat_commitments = Vec::with_capacity(NUM_POLYS);
-            for _ in 0..NUM_POLYS {
-                f_hat_commitments.push(config.receive_commitment(&mut vs).unwrap());
-            }
-            let helper_commitment = helper_config.receive_commitment(&mut vs).unwrap();
-            (vs, f_hat_commitments, helper_commitment)
+            let mut verifier_state = VerifierState::new_std(&ds, &proof);
+            let (f_hat_commitments, helper_commitment) = zk_config
+                .receive_commitments(&mut verifier_state, NUM_POLYS)
+                .unwrap();
+            (verifier_state, f_hat_commitments, helper_commitment)
         })
-        .bench_values(|(mut vs, f_hat_commitments, helper_commitment)| {
+        .bench_values(|(mut verifier_state, f_hat_commitments, helper_commitment)| {
             let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
             black_box(
-                config
-                    .verify_zk(
-                        &mut vs,
+                zk_config
+                    .verify(
+                        &mut verifier_state,
                         &f_hat_refs,
                         &helper_commitment,
-                        &helper_config,
-                        &zk_params,
                         &weight_refs,
                         &evaluations,
                     )

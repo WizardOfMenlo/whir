@@ -1,9 +1,11 @@
+pub mod config;
 mod committer;
 mod prover;
-pub mod utils;
+pub(crate) mod utils;
 mod verifier;
 
-pub use utils::{HelperEvaluations, ZkParams, ZkPreprocessingPolynomials, ZkWitness};
+pub use config::{Config, ZkParams};
+pub use utils::{HelperEvaluations, ZkPreprocessingPolynomials, ZkWitness};
 
 #[cfg(test)]
 mod tests {
@@ -19,8 +21,7 @@ mod tests {
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        protocols::whir::Config,
-        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
+        transcript::{codecs::Empty, ProverState, VerifierState},
     };
 
     /// Field type used in the tests.
@@ -29,14 +30,14 @@ mod tests {
     /// Extension field type used in the tests.
     type EF = Field64_2;
 
-    /// Run a complete zkWHIR proof lifecycle: sample preprocessing, commit_zk, prove_zk.
+    /// Run a complete zkWHIR proof lifecycle: sample preprocessing, commit, prove, verify.
     ///
     /// This function:
     /// - builds N multilinear polynomials with the specified number of variables,
     /// - samples N independent ZK preprocessing polynomials (msk, g₀, ĝ₁..ĝμ, M),
-    /// - constructs a helper Config for the (ℓ+1)-variate helper WHIR,
-    /// - commits using commit_zk (producing f̂ᵢ = fᵢ + mskᵢ and helper commitments),
-    /// - generates a ZK proof using prove_zk, then verifies with verify_zk.
+    /// - constructs a `whir_zk::Config` bundling main + helper WHIR configs,
+    /// - commits (producing f̂ᵢ = fᵢ + mskᵢ and helper commitments),
+    /// - generates a ZK proof, then verifies it.
     fn make_whir_zk_things(
         num_variables: usize,
         folding_factor: FoldingFactor,
@@ -49,7 +50,7 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = StdRng::seed_from_u64(12345);
 
-        // ── Main WHIR config ──
+        // ── Main WHIR parameters ──
         let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
@@ -62,39 +63,28 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(mv_params, &whir_params);
-        eprintln!("{params}");
-
-        // ── Compute ZK parameters (ℓ, μ) ──
-        let zk_params = ZkParams::from_whir_params(&params);
-        eprintln!(
-            "ZK params: ell={}, mu={}, num_polynomials={}",
-            zk_params.ell, zk_params.mu, num_polynomials
+        // ── Build ZK config with auto-derived helper parameters ──
+        let zk_config = Config::with_auto_helper(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(1),
+            num_polynomials,
         );
-
-        // ── Helper WHIR config for (ℓ+1)-variate helper polynomials ──
-        //    batch_size = N×(μ+1) so all N polynomial helpers share one Merkle tree
-        let helper_mv_params = MultivariateParameters::new(zk_params.ell + 1);
-        let helper_whir_params = ProtocolParameters {
-            initial_statement: true,
-            security_level: 32,
-            pow_bits: 0,
-            folding_factor: FoldingFactor::Constant(1),
-            soundness_type: SoundnessType::ConjectureList,
-            starting_log_inv_rate: 1,
-            batch_size: zk_params.helper_batch_size(num_polynomials),
-            hash_id: hash::SHA2,
-        };
-        let helper_config = Config::new(helper_mv_params, &helper_whir_params);
+        let zk_params = &zk_config.zk_params;
+        eprintln!(
+            "ZK params: num_helper_variables={}, num_witness_variables={}, num_polynomials={}",
+            zk_params.num_helper_variables, zk_params.num_witness_variables, num_polynomials
+        );
+        eprintln!("{}", zk_config.main);
 
         // ── Sample N random polynomials and N independent preprocessings ──
         let mut polynomials: Vec<CoefficientList<F>> = Vec::with_capacity(num_polynomials);
         let mut preprocessings: Vec<ZkPreprocessingPolynomials<EF>> =
             Vec::with_capacity(num_polynomials);
-        for i in 0..num_polynomials {
+        for poly_idx in 0..num_polynomials {
             // Each polynomial has distinct coefficients
             let coeffs: Vec<F> = (0..num_coeffs)
-                .map(|j| F::from((i * num_coeffs + j + 1) as u64))
+                .map(|coeff_idx| F::from((poly_idx * num_coeffs + coeff_idx + 1) as u64))
                 .collect();
             polynomials.push(CoefficientList::new(coeffs));
             preprocessings.push(ZkPreprocessingPolynomials::<EF>::sample(
@@ -111,56 +101,47 @@ mod tests {
             let point = MultilinearPoint::rand(&mut rng, num_variables);
             weights.push(Weights::evaluation(point.clone()));
             for poly in &polynomials {
-                evaluations.push(poly.mixed_evaluate(params.embedding(), &point));
+                evaluations.push(poly.mixed_evaluate(zk_config.main.embedding(), &point));
             }
         }
         let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
         let polynomial_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
 
         // ── Set up Fiat-Shamir transcript ──
-        let ds = DomainSeparator::protocol(&params)
+        let ds = zk_config.domain_separator()
             .session(&format!("ZK Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
         // ── ZK commitment: commit to f̂ᵢ = fᵢ + mskᵢ, plus helper polynomials ──
-        let zk_witness = params.commit_zk(
+        let zk_witness = zk_config.commit(
             &mut prover_state,
             &polynomial_refs,
-            &helper_config,
             &preprocessings.iter().collect::<Vec<_>>(),
         );
 
         // ── ZK proof: prove knowledge of {fᵢ} via blinded virtual oracle ──
-        let (_point, _evals) = params.prove_zk(
+        let (_point, _evals) = zk_config.prove(
             &mut prover_state,
             &polynomial_refs,
             &zk_witness,
-            &helper_config,
             &weight_refs,
             &evaluations,
         );
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        // ── Receive commitments from transcript (mirrors commit_zk order) ──
-        // One f̂ commitment per polynomial
-        let f_hat_commitments: Vec<_> = (0..num_polynomials)
-            .map(|_| params.receive_commitment(&mut verifier_state).unwrap())
-            .collect();
-        let f_hat_commitment_refs: Vec<_> = f_hat_commitments.iter().collect();
-        // Single batch commitment for all N×(μ+1) helper polynomials
-        let helper_commitment = helper_config
-            .receive_commitment(&mut verifier_state)
+        // ── Receive commitments from transcript (mirrors commit order) ──
+        let (f_hat_commitments, helper_commitment) = zk_config
+            .receive_commitments(&mut verifier_state, num_polynomials)
             .unwrap();
+        let f_hat_commitment_refs: Vec<_> = f_hat_commitments.iter().collect();
 
         // ── Verify ZK proof ──
-        let verify_result = params.verify_zk(
+        let verify_result = zk_config.verify(
             &mut verifier_state,
             &f_hat_commitment_refs,
             &helper_commitment,
-            &helper_config,
-            &zk_params,
             &weight_refs,
             &evaluations,
         );

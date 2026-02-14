@@ -219,7 +219,7 @@ impl<F: FftField> Config<F> {
         let final_sumcheck_randomness = self.final_sumcheck.verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
-        // Final consistency check (shared with verify_zk)
+        // Final consistency check (shared with whir_zk::Config::verify)
         self.verify_final_consistency(
             verifier_state,
             &round_constraints,
@@ -233,7 +233,7 @@ impl<F: FftField> Config<F> {
     /// Verify the final consistency check: compute folding randomness, read deferred
     /// hints, evaluate weight functions, and check the final sumcheck equation.
     ///
-    /// This is shared between `verify` and `verify_zk`.
+    /// This is shared between `verify` and `whir_zk::Config::verify`.
     pub(crate) fn verify_final_consistency<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
