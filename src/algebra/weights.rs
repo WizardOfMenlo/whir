@@ -384,4 +384,144 @@ mod tests {
         let expected = weight_list.eval_extension(&folding_randomness);
         assert_eq!(weight.compute(&folding_randomness), expected);
     }
+
+    #[test]
+    fn test_protocol() {
+        // ── Step 1: Create a CoefficientList (4 variables, 16 coefficients) ──
+        let coeffs = CoefficientList::new(vec![
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+            Field64::ONE,
+        ]);
+        println!("coeffs: {:?}\n", coeffs);
+
+        // ── Step 2: Evaluate at several MultilinearPoints ──
+        let evaluation_points = vec![
+            MultilinearPoint(vec![
+                Field64::ONE,
+                Field64::ZERO,
+                Field64::ZERO,
+                Field64::ZERO,
+            ]),
+            MultilinearPoint(vec![
+                Field64::ZERO,
+                Field64::ONE,
+                Field64::ZERO,
+                Field64::ZERO,
+            ]),
+            MultilinearPoint(vec![
+                Field64::ZERO,
+                Field64::ZERO,
+                Field64::ONE,
+                Field64::ZERO,
+            ]),
+            MultilinearPoint(vec![
+                Field64::ZERO,
+                Field64::ZERO,
+                Field64::ZERO,
+                Field64::ONE,
+            ]),
+        ];
+        println!("evaluation_points: {:?}\n", evaluation_points);
+        let weights = evaluation_points
+            .iter()
+            .map(|point| Weights::evaluation(point.clone()))
+            .collect::<Vec<_>>();
+        println!("weights: {:?}\n", weights);
+        let evaluations = evaluation_points
+            .iter()
+            .map(|point| coeffs.mixed_evaluate(&Identity::new(), point))
+            .collect::<Vec<_>>();
+        println!("evaluations: {:?}\n", evaluations);
+
+        // ── Step 3: Convert CoefficientList → EvaluationsList → CoefficientList ──
+        // CoefficientList → EvaluationsList (via wavelet transform)
+        let evals = EvaluationsList::from(coeffs.clone());
+        println!("evals (hypercube evaluations): {:?}\n", evals);
+
+        // EvaluationsList → CoefficientList (via inverse wavelet transform)
+        let coeffs_roundtrip = evals.to_coeffs();
+        println!("coeffs_roundtrip: {:?}\n", coeffs_roundtrip);
+
+        // Verify round-trip: coeffs → evals → coeffs gives back the same polynomial
+        assert_eq!(
+            coeffs.coeffs(),
+            coeffs_roundtrip.coeffs(),
+            "Round-trip CoefficientList → EvaluationsList → CoefficientList must be identity"
+        );
+
+        // Both representations should evaluate to the same values at any point
+        for point in &evaluation_points {
+            let from_coeffs = coeffs.evaluate(point);
+            let from_evals = evals.evaluate(point);
+            assert_eq!(
+                from_coeffs, from_evals,
+                "CoefficientList and EvaluationsList must agree at {:?}",
+                point
+            );
+        }
+        println!("✓ Round-trip and evaluation consistency verified\n");
+
+        // ── Step 4: Verify fold_in_place matches fold ──
+        // fold() creates a new polynomial; fold_in_place() mutates in-place.
+        // After folding f(X₀, X₁, X₂, X₃) at (r₀, r₁), we get g(X₂, X₃) = f(X₂, X₃, r₀, r₁).
+        let folding_randomness = MultilinearPoint(vec![Field64::from(3u64), Field64::from(7u64)]);
+
+        // fold() — allocating version
+        let folded = coeffs.fold(&folding_randomness);
+        println!("folded (via fold):          {:?}", folded);
+
+        // fold_in_place() — in-place version
+        let mut coeffs_mut = coeffs.clone();
+        coeffs_mut.fold_in_place(&folding_randomness);
+        println!("folded (via fold_in_place): {:?}", coeffs_mut);
+
+        // They must produce identical results
+        assert_eq!(
+            folded.coeffs(),
+            coeffs_mut.coeffs(),
+            "fold() and fold_in_place() must produce the same polynomial"
+        );
+        println!("✓ fold and fold_in_place match\n");
+
+        // ── Step 5: Verify folded polynomial is consistent with full evaluation ──
+        // g(a, b) should equal f(a, b, r₀, r₁) for any (a, b)
+        let eval_point = MultilinearPoint(vec![Field64::from(5u64), Field64::from(11u64)]);
+        println!("eval_point: {:?}\n", eval_point);
+        let full_point = MultilinearPoint(vec![
+            eval_point.0[0],
+            eval_point.0[1],
+            folding_randomness.0[0],
+            folding_randomness.0[1],
+        ]);
+        println!("full_point: {:?}\n", full_point);
+        let folded_eval = folded.evaluate(&eval_point);
+        println!("folded poly: {:?}\n", folded);
+        let full_eval = coeffs.evaluate(&full_point);
+        println!("full poly: {:?}\n", coeffs);
+
+        println!("folded_eval: {:?}\n", folded_eval);
+        println!("full_eval: {:?}\n", full_eval);
+        assert_eq!(
+            folded_eval, full_eval,
+            "f.fold(r).evaluate(a) must equal f.evaluate(a || r)"
+        );
+        println!(
+            "✓ folded.evaluate({:?}) == coeffs.evaluate({:?}) == {:?}\n",
+            eval_point.0, full_point.0, folded_eval
+        );
+    }
 }

@@ -72,9 +72,11 @@ impl<F: FftField> Config<F> {
                         .weights(self.initial_num_variables()),
                     commitment.out_of_domain().rows(),
                 ) {
-                    for j in 0..num_polynomials {
-                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                    for poly_idx in 0..num_polynomials {
+                        if poly_idx >= polynomial_offset
+                            && poly_idx < oods_row.len() + polynomial_offset
+                        {
+                            matrix.push(oods_row[poly_idx - polynomial_offset]);
                         } else {
                             matrix.push(verifier_state.prover_message()?);
                         }
@@ -84,7 +86,7 @@ impl<F: FftField> Config<F> {
                 polynomial_offset += commitment.num_polynomials();
             }
 
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            all_weights.extend(weights.iter().map(|&weight| weight.clone()));
             matrix.extend_from_slice(evaluations);
             (all_weights, matrix)
         };
@@ -219,43 +221,67 @@ impl<F: FftField> Config<F> {
         let final_sumcheck_randomness = self.final_sumcheck.verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
-        // Compute folding randomness across all rounds
+        // Final consistency check (shared with whir_zk::Config::verify)
+        self.verify_final_consistency(
+            verifier_state,
+            &round_constraints,
+            &round_folding_randomness,
+            &final_coefficients,
+            &final_sumcheck_randomness,
+            the_sum,
+        )
+    }
+
+    /// Verify the final consistency check: compute folding randomness, read deferred
+    /// hints, evaluate weight functions, and check the final sumcheck equation.
+    fn verify_final_consistency<H>(
+        &self,
+        verifier_state: &mut VerifierState<'_, H>,
+        round_constraints: &[(Vec<F>, Vec<Weights<F>>)],
+        round_folding_randomness: &[MultilinearPoint<F>],
+        final_coefficients: &CoefficientList<F>,
+        final_sumcheck_randomness: &MultilinearPoint<F>,
+        the_sum: F,
+    ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
+    where
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+    {
         let folding_randomness = MultilinearPoint(
             round_folding_randomness
-                .into_iter()
+                .iter()
                 .rev()
-                .flat_map(|poly| poly.0.into_iter())
+                .flat_map(|poly| poly.0.iter().copied())
                 .collect(),
         );
 
-        // Compute evaluation of weights in folding randomness point
         let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
         let mut deferred_iter = deferred.iter().copied();
         let mut weight_eval = F::ZERO;
-        for (round, (weights_rlc_coeffs, weights)) in round_constraints.iter().enumerate() {
+
+        for (round, (weights_rlc_coeffs, round_weights)) in round_constraints.iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
                 || self.initial_num_variables(),
-                |p| self.round_configs[p].initial_num_variables(),
+                |prev_round| self.round_configs[prev_round].initial_num_variables(),
             );
             let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
-            for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                let eval = if weights.deferred() {
-                    let deferred = deferred_iter.next();
-                    verify!(deferred.is_some());
-                    deferred.unwrap()
+            for (rlc_coeff, weight) in zip_strict(weights_rlc_coeffs, round_weights) {
+                let eval = if weight.deferred() {
+                    let deferred_value = deferred_iter.next();
+                    verify!(deferred_value.is_some());
+                    deferred_value.unwrap()
                 } else {
-                    weights.compute(&point)
+                    weight.compute(&point)
                 };
                 weight_eval += *rlc_coeff * eval;
             }
         }
         verify!(deferred_iter.next().is_none());
 
-        // Check the final sumcheck equation
-        let poly_eval = final_coefficients.evaluate(&final_sumcheck_randomness);
+        let poly_eval = final_coefficients.evaluate(final_sumcheck_randomness);
         verify!(poly_eval * weight_eval == the_sum);
 
-        // Return the evaluation point and the claimed values of the deferred weights.
         Ok((folding_randomness, deferred))
     }
 }

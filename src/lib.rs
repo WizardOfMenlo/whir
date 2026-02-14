@@ -1,4 +1,6 @@
 pub mod algebra;
+#[cfg(feature = "alloc-track")]
+pub mod alloc_track;
 pub mod ark_serde;
 pub mod bits;
 pub mod cmdline_utils;

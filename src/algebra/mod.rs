@@ -54,6 +54,13 @@ pub fn lift<M: Embedding>(embedding: &M, source: &[M::Source]) -> Vec<M::Target>
     result
 }
 
+/// Scalar-mul add (same-field AXPY)
+///
+/// accumulator[i] += weight * vector[i]
+pub fn scalar_mul_add<F: Field>(accumulator: &mut [F], weight: F, vector: &[F]) {
+    mixed_scalar_mul_add(&embedding::Identity::new(), accumulator, weight, vector);
+}
+
 /// Mixed scalar-mul add
 ///
 /// accumulator[i] += weight * vector[i]

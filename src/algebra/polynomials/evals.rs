@@ -108,6 +108,26 @@ where
         self.num_variables
     }
 
+    /// Folds evaluations in-place by linear interpolation at the given weight.
+    ///
+    /// For each pair `(evals[2i], evals[2i+1])`, computes the interpolated value
+    /// `(evals[2i+1] - evals[2i]) * weight + evals[2i]` and stores it at `evals[i]`.
+    /// The vector is then truncated to half its original size.
+    ///
+    /// This is equivalent to creating a new `EvaluationsList` via
+    /// `algebra::sumcheck::fold`, but avoids allocating a new vector.
+    pub fn fold_in_place(&mut self, weight: F) {
+        assert!(self.evals.len().is_multiple_of(2));
+        let half = self.evals.len() / 2;
+        for i in 0..half {
+            let v0 = self.evals[2 * i];
+            let v1 = self.evals[2 * i + 1];
+            self.evals[i] = (v1 - v0) * weight + v0;
+        }
+        self.evals.truncate(half);
+        self.num_variables -= 1;
+    }
+
     pub fn to_coeffs(&self) -> crate::algebra::polynomials::coeffs::CoefficientList<F> {
         let mut coeffs = self.evals.clone();
         crate::algebra::ntt::inverse_wavelet_transform(&mut coeffs);

@@ -80,6 +80,26 @@ impl<F: Field> CoefficientList<F> {
         }
     }
 
+    /// Embed an ℓ-variate polynomial into an n-variate polynomial (n ≥ ℓ)
+    /// by treating the extra variables as having zero contribution.
+    ///
+    /// Coefficient at index `i` in the ℓ-variate maps to index `i * 2^(n-ℓ)`
+    /// in the n-variate, with all other coefficients set to zero.
+    pub fn embed_into_variables(&self, n: usize) -> Self {
+        let ell = self.num_variables;
+        assert!(n >= ell);
+
+        let factor = 1 << (n - ell);
+        let new_size = 1 << n;
+        let mut coeffs = vec![F::ZERO; new_size];
+
+        for (i, &c) in self.coeffs.iter().enumerate() {
+            coeffs[i * factor] = c;
+        }
+
+        Self::new(coeffs)
+    }
+
     /// Evaluates the polynomial at an arbitrary point in `F^n`.
     ///
     /// This generalizes evaluation beyond `(0,1)^n`, allowing fractional or arbitrary field
@@ -136,6 +156,33 @@ impl<F: Field> CoefficientList<F> {
             coeffs,
             num_variables: self.num_variables() - folding_factor,
         }
+    }
+
+    /// Folds the polynomial in-place along high-indexed variables.
+    ///
+    /// Like [`fold`](Self::fold), but modifies the polynomial in-place instead of
+    /// allocating a new coefficient vector. The excess capacity is freed via truncation.
+    ///
+    /// # Safety of in-place overwrite
+    ///
+    /// For each output index `i`, `eval_multivariate` reads from
+    /// `coeffs[i*chunk .. (i+1)*chunk]` and the result is written to `coeffs[i]`.
+    /// Since `chunk >= 2`, the write target `i` is always strictly less than the
+    /// start of the next read range `(i+1)*chunk`, so writes never corrupt data
+    /// needed by subsequent iterations.
+    pub fn fold_in_place(&mut self, folding_randomness: &MultilinearPoint<F>) {
+        let folding_factor = folding_randomness.num_variables();
+        let chunk_size = 1 << folding_factor;
+        let new_len = self.coeffs.len() / chunk_size;
+        for i in 0..new_len {
+            let val = eval_multivariate(
+                &self.coeffs[i * chunk_size..(i + 1) * chunk_size],
+                &folding_randomness.0,
+            );
+            self.coeffs[i] = val;
+        }
+        self.coeffs.truncate(new_len);
+        self.num_variables -= folding_factor;
     }
 }
 

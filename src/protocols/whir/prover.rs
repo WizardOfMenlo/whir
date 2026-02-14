@@ -4,6 +4,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 use tracing::instrument;
 
 use super::{committer::Witness, config::Config};
+use crate::algebra::polynomials::spot_check_evals_eq;
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
@@ -96,9 +97,11 @@ impl<F: FftField> Config<F> {
                         .weights(self.initial_num_variables()),
                     witness.out_of_domain().rows(),
                 ) {
-                    for (j, polynomial) in polynomials.iter().enumerate() {
-                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                    for (poly_idx, polynomial) in polynomials.iter().enumerate() {
+                        if poly_idx >= polynomial_offset
+                            && poly_idx < oods_row.len() + polynomial_offset
+                        {
+                            matrix.push(oods_row[poly_idx - polynomial_offset]);
                         } else {
                             let eval = weights.mixed_evaluate(self.embedding(), polynomial);
                             prover_state.prover_message(&eval);
@@ -111,7 +114,7 @@ impl<F: FftField> Config<F> {
             }
 
             // Add caller provided weights and evaluations.
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            all_weights.extend(weights.iter().map(|&weight| weight.clone()));
             matrix.extend_from_slice(evaluations);
             (all_weights, matrix)
         };
@@ -149,7 +152,7 @@ impl<F: FftField> Config<F> {
         .sum();
 
         // These invariants are maintained throughout the proof.
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Run initial sumcheck on batched polynomial with combined statement
@@ -171,14 +174,14 @@ impl<F: FftField> Config<F> {
                 &mut the_sum,
             )
         };
-        coefficients = coefficients.fold(&folding_randomness);
+        coefficients.fold_in_place(&folding_randomness);
         if constraint_rlc_coeffs.is_empty() {
             // We didn't fold evaluations, so compute it here.
             evaluations = EvaluationsList::from(coefficients.clone());
         }
         let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Execute standard WHIR rounds on the batched polynomial
@@ -224,7 +227,7 @@ impl<F: FftField> Config<F> {
                 weights.accumulate(&mut constraints, *coeff);
             }
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
             // Run sumcheck for this round
@@ -234,9 +237,9 @@ impl<F: FftField> Config<F> {
                 &mut constraints,
                 &mut the_sum,
             );
-            coefficients = coefficients.fold(&folding_randomness);
+            coefficients.fold_in_place(&folding_randomness);
             randomness_vec.extend(folding_randomness.0.iter().rev());
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
             prev_witness = RoundWitness::Round(witness);
@@ -275,13 +278,12 @@ impl<F: FftField> Config<F> {
 
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
-        let deferred = weights
+        let deferred: Vec<F> = weights
             .iter()
             .filter(|w| w.deferred())
             .map(|w| w.compute(&constraint_eval))
             .collect();
         prover_state.prover_hint_ark(&deferred);
-
         (constraint_eval, deferred)
     }
 }
