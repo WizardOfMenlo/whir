@@ -210,7 +210,7 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.weights(final_coefficients.num_variables()),
+            in_domain.weights(final_coefficients.num_coeffs()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
                 &MultilinearPoint(
@@ -254,7 +254,7 @@ impl<F: FftField> Config<F> {
             }
         }
 
-        // Compute evaluation of non-deffered intial weights in folding randomness point
+        // Compute evaluation of non-deferred initial weights in folding randomness point
         let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
         let mut deferred_iter = deferred.iter().copied();
         for (rlc_coeff, weights) in zip_strict(initial_weight_rlc_coeffs, weights) {

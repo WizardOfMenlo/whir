@@ -85,7 +85,7 @@ impl<M: Embedding> Weights<M::Target> for SubfieldUnivariateEvaluation<M> {
     fn accumulate(&self, accumulator: &mut [M::Target], scalar: M::Target) {
         let mut power = scalar;
         for accumulator in accumulator {
-            *accumulator += scalar;
+            *accumulator += power;
             power = self.embedding.mixed_mul(power, self.point);
         }
     }

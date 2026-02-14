@@ -473,6 +473,7 @@ mod tests {
     /// attempts to use poly_wrong for evaluation, which should cause verification to fail.
     #[test]
     #[cfg_attr(feature = "verifier_panics", should_panic)]
+    #[cfg_attr(debug_assertions, ignore)] // Debug asserts will make prover panic on invalid claim.
     fn test_whir_batch_rejects_invalid_constraint() {
         // Setup parameters
         let num_variables = 4;
