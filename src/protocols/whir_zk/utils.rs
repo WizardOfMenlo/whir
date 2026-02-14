@@ -4,7 +4,6 @@ use ark_std::{
     UniformRand,
 };
 
-use super::config::ZkParams;
 use crate::{
     algebra::{
         embedding::Embedding,
@@ -12,7 +11,7 @@ use crate::{
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         Weights,
     },
-    protocols::{irs_commit, whir},
+    protocols::whir,
 };
 
 // ── IRS Domain Parameters (shared by prover & verifier) ──────────────────
@@ -94,31 +93,37 @@ impl<F: FftField> IrsDomainParams<F> {
     }
 }
 
-/// Sampling random polynomials before the witness polynomial
+/// Random blinding polynomials sampled before the witness polynomial.
+///
+/// For each committed polynomial, these provide the ZK blinding:
+/// msk (masking), g₀ (initial blinding), M (combined), and ĝ₁..ĝμ (per-round blinding).
 #[derive(Clone)]
-pub struct HelperPolynomials<F: FftField> {
+pub struct BlindingPolynomials<F: FftField> {
     pub msk: CoefficientList<F>,
     pub g0_hat: CoefficientList<F>,
     pub m_poly: CoefficientList<F>,
     pub g_hats: Vec<CoefficientList<F>>,
-    pub params: ZkParams,
 }
 
-impl<F: FftField> HelperPolynomials<F> {
-    pub fn sample<R: RngCore + CryptoRng>(rng: &mut R, params: ZkParams) -> Self {
-        let helper_poly_size = 1 << params.num_helper_variables;
-        let m_poly_size = 1 << (params.num_helper_variables + 1);
+impl<F: FftField> BlindingPolynomials<F> {
+    pub fn sample<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        num_blinding_variables: usize,
+        num_witness_variables: usize,
+    ) -> Self {
+        let blinding_poly_size = 1 << num_blinding_variables;
+        let m_poly_size = 1 << (num_blinding_variables + 1);
 
         // Sample all preprocessing polynomials from the BASE FIELD, then lift to extension.
         // This is required because these polynomials are committed via base-field IRS commitment,
         // and the conversion back to base field (to_base_prime_field_elements().next()) must be
         // lossless.
-        let msk_coeffs: Vec<F> = (0..helper_poly_size)
+        let msk_coeffs: Vec<F> = (0..blinding_poly_size)
             .map(|_| F::from_base_prime_field(F::BasePrimeField::rand(rng)))
             .collect();
         let msk = CoefficientList::new(msk_coeffs.clone());
 
-        let g0_coeffs: Vec<F> = (0..helper_poly_size)
+        let g0_coeffs: Vec<F> = (0..blinding_poly_size)
             .map(|_| F::from_base_prime_field(F::BasePrimeField::rand(rng)))
             .collect();
         let g0 = CoefficientList::new(g0_coeffs.clone());
@@ -132,9 +137,9 @@ impl<F: FftField> HelperPolynomials<F> {
         }
         let m_poly = CoefficientList::new(m_coeffs);
 
-        let g_hats = (0..params.num_witness_variables)
+        let g_hats = (0..num_witness_variables)
             .map(|_| {
-                let coeffs = (0..helper_poly_size)
+                let coeffs = (0..blinding_poly_size)
                     .map(|_| F::from_base_prime_field(F::BasePrimeField::rand(rng)))
                     .collect();
                 CoefficientList::new(coeffs)
@@ -146,29 +151,28 @@ impl<F: FftField> HelperPolynomials<F> {
             g0_hat: g0,
             m_poly,
             g_hats,
-            params,
         }
     }
 
-    /// Batch-evaluate all helper polynomials at multiple gamma points using
+    /// Batch-evaluate all blinding polynomials at multiple gamma points using
     /// fused univariate Horner evaluation.
     ///
     /// For each gamma, evaluates msk, g₀, and all ĝⱼ in a single pass per gamma
     /// point, avoiding intermediate per-polynomial allocation vectors.
     ///
-    /// Returns a Vec of `HelperEvaluations` (one per gamma point), in the same
+    /// Returns a Vec of `BlindingEvaluations` (one per gamma point), in the same
     /// order as the input gammas.
-    pub fn batch_evaluate_helpers(
+    pub fn batch_evaluate(
         &self,
         gammas: &[F],
         masking_challenge: F,
-    ) -> Vec<HelperEvaluations<F>> {
+    ) -> Vec<BlindingEvaluations<F>> {
         use crate::algebra::univariate_evaluate;
 
-        // Evaluate all helper polynomials at a single gamma point.
+        // Evaluate all blinding polynomials at a single gamma point.
         // This fuses msk, g₀, and ĝⱼ evaluations per-gamma, avoiding
         // μ+2 intermediate Vec<F> allocations of size |gammas|.
-        let eval_at = |&gamma: &F| -> HelperEvaluations<F> {
+        let eval_at = |&gamma: &F| -> BlindingEvaluations<F> {
             let msk_val = univariate_evaluate(self.msk.coeffs(), gamma);
             let g0_val = univariate_evaluate(self.g0_hat.coeffs(), gamma);
             let m_eval = g0_val - masking_challenge * msk_val;
@@ -177,7 +181,7 @@ impl<F: FftField> HelperPolynomials<F> {
                 .iter()
                 .map(|g_hat| univariate_evaluate(g_hat.coeffs(), gamma))
                 .collect();
-            HelperEvaluations {
+            BlindingEvaluations {
                 gamma,
                 m_eval,
                 g_hat_evals,
@@ -197,32 +201,11 @@ impl<F: FftField> HelperPolynomials<F> {
     }
 }
 
-/// ZK Witness: contains commitment witnesses for all ZK components
-#[derive(Clone)]
-pub struct ZkWitness<F: FftField> {
-    /// Witnesses for [[f̂₁]] = [[f₁ + msk₁]], ..., [[fₙ]] = [[fₙ + mskₙ]] in main WHIR
-    pub f_hat_witnesses: Vec<irs_commit::Witness<F::BasePrimeField, F>>,
-
-    /// Single batch witness for all helper polynomials [[M, ĝ₁, ..., ĝμ]]
-    /// committed via helper_config with batch_size = μ+1
-    pub helper_witness: irs_commit::Witness<F::BasePrimeField, F>,
-
-    /// Reference to preprocessing data for each polynomial
-    pub helper_polynomials: Vec<HelperPolynomials<F>>,
-
-    /// Base-field representations of M polynomials (for helper WHIR prove)
-    pub m_polys_base: Vec<CoefficientList<F::BasePrimeField>>,
-
-    /// Base-field representations of embedded ĝⱼ polynomials (for helper WHIR prove)
-    /// Each ĝⱼ is embedded from ℓ-variate to (ℓ+1)-variate for each polynomial
-    pub g_hats_embedded_bases: Vec<Vec<CoefficientList<F::BasePrimeField>>>,
-}
-
-/// Collect interleaved references to all helper polynomials in batch order:
+/// Collect interleaved references to all blinding polynomials in batch order:
 /// `[M₁, ĝ₁₁, …, ĝ₁μ, M₂, ĝ₂₁, …, ĝ₂μ, …]`
 ///
 /// Used by both committer (batch-commit) and prover (batch-prove).
-pub(crate) fn interleave_helper_poly_refs<'a, F: FftField>(
+pub(crate) fn interleave_blinding_poly_refs<'a, F: FftField>(
     m_polys: &'a [CoefficientList<F::BasePrimeField>],
     g_hats: &'a [Vec<CoefficientList<F::BasePrimeField>>],
 ) -> Vec<&'a CoefficientList<F::BasePrimeField>> {
@@ -238,25 +221,25 @@ pub(crate) fn interleave_helper_poly_refs<'a, F: FftField>(
     refs
 }
 
-/// Compute per-polynomial claims from helper evaluations.
+/// Compute per-polynomial claims from blinding evaluations.
 ///
 /// m_claim = Σᵢ τ₂ⁱ · m(γᵢ, ρ)
 /// g_hat_j_claim = Σᵢ τ₂ⁱ · ĝⱼ(pow(γᵢ))
 pub(crate) fn compute_per_polynomial_claims<F: FftField>(
-    helper_evals: &[HelperEvaluations<F>],
+    blinding_evals: &[BlindingEvaluations<F>],
     query_batching_challenge: F,
 ) -> (F, Vec<F>) {
-    let num_g_hats = helper_evals
+    let num_g_hats = blinding_evals
         .first()
-        .map_or(0, |helper| helper.g_hat_evals.len());
+        .map_or(0, |eval| eval.g_hat_evals.len());
 
     let mut m_claim = F::ZERO;
     let mut g_hat_claims = vec![F::ZERO; num_g_hats];
     let mut batching_power = F::ONE;
 
-    for helper in helper_evals {
-        m_claim += batching_power * helper.m_eval;
-        for (g_hat_idx, &g_hat_eval) in helper.g_hat_evals.iter().enumerate() {
+    for eval in blinding_evals {
+        m_claim += batching_power * eval.m_eval;
+        for (g_hat_idx, &g_hat_eval) in eval.g_hat_evals.iter().enumerate() {
             g_hat_claims[g_hat_idx] += batching_power * g_hat_eval;
         }
         batching_power *= query_batching_challenge;
@@ -265,24 +248,24 @@ pub(crate) fn compute_per_polynomial_claims<F: FftField>(
     (m_claim, g_hat_claims)
 }
 
-/// Construct the weight function for the helper WHIR sumcheck:
+/// Construct the weight function for the blinding polynomial WHIR sumcheck:
 ///
 ///   w(z, t) = eq(-masking_challenge, t) · [Σᵢ query_batching_challenge^i · eq(pow(γᵢ), z)]
 ///
-/// Returns a `Weights::Linear` on (num_helper_variables + 1) variables.
+/// Returns a `Weights::Linear` on (num_blinding_variables + 1) variables.
 pub(crate) fn construct_batched_eq_weights<F: FftField>(
-    helper_evals: &[HelperEvaluations<F>],
+    blinding_evals: &[BlindingEvaluations<F>],
     masking_challenge: F,
     query_batching_challenge: F,
-    num_helper_variables: usize,
+    num_blinding_variables: usize,
 ) -> Weights<F> {
     let neg_masking = -masking_challenge;
-    let z_size = 1 << num_helper_variables;
-    let weight_size = 1 << (num_helper_variables + 1);
+    let z_size = 1 << num_blinding_variables;
+    let weight_size = 1 << (num_blinding_variables + 1);
 
     // Precompute query batching challenge powers
     let batching_powers =
-        crate::algebra::geometric_sequence(query_batching_challenge, helper_evals.len());
+        crate::algebra::geometric_sequence(query_batching_challenge, blinding_evals.len());
 
     // For each γᵢ, compute eq(pow(γᵢ), z) for all z ∈ {0,1}^ℓ using the
     // O(2^ℓ) butterfly expansion in MultilinearPoint::eq_weights(), then
@@ -290,15 +273,15 @@ pub(crate) fn construct_batched_eq_weights<F: FftField>(
     #[cfg(feature = "parallel")]
     let batched_eq: Vec<F> = {
         use rayon::prelude::*;
-        helper_evals
+        blinding_evals
             .par_iter()
             .zip(batching_powers.par_iter())
             .fold(
                 || vec![F::ZERO; z_size],
-                |mut acc, (helper, &batching_power)| {
+                |mut acc, (eval, &batching_power)| {
                     let eq_vals = MultilinearPoint::expand_from_univariate(
-                        helper.gamma,
-                        num_helper_variables,
+                        eval.gamma,
+                        num_blinding_variables,
                     )
                     .eq_weights();
                     for (acc_elem, eq_val) in acc.iter_mut().zip(eq_vals) {
@@ -320,9 +303,9 @@ pub(crate) fn construct_batched_eq_weights<F: FftField>(
     #[cfg(not(feature = "parallel"))]
     let batched_eq: Vec<F> = {
         let mut batched = vec![F::ZERO; z_size];
-        for (helper, &batching_power) in helper_evals.iter().zip(batching_powers.iter()) {
+        for (eval, &batching_power) in blinding_evals.iter().zip(batching_powers.iter()) {
             let eq_vals =
-                MultilinearPoint::expand_from_univariate(helper.gamma, num_helper_variables)
+                MultilinearPoint::expand_from_univariate(eval.gamma, num_blinding_variables)
                     .eq_weights();
             for (acc_elem, &eq_val) in batched.iter_mut().zip(eq_vals.iter()) {
                 *acc_elem += batching_power * eq_val;
@@ -347,9 +330,9 @@ pub(crate) fn construct_batched_eq_weights<F: FftField>(
     Weights::linear(EvaluationsList::new(weight_evals))
 }
 
-/// Helper evaluations at a single query point γ
+/// Blinding polynomial evaluations at a single query point γ
 #[derive(Clone, Debug)]
-pub struct HelperEvaluations<F> {
+pub struct BlindingEvaluations<F> {
     /// The query point γ
     pub gamma: F,
 
@@ -360,8 +343,8 @@ pub struct HelperEvaluations<F> {
     pub g_hat_evals: Vec<F>,
 }
 
-impl<F: FftField> HelperEvaluations<F> {
-    /// Compute the helper polynomial value h(γ) (without the masking_challenge·f̂ term).
+impl<F: FftField> BlindingEvaluations<F> {
+    /// Compute the blinding polynomial value h(γ) (without the masking_challenge·f̂ term).
     ///
     /// h(γ) = m(γ,masking) + Σᵢ blinding^i · γ^(2^(i-1)) · ĝᵢ(pow(γ))
     pub fn compute_h_value(&self, blinding_challenge: F) -> F {

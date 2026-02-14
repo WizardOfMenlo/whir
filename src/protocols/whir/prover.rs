@@ -7,7 +7,7 @@ use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
-        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::{spot_check_evals_eq, CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product, Weights,
     },
     hash::Hash,
@@ -149,7 +149,7 @@ impl<F: FftField> Config<F> {
         .sum();
 
         // These invariants are maintained throughout the proof.
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Run initial sumcheck on batched polynomial with combined statement
@@ -178,7 +178,7 @@ impl<F: FftField> Config<F> {
         }
         let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+        debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
         debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
         // Execute standard WHIR rounds on the batched polynomial
@@ -224,7 +224,7 @@ impl<F: FftField> Config<F> {
                 weights.accumulate(&mut constraints, *coeff);
             }
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
             // Run sumcheck for this round
@@ -236,7 +236,7 @@ impl<F: FftField> Config<F> {
             );
             coefficients.fold_in_place(&folding_randomness);
             randomness_vec.extend(folding_randomness.0.iter().rev());
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
+            debug_assert!(spot_check_evals_eq(&evaluations, &coefficients));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
 
             prev_witness = RoundWitness::Round(witness);
