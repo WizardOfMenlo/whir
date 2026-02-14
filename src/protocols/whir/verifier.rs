@@ -72,9 +72,11 @@ impl<F: FftField> Config<F> {
                         .weights(self.initial_num_variables()),
                     commitment.out_of_domain().rows(),
                 ) {
-                    for j in 0..num_polynomials {
-                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                    for poly_idx in 0..num_polynomials {
+                        if poly_idx >= polynomial_offset
+                            && poly_idx < oods_row.len() + polynomial_offset
+                        {
+                            matrix.push(oods_row[poly_idx - polynomial_offset]);
                         } else {
                             matrix.push(verifier_state.prover_message()?);
                         }
@@ -84,7 +86,7 @@ impl<F: FftField> Config<F> {
                 polynomial_offset += commitment.num_polynomials();
             }
 
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            all_weights.extend(weights.iter().map(|&weight| weight.clone()));
             matrix.extend_from_slice(evaluations);
             (all_weights, matrix)
         };
@@ -263,16 +265,16 @@ impl<F: FftField> Config<F> {
         for (round, (weights_rlc_coeffs, round_weights)) in round_constraints.iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
                 || self.initial_num_variables(),
-                |p| self.round_configs[p].initial_num_variables(),
+                |prev_round| self.round_configs[prev_round].initial_num_variables(),
             );
             let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
-            for (rlc_coeff, w) in zip_strict(weights_rlc_coeffs, round_weights) {
-                let eval = if w.deferred() {
-                    let d = deferred_iter.next();
-                    verify!(d.is_some());
-                    d.unwrap()
+            for (rlc_coeff, weight) in zip_strict(weights_rlc_coeffs, round_weights) {
+                let eval = if weight.deferred() {
+                    let deferred_value = deferred_iter.next();
+                    verify!(deferred_value.is_some());
+                    deferred_value.unwrap()
                 } else {
-                    w.compute(&point)
+                    weight.compute(&point)
                 };
                 weight_eval += *rlc_coeff * eval;
             }

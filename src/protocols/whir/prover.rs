@@ -96,9 +96,11 @@ impl<F: FftField> Config<F> {
                         .weights(self.initial_num_variables()),
                     witness.out_of_domain().rows(),
                 ) {
-                    for (j, polynomial) in polynomials.iter().enumerate() {
-                        if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                    for (poly_idx, polynomial) in polynomials.iter().enumerate() {
+                        if poly_idx >= polynomial_offset
+                            && poly_idx < oods_row.len() + polynomial_offset
+                        {
+                            matrix.push(oods_row[poly_idx - polynomial_offset]);
                         } else {
                             let eval = weights.mixed_evaluate(self.embedding(), polynomial);
                             prover_state.prover_message(&eval);
@@ -111,7 +113,7 @@ impl<F: FftField> Config<F> {
             }
 
             // Add caller provided weights and evaluations.
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
+            all_weights.extend(weights.iter().map(|&weight| weight.clone()));
             matrix.extend_from_slice(evaluations);
             (all_weights, matrix)
         };
