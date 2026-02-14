@@ -63,7 +63,7 @@ impl<F: Field> Config<F> {
     /// - Samples random values to progressively reduce the polynomial.
     /// - Applies proof-of-work grinding if required.
     /// - Returns the sampled folding randomness values used in each reduction step.
-    #[cfg_attr(feature = "tracing", instrument(skip(self, prover_state)))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -108,7 +108,7 @@ impl<F: Field> Config<F> {
         MultilinearPoint(res)
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip(verifier_state)))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,

@@ -6,7 +6,7 @@ pub mod polynomials;
 pub mod sumcheck;
 mod weights;
 
-use ark_ff::{AdditiveGroup, FftField, Field};
+use ark_ff::{AdditiveGroup, Field};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -125,74 +125,4 @@ pub fn mixed_dot<F: Field, G: Field>(
         .sum();
 
     result
-}
-
-/// Project an extension field element to its base prime field component.
-///
-/// Panics if the element does not lie in the base prime subfield.
-#[inline]
-pub fn project_to_base<F: Field>(val: F) -> F::BasePrimeField {
-    val.to_base_prime_field_elements()
-        .next()
-        .expect("element should lie in base prime subfield")
-}
-
-/// Project every element of an extension-field slice to the base prime field.
-///
-/// Panics if any element does not lie in the base prime subfield.
-pub fn project_all_to_base<F: FftField>(coeffs: &[F]) -> Vec<F::BasePrimeField> {
-    #[cfg(feature = "parallel")]
-    {
-        coeffs.par_iter().map(|c| project_to_base(*c)).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        coeffs.iter().map(|&c| project_to_base(c)).collect()
-    }
-}
-
-/// Element-wise add a base-field slice with a (possibly shorter) extension-field
-/// slice projected to base field.
-///
-/// Computes `result[i] = base[i] + project_to_base(ext[i])` for `i < ext.len()`,
-/// and `result[i] = base[i]` for `i >= ext.len()`.
-///
-/// Each element of `ext` must lie in the base prime subfield.
-pub fn add_base_with_projection<F: FftField>(
-    base: &[F::BasePrimeField],
-    ext_addend: &[F],
-) -> Vec<F::BasePrimeField> {
-    debug_assert!(
-        ext_addend.len() <= base.len(),
-        "ext_addend ({}) must not exceed base ({})",
-        ext_addend.len(),
-        base.len(),
-    );
-    let ext_len = ext_addend.len();
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..base.len())
-            .into_par_iter()
-            .map(|i| {
-                if i < ext_len {
-                    base[i] + project_to_base(ext_addend[i])
-                } else {
-                    base[i]
-                }
-            })
-            .collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..base.len())
-            .map(|i| {
-                if i < ext_len {
-                    base[i] + project_to_base(ext_addend[i])
-                } else {
-                    base[i]
-                }
-            })
-            .collect()
-    }
 }

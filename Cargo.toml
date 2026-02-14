@@ -47,6 +47,7 @@ rayon = { version = "1.10", optional = true }
 thiserror = "2.0"
 itertools = "0.14"
 tracing = { version = "0.1", features = ["attributes"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["registry"], optional = true }
 hex = "0.4"
 static_assertions = "1.1.0"
 ciborium = "0.2"
@@ -81,8 +82,9 @@ rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 tracing = ["dep:tracing"]
 # Enable per-step allocation tracking in ZK WHIR.
-# Run: cargo run --bin alloc_report --features alloc-track
-alloc-track = []
+# Requires tracing spans (via the `tracing` feature) for automatic per-span stats.
+# Run: cargo run --bin alloc_report --features alloc-track --release
+alloc-track = ["tracing", "dep:tracing-subscriber"]
 
 [[bench]]
 name = "expand_from_coeff"
