@@ -96,7 +96,7 @@ impl<F: FftField> IrsDomainParams<F> {
 
 /// Sampling random polynomials before the witness polynomial
 #[derive(Clone)]
-pub struct ZkPreprocessingPolynomials<F: FftField> {
+pub struct HelperPolynomials<F: FftField> {
     pub msk: CoefficientList<F>,
     pub g0_hat: CoefficientList<F>,
     pub m_poly: CoefficientList<F>,
@@ -104,7 +104,7 @@ pub struct ZkPreprocessingPolynomials<F: FftField> {
     pub params: ZkParams,
 }
 
-impl<F: FftField> ZkPreprocessingPolynomials<F> {
+impl<F: FftField> HelperPolynomials<F> {
     pub fn sample<R: RngCore + CryptoRng>(rng: &mut R, params: ZkParams) -> Self {
         let helper_poly_size = 1 << params.num_helper_variables;
         let m_poly_size = 1 << (params.num_helper_variables + 1);
@@ -208,7 +208,7 @@ pub struct ZkWitness<F: FftField> {
     pub helper_witness: irs_commit::Witness<F::BasePrimeField, F>,
 
     /// Reference to preprocessing data for each polynomial
-    pub preprocessings: Vec<ZkPreprocessingPolynomials<F>>,
+    pub helper_polynomials: Vec<HelperPolynomials<F>>,
 
     /// Base-field representations of M polynomials (for helper WHIR prove)
     pub m_polys_base: Vec<CoefficientList<F::BasePrimeField>>,

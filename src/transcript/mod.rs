@@ -300,6 +300,11 @@ where
         self.inner.prover_message(&RawBytes(encoded));
     }
 
+    /// Access the prover's private RNG (forwarded from the inner spongefish state).
+    pub fn rng(&mut self) -> &mut (impl RngCore + CryptoRng) {
+        self.inner.rng()
+    }
+
     pub fn proof(self) -> Proof {
         Proof {
             narg_string: self.inner.narg_string().to_owned(),

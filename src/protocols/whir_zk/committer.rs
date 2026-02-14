@@ -6,12 +6,12 @@ use ark_std::rand::{CryptoRng, RngCore};
 use tracing::instrument;
 
 use super::config::Config;
-use super::utils::{interleave_helper_poly_refs, ZkPreprocessingPolynomials, ZkWitness};
+use super::utils::{interleave_helper_poly_refs, HelperPolynomials, ZkWitness};
+use crate::utils::zip_strict;
 use crate::{
     algebra::{add_base_with_projection, polynomials::CoefficientList, project_all_to_base},
     hash::Hash,
     transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState},
-    utils::zip_strict,
 };
 
 impl<F: FftField> Config<F> {
@@ -21,7 +21,6 @@ impl<F: FftField> Config<F> {
         &self,
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
-        preprocessings: &[&ZkPreprocessingPolynomials<F>],
     ) -> ZkWitness<F>
     where
         H: DuplexSpongeInterface,
@@ -32,16 +31,23 @@ impl<F: FftField> Config<F> {
         #[cfg(feature = "alloc-track")]
         let mut __snap = crate::alloc_snap!();
 
+        // Sample helper polynomials internally from the prover's RNG.
+        let helper_polynomials: Vec<HelperPolynomials<F>> = (0..polynomials.len())
+            .map(|_| HelperPolynomials::sample(prover_state.rng(), self.zk_params.clone()))
+            .collect();
+
         // Commit to the polynomials
         // 1. Compute f̂ = f + msk directly in base field.
         //    Both f_coeffs and msk are base field elements (msk is sampled from BasePrimeField
         //    then lifted to F), so the addition can be done in BasePrimeField directly,
         //    avoiding a needless round-trip through the extension field.
         let mut f_hat_witnesses = Vec::new();
-        for (polynomial, preprocessing) in zip_strict(polynomials, preprocessings) {
+        for (polynomial, helper_polynomial) in
+            zip_strict(polynomials.iter(), helper_polynomials.iter())
+        {
             // f̂ = f + msk in base field (msk projected from extension, zero-padded).
             let f_hat_coeffs =
-                add_base_with_projection::<F>(polynomial.coeffs(), preprocessing.msk.coeffs());
+                add_base_with_projection::<F>(polynomial.coeffs(), helper_polynomial.msk.coeffs());
             let f_hat = CoefficientList::new(f_hat_coeffs);
             let f_hat_witness = self.main.commit(prover_state, &[&f_hat]);
             f_hat_witnesses.push(f_hat_witness);
@@ -55,25 +61,25 @@ impl<F: FftField> Config<F> {
         //    For each polynomial, we commit to the M polynomial and the ĝ polynomials
         let mut g_hats_embedded_bases = Vec::new();
         let mut m_polys_base = Vec::new();
-        for (_, preprocessing) in zip_strict(polynomials, preprocessings) {
+        for helper_polynomial in &helper_polynomials {
             // Convert M polynomial to base field
             let m_base_field_polynomial =
-                CoefficientList::new(project_all_to_base(preprocessing.m_poly.coeffs()));
+                CoefficientList::new(project_all_to_base(helper_polynomial.m_poly.coeffs()));
 
             // Embed each ĝⱼ from ℓ to (ℓ+1) variables, then convert to base field
             let embed_g_hat = |g_hat: &CoefficientList<F>| -> CoefficientList<F::BasePrimeField> {
                 let embedded =
-                    g_hat.embed_into_variables(preprocessing.params.num_helper_variables + 1);
+                    g_hat.embed_into_variables(helper_polynomial.params.num_helper_variables + 1);
                 CoefficientList::new(project_all_to_base(embedded.coeffs()))
             };
             #[cfg(feature = "parallel")]
             let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> = {
                 use rayon::prelude::*;
-                preprocessing.g_hats.par_iter().map(embed_g_hat).collect()
+                helper_polynomial.g_hats.par_iter().map(embed_g_hat).collect()
             };
             #[cfg(not(feature = "parallel"))]
             let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> =
-                preprocessing.g_hats.iter().map(embed_g_hat).collect();
+                helper_polynomial.g_hats.iter().map(embed_g_hat).collect();
             m_polys_base.push(m_base_field_polynomial);
             g_hats_embedded_bases.push(g_hats_embedded_base);
         }
@@ -94,7 +100,7 @@ impl<F: FftField> Config<F> {
         ZkWitness {
             f_hat_witnesses,
             helper_witness,
-            preprocessings: preprocessings.iter().map(|&p| p.clone()).collect(),
+            helper_polynomials,
             m_polys_base,
             g_hats_embedded_bases,
         }
