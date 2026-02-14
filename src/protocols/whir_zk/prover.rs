@@ -35,15 +35,15 @@ macro_rules! debug_assert_evals_match_coeffs {
     ($eval_list:expr, $coefficients:expr) => {
         #[cfg(debug_assertions)]
         {
-            use crate::algebra::polynomials::{
-                hypercube::BinaryHypercubePoint, MultilinearPoint,
-            };
+            use crate::algebra::polynomials::{hypercube::BinaryHypercubePoint, MultilinearPoint};
             let _evals = $eval_list.evals();
             let _n = _evals.len();
             let _num_vars = $coefficients.num_variables();
             for &_idx in &[0, _n / 3, 2 * _n / 3, _n - 1] {
-                let _point =
-                    MultilinearPoint::from_binary_hypercube_point(BinaryHypercubePoint(_idx), _num_vars);
+                let _point = MultilinearPoint::from_binary_hypercube_point(
+                    BinaryHypercubePoint(_idx),
+                    _num_vars,
+                );
                 let _expected = $coefficients.evaluate(&_point);
                 assert_eq!(
                     _evals[_idx], _expected,
@@ -88,9 +88,13 @@ impl<F: FftField> Config<F> {
         // Phase 1: ZK blinding setup — build g, evaluate at constraints, form P = masking·f + g
         let blinding_challenge: F = prover_state.verifier_message();
         let mut g_polys = Vec::with_capacity(num_polys);
-        for (_polynomial, helper_polynomial) in zip_strict(polynomials, &witness.helper_polynomials) {
-            let g_poly =
-                self.build_blinding_polynomial(helper_polynomial, num_witness_vars, blinding_challenge);
+        for (_polynomial, helper_polynomial) in zip_strict(polynomials, &witness.helper_polynomials)
+        {
+            let g_poly = self.build_blinding_polynomial(
+                helper_polynomial,
+                num_witness_vars,
+                blinding_challenge,
+            );
             g_polys.push(g_poly);
         }
 
@@ -353,12 +357,7 @@ impl<F: FftField> Config<F> {
         let f_hat_refs: Vec<_> = witness.f_hat_witnesses.iter().collect();
         let in_domain_base = self.main.initial_committer.open(prover_state, &f_hat_refs);
 
-        self.prove_helper_evaluations(
-            prover_state,
-            &in_domain_base,
-            witness,
-            masking_challenge,
-        );
+        self.prove_helper_evaluations(prover_state, &in_domain_base, witness, masking_challenge);
 
         let in_domain = in_domain_base.lift(self.main.embedding());
 
@@ -456,7 +455,9 @@ impl<F: FftField> Config<F> {
         let helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = witness
             .helper_polynomials
             .iter()
-            .map(|helper_polynomial| helper_polynomial.batch_evaluate_helpers(&gammas, masking_challenge))
+            .map(|helper_polynomial| {
+                helper_polynomial.batch_evaluate_helpers(&gammas, masking_challenge)
+            })
             .collect();
 
         #[cfg(feature = "alloc-track")]

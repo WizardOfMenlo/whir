@@ -329,13 +329,20 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     bencher
         .with_inputs(|| {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let commitment = prove_config.receive_commitment(&mut verifier_state).unwrap();
+            let commitment = prove_config
+                .receive_commitment(&mut verifier_state)
+                .unwrap();
             (verifier_state, commitment)
         })
         .bench_values(|(mut verifier_state, commitment)| {
             black_box(
                 prove_config
-                    .verify(&mut verifier_state, &[&commitment], &weight_refs, &evaluations)
+                    .verify(
+                        &mut verifier_state,
+                        &[&commitment],
+                        &weight_refs,
+                        &evaluations,
+                    )
                     .unwrap(),
             );
         });
@@ -350,7 +357,8 @@ fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
     let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
 
-    let ds = zk_config.domain_separator()
+    let ds = zk_config
+        .domain_separator()
         .session(&format!("bench-zk-v2-commit-{num_variables}"))
         .instance(&Empty);
 
@@ -371,7 +379,8 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
         make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = zk_config.domain_separator()
+    let ds = zk_config
+        .domain_separator()
         .session(&format!("bench-zk-v2-prove-{num_variables}"))
         .instance(&Empty);
 
@@ -403,7 +412,8 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = zk_config.domain_separator()
+    let ds = zk_config
+        .domain_separator()
         .session(&format!("bench-zk-v2-verify-{num_variables}"))
         .instance(&Empty);
 
@@ -430,20 +440,22 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
                 .unwrap();
             (verifier_state, f_hat_commitments, helper_commitment)
         })
-        .bench_values(|(mut verifier_state, f_hat_commitments, helper_commitment)| {
-            let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
-            black_box(
-                zk_config
-                    .verify(
-                        &mut verifier_state,
-                        &f_hat_refs,
-                        &helper_commitment,
-                        &weight_refs,
-                        &evaluations,
-                    )
-                    .unwrap(),
-            );
-        });
+        .bench_values(
+            |(mut verifier_state, f_hat_commitments, helper_commitment)| {
+                let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
+                black_box(
+                    zk_config
+                        .verify(
+                            &mut verifier_state,
+                            &f_hat_refs,
+                            &helper_commitment,
+                            &weight_refs,
+                            &evaluations,
+                        )
+                        .unwrap(),
+                );
+            },
+        );
 }
 
 fn main() {

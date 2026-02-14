@@ -12,11 +12,7 @@ use crate::{
         Weights,
     },
     hash::Hash,
-    protocols::{
-        geometric_challenge::geometric_challenge,
-        irs_commit,
-        whir::Commitment,
-    },
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::Commitment},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
@@ -118,8 +114,7 @@ impl<F: FftField> Config<F> {
 
         let folding_randomness = if constraint_rlc_coeffs.is_empty() {
             assert_eq!(the_sum, F::ZERO);
-            let fr =
-                verifier_state.verifier_message_vec(self.main.initial_sumcheck.num_rounds);
+            let fr = verifier_state.verifier_message_vec(self.main.initial_sumcheck.num_rounds);
             self.main
                 .initial_sumcheck
                 .round_pow
@@ -174,8 +169,7 @@ impl<F: FftField> Config<F> {
             the_sum += dot(&stir_rlc_coeffs, &stir_values);
             round_constraints.push((stir_rlc_coeffs, stir_weights));
 
-            let folding_randomness =
-                round_config.sumcheck.verify(verifier_state, &mut the_sum)?;
+            let folding_randomness = round_config.sumcheck.verify(verifier_state, &mut the_sum)?;
             round_folding_randomness.push(folding_randomness);
 
             prev_is_initial = false;
@@ -210,10 +204,10 @@ impl<F: FftField> Config<F> {
         // ====================================================================
         // Phase 4: Final sumcheck + consistency check
         // ====================================================================
-        let final_sumcheck_randomness =
-            self.main
-                .final_sumcheck
-                .verify(verifier_state, &mut the_sum)?;
+        let final_sumcheck_randomness = self
+            .main
+            .final_sumcheck
+            .verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         let result = self.main.verify_final_consistency(
@@ -579,8 +573,7 @@ impl<F: FftField> Config<F> {
                 let coset_offset_ext_inv: F =
                     embedding.map(coset_offset).inverse().unwrap_or(F::ZERO);
 
-                let row =
-                    &in_domain_base.matrix[query_idx * num_cols..(query_idx + 1) * num_cols];
+                let row = &in_domain_base.matrix[query_idx * num_cols..(query_idx + 1) * num_cols];
 
                 // Compute L_combined(γ_j) = Σ_p α_p · L_p(γ_j) for each coset element j
                 let coset_gammas = domain.coset_gammas(alpha_base, embedding);
@@ -591,8 +584,8 @@ impl<F: FftField> Config<F> {
                         let mut combined_virtual_value = F::ZERO;
                         for poly_idx in 0..num_polys {
                             // f̂_p(γ_j) = Σ_{l=0}^{k-1} embed(row[p*k + l]) · γ^l
-                            let f_hat_slice = &row[poly_idx * columns_per_poly
-                                ..(poly_idx + 1) * columns_per_poly];
+                            let f_hat_slice = &row
+                                [poly_idx * columns_per_poly..(poly_idx + 1) * columns_per_poly];
                             let f_hat_at_gamma = crate::algebra::mixed_univariate_evaluate(
                                 embedding,
                                 f_hat_slice,
@@ -608,8 +601,8 @@ impl<F: FftField> Config<F> {
                             let virtual_oracle_per_poly =
                                 challenges.masking * f_hat_at_gamma + helper_value;
 
-                            combined_virtual_value +=
-                                challenges.polynomial_rlc_coeffs[poly_idx] * virtual_oracle_per_poly;
+                            combined_virtual_value += challenges.polynomial_rlc_coeffs[poly_idx]
+                                * virtual_oracle_per_poly;
                         }
                         combined_virtual_value
                     })
@@ -633,4 +626,3 @@ impl<F: FftField> Config<F> {
         Ok(virtual_oracle_values)
     }
 }
-

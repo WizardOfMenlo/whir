@@ -114,8 +114,7 @@ impl<F: FftField + FieldWithSize> Config<F> {
     ) -> Self {
         let main = whir::Config::new(main_mv_params, main_whir_params);
         let zk_params = ZkParams::from_whir_params(&main);
-        let helper_mv_params =
-            MultivariateParameters::new(zk_params.num_helper_variables + 1);
+        let helper_mv_params = MultivariateParameters::new(zk_params.num_helper_variables + 1);
         let helper_whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: main_whir_params.security_level,

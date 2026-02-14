@@ -75,7 +75,11 @@ impl<F: FftField> Config<F> {
             #[cfg(feature = "parallel")]
             let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> = {
                 use rayon::prelude::*;
-                helper_polynomial.g_hats.par_iter().map(embed_g_hat).collect()
+                helper_polynomial
+                    .g_hats
+                    .par_iter()
+                    .map(embed_g_hat)
+                    .collect()
             };
             #[cfg(not(feature = "parallel"))]
             let g_hats_embedded_base: Vec<CoefficientList<F::BasePrimeField>> =

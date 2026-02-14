@@ -296,9 +296,11 @@ pub(crate) fn construct_batched_eq_weights<F: FftField>(
             .fold(
                 || vec![F::ZERO; z_size],
                 |mut acc, (helper, &batching_power)| {
-                    let eq_vals =
-                        MultilinearPoint::expand_from_univariate(helper.gamma, num_helper_variables)
-                            .eq_weights();
+                    let eq_vals = MultilinearPoint::expand_from_univariate(
+                        helper.gamma,
+                        num_helper_variables,
+                    )
+                    .eq_weights();
                     for (acc_elem, eq_val) in acc.iter_mut().zip(eq_vals) {
                         *acc_elem += batching_power * eq_val;
                     }
@@ -376,5 +378,4 @@ impl<F: FftField> HelperEvaluations<F> {
 
         value
     }
-
 }

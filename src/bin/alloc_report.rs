@@ -141,7 +141,8 @@ fn run() {
     alloc_track::report("setup::weights_and_evaluations", &snap);
 
     // ── Transcript setup ─────────────────────────────────────────────
-    let ds = zk_config.domain_separator()
+    let ds = zk_config
+        .domain_separator()
         .session(&String::from("alloc-report"))
         .instance(&Empty);
 
