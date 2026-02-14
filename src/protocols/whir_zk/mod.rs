@@ -1,5 +1,5 @@
-pub mod config;
 mod committer;
+pub mod config;
 mod prover;
 pub(crate) mod utils;
 mod verifier;
@@ -102,7 +102,8 @@ mod tests {
         let polynomial_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
 
         // ── Set up Fiat-Shamir transcript ──
-        let ds = zk_config.domain_separator()
+        let ds = zk_config
+            .domain_separator()
             .session(&format!("ZK Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
