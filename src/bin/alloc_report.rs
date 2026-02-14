@@ -36,7 +36,7 @@ fn run() {
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         protocols::{
             whir::Config as WhirConfig,
-            whir_zk::{self, ZkParams, ZkPreprocessingPolynomials},
+            whir_zk::{self, ZkParams},
         },
         transcript::{codecs::Empty, ProverState, VerifierState},
     };
@@ -110,7 +110,7 @@ fn run() {
     eprintln!("╚══════════════════════════════════════════════════════════════════════╝");
     eprintln!();
 
-    // ── Build polynomials and preprocessings ─────────────────────────
+    // ── Build polynomials ────────────────────────────────────────────
     eprintln!("── setup ──────────────────────────────────────────────────────────");
     let mut snap = alloc_track::Snapshot::now();
 
@@ -124,12 +124,6 @@ fn run() {
         })
         .collect();
     alloc_track::report("setup::build_polynomials", &snap);
-    snap = alloc_track::Snapshot::now();
-
-    let preprocessings: Vec<ZkPreprocessingPolynomials<EF>> = (0..NUM_POLYS)
-        .map(|_| ZkPreprocessingPolynomials::<EF>::sample(&mut rng, zk_params.clone()))
-        .collect();
-    alloc_track::report("setup::sample_preprocessing", &snap);
     snap = alloc_track::Snapshot::now();
 
     // ── Build weights and evaluations ────────────────────────────────
@@ -158,11 +152,7 @@ fn run() {
     eprintln!("── commit ─────────────────────────────────────────────────────────");
     let mut prover_state = ProverState::new_std(&ds);
     snap = alloc_track::Snapshot::now();
-    let zk_witness = zk_config.commit(
-        &mut prover_state,
-        &poly_refs,
-        &preprocessings.iter().collect::<Vec<_>>(),
-    );
+    let zk_witness = zk_config.commit(&mut prover_state, &poly_refs);
     eprintln!("  ──────────────────────────────────────────────────────────────");
     alloc_track::report("commit     TOTAL", &snap);
 

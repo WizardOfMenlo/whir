@@ -5,7 +5,7 @@ pub(crate) mod utils;
 mod verifier;
 
 pub use config::{Config, ZkParams};
-pub use utils::{HelperEvaluations, ZkPreprocessingPolynomials, ZkWitness};
+pub use utils::{HelperEvaluations, ZkWitness};
 
 #[cfg(test)]
 mod tests {
@@ -77,20 +77,14 @@ mod tests {
         );
         eprintln!("{}", zk_config.main);
 
-        // ── Sample N random polynomials and N independent preprocessings ──
+        // ── Sample N random polynomials ──
         let mut polynomials: Vec<CoefficientList<F>> = Vec::with_capacity(num_polynomials);
-        let mut preprocessings: Vec<ZkPreprocessingPolynomials<EF>> =
-            Vec::with_capacity(num_polynomials);
         for poly_idx in 0..num_polynomials {
             // Each polynomial has distinct coefficients
             let coeffs: Vec<F> = (0..num_coeffs)
                 .map(|coeff_idx| F::from((poly_idx * num_coeffs + coeff_idx + 1) as u64))
                 .collect();
             polynomials.push(CoefficientList::new(coeffs));
-            preprocessings.push(ZkPreprocessingPolynomials::<EF>::sample(
-                &mut rng,
-                zk_params.clone(),
-            ));
         }
 
         // ── Create evaluation constraints ──
@@ -114,11 +108,7 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // ── ZK commitment: commit to f̂ᵢ = fᵢ + mskᵢ, plus helper polynomials ──
-        let zk_witness = zk_config.commit(
-            &mut prover_state,
-            &polynomial_refs,
-            &preprocessings.iter().collect::<Vec<_>>(),
-        );
+        let zk_witness = zk_config.commit(&mut prover_state, &polynomial_refs);
 
         // ── ZK proof: prove knowledge of {fᵢ} via blinded virtual oracle ──
         let (_point, _evals) = zk_config.prove(

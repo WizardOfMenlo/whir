@@ -82,15 +82,15 @@ impl<F: FftField> Config<F> {
         #[cfg(feature = "alloc-track")]
         let mut __snap = crate::alloc_snap!();
 
-        let num_witness_vars = witness.preprocessings[0].params.num_witness_variables;
+        let num_witness_vars = witness.helper_polynomials[0].params.num_witness_variables;
         let num_polys = polynomials.len();
 
         // Phase 1: ZK blinding setup — build g, evaluate at constraints, form P = masking·f + g
         let blinding_challenge: F = prover_state.verifier_message();
         let mut g_polys = Vec::with_capacity(num_polys);
-        for (_polynomial, preprocessing) in zip_strict(polynomials, &witness.preprocessings) {
+        for (_polynomial, helper_polynomial) in zip_strict(polynomials, &witness.helper_polynomials) {
             let g_poly =
-                self.build_blinding_polynomial(preprocessing, num_witness_vars, blinding_challenge);
+                self.build_blinding_polynomial(helper_polynomial, num_witness_vars, blinding_challenge);
             g_polys.push(g_poly);
         }
 
@@ -289,19 +289,19 @@ impl<F: FftField> Config<F> {
     /// Returns the blinding polynomial g as a `CoefficientList<F>`.
     fn build_blinding_polynomial(
         &self,
-        preprocessing: &super::utils::ZkPreprocessingPolynomials<F>,
+        helper_polynomial: &super::utils::HelperPolynomials<F>,
         num_witness_vars: usize,
         blinding_challenge: F,
     ) -> CoefficientList<F> {
         let poly_size = 1 << num_witness_vars;
         let mut coeffs = vec![F::ZERO; poly_size];
-        let g0_coeffs = preprocessing.g0_hat.coeffs();
+        let g0_coeffs = helper_polynomial.g0_hat.coeffs();
         coeffs[..g0_coeffs.len()].copy_from_slice(g0_coeffs);
 
         let mut blinding_power = blinding_challenge;
         for term_idx in 1..=num_witness_vars {
             let shift = 1 << (term_idx - 1);
-            let g_hat_coeffs = preprocessing.g_hats[term_idx - 1].coeffs();
+            let g_hat_coeffs = helper_polynomial.g_hats[term_idx - 1].coeffs();
             let target = &mut coeffs[shift..shift + g_hat_coeffs.len()];
             crate::algebra::scalar_mul_add(target, blinding_power, g_hat_coeffs);
             blinding_power *= blinding_challenge;
@@ -443,9 +443,9 @@ impl<F: FftField> Config<F> {
         #[cfg(feature = "alloc-track")]
         let mut __snap = crate::alloc_snap!();
 
-        let num_polys = witness.preprocessings.len();
-        let num_witness_vars = witness.preprocessings[0].params.num_witness_variables;
-        let num_helper_vars = witness.preprocessings[0].params.num_helper_variables;
+        let num_polys = witness.helper_polynomials.len();
+        let num_witness_vars = witness.helper_polynomials[0].params.num_witness_variables;
+        let num_helper_vars = witness.helper_polynomials[0].params.num_helper_variables;
         let domain = self.irs_domain_params();
 
         // Compute gammas: for each query point, produce k coset elements
@@ -454,9 +454,9 @@ impl<F: FftField> Config<F> {
 
         // For each polynomial, batch-evaluate all helper polynomials at all gamma points
         let helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = witness
-            .preprocessings
+            .helper_polynomials
             .iter()
-            .map(|preprocessing| preprocessing.batch_evaluate_helpers(&gammas, masking_challenge))
+            .map(|helper_polynomial| helper_polynomial.batch_evaluate_helpers(&gammas, masking_challenge))
             .collect();
 
         #[cfg(feature = "alloc-track")]
