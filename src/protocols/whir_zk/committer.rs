@@ -5,11 +5,11 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use super::config::Config;
 use super::utils::{interleave_helper_poly_refs, ZkPreprocessingPolynomials, ZkWitness};
 use crate::{
     algebra::{add_base_with_projection, polynomials::CoefficientList, project_all_to_base},
     hash::Hash,
-    protocols::whir::Config,
     transcript::{Codec, DuplexSpongeInterface, ProverMessage, ProverState},
     utils::zip_strict,
 };
@@ -17,11 +17,10 @@ use crate::{
 impl<F: FftField> Config<F> {
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_polynomials = polynomials.len())))]
-    pub fn commit_zk<H, R>(
+    pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
-        helper_config: &Config<F>,
         preprocessings: &[&ZkPreprocessingPolynomials<F>],
     ) -> ZkWitness<F>
     where
@@ -44,12 +43,12 @@ impl<F: FftField> Config<F> {
             let f_hat_coeffs =
                 add_base_with_projection::<F>(polynomial.coeffs(), preprocessing.msk.coeffs());
             let f_hat = CoefficientList::new(f_hat_coeffs);
-            let f_hat_witness = self.commit(prover_state, &[&f_hat]);
+            let f_hat_witness = self.main.commit(prover_state, &[&f_hat]);
             f_hat_witnesses.push(f_hat_witness);
         }
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("commit_zk::f_hat_commit", __snap);
+        crate::alloc_report!("commit::f_hat_commit", __snap);
 
         // 3. Prepare all helper polynomials in base field for batch commitment
         //    Order: [M, ĝ₁_embedded, ..., ĝμ_embedded]
@@ -63,7 +62,8 @@ impl<F: FftField> Config<F> {
 
             // Embed each ĝⱼ from ℓ to (ℓ+1) variables, then convert to base field
             let embed_g_hat = |g_hat: &CoefficientList<F>| -> CoefficientList<F::BasePrimeField> {
-                let embedded = g_hat.embed_into_variables(preprocessing.params.ell + 1);
+                let embedded =
+                    g_hat.embed_into_variables(preprocessing.params.num_helper_variables + 1);
                 CoefficientList::new(project_all_to_base(embedded.coeffs()))
             };
             #[cfg(feature = "parallel")]
@@ -79,22 +79,22 @@ impl<F: FftField> Config<F> {
         }
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("commit_zk::prepare_helper_polys", __snap);
+        crate::alloc_report!("commit::prepare_helper_polys", __snap);
 
         // 4. Batch-commit all μ+1 helper polynomials in ONE IRS commit
-        //    (helper_config has batch_size = μ+1, so one Merkle tree for all)
+        //    (helper config has batch_size = μ+1, so one Merkle tree for all)
         //    Layout: [M₁, ĝ₁₁, ..., ĝ₁μ, M₂, ĝ₂₁, ..., ĝ₂μ, ..., Mₙ, ĝₙ₁, ..., ĝₙμ]
         let helper_poly_refs =
             interleave_helper_poly_refs::<F>(&m_polys_base, &g_hats_embedded_bases);
-        let helper_witness = helper_config.commit(prover_state, &helper_poly_refs);
+        let helper_witness = self.helper.commit(prover_state, &helper_poly_refs);
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("commit_zk::helper_batch_commit", __snap);
+        crate::alloc_report!("commit::helper_batch_commit", __snap);
 
         ZkWitness {
             f_hat_witnesses,
             helper_witness,
-            preprocessings: preprocessings.iter().copied().cloned().collect(),
+            preprocessings: preprocessings.iter().map(|&p| p.clone()).collect(),
             m_polys_base,
             g_hats_embedded_bases,
         }

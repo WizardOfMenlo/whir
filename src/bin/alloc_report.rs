@@ -35,10 +35,10 @@ fn run() {
         alloc_track, hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
         protocols::{
-            whir::Config,
-            whir_zk::{ZkParams, ZkPreprocessingPolynomials},
+            whir::Config as WhirConfig,
+            whir_zk::{self, ZkParams, ZkPreprocessingPolynomials},
         },
-        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
+        transcript::{codecs::Empty, ProverState, VerifierState},
     };
 
     type F = Field64;
@@ -64,10 +64,10 @@ fn run() {
         batch_size: 1,
         hash_id: hash::SHA2,
     };
-    let config = Config::<EF>::new(mv, &params);
-    let zk_params = ZkParams::from_whir_params(&config);
+    // Compute ZK params from main config to size the helper
+    let zk_params = ZkParams::from_whir_params(&WhirConfig::<EF>::new(mv, &params));
 
-    let helper_mv = MultivariateParameters::new(zk_params.ell + 1);
+    let helper_mv = MultivariateParameters::new(zk_params.num_helper_variables + 1);
     let helper_params = ProtocolParameters {
         initial_statement: true,
         security_level: 32,
@@ -78,7 +78,7 @@ fn run() {
         batch_size: zk_params.helper_batch_size(NUM_POLYS),
         hash_id: hash::SHA2,
     };
-    let helper_config = Config::<EF>::new(helper_mv, &helper_params);
+    let zk_config = whir_zk::Config::new(mv, &params, helper_mv, &helper_params);
 
     eprintln!("╔══════════════════════════════════════════════════════════════════════╗");
     eprintln!("║  ZK WHIR Allocation Report                                         ║");
@@ -96,16 +96,16 @@ fn run() {
         NUM_POINTS
     );
     eprintln!(
-        "║  ell (ZK)      = {:>4}                                              ║",
-        zk_params.ell
+        "║  helper_vars   = {:>4}                                              ║",
+        zk_params.num_helper_variables
     );
     eprintln!(
-        "║  mu  (ZK)      = {:>4}                                              ║",
-        zk_params.mu
+        "║  witness_vars  = {:>4}                                              ║",
+        zk_params.num_witness_variables
     );
     eprintln!(
         "║  WHIR rounds   = {:>4}                                              ║",
-        config.n_rounds()
+        zk_config.main.n_rounds()
     );
     eprintln!("╚══════════════════════════════════════════════════════════════════════╝");
     eprintln!();
@@ -115,10 +115,10 @@ fn run() {
     let mut snap = alloc_track::Snapshot::now();
 
     let polynomials: Vec<CoefficientList<F>> = (0..NUM_POLYS)
-        .map(|i| {
+        .map(|poly_idx| {
             CoefficientList::new(
                 (0..num_coeffs)
-                    .map(|j| F::from((i * num_coeffs + j + 1) as u64))
+                    .map(|coeff_idx| F::from((poly_idx * num_coeffs + coeff_idx + 1) as u64))
                     .collect(),
             )
         })
@@ -139,7 +139,7 @@ fn run() {
         let point = MultilinearPoint::rand(&mut rng, NUM_VARIABLES);
         weights.push(Weights::evaluation(point.clone()));
         for poly in &polynomials {
-            evaluations.push(poly.mixed_evaluate(config.embedding(), &point));
+            evaluations.push(poly.mixed_evaluate(zk_config.main.embedding(), &point));
         }
     }
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
@@ -147,7 +147,7 @@ fn run() {
     alloc_track::report("setup::weights_and_evaluations", &snap);
 
     // ── Transcript setup ─────────────────────────────────────────────
-    let ds = DomainSeparator::protocol(&config)
+    let ds = zk_config.domain_separator()
         .session(&String::from("alloc-report"))
         .instance(&Empty);
 
@@ -155,66 +155,59 @@ fn run() {
     //  COMMIT
     // ══════════════════════════════════════════════════════════════════
     eprintln!();
-    eprintln!("── commit_zk ──────────────────────────────────────────────────────");
+    eprintln!("── commit ─────────────────────────────────────────────────────────");
     let mut prover_state = ProverState::new_std(&ds);
     snap = alloc_track::Snapshot::now();
-    let zk_witness = config.commit_zk(
+    let zk_witness = zk_config.commit(
         &mut prover_state,
         &poly_refs,
-        &helper_config,
         &preprocessings.iter().collect::<Vec<_>>(),
     );
     eprintln!("  ──────────────────────────────────────────────────────────────");
-    alloc_track::report("commit_zk  TOTAL", &snap);
+    alloc_track::report("commit     TOTAL", &snap);
 
     // ══════════════════════════════════════════════════════════════════
     //  PROVE
     // ══════════════════════════════════════════════════════════════════
     eprintln!();
-    eprintln!("── prove_zk ───────────────────────────────────────────────────────");
+    eprintln!("── prove ──────────────────────────────────────────────────────────");
     snap = alloc_track::Snapshot::now();
-    let (_point, _evals) = config.prove_zk(
+    let (_point, _evals) = zk_config.prove(
         &mut prover_state,
         &poly_refs,
         &zk_witness,
-        &helper_config,
         &weight_refs,
         &evaluations,
     );
     eprintln!("  ──────────────────────────────────────────────────────────────");
-    alloc_track::report("prove_zk   TOTAL", &snap);
+    alloc_track::report("prove      TOTAL", &snap);
 
     // ══════════════════════════════════════════════════════════════════
     //  VERIFY
     // ══════════════════════════════════════════════════════════════════
     let proof = prover_state.proof();
     eprintln!();
-    eprintln!("── verify_zk ──────────────────────────────────────────────────────");
+    eprintln!("── verify ─────────────────────────────────────────────────────────");
     snap = alloc_track::Snapshot::now();
 
     let mut verifier_state = VerifierState::new_std(&ds, &proof);
-    let f_hat_commitments: Vec<_> = (0..NUM_POLYS)
-        .map(|_| config.receive_commitment(&mut verifier_state).unwrap())
-        .collect();
-    let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
-    let helper_commitment = helper_config
-        .receive_commitment(&mut verifier_state)
+    let (f_hat_commitments, helper_commitment) = zk_config
+        .receive_commitments(&mut verifier_state, NUM_POLYS)
         .unwrap();
-    alloc_track::report("verify_zk::receive_commitments", &snap);
+    let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
+    alloc_track::report("verify::receive_commitments", &snap);
     snap = alloc_track::Snapshot::now();
 
-    let result = config.verify_zk(
+    let result = zk_config.verify(
         &mut verifier_state,
         &f_hat_refs,
         &helper_commitment,
-        &helper_config,
-        &zk_params,
         &weight_refs,
         &evaluations,
     );
     assert!(result.is_ok(), "Verification failed: {result:?}");
     eprintln!("  ──────────────────────────────────────────────────────────────");
-    alloc_track::report("verify_zk  TOTAL", &snap);
+    alloc_track::report("verify     TOTAL", &snap);
 
     eprintln!();
     eprintln!("✓ Verification passed. All allocation counts above are per full run.");
