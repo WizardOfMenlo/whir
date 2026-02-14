@@ -171,7 +171,7 @@ impl<F: FftField> Config<F> {
                 &mut the_sum,
             )
         };
-        coefficients = coefficients.fold(&folding_randomness);
+        coefficients.fold_in_place(&folding_randomness);
         if constraint_rlc_coeffs.is_empty() {
             // We didn't fold evaluations, so compute it here.
             evaluations = EvaluationsList::from(coefficients.clone());
@@ -234,7 +234,7 @@ impl<F: FftField> Config<F> {
                 &mut constraints,
                 &mut the_sum,
             );
-            coefficients = coefficients.fold(&folding_randomness);
+            coefficients.fold_in_place(&folding_randomness);
             randomness_vec.extend(folding_randomness.0.iter().rev());
             debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
             debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
@@ -244,10 +244,7 @@ impl<F: FftField> Config<F> {
         }
 
         // Directly send coefficients of the polynomial to the verifier.
-        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
-        for coeff in coefficients.coeffs() {
-            prover_state.prover_message(coeff);
-        }
+        self.send_final_coefficients(prover_state, &coefficients);
 
         // PoW
         self.final_pow.prove(prover_state);
@@ -274,14 +271,46 @@ impl<F: FftField> Config<F> {
         randomness_vec.extend(final_folding_randomness.0.iter().rev());
 
         // Hints for deferred constraints
+        self.compute_deferred_hints(prover_state, weights, &randomness_vec)
+    }
+
+    /// Send final polynomial coefficients to verifier.
+    pub(crate) fn send_final_coefficients<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        coefficients: &CoefficientList<F>,
+    ) where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+    {
+        assert_eq!(coefficients.num_coeffs(), self.final_sumcheck.initial_size);
+        for coeff in coefficients.coeffs() {
+            prover_state.prover_message(coeff);
+        }
+    }
+
+    /// Compute deferred constraint hints and write them to the transcript.
+    ///
+    /// Returns `(constraint_evaluation_point, deferred_values)`.
+    pub(crate) fn compute_deferred_hints<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        weights: &[&Weights<F>],
+        randomness_vec: &[F],
+    ) -> (MultilinearPoint<F>, Vec<F>)
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+    {
         let constraint_eval = MultilinearPoint(randomness_vec.iter().copied().rev().collect());
-        let deferred = weights
+        let deferred: Vec<F> = weights
             .iter()
             .filter(|w| w.deferred())
             .map(|w| w.compute(&constraint_eval))
             .collect();
         prover_state.prover_hint_ark(&deferred);
-
         (constraint_eval, deferred)
     }
 }

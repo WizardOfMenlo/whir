@@ -12,7 +12,7 @@ use crate::{
     algebra::{
         dot,
         polynomials::{EvaluationsList, MultilinearPoint},
-        sumcheck::{compute_sumcheck_polynomial, fold},
+        sumcheck::compute_sumcheck_polynomial,
     },
     ensure,
     protocols::proof_of_work,
@@ -98,9 +98,9 @@ impl<F: Field> Config<F> {
             let folding_randomness = prover_state.verifier_message::<F>();
             res.push(folding_randomness);
 
-            // Fold the inputs
-            *a = EvaluationsList::new(fold(folding_randomness, a.evals()));
-            *b = EvaluationsList::new(fold(folding_randomness, b.evals()));
+            // Fold the inputs in-place (avoids allocating new Vecs each round)
+            a.fold_in_place(folding_randomness);
+            b.fold_in_place(folding_randomness);
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
