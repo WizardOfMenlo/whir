@@ -3,15 +3,15 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::config::Config;
 use super::utils::{
-    compute_per_polynomial_claims, construct_batched_eq_weights, interleave_helper_poly_refs,
-    HelperEvaluations, ZkWitness,
+    compute_per_polynomial_claims, construct_batched_eq_weights, interleave_blinding_poly_refs,
+    BlindingEvaluations, IrsDomainParams,
 };
+use super::{Config, Witness};
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
-        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::{spot_check_evals_eq, CoefficientList, EvaluationsList, MultilinearPoint},
         Weights,
     },
     hash::Hash,
@@ -23,50 +23,19 @@ use crate::{
     utils::zip_strict,
 };
 
-/// Spot-check that an `EvaluationsList` matches a `CoefficientList` at a few
-/// deterministic boolean hypercube points, without cloning the full polynomial.
-///
-/// Checks indices 0, n/3, 2n/3, and n-1 (where n = 2^num_variables).
-/// Each check is O(n) via `evaluate`, giving O(n) total instead of the O(n log n)
-/// wavelet transform + O(n) allocation that a full comparison would require.
-///
-/// Compiles to nothing in release builds.
-macro_rules! debug_assert_evals_match_coeffs {
-    ($eval_list:expr, $coefficients:expr) => {
-        #[cfg(debug_assertions)]
-        {
-            use crate::algebra::polynomials::{hypercube::BinaryHypercubePoint, MultilinearPoint};
-            let _evals = $eval_list.evals();
-            let _n = _evals.len();
-            let _num_vars = $coefficients.num_variables();
-            for &_idx in &[0, _n / 3, 2 * _n / 3, _n - 1] {
-                let _point = MultilinearPoint::from_binary_hypercube_point(
-                    BinaryHypercubePoint(_idx),
-                    _num_vars,
-                );
-                let _expected = $coefficients.evaluate(&_point);
-                assert_eq!(
-                    _evals[_idx], _expected,
-                    "eval_list[{_idx}] diverged from coefficients"
-                );
-            }
-        }
-    };
-}
-
 impl<F: FftField> Config<F> {
     /// Prove a ZK WHIR opening.
     ///
     /// This proves knowledge of a polynomial `f` by:
     /// 1. Blinding with g to form P = masking·f + g
     /// 2. Running WHIR rounds on P with a virtual oracle L = masking·f̂ + h
-    /// 3. Proving helper polynomial evaluations so verifier can reconstruct L
+    /// 3. Proving blinding polynomial evaluations so verifier can reconstruct L
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_polynomials = polynomials.len())))]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
-        witness: &ZkWitness<F>,
+        witness: &Witness<F>,
         weights: &[&Weights<F>],
         evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
@@ -82,16 +51,17 @@ impl<F: FftField> Config<F> {
         #[cfg(feature = "alloc-track")]
         let mut __snap = crate::alloc_snap!();
 
-        let num_witness_vars = witness.helper_polynomials[0].params.num_witness_variables;
+        let num_witness_vars = self.num_witness_variables();
         let num_polys = polynomials.len();
 
         // Phase 1: ZK blinding setup — build g, evaluate at constraints, form P = masking·f + g
         let blinding_challenge: F = prover_state.verifier_message();
         let mut g_polys = Vec::with_capacity(num_polys);
-        for (_polynomial, helper_polynomial) in zip_strict(polynomials, &witness.helper_polynomials)
+        for (_polynomial, blinding_polynomial) in
+            zip_strict(polynomials, &witness.blinding_polynomials)
         {
             let g_poly = self.build_blinding_polynomial(
-                helper_polynomial,
+                blinding_polynomial,
                 num_witness_vars,
                 blinding_challenge,
             );
@@ -179,7 +149,7 @@ impl<F: FftField> Config<F> {
         }
         let mut randomness_vec = Vec::with_capacity(num_witness_vars);
         randomness_vec.extend(folding_randomness.0.iter().rev().copied());
-        debug_assert_evals_match_coeffs!(eval_list, coefficients);
+        debug_assert!(spot_check_evals_eq(&eval_list, &coefficients));
         debug_assert_eq!(dot(eval_list.evals(), constraints.evals()), the_sum);
 
         #[cfg(feature = "alloc-track")]
@@ -227,7 +197,7 @@ impl<F: FftField> Config<F> {
                 weight.accumulate(&mut constraints, *coeff);
             }
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
-            debug_assert_evals_match_coeffs!(eval_list, coefficients);
+            debug_assert!(spot_check_evals_eq(&eval_list, &coefficients));
             debug_assert_eq!(dot(eval_list.evals(), constraints.evals()), the_sum);
 
             folding_randomness = round_config.sumcheck.prove(
@@ -238,7 +208,7 @@ impl<F: FftField> Config<F> {
             );
             coefficients.fold_in_place(&folding_randomness);
             randomness_vec.extend(folding_randomness.0.iter().rev());
-            debug_assert_evals_match_coeffs!(eval_list, coefficients);
+            debug_assert!(spot_check_evals_eq(&eval_list, &coefficients));
             debug_assert_eq!(dot(eval_list.evals(), constraints.evals()), the_sum);
 
             prev_is_initial = false;
@@ -256,7 +226,7 @@ impl<F: FftField> Config<F> {
         if prev_is_initial {
             let f_hat_refs: Vec<_> = witness.f_hat_witnesses.iter().collect();
             let in_domain_base = self.main.initial_committer.open(prover_state, &f_hat_refs);
-            self.prove_helper_evaluations(
+            self.prove_blinding_evaluations(
                 prover_state,
                 &in_domain_base,
                 witness,
@@ -293,19 +263,19 @@ impl<F: FftField> Config<F> {
     /// Returns the blinding polynomial g as a `CoefficientList<F>`.
     fn build_blinding_polynomial(
         &self,
-        helper_polynomial: &super::utils::HelperPolynomials<F>,
+        blinding_polynomial: &super::utils::BlindingPolynomials<F>,
         num_witness_vars: usize,
         blinding_challenge: F,
     ) -> CoefficientList<F> {
         let poly_size = 1 << num_witness_vars;
         let mut coeffs = vec![F::ZERO; poly_size];
-        let g0_coeffs = helper_polynomial.g0_hat.coeffs();
+        let g0_coeffs = blinding_polynomial.g0_hat.coeffs();
         coeffs[..g0_coeffs.len()].copy_from_slice(g0_coeffs);
 
         let mut blinding_power = blinding_challenge;
         for term_idx in 1..=num_witness_vars {
             let shift = 1 << (term_idx - 1);
-            let g_hat_coeffs = helper_polynomial.g_hats[term_idx - 1].coeffs();
+            let g_hat_coeffs = blinding_polynomial.g_hats[term_idx - 1].coeffs();
             let target = &mut coeffs[shift..shift + g_hat_coeffs.len()];
             crate::algebra::scalar_mul_add(target, blinding_power, g_hat_coeffs);
             blinding_power *= blinding_challenge;
@@ -332,14 +302,14 @@ impl<F: FftField> Config<F> {
         CoefficientList::new(coeffs)
     }
 
-    /// Open the initial f̂ commitment: open f̂, prove helper evaluations,
+    /// Open the initial f̂ commitment: open f̂, prove blinding evaluations,
     /// and compute virtual oracle folded values.
     ///
     /// Returns `(in_domain_evaluations, stir_evaluation_values)`.
     fn open_initial_round<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        witness: &ZkWitness<F>,
+        witness: &Witness<F>,
         masking_challenge: F,
         coefficients: &CoefficientList<F>,
         round_witness: &irs_commit::Witness<F, F>,
@@ -357,7 +327,7 @@ impl<F: FftField> Config<F> {
         let f_hat_refs: Vec<_> = witness.f_hat_witnesses.iter().collect();
         let in_domain_base = self.main.initial_committer.open(prover_state, &f_hat_refs);
 
-        self.prove_helper_evaluations(prover_state, &in_domain_base, witness, masking_challenge);
+        self.prove_blinding_evaluations(prover_state, &in_domain_base, witness, masking_challenge);
 
         let in_domain = in_domain_base.lift(self.main.embedding());
 
@@ -415,20 +385,20 @@ impl<F: FftField> Config<F> {
         (in_domain, stir_evaluations)
     }
 
-    /// Prove helper polynomial evaluations for the ZK virtual oracle.
+    /// Prove blinding polynomial evaluations for the ZK virtual oracle.
     ///
     /// Given the IRS opening of f̂, this:
     /// 1. Computes gamma points (coset elements) for each query
     /// 2. For each polynomial, batch-evaluates M, ĝ₁, ..., ĝμ at all gamma points
     /// 3. Sends evaluations to the verifier (gamma-major, polynomial-minor order)
-    /// 4. Runs a helper WHIR proof to bind evaluations to committed polynomials
+    /// 4. Runs a blinding WHIR proof to bind evaluations to committed polynomials
     ///
-    /// For N polynomials, the helper WHIR covers N×(μ+1) polynomials in one batch.
-    fn prove_helper_evaluations<H, R>(
+    /// For N polynomials, the blinding WHIR covers N×(μ+1) polynomials in one batch.
+    fn prove_blinding_evaluations<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         in_domain_base: &irs_commit::Evaluations<F::BasePrimeField>,
-        witness: &ZkWitness<F>,
+        witness: &Witness<F>,
         masking_challenge: F,
     ) where
         H: DuplexSpongeInterface<U = u8>,
@@ -442,28 +412,28 @@ impl<F: FftField> Config<F> {
         #[cfg(feature = "alloc-track")]
         let mut __snap = crate::alloc_snap!();
 
-        let num_polys = witness.helper_polynomials.len();
-        let num_witness_vars = witness.helper_polynomials[0].params.num_witness_variables;
-        let num_helper_vars = witness.helper_polynomials[0].params.num_helper_variables;
-        let domain = self.irs_domain_params();
+        let num_polys = witness.blinding_polynomials.len();
+        let num_witness_vars = self.num_witness_variables();
+        let num_blinding_vars = self.num_blinding_variables();
+        let domain = IrsDomainParams::from_config(&self.main);
 
         // Compute gammas: for each query point, produce k coset elements
         // These are the SAME for all polynomials (derived from IRS domain structure).
         let gammas = domain.all_gammas(&in_domain_base.points, self.main.embedding());
 
-        // For each polynomial, batch-evaluate all helper polynomials at all gamma points
-        let helper_evals_per_poly: Vec<Vec<HelperEvaluations<F>>> = witness
-            .helper_polynomials
+        // For each polynomial, batch-evaluate all blinding polynomials at all gamma points
+        let blinding_evals_per_poly: Vec<Vec<BlindingEvaluations<F>>> = witness
+            .blinding_polynomials
             .iter()
-            .map(|helper_polynomial| {
-                helper_polynomial.batch_evaluate_helpers(&gammas, masking_challenge)
+            .map(|blinding_polynomial| {
+                blinding_polynomial.batch_evaluate(&gammas, masking_challenge)
             })
             .collect();
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::batch_evaluate", __snap);
+        crate::alloc_report!("  blinding_evals::batch_evaluate", __snap);
 
-        // Send helper evaluations as a single batch message.
+        // Send blinding evaluations as a single batch message.
         // Order: for each gamma, for each polynomial: m_eval, then mu g_hat_evals.
         // This groups all polynomial data per-gamma for natural virtual oracle reconstruction.
         let evals_per_point = 1 + num_witness_vars; // m_eval + num_witness_vars g_hat_evals
@@ -473,9 +443,9 @@ impl<F: FftField> Config<F> {
         let mut encoded = Vec::with_capacity(total_evals * elem_bytes);
         for gamma_idx in 0..gammas.len() {
             for poly_idx in 0..num_polys {
-                let helper_eval = &helper_evals_per_poly[poly_idx][gamma_idx];
-                transcript::encode_field_element_into(&helper_eval.m_eval, &mut encoded);
-                for g_hat_eval in &helper_eval.g_hat_evals {
+                let blinding_eval = &blinding_evals_per_poly[poly_idx][gamma_idx];
+                transcript::encode_field_element_into(&blinding_eval.m_eval, &mut encoded);
+                for g_hat_eval in &blinding_eval.g_hat_evals {
                     transcript::encode_field_element_into(g_hat_eval, &mut encoded);
                 }
             }
@@ -483,17 +453,17 @@ impl<F: FftField> Config<F> {
         prover_state.prover_messages_bytes::<F>(total_evals, &encoded);
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::send_to_verifier", __snap);
+        crate::alloc_report!("  blinding_evals::send_to_verifier", __snap);
 
         // Sample query batching challenge for combining query points
         let query_batching_challenge: F = prover_state.verifier_message();
 
         // Construct batched eq weights (uses gammas which are same for all polynomials)
         let beq_weights = construct_batched_eq_weights(
-            &helper_evals_per_poly[0],
+            &blinding_evals_per_poly[0],
             masking_challenge,
             query_batching_challenge,
-            num_helper_vars,
+            num_blinding_vars,
         );
 
         // Compute per-polynomial claims and collect evaluations
@@ -501,29 +471,31 @@ impl<F: FftField> Config<F> {
         let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + num_witness_vars));
         for poly_idx in 0..num_polys {
             let (m_claim, g_hat_claims) = compute_per_polynomial_claims(
-                &helper_evals_per_poly[poly_idx],
+                &blinding_evals_per_poly[poly_idx],
                 query_batching_challenge,
             );
             all_evaluations.push(m_claim);
             all_evaluations.extend_from_slice(&g_hat_claims);
         }
 
-        // Collect all helper polynomials (base-field):
+        // Collect all blinding polynomials (base-field):
         // [M₁, ĝ₁₁, ..., ĝ₁μ, M₂, ĝ₂₁, ..., ĝ₂μ, ...]
-        let all_polynomials =
-            interleave_helper_poly_refs::<F>(&witness.m_polys_base, &witness.g_hats_embedded_bases);
+        let all_polynomials = interleave_blinding_poly_refs::<F>(
+            &witness.m_polys_base,
+            &witness.g_hats_embedded_bases,
+        );
 
-        // Single batch witness (helper.batch_size = N×(μ+1))
+        // Single batch witness (blinding_poly_commitment.batch_size = N×(μ+1))
         let all_witnesses: Vec<&irs_commit::Witness<F::BasePrimeField, F>> =
-            vec![&witness.helper_witness];
+            vec![&witness.blinding_witness];
 
         let weight_refs: Vec<&Weights<F>> = vec![&beq_weights];
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::build_weights_claims", __snap);
+        crate::alloc_report!("  blinding_evals::build_weights_claims", __snap);
 
-        // Run helper WHIR proof with existing batch commitment
-        self.helper.prove(
+        // Run blinding WHIR proof with existing batch commitment
+        self.blinding_poly_commitment.prove(
             prover_state,
             &all_polynomials,
             &all_witnesses,
@@ -532,6 +504,6 @@ impl<F: FftField> Config<F> {
         );
 
         #[cfg(feature = "alloc-track")]
-        crate::alloc_report!("  helper_evals::helper_whir_prove", __snap);
+        crate::alloc_report!("  blinding_evals::blinding_whir_prove", __snap);
     }
 }

@@ -34,11 +34,8 @@ fn run() {
         },
         alloc_track, hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        protocols::{
-            whir::Config as WhirConfig,
-            whir_zk::{self, ZkParams},
-        },
-        transcript::{codecs::Empty, ProverState, VerifierState},
+        protocols::whir_zk,
+        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
     };
 
     type F = Field64;
@@ -64,47 +61,34 @@ fn run() {
         batch_size: 1,
         hash_id: hash::SHA2,
     };
-    // Compute ZK params from main config to size the helper
-    let zk_params = ZkParams::from_whir_params(&WhirConfig::<EF>::new(mv, &params));
-
-    let helper_mv = MultivariateParameters::new(zk_params.num_helper_variables + 1);
-    let helper_params = ProtocolParameters {
-        initial_statement: true,
-        security_level: 32,
-        pow_bits: 0,
-        folding_factor: FoldingFactor::Constant(4),
-        soundness_type: SoundnessType::ConjectureList,
-        starting_log_inv_rate: 1,
-        batch_size: zk_params.helper_batch_size(NUM_POLYS),
-        hash_id: hash::SHA2,
-    };
-    let zk_config = whir_zk::Config::new(mv, &params, helper_mv, &helper_params);
+    let zk_config =
+        whir_zk::Config::<EF>::with_auto_helper(mv, &params, FoldingFactor::Constant(4), NUM_POLYS);
 
     eprintln!("╔══════════════════════════════════════════════════════════════════════╗");
     eprintln!("║  ZK WHIR Allocation Report                                         ║");
     eprintln!("╠══════════════════════════════════════════════════════════════════════╣");
     eprintln!(
-        "║  num_variables = {:>4}                                              ║",
+        "║  num_variables     = {:>4}                                          ║",
         NUM_VARIABLES
     );
     eprintln!(
-        "║  num_polys     = {:>4}                                              ║",
+        "║  num_polys         = {:>4}                                          ║",
         NUM_POLYS
     );
     eprintln!(
-        "║  num_points    = {:>4}                                              ║",
+        "║  num_points        = {:>4}                                          ║",
         NUM_POINTS
     );
     eprintln!(
-        "║  helper_vars   = {:>4}                                              ║",
-        zk_params.num_helper_variables
+        "║  blinding_vars     = {:>4}                                          ║",
+        zk_config.num_blinding_variables()
     );
     eprintln!(
-        "║  witness_vars  = {:>4}                                              ║",
-        zk_params.num_witness_variables
+        "║  witness_vars      = {:>4}                                          ║",
+        zk_config.num_witness_variables()
     );
     eprintln!(
-        "║  WHIR rounds   = {:>4}                                              ║",
+        "║  WHIR rounds       = {:>4}                                          ║",
         zk_config.main.n_rounds()
     );
     eprintln!("╚══════════════════════════════════════════════════════════════════════╝");
@@ -141,8 +125,7 @@ fn run() {
     alloc_track::report("setup::weights_and_evaluations", &snap);
 
     // ── Transcript setup ─────────────────────────────────────────────
-    let ds = zk_config
-        .domain_separator()
+    let ds = DomainSeparator::protocol(&zk_config)
         .session(&String::from("alloc-report"))
         .instance(&Empty);
 
@@ -182,7 +165,7 @@ fn run() {
     snap = alloc_track::Snapshot::now();
 
     let mut verifier_state = VerifierState::new_std(&ds, &proof);
-    let (f_hat_commitments, helper_commitment) = zk_config
+    let (f_hat_commitments, blinding_commitment) = zk_config
         .receive_commitments(&mut verifier_state, NUM_POLYS)
         .unwrap();
     let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
@@ -192,7 +175,7 @@ fn run() {
     let result = zk_config.verify(
         &mut verifier_state,
         &f_hat_refs,
-        &helper_commitment,
+        &blinding_commitment,
         &weight_refs,
         &evaluations,
     );

@@ -17,10 +17,7 @@ use whir::{
     },
     hash,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-    protocols::{
-        whir::Config,
-        whir_zk::{self, ZkParams},
-    },
+    protocols::{whir::Config, whir_zk},
     transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -207,32 +204,15 @@ fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, Protocol
     (mv, params)
 }
 
-/// ZK v2 helper WHIR parameters, tuned for the given ZK params and number of polynomials.
-fn zk_helper_params(
-    zk_params: &ZkParams,
-    num_polynomials: usize,
-) -> (MultivariateParameters<EF>, ProtocolParameters) {
-    let helper_vars = zk_params.num_helper_variables + 1;
-    let mv = MultivariateParameters::new(helper_vars);
-    let params = ProtocolParameters {
-        initial_statement: true,
-        security_level: 32,
-        pow_bits: 0,
-        folding_factor: FoldingFactor::Constant(1),
-        soundness_type: SoundnessType::ConjectureList,
-        starting_log_inv_rate: 1,
-        batch_size: zk_params.helper_batch_size(num_polynomials),
-        hash_id: hash::SHA2,
-    };
-    (mv, params)
-}
-
 /// Build a complete ZK v2 config for the given variable count and polynomial count.
 fn make_zk_v2_config(num_variables: usize, num_polynomials: usize) -> whir_zk::Config<EF> {
     let (main_mv, main_params) = zk_main_params(num_variables);
-    let zk_params = ZkParams::from_whir_params(&Config::new(main_mv, &main_params));
-    let (helper_mv, helper_params) = zk_helper_params(&zk_params, num_polynomials);
-    whir_zk::Config::new(main_mv, &main_params, helper_mv, &helper_params)
+    whir_zk::Config::with_auto_helper(
+        main_mv,
+        &main_params,
+        FoldingFactor::Constant(1),
+        num_polynomials,
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -357,8 +337,7 @@ fn zk_v2_commit(bencher: Bencher, num_variables: usize) {
     let polynomials = make_polynomials(num_variables, NUM_POLYS);
     let zk_config = make_zk_v2_config(num_variables, NUM_POLYS);
 
-    let ds = zk_config
-        .domain_separator()
+    let ds = DomainSeparator::protocol(&zk_config)
         .session(&format!("bench-zk-v2-commit-{num_variables}"))
         .instance(&Empty);
 
@@ -379,8 +358,7 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
         make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = zk_config
-        .domain_separator()
+    let ds = DomainSeparator::protocol(&zk_config)
         .session(&format!("bench-zk-v2-prove-{num_variables}"))
         .instance(&Empty);
 
@@ -412,8 +390,7 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         make_weights_and_evaluations_multi(&polynomials, &zk_config.main, num_variables);
     let weight_refs: Vec<&Weights<EF>> = weights.iter().collect();
 
-    let ds = zk_config
-        .domain_separator()
+    let ds = DomainSeparator::protocol(&zk_config)
         .session(&format!("bench-zk-v2-verify-{num_variables}"))
         .instance(&Empty);
 
@@ -435,20 +412,20 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
     bencher
         .with_inputs(|| {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let (f_hat_commitments, helper_commitment) = zk_config
+            let (f_hat_commitments, blinding_commitment) = zk_config
                 .receive_commitments(&mut verifier_state, NUM_POLYS)
                 .unwrap();
-            (verifier_state, f_hat_commitments, helper_commitment)
+            (verifier_state, f_hat_commitments, blinding_commitment)
         })
         .bench_values(
-            |(mut verifier_state, f_hat_commitments, helper_commitment)| {
+            |(mut verifier_state, f_hat_commitments, blinding_commitment)| {
                 let f_hat_refs: Vec<_> = f_hat_commitments.iter().collect();
                 black_box(
                     zk_config
                         .verify(
                             &mut verifier_state,
                             &f_hat_refs,
-                            &helper_commitment,
+                            &blinding_commitment,
                             &weight_refs,
                             &evaluations,
                         )

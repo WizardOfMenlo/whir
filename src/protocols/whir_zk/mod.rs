@@ -1,11 +1,153 @@
 mod committer;
-pub mod config;
 mod prover;
 pub(crate) mod utils;
 mod verifier;
 
-pub use config::{Config, ZkParams};
-pub use utils::{HelperEvaluations, ZkWitness};
+pub use utils::BlindingEvaluations;
+
+use ark_ff::FftField;
+use serde::Serialize;
+
+use crate::{
+    algebra::{fields::FieldWithSize, polynomials::CoefficientList},
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+    protocols::{irs_commit, whir},
+};
+
+// ── ZK WHIR Config ───────────────────────────────────────────────────
+
+/// Configuration for the ZK WHIR protocol.
+///
+/// Bundles the main WHIR config (for the witness polynomial) and the
+/// blinding polynomial WHIR config (for blinding polynomials committed
+/// in a separate Merkle tree).
+///
+/// ZK parameters (`num_witness_variables`, `num_blinding_variables`) are
+/// derivable from the two configs and exposed as methods.
+#[derive(Clone, Serialize)]
+#[serde(bound = "F: FftField")]
+pub struct Config<F: FftField> {
+    /// Main WHIR config for the witness polynomial.
+    pub main: whir::Config<F>,
+    /// WHIR config for blinding polynomials (ℓ+1 variables, batch_size = N×(μ+1)).
+    pub blinding_poly_commitment: whir::Config<F>,
+}
+
+impl<F: FftField + FieldWithSize> Config<F> {
+    /// Create a new ZK WHIR config from multivariate and protocol parameters
+    /// for both the main and blinding polynomial WHIR configurations.
+    pub fn new(
+        main_mv_params: MultivariateParameters<F>,
+        main_whir_params: &ProtocolParameters,
+        blinding_mv_params: MultivariateParameters<F>,
+        blinding_whir_params: &ProtocolParameters,
+    ) -> Self {
+        let main = whir::Config::new(main_mv_params, main_whir_params);
+        let blinding_poly_commitment = whir::Config::new(blinding_mv_params, blinding_whir_params);
+        Self {
+            main,
+            blinding_poly_commitment,
+        }
+    }
+
+    /// Build a ZK WHIR config with automatically-derived blinding parameters.
+    ///
+    /// This is a convenience constructor for the common case where the blinding
+    /// config inherits most settings from the main config. Callers only need
+    /// to specify the main parameters plus the blinding folding factor and the
+    /// number of polynomials (which determines the blinding batch size).
+    ///
+    /// The blinding config inherits `security_level`, `soundness_type`,
+    /// `starting_log_inv_rate`, and `hash_id` from the main parameters, sets
+    /// `pow_bits` to 0, and computes `num_variables` and `batch_size` from
+    /// the derived ZK parameters.
+    pub fn with_auto_helper(
+        main_mv_params: MultivariateParameters<F>,
+        main_whir_params: &ProtocolParameters,
+        blinding_folding_factor: FoldingFactor,
+        num_polynomials: usize,
+    ) -> Self {
+        let main = whir::Config::new(main_mv_params, main_whir_params);
+        let num_blinding_variables = Self::compute_num_blinding_variables(&main);
+        let num_witness_variables = main.initial_num_variables();
+        let blinding_mv_params = MultivariateParameters::new(num_blinding_variables + 1);
+        let blinding_whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: main_whir_params.security_level,
+            pow_bits: 0,
+            folding_factor: blinding_folding_factor,
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: main_whir_params.starting_log_inv_rate,
+            batch_size: num_polynomials * (num_witness_variables + 1),
+            hash_id: main_whir_params.hash_id,
+        };
+        let blinding_poly_commitment = whir::Config::new(blinding_mv_params, &blinding_whir_params);
+        Self {
+            main,
+            blinding_poly_commitment,
+        }
+    }
+
+    /// Compute the number of blinding variables (ℓ) from the main WHIR config.
+    ///
+    /// ℓ is chosen such that 2^ℓ > conservative query upper bound.
+    fn compute_num_blinding_variables(main: &whir::Config<F>) -> usize {
+        let num_witness_variables = main.initial_num_variables();
+        let folding_factor_size = 1 << main.initial_sumcheck.num_rounds;
+        let initial_query_count = main
+            .round_configs
+            .first()
+            .map_or(main.initial_committer.in_domain_samples, |r| {
+                r.irs_committer.in_domain_samples
+            });
+
+        let query_upper_bound =
+            2 * folding_factor_size * initial_query_count + 4 * num_witness_variables + 10;
+        let num_blinding_variables = (query_upper_bound as f64).log2().ceil() as usize;
+        assert!(
+            num_blinding_variables < num_witness_variables,
+            "ZK requires ℓ < μ (ℓ={num_blinding_variables}, μ={num_witness_variables}). \
+             Increase num_variables or lower security_level/queries. \
+             (q_ub={query_upper_bound}, k={folding_factor_size}, q1={initial_query_count})"
+        );
+        num_blinding_variables
+    }
+}
+
+impl<F: FftField> Config<F> {
+    /// Number of variables in the witness polynomial (μ in the paper).
+    pub fn num_witness_variables(&self) -> usize {
+        self.main.initial_num_variables()
+    }
+
+    /// Number of variables for blinding polynomials (ℓ in the paper).
+    pub fn num_blinding_variables(&self) -> usize {
+        self.blinding_poly_commitment.initial_num_variables() - 1
+    }
+}
+
+/// Witness: contains commitment witnesses for all ZK components.
+///
+/// Produced by [`Config::commit`] and consumed by [`Config::prove`].
+#[derive(Clone)]
+pub struct Witness<F: FftField> {
+    /// Witnesses for [[f̂₁]] = [[f₁ + msk₁]], ..., [[fₙ]] = [[fₙ + mskₙ]] in main WHIR
+    pub f_hat_witnesses: Vec<irs_commit::Witness<F::BasePrimeField, F>>,
+
+    /// Single batch witness for all blinding polynomials [[M, ĝ₁, ..., ĝμ]]
+    /// committed via blinding_poly_commitment config with batch_size = μ+1
+    pub blinding_witness: irs_commit::Witness<F::BasePrimeField, F>,
+
+    /// Reference to blinding data for each polynomial
+    pub blinding_polynomials: Vec<utils::BlindingPolynomials<F>>,
+
+    /// Base-field representations of M polynomials (for blinding WHIR prove)
+    pub m_polys_base: Vec<CoefficientList<F::BasePrimeField>>,
+
+    /// Base-field representations of embedded ĝⱼ polynomials (for blinding WHIR prove)
+    /// Each ĝⱼ is embedded from ℓ to (ℓ+1) variables for each polynomial
+    pub g_hats_embedded_bases: Vec<Vec<CoefficientList<F::BasePrimeField>>>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -21,7 +163,7 @@ mod tests {
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
-        transcript::{codecs::Empty, ProverState, VerifierState},
+        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
     };
 
     /// Field type used in the tests.
@@ -34,9 +176,8 @@ mod tests {
     ///
     /// This function:
     /// - builds N multilinear polynomials with the specified number of variables,
-    /// - samples N independent ZK preprocessing polynomials (msk, g₀, ĝ₁..ĝμ, M),
-    /// - constructs a `whir_zk::Config` bundling main + helper WHIR configs,
-    /// - commits (producing f̂ᵢ = fᵢ + mskᵢ and helper commitments),
+    /// - constructs a `whir_zk::Config` bundling main + blinding WHIR configs,
+    /// - commits (producing f̂ᵢ = fᵢ + mskᵢ and blinding commitments),
     /// - generates a ZK proof, then verifies it.
     fn make_whir_zk_things(
         num_variables: usize,
@@ -63,17 +204,18 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        // ── Build ZK config with auto-derived helper parameters ──
+        // ── Build ZK config with auto-derived blinding parameters ──
         let zk_config = Config::with_auto_helper(
             mv_params,
             &whir_params,
             FoldingFactor::Constant(1),
             num_polynomials,
         );
-        let zk_params = &zk_config.zk_params;
         eprintln!(
-            "ZK params: num_helper_variables={}, num_witness_variables={}, num_polynomials={}",
-            zk_params.num_helper_variables, zk_params.num_witness_variables, num_polynomials
+            "ZK params: num_blinding_variables={}, num_witness_variables={}, num_polynomials={}",
+            zk_config.num_blinding_variables(),
+            zk_config.num_witness_variables(),
+            num_polynomials
         );
         eprintln!("{}", zk_config.main);
 
@@ -102,13 +244,12 @@ mod tests {
         let polynomial_refs: Vec<&CoefficientList<F>> = polynomials.iter().collect();
 
         // ── Set up Fiat-Shamir transcript ──
-        let ds = zk_config
-            .domain_separator()
+        let ds = DomainSeparator::protocol(&zk_config)
             .session(&format!("ZK Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
-        // ── ZK commitment: commit to f̂ᵢ = fᵢ + mskᵢ, plus helper polynomials ──
+        // ── ZK commitment: commit to f̂ᵢ = fᵢ + mskᵢ, plus blinding polynomials ──
         let zk_witness = zk_config.commit(&mut prover_state, &polynomial_refs);
 
         // ── ZK proof: prove knowledge of {fᵢ} via blinded virtual oracle ──
@@ -123,7 +264,7 @@ mod tests {
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         // ── Receive commitments from transcript (mirrors commit order) ──
-        let (f_hat_commitments, helper_commitment) = zk_config
+        let (f_hat_commitments, blinding_commitment) = zk_config
             .receive_commitments(&mut verifier_state, num_polynomials)
             .unwrap();
         let f_hat_commitment_refs: Vec<_> = f_hat_commitments.iter().collect();
@@ -132,7 +273,7 @@ mod tests {
         let verify_result = zk_config.verify(
             &mut verifier_state,
             &f_hat_commitment_refs,
-            &helper_commitment,
+            &blinding_commitment,
             &weight_refs,
             &evaluations,
         );
