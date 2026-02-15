@@ -9,7 +9,7 @@ use crate::utils::zip_strict;
 ///
 /// Given a vector $v ∈ 𝔽^n$ it computes $sum_i v_i · x^i$ for some fixed $x$.
 ///
-/// **TODO**. This actually first converst $v$ from an multilinear evaluation basis
+/// **TODO**. This actually first converts $v$ from a multilinear evaluation basis
 /// to a coefficient basis.
 pub struct UnivariateEvaluation<F: Field> {
     /// Univariate evaluation doesn't have an inherent size, so we need to store one.
@@ -52,12 +52,12 @@ impl<F: Field> UnivariateEvaluation<F> {
 }
 
 impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
-    fn deferred(&self) -> bool {
-        false
-    }
-
     fn size(&self) -> usize {
         self.size
+    }
+
+    fn deferred(&self) -> bool {
+        false
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {

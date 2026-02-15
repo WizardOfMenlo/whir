@@ -183,7 +183,7 @@ where
         let evaluations: Vec<F> = Vec::new();
         let weight_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
 
         params.prove(
@@ -273,7 +273,7 @@ where
 
         let weight_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
@@ -290,10 +290,6 @@ where
 
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 

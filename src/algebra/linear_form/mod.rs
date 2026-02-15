@@ -46,8 +46,8 @@ pub trait LinearForm<F: Field> {
 
     /// Accumulate the covector representation of the linear form.
     ///
-    /// Take $w ∈ 𝔽^n$ such that evaluating the linear form on $v ∈ 𝔽^n$ is equals the inner
-    /// product $⟨w,v⟩$. Then this function computes $accumulator_i = scalar · w_i$.
+    /// Take $w ∈ 𝔽^n$ such that evaluating the linear form on $v ∈ 𝔽^n$ equals the inner
+    /// product $⟨w,v⟩$. Then this function computes $accumulator_i += scalar · w_i$.
     ///
     /// This function is only called by the prover.
     fn accumulate(&self, accumulator: &mut [F], scalar: F);

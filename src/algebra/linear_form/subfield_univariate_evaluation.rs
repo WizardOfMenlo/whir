@@ -33,7 +33,7 @@ impl<M: Embedding> SubfieldUnivariateEvaluation<M> {
         }
     }
 
-    /// Lift to a [`UnivariateEvaluation`] over the targer field.
+    /// Lift to a [`UnivariateEvaluation`] over the target field.
     pub fn lift(&self) -> UnivariateEvaluation<M::Target> {
         UnivariateEvaluation::new(self.embedding.map(self.point), self.size)
     }
