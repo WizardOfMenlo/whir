@@ -32,13 +32,11 @@ pub fn compute_fold<F: Field>(
     mut coset_offset_inv: F,
     mut coset_gen_inv: F,
     two_inv: F,
-    folding_factor: usize,
 ) -> F {
     let mut answers = answers.to_vec();
 
     // Perform the folding process `folding_factor` times.
-    for rec in 0..folding_factor {
-        let r = folding_randomness[folding_randomness.len() - 1 - rec];
+    for &r in folding_randomness {
         let offset = answers.len() / 2;
         let mut coset_index_inv = F::ONE;
 
@@ -86,59 +84,34 @@ mod tests {
         let num_variables = 5;
         let num_coeffs = 1 << num_variables;
 
-        // Total size of the evaluation domain
-        let domain_size = 256;
+        // Folding factor determines how many variables are folded (3)
+        let folding_factor = 3_usize;
 
-        // Folding factor determines how many evaluations to fold at once (2^3 = 8)
-        let folding_factor = 3;
-        let folding_factor_exp = 1 << folding_factor;
-
-        // Create a simple multilinear polynomial f(x₀, ..., x₄) = ∑ xᵢ
+        // Create a simple multilinear polynomial with deterministic coefficients.
         let poly = CoefficientList::new((0..num_coeffs).map(F::from).collect());
 
-        // Get the primitive root of unity for the domain
-        let root_of_unity = F::get_root_of_unity(domain_size).unwrap();
-
-        // Pick a specific coset index to evaluate
-        let index = 15;
         // Folding randomness vector `r = [0, 1, 2]`
         let folding_randomness: Vec<_> = (0..folding_factor as u64).map(F::from).collect();
 
-        // Compute coset offset = ω^index
-        let coset_offset = root_of_unity.pow([index]);
-        // Compute coset generator = ω^{N / 2^m}
-        let coset_gen = root_of_unity.pow([domain_size / folding_factor_exp]);
+        // Pick a deterministic point for the remaining variables.
+        let remaining_point = MultilinearPoint(vec![F::from(7), F::from(9)]);
 
-        // Evaluate the polynomial at the points in the coset: γ * g^i
-        let poly_eval: Vec<_> = (0..folding_factor_exp)
-            .map(|i| {
-                poly.evaluate(&MultilinearPoint::expand_from_univariate(
-                    coset_offset * coset_gen.pow([i]),
-                    num_variables,
-                ))
-            })
-            .collect();
+        // Fold the first variables and evaluate at the remaining point.
+        let folded_poly = poly.fold(&MultilinearPoint(folding_randomness.clone()));
+        let folded_value = folded_poly.evaluate(&remaining_point);
 
-        // Fold the evaluations down to a single value using the compute_fold routine
-        let fold_value = compute_fold(
-            &poly_eval,
-            &folding_randomness,
-            coset_offset.inverse().unwrap(),
-            coset_gen.inverse().unwrap(),
-            F::from(2).inverse().unwrap(),
-            folding_factor,
+        // Evaluate the original polynomial at the combined point.
+        let full_point = MultilinearPoint(
+            folding_randomness
+                .iter()
+                .copied()
+                .chain(remaining_point.0.iter().copied())
+                .collect(),
         );
+        let direct_value = poly.evaluate(&full_point);
 
-        // Compute the expected value by folding the polynomial, then evaluating it at ω^{8·index}
-        let truth_value = poly.fold(&MultilinearPoint(folding_randomness)).evaluate(
-            &MultilinearPoint::expand_from_univariate(
-                root_of_unity.pow([folding_factor_exp * index]),
-                2,
-            ),
-        );
-
-        // The folded value should match the evaluation of the folded polynomial
-        assert_eq!(fold_value, truth_value);
+        // Folding should match direct evaluation with substituted variables.
+        assert_eq!(folded_value, direct_value);
     }
 
     #[test]
@@ -208,12 +181,13 @@ mod tests {
                 offset_inv,
                 coset_gen_inv,
                 F::from(2).inverse().unwrap(),
-                folding_factor,
             );
 
             // Compute folded value using the processed evaluation and standard evaluation
-            let answer_processed = CoefficientList::new(domain_evaluations[span].to_vec())
-                .evaluate(&MultilinearPoint(folding_randomness.clone()));
+            let reversed_point =
+                MultilinearPoint(folding_randomness.iter().rev().copied().collect());
+            let answer_processed =
+                CoefficientList::new(domain_evaluations[span].to_vec()).evaluate(&reversed_point);
 
             // Assert that both answers match
             assert_eq!(answer_processed, answer_unprocessed);
@@ -247,7 +221,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            1,
         );
         assert_eq!(result, expected);
     }
@@ -266,7 +239,7 @@ mod tests {
         // Folding randomness used in each layer (innermost first)
         let r0 = F::from(5); // randomness for layer 1 (first fold)
         let r1 = F::from(7); // randomness for layer 2 (second fold)
-        let folding_randomness = vec![r1, r0]; // reversed because fold reads from the back
+        let folding_randomness = vec![r0, r1];
 
         // Precompute constants
         let two_inv = F::from(2).inverse().unwrap(); // 1/2 used in folding formula
@@ -320,7 +293,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            2,
         );
 
         // Assert that the result matches the manually computed expected value
@@ -351,7 +323,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            1,
         );
 
         assert_eq!(result, expected);
@@ -375,7 +346,6 @@ mod tests {
             coset_offset_inv,
             coset_gen_inv,
             two_inv,
-            3,
         );
 
         assert_eq!(result, expected);

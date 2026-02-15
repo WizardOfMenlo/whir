@@ -12,7 +12,7 @@ use crate::{
     algebra::{
         dot,
         polynomials::{EvaluationsList, MultilinearPoint},
-        sumcheck::{compute_sumcheck_polynomial, fold},
+        sumcheck::compute_sumcheck_polynomial,
     },
     ensure,
     protocols::proof_of_work,
@@ -56,7 +56,7 @@ impl<F: Field> Config<F> {
     /// Runs the quadratic sumcheck protocol as configured.
     ///
     /// It reduces a claim of the form `dot(a, b) == sum` to an exponentially
-    /// smaller claim `dot(a', b') == sum'` where `a' = fold(a, randomness)`
+    /// smaller claim `dot(a', b') == sum'` where `a'` is `a` folded in place
     /// and similarly for `b`.
     ///
     /// This function:
@@ -99,12 +99,11 @@ impl<F: Field> Config<F> {
             res.push(folding_randomness);
 
             // Fold the inputs
-            *a = EvaluationsList::new(fold(folding_randomness, a.evals()));
-            *b = EvaluationsList::new(fold(folding_randomness, b.evals()));
+            a.fold_in_place(folding_randomness);
+            b.fold_in_place(folding_randomness);
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
-        res.reverse();
         MultilinearPoint(res)
     }
 
@@ -140,7 +139,6 @@ impl<F: Field> Config<F> {
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
-        res.reverse();
         Ok(MultilinearPoint(res))
     }
 }

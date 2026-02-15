@@ -10,9 +10,8 @@ use {
 use super::evals::EvaluationsList;
 use crate::algebra::{
     embedding::Embedding, lift, ntt::wavelet_transform, polynomials::MultilinearPoint,
+    sumcheck::mixed_eval,
 };
-#[cfg(feature = "parallel")]
-use crate::utils::workload_size;
 
 /// Represents a multilinear polynomial in coefficient form with `num_variables` variables.
 ///
@@ -103,13 +102,13 @@ impl<F: Field> CoefficientList<F> {
         mixed_eval(embedding, &self.coeffs, &point.0, M::Target::ONE)
     }
 
-    /// Folds the polynomial along high-indexed variables, reducing its dimensionality.
+    /// Folds the polynomial along low-indexed variables, reducing its dimensionality.
     ///
     /// Given a multilinear polynomial `f(X₀, ..., X_{n-1})`, this partially evaluates it at
     /// `folding_randomness`, returning a new polynomial in fewer variables:
     ///
     /// ```ignore
-    /// f(X₀, ..., X_{m-1}, r₀, r₁, ..., r_k) → g(X₀, ..., X_{m-1})
+    /// f(r₀, r₁, ..., r_k, X_{k+1}, ..., X_{n-1}) → g(X_{k+1}, ..., X_{n-1})
     /// ```
     /// where `r₀, ..., r_k` are values from `folding_randomness`.
     ///
@@ -119,22 +118,35 @@ impl<F: Field> CoefficientList<F> {
     #[cfg_attr(feature = "tracing", instrument(level = "debug", skip_all, fields(size = self.coeffs.len())))]
     pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
         let folding_factor = folding_randomness.num_variables();
+        let remaining_vars = self.num_variables() - folding_factor;
+        let block_size = 1 << remaining_vars;
+        let num_blocks = 1 << folding_factor;
+
         #[cfg(not(feature = "parallel"))]
-        let coeffs = self
-            .coeffs
-            .chunks_exact(1 << folding_factor)
-            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+        let coeffs = (0..block_size)
+            .map(|offset| {
+                let mut block = Vec::with_capacity(num_blocks);
+                for i in 0..num_blocks {
+                    block.push(self.coeffs[i * block_size + offset]);
+                }
+                eval_multivariate(&block, &folding_randomness.0)
+            })
             .collect();
         #[cfg(feature = "parallel")]
-        let coeffs = self
-            .coeffs
-            .par_chunks_exact(1 << folding_factor)
-            .map(|coeffs| eval_multivariate(coeffs, &folding_randomness.0))
+        let coeffs = (0..block_size)
+            .into_par_iter()
+            .map(|offset| {
+                let mut block = Vec::with_capacity(num_blocks);
+                for i in 0..num_blocks {
+                    block.push(self.coeffs[i * block_size + offset]);
+                }
+                eval_multivariate(&block, &folding_randomness.0)
+            })
             .collect();
 
         Self {
             coeffs,
-            num_variables: self.num_variables() - folding_factor,
+            num_variables: remaining_vars,
         }
     }
 }
@@ -208,33 +220,6 @@ where
     }
 }
 
-fn mixed_eval<M: Embedding>(
-    embedding: &M,
-    coeff: &[M::Source],
-    eval: &[M::Target],
-    scalar: M::Target,
-) -> M::Target {
-    debug_assert_eq!(coeff.len(), 1 << eval.len());
-
-    if let Some((&x, tail)) = eval.split_first() {
-        let (low, high) = coeff.split_at(coeff.len() / 2);
-
-        #[cfg(feature = "parallel")]
-        if low.len() > workload_size::<M::Source>() {
-            let (a, b) = rayon::join(
-                || mixed_eval(embedding, low, tail, scalar),
-                || mixed_eval(embedding, high, tail, scalar * x),
-            );
-            return a + b;
-        }
-
-        // Default non-parallel execution
-        mixed_eval(embedding, low, tail, scalar) + mixed_eval(embedding, high, tail, scalar * x)
-    } else {
-        embedding.mixed_mul(scalar, coeff[0])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ark_ff::AdditiveGroup;
@@ -272,11 +257,11 @@ mod tests {
         let alpha = F::from(100);
         let beta = F::from(32);
 
-        let folded = coeffs_list.fold(&MultilinearPoint(vec![beta]));
+        let folded = coeffs_list.fold(&MultilinearPoint(vec![alpha]));
 
         assert_eq!(
             coeffs_list.evaluate(&MultilinearPoint(vec![alpha, beta])),
-            folded.evaluate(&MultilinearPoint(vec![alpha]))
+            folded.evaluate(&MultilinearPoint(vec![beta]))
         );
     }
 
@@ -292,7 +277,7 @@ mod tests {
             let eval_part = randomness[k..randomness.len()].to_vec();
 
             let fold_random = MultilinearPoint(fold_part.clone());
-            let eval_point = MultilinearPoint([eval_part.clone(), fold_part].concat());
+            let eval_point = MultilinearPoint([fold_part, eval_part.clone()].concat());
 
             let folded = coeffs_list.fold(&fold_random);
             assert_eq!(
@@ -338,14 +323,14 @@ mod tests {
         let coeffs: Vec<F> = (0..(1 << num_variables)).map(F::from).collect();
         let coeff_list = CoefficientList::new(coeffs);
 
-        let fold_x1 = F::from(4);
-        let fold_x2 = F::from(2);
-        let folding_point = MultilinearPoint(vec![fold_x1, fold_x2]);
+        let fold_x0 = F::from(4);
+        let fold_x1 = F::from(2);
+        let folding_point = MultilinearPoint(vec![fold_x0, fold_x1]);
 
         let folded = coeff_list.fold(&folding_point);
 
         let eval_x0 = F::from(6);
-        let full_point = MultilinearPoint(vec![eval_x0, fold_x1, fold_x2]);
+        let full_point = MultilinearPoint(vec![fold_x0, fold_x1, eval_x0]);
         let expected_eval = coeff_list.evaluate(&full_point);
 
         // Ensure correctness of folding and evaluation

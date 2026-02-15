@@ -5,7 +5,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
-use crate::utils::zip_strict;
+use crate::{
+    algebra::{multilinear_extend, sumcheck::fold},
+    utils::zip_strict,
+};
 
 /// Represents a multilinear polynomial `f` in `num_variables` unknowns, stored via its evaluations
 /// over the hypercube `{0,1}^{num_variables}`.
@@ -78,7 +81,7 @@ where
         if let Some(point) = point.to_hypercube() {
             return self.evals[point.0];
         }
-        eval_multilinear(&self.evals, &point.0)
+        multilinear_extend(&self.evals, &point.0)
     }
 
     /// Returns an immutable reference to the evaluations vector.
@@ -108,6 +111,12 @@ where
         self.num_variables
     }
 
+    /// Folds evaluations in place by linear interpolation at the given weight.
+    pub fn fold_in_place(&mut self, weight: F) {
+        fold(&mut self.evals, weight);
+        self.num_variables -= 1;
+    }
+
     pub fn to_coeffs(&self) -> crate::algebra::polynomials::coeffs::CoefficientList<F> {
         let mut coeffs = self.evals.clone();
         crate::algebra::ntt::inverse_wavelet_transform(&mut coeffs);
@@ -120,60 +129,6 @@ impl<F> Index<usize> for EvaluationsList<F> {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.evals[index]
-    }
-}
-
-fn eval_multilinear<F: Field>(evals: &[F], point: &[F]) -> F {
-    assert_eq!(evals.len(), 1 << point.len());
-    match point {
-        [] => evals[0],
-        [x] => evals[0] + (evals[1] - evals[0]) * *x,
-        [x0, x1] => {
-            let a0 = evals[0] + (evals[1] - evals[0]) * *x1;
-            let a1 = evals[2] + (evals[3] - evals[2]) * *x1;
-            a0 + (a1 - a0) * *x0
-        }
-        [x0, x1, x2] => {
-            let a00 = evals[0] + (evals[1] - evals[0]) * *x2;
-            let a01 = evals[2] + (evals[3] - evals[2]) * *x2;
-            let a10 = evals[4] + (evals[5] - evals[4]) * *x2;
-            let a11 = evals[6] + (evals[7] - evals[6]) * *x2;
-            let a0 = a00 + (a01 - a00) * *x1;
-            let a1 = a10 + (a11 - a10) * *x1;
-            a0 + (a1 - a0) * *x0
-        }
-        [x0, x1, x2, x3] => {
-            let a000 = evals[0] + (evals[1] - evals[0]) * *x3;
-            let a001 = evals[2] + (evals[3] - evals[2]) * *x3;
-            let a010 = evals[4] + (evals[5] - evals[4]) * *x3;
-            let a011 = evals[6] + (evals[7] - evals[6]) * *x3;
-            let a100 = evals[8] + (evals[9] - evals[8]) * *x3;
-            let a101 = evals[10] + (evals[11] - evals[10]) * *x3;
-            let a110 = evals[12] + (evals[13] - evals[12]) * *x3;
-            let a111 = evals[14] + (evals[15] - evals[14]) * *x3;
-            let a00 = a000 + (a001 - a000) * *x2;
-            let a01 = a010 + (a011 - a010) * *x2;
-            let a10 = a100 + (a101 - a100) * *x2;
-            let a11 = a110 + (a111 - a110) * *x2;
-            let a0 = a00 + (a01 - a00) * *x1;
-            let a1 = a10 + (a11 - a10) * *x1;
-            a0 + (a1 - a0) * *x0
-        }
-        [x, tail @ ..] => {
-            let (f0, f1) = evals.split_at(evals.len() / 2);
-            #[cfg(not(feature = "parallel"))]
-            let (f0, f1) = (eval_multilinear(f0, tail), eval_multilinear(f1, tail));
-            #[cfg(feature = "parallel")]
-            let (f0, f1) = {
-                let work_size: usize = (1 << 15) / std::mem::size_of::<F>();
-                if evals.len() > work_size {
-                    rayon::join(|| eval_multilinear(f0, tail), || eval_multilinear(f1, tail))
-                } else {
-                    (eval_multilinear(f0, tail), eval_multilinear(f1, tail))
-                }
-            };
-            f0 + (f1 - f0) * *x
-        }
     }
 }
 
@@ -359,7 +314,7 @@ mod tests {
         let result = evals.eval_extension(&point);
 
         // Expected result using `eval_multilinear`
-        let expected = eval_multilinear(evals.evals(), &point.0);
+        let expected = multilinear_extend(evals.evals(), &point.0);
 
         assert_eq!(result, expected);
     }
@@ -374,7 +329,7 @@ mod tests {
         let x = Field64::from(1) / Field64::from(2);
         let expected = a + (b - a) * x;
 
-        assert_eq!(eval_multilinear(&evals, &[x]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x]), expected);
     }
 
     #[test]
@@ -399,7 +354,7 @@ mod tests {
             + x * (Field64::ONE - y) * b
             + x * y * d;
 
-        assert_eq!(eval_multilinear(&evals, &[x, y]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y]), expected);
     }
 
     #[test]
@@ -432,7 +387,7 @@ mod tests {
             + x * y * (Field64::ONE - z) * g
             + x * y * z * h;
 
-        assert_eq!(eval_multilinear(&evals, &[x, y, z]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y, z]), expected);
     }
 
     #[test]
@@ -482,6 +437,6 @@ mod tests {
                 + x * y * z * w * p;
 
         // Validate against the function output
-        assert_eq!(eval_multilinear(&evals, &[x, y, z, w]), expected);
+        assert_eq!(multilinear_extend(&evals, &[x, y, z, w]), expected);
     }
 }
