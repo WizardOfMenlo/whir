@@ -1,18 +1,21 @@
 use ark_ff::Field;
 
-use super::Weights;
-use crate::algebra::{embedding::Embedding, mixed_univariate_evaluate, weights::Evaluate};
+use super::LinearForm;
+use crate::algebra::{embedding::Embedding, linear_form::Evaluate, mixed_univariate_evaluate};
 #[cfg(feature = "parallel")]
 use crate::utils::zip_strict;
 
-/// Weights vector to represent univariate polynomial evaluation.
+/// Linear form to represent univariate polynomial evaluation.
 ///
-/// Specifically the weights are $w_i = x^i$.
+/// Given a vector $v ∈ 𝔽^n$ it computes $sum_i v_i · x^i$ for some fixed $x$.
+///
+/// **TODO**. This actually first converst $v$ from an multilinear evaluation basis
+/// to a coefficient basis.
 pub struct UnivariateEvaluation<F: Field> {
     /// Univariate evaluation doesn't have an inherent size, so we need to store one.
     pub size: usize,
 
-    /// The point to evaluate in.
+    /// The point $x ∈ 𝔽$ to evaluate on.
     pub point: F,
 }
 
@@ -21,15 +24,14 @@ impl<F: Field> UnivariateEvaluation<F> {
         Self { size, point }
     }
 
-    /// Same as [`Weights::accumulate`], but batches many [`UnivariateEvaluation`]s together
-    /// in a single pass.
-    pub fn accumulate_many(weights: &[Self], accumulator: &mut [F], scalars: &[F]) {
-        assert_eq!(weights.len(), scalars.len());
-        if weights.is_empty() {
+    /// Batched version of [`LinearForm::accumulate`] for many [`UnivariateEvaluation`]s.
+    pub fn accumulate_many(evaluators: &[Self], accumulator: &mut [F], scalars: &[F]) {
+        assert_eq!(evaluators.len(), scalars.len());
+        if evaluators.is_empty() {
             return;
         }
 
-        let size = weights[0].size;
+        let size = evaluators[0].size;
         assert_eq!(accumulator.len(), size);
         assert!(size.is_power_of_two());
         let num_variables = size.trailing_zeros() as usize;
@@ -37,7 +39,7 @@ impl<F: Field> UnivariateEvaluation<F> {
         // Create a matrix of pow2k
         let mut points = vec![F::ZERO; scalars.len() * num_variables];
         for j in 0..scalars.len() {
-            points[scalars.len() * (num_variables - 1) + j] = weights[j].point;
+            points[scalars.len() * (num_variables - 1) + j] = evaluators[j].point;
         }
         for i in (0..num_variables - 1).rev() {
             for j in 0..scalars.len() {
@@ -49,7 +51,7 @@ impl<F: Field> UnivariateEvaluation<F> {
     }
 }
 
-impl<F: Field> Weights<F> for UnivariateEvaluation<F> {
+impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
     fn deferred(&self) -> bool {
         false
     }

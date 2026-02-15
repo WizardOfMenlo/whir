@@ -1,19 +1,19 @@
 use ark_ff::Field;
 
-use super::Weights;
+use super::LinearForm;
 use crate::{
     algebra::{
         embedding::{self, Embedding},
+        linear_form::{Evaluate, UnivariateEvaluation},
         mixed_univariate_evaluate, univariate_evaluate,
-        weights::{Evaluate, UnivariateEvaluation},
     },
     utils::zip_strict,
 };
 
-/// Weights vector to represent univariate polynomial evaluation.
+/// Linear form to represent univariate polynomial evaluation.
 ///
-/// Identical to [`UnivariateEvaluation`], but optimized for when the evaluation point
-/// is in a subfield.
+/// Identical to [`UnivariateEvaluation`], but optimized for evaluation points that lie in a
+/// subfield. This allows for additional optimizations.
 pub struct SubfieldUnivariateEvaluation<M: Embedding> {
     pub embedding: M,
 
@@ -33,7 +33,7 @@ impl<M: Embedding> SubfieldUnivariateEvaluation<M> {
         }
     }
 
-    /// Lift to an evaluation over a target field point
+    /// Lift to a [`UnivariateEvaluation`] over the targer field.
     pub fn lift(&self) -> UnivariateEvaluation<M::Target> {
         UnivariateEvaluation::new(self.embedding.map(self.point), self.size)
     }
@@ -41,28 +41,28 @@ impl<M: Embedding> SubfieldUnivariateEvaluation<M> {
     /// Same as `Self::accumulate`, but batches many `UnivariateEvaluation`s together
     /// in a single pass.
     pub fn accumulate_many(
-        weights: &[Self],
+        evaluators: &[Self],
         accumulator: &mut [M::Target],
         scalars: Vec<M::Target>,
     ) {
-        assert_eq!(weights.len(), scalars.len());
+        assert_eq!(evaluators.len(), scalars.len());
         let mut powers = scalars;
         for accumulator in accumulator {
-            for (power, weights) in zip_strict(&mut powers, weights) {
+            for (power, evaluator) in zip_strict(&mut powers, evaluators) {
                 *accumulator += *power;
-                *power = weights.embedding.mixed_mul(*power, weights.point);
+                *power = evaluator.embedding.mixed_mul(*power, evaluator.point);
             }
         }
     }
 }
 
-impl<M: Embedding> Weights<M::Target> for SubfieldUnivariateEvaluation<M> {
-    fn deferred(&self) -> bool {
-        false
-    }
-
+impl<M: Embedding> LinearForm<M::Target> for SubfieldUnivariateEvaluation<M> {
     fn size(&self) -> usize {
         self.size
+    }
+
+    fn deferred(&self) -> bool {
+        false
     }
 
     fn mle_evaluate(&self, point: &[M::Target]) -> M::Target {

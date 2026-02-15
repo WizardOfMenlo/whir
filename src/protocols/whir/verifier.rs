@@ -5,9 +5,9 @@ use crate::{
     algebra::{
         dot,
         embedding::Identity,
+        linear_form::{Evaluate, LinearForm},
         polynomials::{CoefficientList, MultilinearPoint},
         tensor_product,
-        weights::{Evaluate, Weights},
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -43,7 +43,7 @@ impl<F: FftField> Config<F> {
         &self,
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<F>],
-        weights: &[&dyn Weights<F>],
+        weights: &[&dyn LinearForm<F>],
         evaluations: &[F],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
@@ -69,7 +69,7 @@ impl<F: FftField> Config<F> {
             let mut polynomial_offset = 0;
             for commitment in commitments {
                 for (weights, oods_row) in zip_strict(
-                    commitment.out_of_domain().weights(self.initial_size()),
+                    commitment.out_of_domain().evaluators(self.initial_size()),
                     commitment.out_of_domain().rows(),
                 ) {
                     for j in 0..num_polynomials {
@@ -159,8 +159,8 @@ impl<F: FftField> Config<F> {
             // Random linear combination of out- and in-domain constraints
             let constraint_weights = commitment
                 .out_of_domain()
-                .weights(round_config.initial_size())
-                .chain(in_domain.weights(round_config.initial_size()))
+                .evaluators(round_config.initial_size())
+                .chain(in_domain.evaluators(round_config.initial_size()))
                 .collect::<Vec<_>>();
             let constraint_values = commitment
                 .out_of_domain()
@@ -210,7 +210,7 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.weights(final_coefficients.num_coeffs()),
+            in_domain.evaluators(final_coefficients.num_coeffs()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
                 &MultilinearPoint(

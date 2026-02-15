@@ -18,8 +18,8 @@ mod tests {
         algebra::{
             embedding::Basefield,
             fields::{Field64, Field64_2},
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-            weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -166,7 +166,7 @@ mod tests {
         // Generate a STARK proof for the given statement and witness
         let weight_dyn_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
@@ -184,10 +184,6 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        let weight_dyn_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         params
             .verify(
                 &mut verifier_state,
@@ -372,7 +368,7 @@ mod tests {
         // Batch prove all polynomials together
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
@@ -395,10 +391,6 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
-        let weights_dyn_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         params
             .verify(
                 &mut verifier_state,
@@ -536,7 +528,7 @@ mod tests {
         // The prover will compute cross-terms using poly_wrong, not poly2
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
@@ -556,10 +548,6 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
-        let weights_dyn_ref = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,
             &[&commitments[0], &commitments[1]],
@@ -672,7 +660,7 @@ mod tests {
         // Batch prove all witnesses together
         let weights_dyn_ref = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
@@ -693,10 +681,6 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let weights_dyn_ref = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,
             &commitment_refs,

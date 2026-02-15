@@ -1,11 +1,11 @@
 pub mod domain;
 pub mod embedding;
 pub mod fields;
+pub mod linear_form;
 mod multilinear;
 pub mod ntt;
 pub mod polynomials;
 pub mod sumcheck;
-pub mod weights;
 
 use ark_ff::{AdditiveGroup, Field};
 pub use multilinear::{eval_eq, mixed_multilinear_extend, multilinear_extend};

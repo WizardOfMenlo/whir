@@ -1,23 +1,23 @@
 use ark_ff::Field;
 
-use super::{Evaluate, Weights};
+use super::{Evaluate, LinearForm};
 use crate::algebra::{
     mixed_dot, multilinear_extend, ntt::wavelet_transform, scalar_mul_add, Embedding,
 };
 
-/// Weights as an explicit (co)vector in the field.
+/// Linear form as an explicit covector over the field.
 pub struct Covector<F: Field> {
     pub deferred: bool,
     pub vector: Vec<F>,
 }
 
-impl<F: Field> Weights<F> for Covector<F> {
-    fn deferred(&self) -> bool {
-        self.deferred
-    }
-
+impl<F: Field> LinearForm<F> for Covector<F> {
     fn size(&self) -> usize {
         self.vector.len()
+    }
+
+    fn deferred(&self) -> bool {
+        self.deferred
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
@@ -30,17 +30,17 @@ impl<F: Field> Weights<F> for Covector<F> {
 }
 
 impl<F: Field> Covector<F> {
-    pub const fn new(weights: Vec<F>) -> Self {
+    pub const fn new(vector: Vec<F>) -> Self {
         Self {
             deferred: true,
-            vector: weights,
+            vector,
         }
     }
 
-    /// Any [`Weights<F>`] vector can be converted to a [`Covector<F>`].
-    pub fn from(weights: &impl Weights<F>) -> Self {
-        let mut vector = vec![F::ZERO; weights.size()];
-        weights.accumulate(&mut vector, F::ONE);
+    /// Any [`LinearForm<F>`] can be converted to a [`Covector<F>`].
+    pub fn from(linear_form: &dyn LinearForm<F>) -> Self {
+        let mut vector = vec![F::ZERO; linear_form.size()];
+        linear_form.accumulate(&mut vector, F::ONE);
         Self {
             deferred: true,
             vector,

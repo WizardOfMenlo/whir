@@ -12,8 +12,8 @@ use whir::{
     algebra::{
         embedding::Basefield,
         fields,
+        linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
         polynomials::{CoefficientList, MultilinearPoint},
-        weights::{Evaluate, MultilinearEvaluation, Weights},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -203,7 +203,7 @@ where
         let whir_ldt_verifier_time = Instant::now();
         let weight_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
@@ -292,7 +292,7 @@ where
         let whir_verifier_time = Instant::now();
         let weight_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);

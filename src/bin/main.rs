@@ -7,8 +7,8 @@ use whir::{
     algebra::{
         embedding::Basefield,
         fields,
+        linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-        weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -288,7 +288,7 @@ where
 
     let weight_dyn_refs = weights
         .iter()
-        .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+        .map(|w| w.as_ref() as &dyn LinearForm<F>)
         .collect::<Vec<_>>();
     let whir_prove_time = Instant::now();
     params.prove(
@@ -310,10 +310,6 @@ where
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
 
-    let weight_dyn_refs = weights
-        .iter()
-        .map(|w| w.as_ref() as &dyn Weights<F>)
-        .collect::<Vec<_>>();
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {

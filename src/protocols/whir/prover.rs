@@ -7,11 +7,10 @@ use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
         dot,
-        embedding::Basefield,
+        linear_form::{Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
         polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product,
-        weights::{Evaluate, UnivariateEvaluation},
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -35,11 +34,11 @@ impl<F: FftField> Config<F> {
     /// * `witnesses` witnesses corresponding to the `polynomials`, in the same
     ///   order. Multiple polynomials may share the same witness, in which case
     ///   only one witness should be provided.
-    /// * `weights` the weight vectors (if any) to evaluate each polynomial at.
+    /// * `linear_forms` the weight vectors (if any) to evaluate each polynomial at.
     /// * `evaluations` a matrix of each polynomial evaluated at each weight.
     ///
     /// The `evaluations` matrix is in row-major order with the number of rows
-    /// equal to the `weights.len()` and the number of columns equal to
+    /// equal to the `linear_forms.len()` and the number of columns equal to
     /// `polynomials.len()`.
     ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -49,8 +48,8 @@ impl<F: FftField> Config<F> {
         prover_state: &mut ProverState<H, R>,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
         witnesses: &[&Witness<F>],
-        weights: &[&dyn Evaluate<Basefield<F>>],
-        weight_evaluations: &[F],
+        linear_forms: &[&dyn LinearForm<F>],
+        evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
         H: DuplexSpongeInterface,
@@ -66,16 +65,22 @@ impl<F: FftField> Config<F> {
             polynomials.len(),
             witnesses.len() * self.initial_committer.num_polynomials
         );
+        assert_eq!(evaluations.len(), polynomials.len() * linear_forms.len());
         for polynomial in polynomials {
             assert_eq!(polynomial.num_coeffs(), self.initial_size());
         }
-        for (weight, evaluations) in
-            zip_strict(weights, weight_evaluations.chunks_exact(polynomials.len()))
-        {
+        for weight in linear_forms {
             assert_eq!(weight.size(), self.initial_size());
+        }
+        #[cfg(debug_assertions)]
+        for (&weight, evaluations) in
+            zip_strict(linear_forms, evaluations.chunks_exact(polynomials.len()))
+        {
+            use crate::algebra::linear_form::Covector;
+            let covector = Covector::from(weight);
             for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
                 debug_assert_eq!(
-                    weight.evaluate(self.embedding(), polynomial.coeffs()),
+                    covector.evaluate(self.embedding(), polynomial.coeffs()),
                     *evaluation
                 );
             }
@@ -94,7 +99,7 @@ impl<F: FftField> Config<F> {
             let mut polynomial_offset = 0;
             for witness in witnesses {
                 for (weights, oods_row) in zip_strict(
-                    witness.out_of_domain().weights(self.initial_size()),
+                    witness.out_of_domain().evaluators(self.initial_size()),
                     witness.out_of_domain().rows(),
                 ) {
                     for (j, &polynomial) in polynomials.iter().enumerate() {
@@ -131,44 +136,40 @@ impl<F: FftField> Config<F> {
                 polynomial.coeffs(),
             );
         }
-        let mut evaluations = EvaluationsList::from(coefficients.clone());
+        let mut vector = EvaluationsList::from(coefficients.clone());
         let mut prev_witness = RoundWitness::Initial(witnesses);
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
-            geometric_challenge(prover_state, weights.len() + oods_weights.len());
+            geometric_challenge(prover_state, linear_forms.len() + oods_weights.len());
         // TODO: Flip order.
         let (oods_rlc_coeffs, intial_weights_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_weights.len());
-        let mut constraints = EvaluationsList::new(vec![F::ZERO; self.initial_size()]);
-        for (rlc_coeff, weights) in zip_strict(intial_weights_rlc_coeffs, weights) {
-            weights.accumulate(constraints.evals_mut(), *rlc_coeff);
+        let mut covector = EvaluationsList::new(vec![F::ZERO; self.initial_size()]);
+        for (rlc_coeff, weights) in zip_strict(intial_weights_rlc_coeffs, linear_forms) {
+            weights.accumulate(covector.evals_mut(), *rlc_coeff);
         }
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(
             intial_weights_rlc_coeffs,
-            weight_evaluations.chunks_exact(polynomials.len()),
+            evaluations.chunks_exact(polynomials.len()),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
         .sum();
 
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
-        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+        debug_assert_eq!(vector, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(vector.evals(), covector.evals()), the_sum);
 
         // Add OODS constraints
-        UnivariateEvaluation::accumulate_many(
-            &oods_weights,
-            constraints.evals_mut(),
-            oods_rlc_coeffs,
-        );
+        UnivariateEvaluation::accumulate_many(&oods_weights, covector.evals_mut(), oods_rlc_coeffs);
         the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(polynomials.len()))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
             .sum::<F>();
 
         // These invariants are maintained throughout the proof.
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
-        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+        debug_assert_eq!(vector, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(vector.evals(), covector.evals()), the_sum);
 
         // Run initial sumcheck on batched polynomial with combined statement
         let mut folding_randomness = if constraint_rlc_coeffs.is_empty() {
@@ -179,25 +180,21 @@ impl<F: FftField> Config<F> {
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_sumcheck.round_pow.prove(prover_state);
-            constraints = EvaluationsList::new(vec![F::ZERO; self.initial_sumcheck.final_size()]);
+            covector = EvaluationsList::new(vec![F::ZERO; self.initial_sumcheck.final_size()]);
             MultilinearPoint(folding_randomness)
         } else {
-            self.initial_sumcheck.prove(
-                prover_state,
-                &mut evaluations,
-                &mut constraints,
-                &mut the_sum,
-            )
+            self.initial_sumcheck
+                .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
         };
         coefficients = coefficients.fold(&folding_randomness);
         if constraint_rlc_coeffs.is_empty() {
             // We didn't fold evaluations, so compute it here.
-            evaluations = EvaluationsList::from(coefficients.clone());
+            vector = EvaluationsList::from(coefficients.clone());
         }
         let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
         randomness_vec.extend(folding_randomness.0.iter().copied());
-        debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
-        debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+        debug_assert_eq!(vector, EvaluationsList::from(coefficients.clone()));
+        debug_assert_eq!(dot(vector.evals(), covector.evals()), the_sum);
 
         // Execute standard WHIR rounds on the batched polynomial
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
@@ -226,8 +223,8 @@ impl<F: FftField> Config<F> {
             // Collect constraints for this round and RLC them in
             let stir_challenges = witness
                 .out_of_domain()
-                .weights(round_config.initial_size())
-                .chain(in_domain.weights(round_config.initial_size()))
+                .evaluators(round_config.initial_size())
+                .chain(in_domain.evaluators(round_config.initial_size()))
                 .collect::<Vec<_>>();
             let stir_evaluations = witness
                 .out_of_domain()
@@ -240,24 +237,22 @@ impl<F: FftField> Config<F> {
             let stir_rlc_coeffs = geometric_challenge(prover_state, stir_challenges.len());
             UnivariateEvaluation::accumulate_many(
                 &stir_challenges,
-                constraints.evals_mut(),
+                covector.evals_mut(),
                 &stir_rlc_coeffs,
             );
             the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
-            debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+            debug_assert_eq!(vector, EvaluationsList::from(coefficients.clone()));
+            debug_assert_eq!(dot(vector.evals(), covector.evals()), the_sum);
 
             // Run sumcheck for this round
-            folding_randomness = round_config.sumcheck.prove(
-                prover_state,
-                &mut evaluations,
-                &mut constraints,
-                &mut the_sum,
-            );
+            folding_randomness =
+                round_config
+                    .sumcheck
+                    .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
             coefficients = coefficients.fold(&folding_randomness);
             randomness_vec.extend(folding_randomness.0.iter().copied());
-            debug_assert_eq!(evaluations, EvaluationsList::from(coefficients.clone()));
-            debug_assert_eq!(dot(evaluations.evals(), constraints.evals()), the_sum);
+            debug_assert_eq!(vector, EvaluationsList::from(coefficients.clone()));
+            debug_assert_eq!(dot(vector.evals(), covector.evals()), the_sum);
 
             prev_witness = RoundWitness::Round(witness);
             polynomial_rlc_coeffs = vec![F::ONE];
@@ -285,17 +280,14 @@ impl<F: FftField> Config<F> {
         }
 
         // Final sumcheck
-        let final_folding_randomness = self.final_sumcheck.prove(
-            prover_state,
-            &mut evaluations,
-            &mut constraints,
-            &mut the_sum,
-        );
+        let final_folding_randomness =
+            self.final_sumcheck
+                .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
         randomness_vec.extend(final_folding_randomness.0.iter().copied());
 
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec);
-        let deferred = weights
+        let deferred = linear_forms
             .iter()
             .filter(|w| w.deferred())
             .map(|w| w.mle_evaluate(&constraint_eval.0))

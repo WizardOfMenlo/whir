@@ -39,9 +39,10 @@ use crate::{
     algebra::{
         dot,
         embedding::{Basefield, Embedding, Identity},
-        lift, mixed_univariate_evaluate,
+        lift,
+        linear_form::UnivariateEvaluation,
+        mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
-        weights::UnivariateEvaluation,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -424,7 +425,7 @@ impl<F: Field> Evaluations<F> {
         }
     }
 
-    pub fn weights(&self, size: usize) -> impl '_ + Iterator<Item = UnivariateEvaluation<F>> {
+    pub fn evaluators(&self, size: usize) -> impl '_ + Iterator<Item = UnivariateEvaluation<F>> {
         self.points
             .iter()
             .map(move |&point| UnivariateEvaluation::new(point, size))

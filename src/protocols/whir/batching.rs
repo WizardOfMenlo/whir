@@ -34,8 +34,8 @@ mod batching_tests {
         algebra::{
             embedding::Basefield,
             fields::Field64,
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
             polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
-            weights::{Covector, Evaluate, MultilinearEvaluation, Weights},
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -152,7 +152,7 @@ mod batching_tests {
         // Generate a STARK proof for the given statement and witness
         let weights_dyn_refs = weights
             .iter()
-            .map(|w| w.as_ref() as &dyn Evaluate<Basefield<F>>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
@@ -169,10 +169,6 @@ mod batching_tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        let weights_dyn_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn Weights<F>)
-            .collect::<Vec<_>>();
         assert!(params
             .verify(
                 &mut verifier_state,
