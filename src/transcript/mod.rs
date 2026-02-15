@@ -289,12 +289,12 @@ where
     ///
     /// Requires a byte-oriented sponge (`H::U = u8`).
     #[cfg_attr(test, track_caller)]
-    pub fn prover_messages_bytes<T>(&mut self, _count: usize, encoded: &[u8])
+    pub fn prover_messages_bytes<T>(&mut self, count: usize, encoded: &[u8])
     where
         H: DuplexSpongeInterface<U = u8>,
     {
         #[cfg(debug_assertions)]
-        for _ in 0.._count {
+        for _ in 0..count {
             self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
         }
         self.inner.prover_message(&RawBytes(encoded));

@@ -85,6 +85,7 @@ impl<F: Field> CoefficientList<F> {
     ///
     /// Coefficient at index `i` in the ℓ-variate maps to index `i * 2^(n-ℓ)`
     /// in the n-variate, with all other coefficients set to zero.
+    #[must_use]
     pub fn embed_into_variables(&self, n: usize) -> Self {
         let ell = self.num_variables;
         assert!(n >= ell);

@@ -4,11 +4,10 @@ use ark_std::rand::{CryptoRng, RngCore};
 use tracing::instrument;
 
 use super::{committer::Witness, config::Config};
-use crate::algebra::polynomials::spot_check_evals_eq;
 use crate::{
     algebra::{
         dot, mixed_scalar_mul_add,
-        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::{spot_check_evals_eq, CoefficientList, EvaluationsList, MultilinearPoint},
         tensor_product, Weights,
     },
     hash::Hash,
@@ -41,7 +40,7 @@ impl<F: FftField> Config<F> {
     /// `polynomials.len()`.
     ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,

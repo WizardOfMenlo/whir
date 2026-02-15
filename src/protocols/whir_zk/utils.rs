@@ -9,7 +9,7 @@ use crate::algebra::{
 /// `[M₁, ĝ₁₁, …, ĝ₁μ, M₂, ĝ₂₁, …, ĝ₂μ, …]`
 ///
 /// Used by both committer (batch-commit) and prover (batch-prove).
-pub(crate) fn interleave_blinding_poly_refs<'a, F: FftField>(
+pub fn interleave_blinding_poly_refs<'a, F: FftField>(
     m_polys: &'a [CoefficientList<F::BasePrimeField>],
     g_hats: &'a [Vec<CoefficientList<F::BasePrimeField>>],
 ) -> Vec<&'a CoefficientList<F::BasePrimeField>> {
@@ -29,7 +29,7 @@ pub(crate) fn interleave_blinding_poly_refs<'a, F: FftField>(
 ///
 /// m_claim = Σᵢ τ₂ⁱ · m(γᵢ, ρ)
 /// g_hat_j_claim = Σᵢ τ₂ⁱ · ĝⱼ(pow(γᵢ))
-pub(crate) fn compute_per_polynomial_claims<F: FftField>(
+pub fn compute_per_polynomial_claims<F: FftField>(
     blinding_evals: &[BlindingEvaluations<F>],
     query_batching_challenge: F,
 ) -> (F, Vec<F>) {
@@ -57,7 +57,7 @@ pub(crate) fn compute_per_polynomial_claims<F: FftField>(
 ///   w(z, t) = eq(-masking_challenge, t) · [Σᵢ query_batching_challenge^i · eq(pow(γᵢ), z)]
 ///
 /// Returns a `Weights::Linear` on (num_blinding_variables + 1) variables.
-pub(crate) fn construct_batched_eq_weights<F: FftField>(
+pub fn construct_batched_eq_weights<F: FftField>(
     blinding_evals: &[BlindingEvaluations<F>],
     masking_challenge: F,
     query_batching_challenge: F,

@@ -49,6 +49,12 @@ pub struct ProfilingAllocator {
     count: AtomicUsize,
 }
 
+impl Default for ProfilingAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProfilingAllocator {
     pub const fn new() -> Self {
         Self {
@@ -192,7 +198,7 @@ pub struct SpanStats {
 }
 
 impl SpanStats {
-    pub fn new(allocator: &'static ProfilingAllocator) -> Self {
+    pub const fn new(allocator: &'static ProfilingAllocator) -> Self {
         Self { allocator }
     }
 }
@@ -201,6 +207,7 @@ impl<S> Layer<S> for SpanStats
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
 {
+    #[allow(clippy::significant_drop_tightening)]
     fn on_new_span(&self, attrs: &Attributes, id: &Id, ctx: Context<S>) {
         let span = ctx.span(id).expect("invalid span in on_new_span");
 
@@ -293,6 +300,7 @@ where
         eprintln!("{buffer}");
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     fn on_close(&self, id: Id, ctx: Context<S>) {
         let span = ctx.span(&id).expect("invalid span in on_close");
         let ext = span.extensions();
@@ -352,6 +360,7 @@ where
 pub fn human(value: f64) -> impl Display {
     struct Human(f64);
     impl Display for Human {
+        #[allow(clippy::cast_sign_loss)]
         fn fmt(&self, f: &mut Formatter) -> fmt::Result {
             let log10 = if self.0.is_normal() {
                 self.0.abs().log10()

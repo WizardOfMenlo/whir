@@ -44,7 +44,7 @@ impl<F: 'static + Family> TypeMap<F> {
             .read()
             .expect("Lock poisoned")
             .get(&TypeId::of::<T>())
-            .and_then(|a| a.downcast_ref::<Holder<F, T>>())
+            .and_then(|a| (**a).downcast_ref::<Holder<F, T>>())
             .map(|h| h.0.clone())
     }
 

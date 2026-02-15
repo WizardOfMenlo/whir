@@ -3,18 +3,19 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::utils::{
-    compute_per_polynomial_claims, construct_batched_eq_weights, interleave_blinding_poly_refs,
-    BlindingEvaluations,
+use super::{
+    utils::{
+        compute_per_polynomial_claims, construct_batched_eq_weights, interleave_blinding_poly_refs,
+        BlindingEvaluations,
+    },
+    Config, Witness,
 };
-use super::{Config, Witness};
-use crate::algebra::polynomials::spot_check_evals_eq;
 use crate::{
     algebra::{
         dot,
         embedding::Embedding,
         mixed_scalar_mul_add,
-        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::{spot_check_evals_eq, CoefficientList, EvaluationsList, MultilinearPoint},
         Weights,
     },
     hash::Hash,
@@ -34,6 +35,7 @@ impl<F: FftField> Config<F> {
     /// 2. Running WHIR rounds on P with a virtual oracle L = masking·f̂ + h
     /// 3. Proving blinding polynomial evaluations so verifier can reconstruct L
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(num_polynomials = polynomials.len())))]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -452,8 +454,8 @@ impl<F: FftField> Config<F> {
         let elem_bytes = base_field_size * F::extension_degree() as usize;
         let mut encoded = Vec::with_capacity(total_evals * elem_bytes);
         for gamma_idx in 0..gammas.len() {
-            for poly_idx in 0..num_polys {
-                let blinding_eval = &blinding_evals_per_poly[poly_idx][gamma_idx];
+            for blinding_evals in &blinding_evals_per_poly {
+                let blinding_eval = &blinding_evals[gamma_idx];
                 transcript::encode_field_element_into(&blinding_eval.m_eval, &mut encoded);
                 for g_hat_eval in &blinding_eval.g_hat_evals {
                     transcript::encode_field_element_into(g_hat_eval, &mut encoded);
@@ -476,11 +478,9 @@ impl<F: FftField> Config<F> {
         // Compute per-polynomial claims and collect evaluations
         // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
         let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + num_witness_vars));
-        for poly_idx in 0..num_polys {
-            let (m_claim, g_hat_claims) = compute_per_polynomial_claims(
-                &blinding_evals_per_poly[poly_idx],
-                query_batching_challenge,
-            );
+        for blinding_evals in &blinding_evals_per_poly {
+            let (m_claim, g_hat_claims) =
+                compute_per_polynomial_claims(blinding_evals, query_batching_challenge);
             all_evaluations.push(m_claim);
             all_evaluations.extend_from_slice(&g_hat_claims);
         }

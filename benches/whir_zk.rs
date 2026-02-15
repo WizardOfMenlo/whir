@@ -189,7 +189,7 @@ fn make_zk_v1_weights_and_evaluations(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// ZK v2 main WHIR parameters (round-0 fold = 2 for small k).
-fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, ProtocolParameters) {
+const fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, ProtocolParameters) {
     let mv = MultivariateParameters::new(num_variables);
     let params = ProtocolParameters {
         initial_statement: true,

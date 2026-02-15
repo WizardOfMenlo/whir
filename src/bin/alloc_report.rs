@@ -29,6 +29,7 @@ static ALLOCATOR: whir::alloc_track::ProfilingAllocator =
     whir::alloc_track::ProfilingAllocator::new();
 
 #[cfg(feature = "alloc-track")]
+#[allow(clippy::too_many_lines)]
 fn run() {
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use whir::{
@@ -75,17 +76,10 @@ fn run() {
     eprintln!("║  ZK WHIR Allocation Report  (tracing-based)                        ║");
     eprintln!("╠══════════════════════════════════════════════════════════════════════╣");
     eprintln!(
-        "║  num_variables     = {:>4}                                          ║",
-        NUM_VARIABLES
+        "║  num_variables     = {NUM_VARIABLES:>4}                                          ║",
     );
-    eprintln!(
-        "║  num_polys         = {:>4}                                          ║",
-        NUM_POLYS
-    );
-    eprintln!(
-        "║  num_points        = {:>4}                                          ║",
-        NUM_POINTS
-    );
+    eprintln!("║  num_polys         = {NUM_POLYS:>4}                                          ║",);
+    eprintln!("║  num_points        = {NUM_POINTS:>4}                                          ║",);
     eprintln!(
         "║  blinding_vars     = {:>4}                                          ║",
         zk_config.num_blinding_variables()

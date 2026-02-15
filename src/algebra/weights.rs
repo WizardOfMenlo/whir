@@ -386,6 +386,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_protocol() {
         // ── Step 1: Create a CoefficientList (4 variables, 16 coefficients) ──
         let coeffs = CoefficientList::new(vec![
@@ -406,7 +407,7 @@ mod tests {
             Field64::ONE,
             Field64::ONE,
         ]);
-        println!("coeffs: {:?}\n", coeffs);
+        println!("coeffs: {coeffs:?}\n");
 
         // ── Step 2: Evaluate at several MultilinearPoints ──
         let evaluation_points = vec![
@@ -435,26 +436,26 @@ mod tests {
                 Field64::ONE,
             ]),
         ];
-        println!("evaluation_points: {:?}\n", evaluation_points);
+        println!("evaluation_points: {evaluation_points:?}\n");
         let weights = evaluation_points
             .iter()
             .map(|point| Weights::evaluation(point.clone()))
             .collect::<Vec<_>>();
-        println!("weights: {:?}\n", weights);
+        println!("weights: {weights:?}\n");
         let evaluations = evaluation_points
             .iter()
             .map(|point| coeffs.mixed_evaluate(&Identity::new(), point))
             .collect::<Vec<_>>();
-        println!("evaluations: {:?}\n", evaluations);
+        println!("evaluations: {evaluations:?}\n");
 
         // ── Step 3: Convert CoefficientList → EvaluationsList → CoefficientList ──
         // CoefficientList → EvaluationsList (via wavelet transform)
         let evals = EvaluationsList::from(coeffs.clone());
-        println!("evals (hypercube evaluations): {:?}\n", evals);
+        println!("evals (hypercube evaluations): {evals:?}\n");
 
         // EvaluationsList → CoefficientList (via inverse wavelet transform)
         let coeffs_roundtrip = evals.to_coeffs();
-        println!("coeffs_roundtrip: {:?}\n", coeffs_roundtrip);
+        println!("coeffs_roundtrip: {coeffs_roundtrip:?}\n");
 
         // Verify round-trip: coeffs → evals → coeffs gives back the same polynomial
         assert_eq!(
@@ -469,8 +470,7 @@ mod tests {
             let from_evals = evals.evaluate(point);
             assert_eq!(
                 from_coeffs, from_evals,
-                "CoefficientList and EvaluationsList must agree at {:?}",
-                point
+                "CoefficientList and EvaluationsList must agree at {point:?}"
             );
         }
         println!("✓ Round-trip and evaluation consistency verified\n");
@@ -482,12 +482,12 @@ mod tests {
 
         // fold() — allocating version
         let folded = coeffs.fold(&folding_randomness);
-        println!("folded (via fold):          {:?}", folded);
+        println!("folded (via fold):          {folded:?}");
 
         // fold_in_place() — in-place version
         let mut coeffs_mut = coeffs.clone();
         coeffs_mut.fold_in_place(&folding_randomness);
-        println!("folded (via fold_in_place): {:?}", coeffs_mut);
+        println!("folded (via fold_in_place): {coeffs_mut:?}");
 
         // They must produce identical results
         assert_eq!(
@@ -500,21 +500,21 @@ mod tests {
         // ── Step 5: Verify folded polynomial is consistent with full evaluation ──
         // g(a, b) should equal f(a, b, r₀, r₁) for any (a, b)
         let eval_point = MultilinearPoint(vec![Field64::from(5u64), Field64::from(11u64)]);
-        println!("eval_point: {:?}\n", eval_point);
+        println!("eval_point: {eval_point:?}\n");
         let full_point = MultilinearPoint(vec![
             eval_point.0[0],
             eval_point.0[1],
             folding_randomness.0[0],
             folding_randomness.0[1],
         ]);
-        println!("full_point: {:?}\n", full_point);
+        println!("full_point: {full_point:?}\n");
         let folded_eval = folded.evaluate(&eval_point);
-        println!("folded poly: {:?}\n", folded);
+        println!("folded poly: {folded:?}\n");
         let full_eval = coeffs.evaluate(&full_point);
-        println!("full poly: {:?}\n", coeffs);
+        println!("full poly: {coeffs:?}\n");
 
-        println!("folded_eval: {:?}\n", folded_eval);
-        println!("full_eval: {:?}\n", full_eval);
+        println!("folded_eval: {folded_eval:?}\n");
+        println!("full_eval: {full_eval:?}\n");
         assert_eq!(
             folded_eval, full_eval,
             "f.fold(r).evaluate(a) must equal f.evaluate(a || r)"

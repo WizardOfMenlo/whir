@@ -3,14 +3,13 @@ mod prover;
 pub(crate) mod utils;
 mod verifier;
 
-pub use utils::BlindingEvaluations;
-
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::{
     rand::{CryptoRng, RngCore},
     UniformRand,
 };
 use serde::Serialize;
+pub use utils::BlindingEvaluations;
 
 use crate::{
     algebra::{fields::FieldWithSize, polynomials::CoefficientList},
@@ -29,7 +28,7 @@ use crate::{
 /// ZK parameters (`num_witness_variables`, `num_blinding_variables`) are
 /// derivable from the two configs and exposed as methods.
 #[derive(Clone, Serialize)]
-#[serde(bound = "F: FftField")]
+#[serde(bound(serialize = ""))]
 pub struct Config<F: FftField> {
     /// WHIR config for the blinded witness polynomial commitment.
     pub blinded_commitment: whir::Config<F>,
@@ -53,7 +52,7 @@ impl<F: FftField> Commitment<F> {
     }
 
     /// Reference to the blinding polynomial commitment.
-    pub fn blinding_commitment(&self) -> &whir::Commitment<F> {
+    pub const fn blinding_commitment(&self) -> &whir::Commitment<F> {
         &self.blinding
     }
 }
@@ -109,6 +108,7 @@ impl<F: FftField + FieldWithSize> Config<F> {
 
         let query_upper_bound =
             2 * folding_factor_size * initial_query_count + 4 * num_witness_variables + 10;
+        #[allow(clippy::cast_sign_loss)]
         let num_blinding_variables = (query_upper_bound as f64).log2().ceil() as usize;
         assert!(
             num_blinding_variables < num_witness_variables,
@@ -132,7 +132,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Interleaving depth of the initial IRS commitment (= 2^folding_factor).
-    pub(super) fn interleaving_depth(&self) -> usize {
+    pub(super) const fn interleaving_depth(&self) -> usize {
         self.blinded_commitment.initial_committer.interleaving_depth
     }
 
@@ -163,6 +163,7 @@ impl<F: FftField> Config<F> {
 
     /// Find the index of `alpha_base` in the sub-domain powers.
     #[inline]
+    #[allow(clippy::unused_self)]
     pub(super) fn query_index(
         &self,
         alpha_base: F::BasePrimeField,
@@ -210,6 +211,7 @@ impl<F: FftField> Config<F> {
 ///
 /// Produced by [`Config::commit`] and consumed by [`Config::prove`].
 #[derive(Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct Witness<F: FftField> {
     /// Witnesses for [[f̂₁]] = [[f₁ + msk₁]], ..., [[fₙ]] = [[fₙ + mskₙ]] in main WHIR
     pub(super) f_hat_witnesses: Vec<irs_commit::Witness<F::BasePrimeField, F>>,

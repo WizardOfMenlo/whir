@@ -5,15 +5,14 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::utils::interleave_blinding_poly_refs;
-use super::{BlindingPolynomials, Config, Witness};
-use crate::utils::zip_strict;
+use super::{utils::interleave_blinding_poly_refs, BlindingPolynomials, Config, Witness};
 use crate::{
     algebra::polynomials::CoefficientList,
     hash::Hash,
     transcript::{
         Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
     },
+    utils::zip_strict,
 };
 
 impl<F: FftField> Config<F> {

@@ -1,9 +1,9 @@
 use ark_ff::{FftField, Field};
 
-use super::utils::{
-    compute_per_polynomial_claims, construct_batched_eq_weights, BlindingEvaluations,
+use super::{
+    utils::{compute_per_polynomial_claims, construct_batched_eq_weights, BlindingEvaluations},
+    Config,
 };
-use super::Config;
 use crate::{
     algebra::{
         dot,
@@ -42,6 +42,7 @@ impl<F: FftField> Config<F> {
     /// 2. Runs WHIR rounds, reconstructing virtual oracle values at each initial opening
     /// 3. Verifies blinding polynomial evaluations via a nested WHIR proof
     /// 4. Checks the final sumcheck equation
+    #[allow(clippy::too_many_lines)]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -181,22 +182,21 @@ impl<F: FftField> Config<F> {
             .verify(verifier_state, &mut the_sum)?;
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
-        let result = self.verify_final_consistency(
+        self.verify_final_consistency(
             verifier_state,
             &round_constraints,
             &round_folding_randomness,
             &final_coefficients,
             &final_sumcheck_randomness,
             the_sum,
-        );
-
-        result
+        )
     }
 
     /// Read the ZK transcript header: blinding challenge, g(āᵢ) evaluations, masking challenge.
     ///
     /// Returns `(blinding_challenge, masking_challenge, modified_evaluations)` where
     /// modified_evaluations[i] = masking_challenge · evaluations[i] + g_evals[i].
+    #[allow(clippy::unused_self)]
     fn read_header<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -266,6 +266,7 @@ impl<F: FftField> Config<F> {
     /// the polynomial RLC coefficients.
     ///
     /// Returns `(stir_weights, stir_values)`.
+    #[allow(clippy::too_many_arguments)]
     fn verify_initial_round<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -351,6 +352,7 @@ impl<F: FftField> Config<F> {
     /// rounds) and the case where it's the last WHIR round commitment.
     /// For the initial case with N polynomials, opens all N f̂ commitments and
     /// verifies the batched virtual oracle.
+    #[allow(clippy::too_many_arguments)]
     fn verify_final_opening<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -410,6 +412,7 @@ impl<F: FftField> Config<F> {
     ///
     /// Returns the virtual oracle folded values for each query point (to use as
     /// STIR in-domain constraint values).
+    #[allow(clippy::too_many_lines)]
     fn verify_blinding_evaluations<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -465,13 +468,13 @@ impl<F: FftField> Config<F> {
             let coset_gammas = self.coset_gammas(alpha_base, &omega_powers);
 
             for gamma in coset_gammas {
-                for poly_idx in 0..num_polys {
+                for blinding_evals in &mut blinding_evals_per_poly {
                     let m_eval = all_evals[eval_cursor];
                     eval_cursor += 1;
                     let g_hat_evals =
                         all_evals[eval_cursor..eval_cursor + num_witness_vars].to_vec();
                     eval_cursor += num_witness_vars;
-                    blinding_evals_per_poly[poly_idx].push(BlindingEvaluations {
+                    blinding_evals.push(BlindingEvaluations {
                         gamma,
                         m_eval,
                         g_hat_evals,
@@ -496,11 +499,9 @@ impl<F: FftField> Config<F> {
         // Compute per-polynomial claims and collect evaluations
         // Layout: [m₁_claim, ĝ₁₁_claim, ..., ĝ₁μ_claim, m₂_claim, ĝ₂₁_claim, ..., ĝ₂μ_claim, ...]
         let mut all_evaluations: Vec<F> = Vec::with_capacity(num_polys * (1 + num_witness_vars));
-        for poly_idx in 0..num_polys {
-            let (m_claim, g_hat_claims) = compute_per_polynomial_claims(
-                &blinding_evals_per_poly[poly_idx],
-                query_batching_challenge,
-            );
+        for blinding_evals in &blinding_evals_per_poly {
+            let (m_claim, g_hat_claims) =
+                compute_per_polynomial_claims(blinding_evals, query_batching_challenge);
             all_evaluations.push(m_claim);
             all_evaluations.extend_from_slice(&g_hat_claims);
         }
