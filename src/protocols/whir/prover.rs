@@ -3,7 +3,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{committer::Witness, config::Config};
+use super::{Config, VirtualOracle, Witness};
 use crate::{
     algebra::{
         dot,
@@ -13,7 +13,7 @@ use crate::{
         tensor_product,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::OracleQuery},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
@@ -27,22 +27,6 @@ enum RoundWitness<'a, F: FftField> {
 }
 
 impl<F: FftField> Config<F> {
-    /// Prove a WHIR opening.
-    ///
-    /// * `prover_state` the mutable transcript to write the proof to.
-    /// * `polynomials` are all the polynomials (in coefficient) form, we are opening.
-    /// * `witnesses` witnesses corresponding to the `polynomials`, in the same
-    ///   order. Multiple polynomials may share the same witness, in which case
-    ///   only one witness should be provided.
-    /// * `linear_forms` the weight vectors (if any) to evaluate each polynomial at.
-    /// * `evaluations` a matrix of each polynomial evaluated at each weight.
-    ///
-    /// The `evaluations` matrix is in row-major order with the number of rows
-    /// equal to the `linear_forms.len()` and the number of columns equal to
-    /// `polynomials.len()`.
-    ///
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    #[allow(clippy::too_many_lines)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -60,37 +44,101 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let (_, point, deferred) = self.prove_with_virtual_oracle(
+            prover_state,
+            polynomials,
+            witnesses,
+            None,
+            linear_forms,
+            evaluations,
+        );
+        (point, deferred)
+    }
+
+    /// Prove a WHIR opening.
+    ///
+    /// * `prover_state` the mutable transcript to write the proof to.
+    /// * `polynomials` are all the polynomials (in coefficient) form, we are opening.
+    /// * `witnesses` witnesses corresponding to the `polynomials`, in the same
+    ///   order. Multiple polynomials may share the same witness, in which case
+    ///   only one witness should be provided.
+    /// * `linear_forms` the weight vectors (if any) to evaluate each polynomial at.
+    /// * `evaluations` a matrix of each polynomial evaluated at each weight.
+    ///
+    /// The `evaluations` matrix is in row-major order with the number of rows
+    /// equal to the `linear_forms.len()` and the number of columns equal to
+    /// `polynomials.len()`.
+    ///
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    #[allow(clippy::too_many_lines)]
+    pub fn prove_with_virtual_oracle<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        polynomials: &[&CoefficientList<F::BasePrimeField>],
+        witnesses: &[&Witness<F>],
+        virtual_oracle: Option<&dyn VirtualOracle<F>>,
+        linear_forms: &[&dyn LinearForm<F>],
+        evaluations: &[F],
+    ) -> (Vec<OracleQuery<F>>, MultilinearPoint<F>, Vec<F>)
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
         // Input validation
         assert_eq!(
             polynomials.len(),
             witnesses.len() * self.initial_committer.num_polynomials
         );
-        assert_eq!(evaluations.len(), polynomials.len() * linear_forms.len());
+        let num_polynomials = polynomials.len() + virtual_oracle.iter().len();
+        assert_eq!(evaluations.len(), num_polynomials * linear_forms.len());
         for polynomial in polynomials {
             assert_eq!(polynomial.num_coeffs(), self.initial_size());
+        }
+        if let Some(virtual_oracle) = virtual_oracle {
+            assert_eq!(virtual_oracle.size(), self.initial_size());
         }
         for weight in linear_forms {
             assert_eq!(weight.size(), self.initial_size());
         }
         #[cfg(debug_assertions)]
+        let realized_virtual_oracle = virtual_oracle.map(|virtual_oracle| {
+            let mut evals = vec![F::ZERO; virtual_oracle.size()];
+            virtual_oracle.accumulate(&mut evals, F::ONE);
+            EvaluationsList::new(evals).to_coeffs()
+        });
+        #[cfg(debug_assertions)]
         for (&weight, evaluations) in
-            zip_strict(linear_forms, evaluations.chunks_exact(polynomials.len()))
+            zip_strict(linear_forms, evaluations.chunks_exact(num_polynomials))
         {
-            use crate::algebra::linear_form::Covector;
+            use crate::algebra::{embedding::Identity, linear_form::Covector};
             let covector = Covector::from(weight);
-            for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
+            for (&polynomial, evaluation) in
+                zip_strict(polynomials, evaluations.iter().take(polynomials.len()))
+            {
                 debug_assert_eq!(
                     covector.evaluate(self.embedding(), polynomial.coeffs()),
                     *evaluation
                 );
             }
+            if let Some(polynomial) = &realized_virtual_oracle {
+                debug_assert_eq!(
+                    covector.evaluate(&Identity::<F>::new(), polynomial.coeffs()),
+                    *evaluations.last().unwrap()
+                );
+            }
         }
-        if polynomials.is_empty() {
+        if num_polynomials == 0 {
             // TODO: Should we draw a random evaluation point of the right size?
-            return (MultilinearPoint::default(), Vec::new());
+            return (Vec::new(), MultilinearPoint::default(), Vec::new());
         }
 
         // Complete evaluations of EVERY polynomial at EVERY OOD/Statement constraint.
+        let mut oracle_queries = Vec::new();
         let (oods_weights, oods_matrix) = {
             let mut oods_weights = Vec::new();
             let mut oods_matrix = Vec::new();
@@ -108,7 +156,6 @@ impl<F: FftField> Config<F> {
                                 oods_row[j - polynomial_offset],
                                 weights.evaluate(self.embedding(), polynomial.coeffs())
                             );
-
                             oods_matrix.push(oods_row[j - polynomial_offset]);
                         } else {
                             let eval = weights.evaluate(self.embedding(), polynomial.coeffs());
@@ -120,15 +167,30 @@ impl<F: FftField> Config<F> {
                 }
                 polynomial_offset += witness.num_polynomials();
             }
+            if let Some(virtual_oracle) = virtual_oracle {
+                let multilinear = vec![];
+                let univariate = oods_weights.iter().map(|u| u.point).collect::<Vec<_>>();
+                let responses = virtual_oracle.query(&multilinear, &univariate);
+
+                // TODO: Add to oods_matrix
+
+                oracle_queries.push(OracleQuery {
+                    multilinear,
+                    univariate,
+                    responses,
+                })
+            }
+
             (oods_weights, oods_matrix)
         };
 
         // Random linear combination of the polynomials.
-        let mut polynomial_rlc_coeffs: Vec<F> =
-            geometric_challenge(prover_state, polynomials.len());
+        let mut polynomial_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, num_polynomials);
         assert_eq!(polynomial_rlc_coeffs[0], F::ONE);
         let mut coefficients = polynomials[0].lift(self.embedding());
-        for (rlc_coeff, polynomial) in zip_strict(&polynomial_rlc_coeffs, polynomials).skip(1) {
+        for (rlc_coeff, polynomial) in
+            zip_strict(&polynomial_rlc_coeffs[..polynomials.len()], polynomials).skip(1)
+        {
             mixed_scalar_mul_add(
                 self.embedding(),
                 coefficients.coeffs_mut(),
@@ -136,6 +198,13 @@ impl<F: FftField> Config<F> {
                 polynomial.coeffs(),
             );
         }
+        if let Some(virtual_oracle) = virtual_oracle {
+            virtual_oracle.accumulate(
+                coefficients.coeffs_mut(),
+                *polynomial_rlc_coeffs.last().unwrap(),
+            );
+        }
+
         let mut vector = EvaluationsList::from(coefficients.clone());
         let mut prev_witness = RoundWitness::Initial(witnesses);
 
@@ -208,10 +277,26 @@ impl<F: FftField> Config<F> {
 
             // Open the previous round's commitment, producing in-domain evaluations.
             let in_domain = match &prev_witness {
-                RoundWitness::Initial(witnesses) => self
-                    .initial_committer
-                    .open(prover_state, witnesses)
-                    .lift(self.embedding()),
+                RoundWitness::Initial(witnesses) => {
+                    let in_domain = self
+                        .initial_committer
+                        .open(prover_state, witnesses)
+                        .lift(self.embedding());
+
+                    if let Some(virtual_oracle) = virtual_oracle {
+                        let multilinear = folding_randomness.coeff_weights(true);
+                        let univariate = in_domain.points.clone();
+                        let responses = virtual_oracle.query(&multilinear, &univariate);
+                        // TODO: Add to in_domain
+                        oracle_queries.push(OracleQuery {
+                            multilinear,
+                            univariate,
+                            responses,
+                        });
+                    }
+
+                    in_domain
+                }
                 RoundWitness::Round(witness) => {
                     let prev_round_config = &self.round_configs[round_index - 1];
                     prev_round_config
@@ -272,6 +357,8 @@ impl<F: FftField> Config<F> {
         match &prev_witness {
             RoundWitness::Initial(witnesses) => {
                 let _in_domain = self.initial_committer.open(prover_state, witnesses);
+
+                // TODO: What about virtual_oracle?
             }
             RoundWitness::Round(witness) => {
                 let prev_config = self.round_configs.last().unwrap();
@@ -294,6 +381,6 @@ impl<F: FftField> Config<F> {
             .collect();
         prover_state.prover_hint_ark(&deferred);
 
-        (constraint_eval, deferred)
+        (oracle_queries, constraint_eval, deferred)
     }
 }

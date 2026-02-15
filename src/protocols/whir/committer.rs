@@ -1,22 +1,18 @@
 #![allow(type_alias_bounds)] // We need the bound to reference F::BasePrimeField.
 
-use ark_ff::{FftField, Field};
+use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::Config;
+use super::{Commitment, Config, Witness};
 use crate::{
     algebra::polynomials::CoefficientList,
     hash::Hash,
-    protocols::irs_commit,
     transcript::{
         Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
     },
 };
-
-pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
-pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
 impl<F: FftField> Config<F> {
     /// Commit to one or more polynomials in coefficient form.

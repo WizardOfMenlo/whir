@@ -1,14 +1,10 @@
 use core::panic;
-use std::{
-    f64::consts::LOG2_10,
-    fmt::{Debug, Display},
-    ops::Neg,
-};
+use std::{f64::consts::LOG2_10, fmt::Display, ops::Neg};
 
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
-use serde::{Deserialize, Serialize};
 
+use super::{Config, RoundConfig};
 use crate::{
     algebra::{
         domain::Domain,
@@ -20,35 +16,6 @@ use crate::{
     protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
     type_info::{Type, Typed},
 };
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField")]
-pub struct Config<F>
-where
-    F: FftField,
-{
-    pub initial_committer: irs_commit::BasefieldConfig<F>,
-    pub initial_sumcheck: sumcheck::Config<F>,
-    pub round_configs: Vec<RoundConfig<F>>,
-    pub final_sumcheck: sumcheck::Config<F>,
-    pub final_pow: proof_of_work::Config,
-
-    // TODO: These don't belong in the config. Instead there should be
-    // fn like `WhirConfig::soundness(&self, assumptions: SoundnessType) -> Bits`.
-    pub soundness_type: SoundnessType,
-    pub security_level: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: FftField")]
-pub struct RoundConfig<F>
-where
-    F: FftField,
-{
-    pub irs_committer: irs_commit::Config<F>,
-    pub sumcheck: sumcheck::Config<F>,
-    pub pow: proof_of_work::Config,
-}
 
 impl<F> Config<F>
 where

@@ -1,6 +1,6 @@
 use ark_ff::FftField;
 
-use super::{config::Config, Commitment};
+use super::{Commitment, Config};
 use crate::{
     algebra::{
         dot,

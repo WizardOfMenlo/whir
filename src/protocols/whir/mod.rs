@@ -4,10 +4,68 @@ mod config;
 mod prover;
 mod verifier;
 
-pub use self::{
-    committer::{Commitment, Witness},
-    config::{Config, RoundConfig},
+use ark_ff::{FftField, Field};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    parameters::SoundnessType,
+    protocols::{irs_commit, proof_of_work, sumcheck},
 };
+
+/// A virtual polynomial to be included in a WHIR opening
+pub trait VirtualOracle<F> {
+    /// Size of the virtual polynomial
+    fn size(&self) -> usize;
+
+    /// Fold the polynomial by `multi_linear`, then evaluate _univariately_ in all
+    /// `points`.
+    fn query(&self, multi_linear: &[F], univariate: &[F]) -> Vec<F>;
+
+    /// Accumulate the polynomial in multi-linear evaluation basis.
+    fn accumulate(&self, accumulator: &mut [F], scalar: F);
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "F: FftField")]
+pub struct Config<F>
+where
+    F: FftField,
+{
+    pub initial_committer: irs_commit::BasefieldConfig<F>,
+    pub initial_sumcheck: sumcheck::Config<F>,
+    pub round_configs: Vec<RoundConfig<F>>,
+    pub final_sumcheck: sumcheck::Config<F>,
+    pub final_pow: proof_of_work::Config,
+
+    // TODO: These don't belong in the config. Instead there should be
+    // fn like `WhirConfig::soundness(&self, assumptions: SoundnessType) -> Bits`.
+    pub soundness_type: SoundnessType,
+    pub security_level: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: FftField")]
+pub struct RoundConfig<F>
+where
+    F: FftField,
+{
+    pub irs_committer: irs_commit::Config<F>,
+    pub sumcheck: sumcheck::Config<F>,
+    pub pow: proof_of_work::Config,
+}
+
+pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
+pub type Commitment<F: Field> = irs_commit::Commitment<F>;
+
+/// A set of queries made to a [`VirtualOracle`]
+pub struct OracleQuery<F: Field> {
+    /// Multilinear partial evaluation point
+    multilinear: Vec<F>,
+    /// Set of univariate evaluatiion points
+    univariate: Vec<F>,
+    /// Responses provided by the oracle
+    responses: Vec<F>,
+}
 
 #[cfg(test)]
 mod tests {
