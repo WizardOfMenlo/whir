@@ -4,8 +4,10 @@ use super::{config::Config, Commitment};
 use crate::{
     algebra::{
         dot,
+        embedding::Identity,
+        linear_form::{Evaluate, LinearForm},
         polynomials::{CoefficientList, MultilinearPoint},
-        tensor_product, Weights,
+        tensor_product,
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit},
@@ -41,7 +43,7 @@ impl<F: FftField> Config<F> {
         &self,
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<F>],
-        weights: &[&Weights<F>],
+        weights: &[&dyn LinearForm<F>],
         evaluations: &[F],
     ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
     where
@@ -59,34 +61,29 @@ impl<F: FftField> Config<F> {
         }
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
-        let (constraint_weights, constraint_matrix) = {
-            let mut all_weights = Vec::new();
-            let mut matrix = Vec::new();
+        let (oods_weights, oods_matrix) = {
+            let mut oods_weights = Vec::new();
+            let mut oods_matrix = Vec::new();
 
             // OOD weights from each commitment, evaluated for each polynomial
             let mut polynomial_offset = 0;
             for commitment in commitments {
                 for (weights, oods_row) in zip_strict(
-                    commitment
-                        .out_of_domain()
-                        .weights(self.initial_num_variables()),
+                    commitment.out_of_domain().evaluators(self.initial_size()),
                     commitment.out_of_domain().rows(),
                 ) {
                     for j in 0..num_polynomials {
                         if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
-                            matrix.push(oods_row[j - polynomial_offset]);
+                            oods_matrix.push(oods_row[j - polynomial_offset]);
                         } else {
-                            matrix.push(verifier_state.prover_message()?);
+                            oods_matrix.push(verifier_state.prover_message()?);
                         }
                     }
-                    all_weights.push(weights);
+                    oods_weights.push(weights);
                 }
                 polynomial_offset += commitment.num_polynomials();
             }
-
-            all_weights.extend(weights.iter().map(|&w| w.clone()));
-            matrix.extend_from_slice(evaluations);
-            (all_weights, matrix)
+            (oods_weights, oods_matrix)
         };
 
         // Random linear combination of the polynomials.
@@ -98,16 +95,21 @@ impl<F: FftField> Config<F> {
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
-            geometric_challenge(verifier_state, constraint_weights.len());
-        let mut round_constraints = vec![(constraint_rlc_coeffs.clone(), constraint_weights)];
+            geometric_challenge(verifier_state, oods_weights.len() + weights.len());
+        let initial_weight_rlc_coeffs = constraint_rlc_coeffs[oods_weights.len()..].to_vec();
+        let oods_rlc_coeffs = constraint_rlc_coeffs[..oods_weights.len()].to_vec();
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(
-            &constraint_rlc_coeffs,
-            constraint_matrix.chunks_exact(num_polynomials),
+            &initial_weight_rlc_coeffs,
+            evaluations.chunks_exact(num_polynomials),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
-        .sum();
+        .sum::<F>();
+        the_sum += zip_strict(&oods_rlc_coeffs, oods_matrix.chunks_exact(num_polynomials))
+            .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
+            .sum::<F>();
+        let mut round_constraints = vec![(oods_rlc_coeffs, oods_weights)];
 
         let mut round_folding_randomness = Vec::new();
 
@@ -141,6 +143,8 @@ impl<F: FftField> Config<F> {
                     batching_weights,
                 } => {
                     let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
+                    // TODO: Skip lift and keep initial in-domain in subfield for evaluation.
+                    // This should be every so slightly more performant.
                     (in_domain.lift(self.embedding()), batching_weights)
                 }
                 RoundCommitment::Round { commitment } => {
@@ -155,8 +159,8 @@ impl<F: FftField> Config<F> {
             // Random linear combination of out- and in-domain constraints
             let constraint_weights = commitment
                 .out_of_domain()
-                .weights(round_config.initial_num_variables())
-                .chain(in_domain.weights(round_config.initial_num_variables()))
+                .evaluators(round_config.initial_size())
+                .chain(in_domain.evaluators(round_config.initial_size()))
                 .collect::<Vec<_>>();
             let constraint_values = commitment
                 .out_of_domain()
@@ -167,7 +171,7 @@ impl<F: FftField> Config<F> {
                 )))
                 .collect::<Vec<_>>();
             let constraint_rlc_coeffs =
-                geometric_challenge(verifier_state, constraint_weights.len());
+                geometric_challenge(verifier_state, constraint_values.len());
             the_sum += dot(&constraint_rlc_coeffs, &constraint_values);
             round_constraints.push((constraint_rlc_coeffs, constraint_weights));
 
@@ -206,13 +210,23 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.weights(final_coefficients.num_variables()),
+            in_domain.evaluators(final_coefficients.num_coeffs()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
-                &round_folding_randomness.last().unwrap().coeff_weights(true),
+                &MultilinearPoint(
+                    round_folding_randomness
+                        .last()
+                        .unwrap()
+                        .0
+                        .iter()
+                        .rev()
+                        .copied()
+                        .collect(),
+                )
+                .coeff_weights(false),
             )),
         ) {
-            verify!(weights.evaluate(&final_coefficients) == evals);
+            verify!(weights.evaluate(&Identity::<F>::new(), final_coefficients.coeffs()) == evals);
         }
 
         // Final sumcheck
@@ -223,31 +237,35 @@ impl<F: FftField> Config<F> {
         let folding_randomness = MultilinearPoint(
             round_folding_randomness
                 .into_iter()
-                .rev()
                 .flat_map(|poly| poly.0.into_iter())
                 .collect(),
         );
 
-        // Compute evaluation of weights in folding randomness point
-        let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
-        let mut deferred_iter = deferred.iter().copied();
+        // Evaluate all round constraints weights
         let mut weight_eval = F::ZERO;
-        for (round, (weights_rlc_coeffs, weights)) in round_constraints.iter().enumerate() {
+        for (round, (weights_rlc_coeffs, weights)) in round_constraints.into_iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
                 || self.initial_num_variables(),
                 |p| self.round_configs[p].initial_num_variables(),
             );
-            let point = MultilinearPoint(folding_randomness.0[..num_variables].to_vec());
+            let start = folding_randomness.0.len().saturating_sub(num_variables);
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                let eval = if weights.deferred() {
-                    let deferred = deferred_iter.next();
-                    verify!(deferred.is_some());
-                    deferred.unwrap()
-                } else {
-                    weights.compute(&point)
-                };
-                weight_eval += *rlc_coeff * eval;
+                weight_eval += rlc_coeff * weights.mle_evaluate(&folding_randomness.0[start..]);
             }
+        }
+
+        // Compute evaluation of non-deferred initial weights in folding randomness point
+        let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
+        let mut deferred_iter = deferred.iter().copied();
+        for (rlc_coeff, weights) in zip_strict(initial_weight_rlc_coeffs, weights) {
+            let eval = if weights.deferred() {
+                let deferred = deferred_iter.next();
+                verify!(deferred.is_some());
+                deferred.unwrap()
+            } else {
+                weights.mle_evaluate(&folding_randomness.0)
+            };
+            weight_eval += rlc_coeff * eval;
         }
         verify!(deferred_iter.next().is_none());
 

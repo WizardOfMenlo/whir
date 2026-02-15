@@ -39,9 +39,10 @@ use crate::{
     algebra::{
         dot,
         embedding::{Basefield, Embedding, Identity},
-        lift, mixed_univariate_evaluate,
+        lift,
+        linear_form::UnivariateEvaluation,
+        mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
-        Weights,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -190,23 +191,8 @@ where
         assert_eq!(polynomials.len(), self.num_polynomials);
         assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
 
-        // TODO: If only one polynomial, we can skip the copying.
-        let mut matrix = vec![F::ZERO; self.size()];
-        for (i, polynomial) in polynomials.iter().enumerate() {
-            // Interleaved RS encode
-            let evals = interleaved_rs_encode(polynomial, self.expansion, self.interleaving_depth);
-
-            // Stack evaluations leaf-wise
-            let dst = matrix.chunks_exact_mut(self.num_cols()).map(|leave| {
-                leave
-                    .chunks_exact_mut(self.interleaving_depth)
-                    .nth(i)
-                    .unwrap()
-            });
-            for (evals, leaves) in zip_strict(evals.chunks_exact(self.interleaving_depth), dst) {
-                leaves.copy_from_slice(evals);
-            }
-        }
+        // Interleaved RS Encode the polynomials
+        let matrix = interleaved_rs_encode(polynomials, self.expansion, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
@@ -439,10 +425,10 @@ impl<F: Field> Evaluations<F> {
         }
     }
 
-    pub fn weights(&self, num_variables: usize) -> impl '_ + Iterator<Item = Weights<F>> {
+    pub fn evaluators(&self, size: usize) -> impl '_ + Iterator<Item = UnivariateEvaluation<F>> {
         self.points
             .iter()
-            .map(move |point| Weights::univariate(*point, num_variables))
+            .map(move |&point| UnivariateEvaluation::new(point, size))
     }
 
     pub fn values<'a>(&'a self, weights: &'a [F]) -> impl 'a + Iterator<Item = F> {
@@ -614,6 +600,7 @@ mod tests {
             in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
         );
         if config.num_polynomials > 0 {
+            let base = config.polynomial_size / config.interleaving_depth;
             for (point, evals) in zip_strict(
                 &in_domain_evals.points,
                 in_domain_evals
@@ -622,13 +609,9 @@ mod tests {
             ) {
                 let expected_iter = polynomials.iter().flat_map(|poly| {
                     (0..config.interleaving_depth).map(|j| {
-                        // coefficients at positions j, j+d, j+2d, ...
-                        let coeffs: Vec<_> = poly
-                            .iter()
-                            .copied()
-                            .skip(j)
-                            .step_by(config.interleaving_depth)
-                            .collect();
+                        // coefficients in the contiguous block for this interleaving index
+                        let start = j * base;
+                        let coeffs: Vec<_> = poly.iter().copied().skip(start).take(base).collect();
                         univariate_evaluate(&coeffs, *point)
                     })
                 });

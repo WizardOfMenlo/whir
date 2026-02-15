@@ -62,7 +62,7 @@ impl type_map::Family for NttFamily {
 pub trait ReedSolomon<F>: Debug + Send + Sync {
     fn interleaved_encode(
         &self,
-        interleaved_coeffs: &[F],
+        interleaved_coeffs: &[&[F]],
         expansion: usize,
         interleaving_depth: usize,
     ) -> Vec<F>;
@@ -76,7 +76,7 @@ pub struct ArkNtt<F: FftField>(PhantomData<F>);
 impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
     fn interleaved_encode(
         &self,
-        interleaved_coeffs: &[F],
+        interleaved_coeffs: &[&[F]],
         expansion: usize,
         interleaving_depth: usize,
     ) -> Vec<F> {
@@ -85,7 +85,7 @@ impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
 }
 
 pub fn interleaved_rs_encode<F: 'static>(
-    interleaved_coeffs: &[F],
+    interleaved_coeffs: &[&[F]],
     expansion: usize,
     interleaving_depth: usize,
 ) -> Vec<F> {
@@ -94,35 +94,47 @@ pub fn interleaved_rs_encode<F: 'static>(
 }
 
 ///
-/// RS encode interleaved data `interleaved_coeffs` at the rate
-/// 1/`expansion`, where `interleaving_depth` elements are interleaved
-/// together.
+/// RS encode coefficients grouped in `interleaving_depth` contiguous blocks
+/// at the rate 1/`expansion`, then interleave the evaluations per point.
 ///
 /// This function computes the RS-code for each interleaved message and
 /// outputs the interleaved alphabets in the same order as the input.
 ///
 #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(coeffs), fields(size = coeffs.len())))]
-fn ark_ntt<F: FftField>(coeffs: &[F], expansion: usize, interleaving_depth: usize) -> Vec<F> {
+fn ark_ntt<F: FftField>(coeffs: &[&[F]], expansion: usize, interleaving_depth: usize) -> Vec<F> {
     assert!(expansion > 0);
-    assert!(coeffs.len().is_multiple_of(interleaving_depth));
-    let expanded_size = coeffs.len() * expansion;
+    if coeffs.is_empty() {
+        return Vec::new();
+    }
 
-    // 1. Create zero-padded message of appropriate size
-    let mut result = Vec::with_capacity(expanded_size);
-    result.extend_from_slice(coeffs);
-    result.resize(expanded_size, F::ZERO);
+    let poly_size = coeffs[0].len();
+    assert!(poly_size.is_multiple_of(interleaving_depth));
+    for poly in coeffs {
+        assert_eq!(poly.len(), poly_size);
+    }
 
-    let rows = expanded_size / interleaving_depth;
-    let columns = interleaving_depth;
-    //
-    // 2. Convert from column-major (interleaved form) to row-major
-    //    representation.
-    //
+    let block_size = poly_size / interleaving_depth;
+    let expanded_block = block_size * expansion;
+    let per_poly_size = expanded_block * interleaving_depth;
+    let expanded_size = per_poly_size * coeffs.len();
 
-    // TODO: Might be useful to keep the transposed data for future use.
-    transpose(&mut result, rows, columns);
-    ntt_batch(&mut result, rows);
-    transpose(&mut result, columns, rows);
+    // Lay out coefficients in contiguous blocks and zero-pad each block.
+    let mut result = vec![F::ZERO; expanded_size];
+    for (poly_index, poly) in coeffs.iter().enumerate() {
+        for (block_index, block) in poly.chunks_exact(block_size).enumerate() {
+            let dst = poly_index * per_poly_size + block_index * expanded_block;
+            result[dst..dst + block_size].copy_from_slice(block);
+        }
+    }
+
+    // NTT each block, then transpose to row-major order with polynomials
+    // stacked horizontally.
+    ntt_batch(&mut result, expanded_block);
+    transpose(
+        &mut result,
+        coeffs.len() * interleaving_depth,
+        expanded_block,
+    );
     result
 }
 
@@ -307,7 +319,6 @@ mod tests {
 
     #[test]
     fn test_interleaved_rs_encode() {
-        use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
         use ark_std::UniformRand;
 
         let mut rng = ark_std::test_rng();
@@ -315,20 +326,25 @@ mod tests {
         let expansion = 4;
         let folding_factor = 6;
 
-        let eval_domain = GeneralEvaluationDomain::<Field64>::new(count * expansion).unwrap();
-
         let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
 
         // Compute things the old way
-        let mut expected = test_utils::expand_from_coeff(&poly, expansion);
-        test_utils::transform_evaluations(
-            &mut expected,
-            eval_domain.group_gen_inv(),
-            folding_factor,
-        );
+        let block_size = count / (1 << folding_factor);
+        let mut blocks = Vec::with_capacity(1 << folding_factor);
+        for block in poly.chunks_exact(block_size) {
+            blocks.push(test_utils::expand_from_coeff(block, expansion));
+        }
+        let evals_len = block_size * expansion;
+        let mut expected = Vec::with_capacity(count * expansion);
+        for i in 0..evals_len {
+            for block in &blocks {
+                expected.push(block[i]);
+            }
+        }
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, 1 << folding_factor);
+        let interleaved_ntt =
+            interleaved_rs_encode(&[poly.as_slice()], expansion, 1 << folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

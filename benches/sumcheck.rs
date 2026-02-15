@@ -19,10 +19,10 @@ fn sumcheck_first_round(bencher: Bencher, size: u64) {
             let folding_randomness = F::from(42);
             (a, b, folding_randomness)
         })
-        .bench_values(|(a, b, folding_randomness)| {
+        .bench_values(|(mut a, mut b, folding_randomness)| {
             let poly = compute_sumcheck_polynomial(&a, &b);
-            let a = fold(folding_randomness, &a);
-            let b = fold(folding_randomness, &b);
+            fold(&mut a, folding_randomness);
+            fold(&mut b, folding_randomness);
             black_box((poly, a, b))
         });
 }

@@ -1,17 +1,18 @@
 pub mod domain;
 pub mod embedding;
 pub mod fields;
+pub mod linear_form;
+mod multilinear;
 pub mod ntt;
 pub mod polynomials;
 pub mod sumcheck;
-mod weights;
 
 use ark_ff::{AdditiveGroup, Field};
+pub use multilinear::{eval_eq, mixed_multilinear_extend, multilinear_extend};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use self::embedding::Embedding;
-pub use self::weights::Weights;
 #[cfg(feature = "parallel")]
 use crate::utils::workload_size;
 
@@ -39,10 +40,6 @@ pub fn tensor_product<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     result
 }
 
-pub fn univariate_evaluate<F: Field>(coefficients: &[F], point: F) -> F {
-    mixed_univariate_evaluate(&embedding::Identity::new(), coefficients, point)
-}
-
 /// Lift a vector to an embedding.
 pub fn lift<M: Embedding>(embedding: &M, source: &[M::Source]) -> Vec<M::Target> {
     #[cfg(not(feature = "parallel"))]
@@ -52,6 +49,15 @@ pub fn lift<M: Embedding>(embedding: &M, source: &[M::Source]) -> Vec<M::Target>
     let result = source.par_iter().map(|c| embedding.map(*c)).collect();
 
     result
+}
+
+pub fn scalar_mul_add<F: Field>(accumulator: &mut [F], weight: F, vector: &[F]) {
+    mixed_scalar_mul_add(
+        &embedding::Identity::<F>::new(),
+        accumulator,
+        weight,
+        vector,
+    );
 }
 
 /// Mixed scalar-mul add
@@ -67,6 +73,10 @@ pub fn mixed_scalar_mul_add<M: Embedding>(
     for (accumulator, value) in accumulator.iter_mut().zip(vector) {
         *accumulator += embedding.mixed_mul(weight, *value);
     }
+}
+
+pub fn univariate_evaluate<F: Field>(coefficients: &[F], point: F) -> F {
+    mixed_univariate_evaluate(&embedding::Identity::new(), coefficients, point)
 }
 
 /// Mixed field univariate Horner evaluation.
