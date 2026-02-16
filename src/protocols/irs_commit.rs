@@ -58,7 +58,7 @@ pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
 #[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
 pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
 
-/// Commit to polynomials over an fft-friendly field F
+/// Commit to vectors over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(bound = "F: FftField, G: Field, M: Embedding<Source = F, Target = G>")]
 pub struct Config<F, G = F, M = Identity<F>>
@@ -70,11 +70,11 @@ where
     /// Embedding into a (larger) field used for weights and drawing challenges.
     pub embedding: Typed<M>,
 
-    /// The number of polynomials to commit to in one operation.
-    pub num_polynomials: usize,
+    /// The number of vectors to commit to in one operation.
+    pub num_vectors: usize,
 
-    /// The number of coefficients in each polynomial.
-    pub polynomial_size: usize,
+    /// The number of coefficients in each vector.
+    pub vector_size: usize,
 
     /// The Reed-Solomon expansion factor.
     pub expansion: usize,
@@ -163,7 +163,7 @@ where
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&[F]],
+        vectors: &[&[F]],
     ) -> Witness<F, G>
     where
         H: DuplexSpongeInterface,
@@ -172,31 +172,31 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         // Validate config
-        assert!((self.polynomial_size).is_multiple_of(self.interleaving_depth));
+        assert!((self.vector_size).is_multiple_of(self.interleaving_depth));
         assert_eq!(
             self.matrix_commit.num_rows(),
-            (self.polynomial_size / self.interleaving_depth) * self.expansion
+            (self.vector_size / self.interleaving_depth) * self.expansion
         );
         assert_eq!(
             self.matrix_commit.num_cols,
-            self.num_polynomials * self.interleaving_depth
+            self.num_vectors * self.interleaving_depth
         );
 
         // Validate input
-        assert_eq!(polynomials.len(), self.num_polynomials);
-        assert!(polynomials.iter().all(|p| p.len() == self.polynomial_size));
+        assert_eq!(vectors.len(), self.num_vectors);
+        assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
         // Interleaved RS Encode the polynomials
-        let matrix = interleaved_rs_encode(polynomials, self.expansion, self.interleaving_depth);
+        let matrix = interleaved_rs_encode(vectors, self.expansion, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
 
         // Handle out-of-domain points and values
         let oods_points: Vec<G> = prover_state.verifier_message_vec(self.out_domain_samples);
-        let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_polynomials);
+        let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_vectors);
         for &point in &oods_points {
-            for &polynomial in polynomials {
+            for &polynomial in vectors {
                 let value = mixed_univariate_evaluate(&*self.embedding, polynomial, point);
                 prover_state.prover_message(&value);
                 oods_matrix.push(value);
@@ -227,7 +227,7 @@ where
         let matrix_commitment = self.matrix_commit.receive_commitment(verifier_state)?;
         let oods_points: Vec<G> = verifier_state.verifier_message_vec(self.out_domain_samples);
         let oods_matrix =
-            verifier_state.prover_messages_vec(self.out_domain_samples * self.num_polynomials)?;
+            verifier_state.prover_messages_vec(self.out_domain_samples * self.num_vectors)?;
         Ok(Commitment {
             matrix_commitment,
             out_of_domain: Evaluations {
@@ -261,7 +261,7 @@ where
             assert_eq!(witness.out_of_domain.points.len(), self.out_domain_samples);
             assert_eq!(
                 witness.out_of_domain.matrix.len(),
-                self.out_domain_samples * self.num_polynomials
+                self.out_domain_samples * self.num_vectors
             );
         }
 
@@ -311,8 +311,7 @@ where
         for commitment in commitments {
             verify!(commitment.out_of_domain.points.len() == self.out_domain_samples);
             verify!(
-                commitment.out_of_domain.matrix.len()
-                    == self.num_polynomials * self.out_domain_samples
+                commitment.out_of_domain.matrix.len() == self.num_vectors * self.out_domain_samples
             );
         }
 
@@ -441,7 +440,7 @@ where
         write!(
             f,
             "size {}×{}/{}",
-            self.num_polynomials, self.polynomial_size, self.interleaving_depth,
+            self.num_vectors, self.vector_size, self.interleaving_depth,
         )?;
         if self.expansion.is_power_of_two() {
             write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
@@ -511,8 +510,8 @@ mod tests {
                 deduplicate_in_domain,
             )| Config {
                 embedding: Typed::new(embedding.clone()),
-                num_polynomials,
-                polynomial_size,
+                num_vectors: num_polynomials,
+                vector_size: polynomial_size,
                 expansion,
                 interleaving_depth,
                 matrix_commit,
@@ -537,9 +536,9 @@ mod tests {
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
-        let polynomials = (0..config.num_polynomials)
+        let polynomials = (0..config.num_vectors)
             .map(|_| {
-                (0..config.polynomial_size)
+                (0..config.vector_size)
                     .map(|_| rng.gen::<M::Source>())
                     .collect::<Vec<_>>()
             })
@@ -559,15 +558,15 @@ mod tests {
         );
         assert_eq!(
             witness.out_of_domain().matrix.len(),
-            config.out_domain_samples * config.num_polynomials
+            config.out_domain_samples * config.num_vectors
         );
-        if config.num_polynomials > 0 {
+        if config.num_vectors > 0 {
             for (point, evals) in zip_strict(
                 witness.out_of_domain().points.iter(),
                 witness
                     .out_of_domain()
                     .matrix
-                    .chunks_exact(config.num_polynomials),
+                    .chunks_exact(config.num_vectors),
             ) {
                 for (polynomial, expected) in zip_strict(polynomials.iter(), evals.iter()) {
                     assert_eq!(
@@ -592,15 +591,15 @@ mod tests {
         }
         assert_eq!(
             in_domain_evals.matrix.len(),
-            in_domain_evals.points.len() * config.num_polynomials * config.interleaving_depth
+            in_domain_evals.points.len() * config.num_vectors * config.interleaving_depth
         );
-        if config.num_polynomials > 0 {
-            let base = config.polynomial_size / config.interleaving_depth;
+        if config.num_vectors > 0 {
+            let base = config.vector_size / config.interleaving_depth;
             for (point, evals) in zip_strict(
                 &in_domain_evals.points,
                 in_domain_evals
                     .matrix
-                    .chunks_exact(config.num_polynomials * config.interleaving_depth),
+                    .chunks_exact(config.num_vectors * config.interleaving_depth),
             ) {
                 let expected_iter = polynomials.iter().flat_map(|poly| {
                     (0..config.interleaving_depth).map(|j| {

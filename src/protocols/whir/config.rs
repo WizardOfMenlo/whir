@@ -187,8 +187,8 @@ where
             round_parameters.push(RoundConfig {
                 irs_committer: irs_commit::Config {
                     embedding: Typed::new(embedding::Identity::new()),
-                    num_polynomials: 1,
-                    polynomial_size: 1 << num_variables,
+                    num_vectors: 1,
+                    vector_size: 1 << num_variables,
                     expansion: 1 << next_rate,
                     interleaving_depth: 1 << next_folding_factor,
                     matrix_commit: matrix_committer.clone(),
@@ -239,8 +239,8 @@ where
             soundness_type: whir_parameters.soundness_type,
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
-                num_polynomials: whir_parameters.batch_size,
-                polynomial_size: 1 << mv_parameters.num_variables,
+                num_vectors: whir_parameters.batch_size,
+                vector_size: 1 << mv_parameters.num_variables,
                 expansion: 1 << whir_parameters.starting_log_inv_rate,
                 interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
                 matrix_commit: matrix_commit::Config::with_hash(
@@ -284,7 +284,7 @@ where
     }
 
     pub const fn initial_size(&self) -> usize {
-        self.initial_committer.polynomial_size
+        self.initial_committer.vector_size
     }
 
     pub fn initial_num_variables(&self) -> usize {
@@ -702,7 +702,7 @@ impl<F: FftField> Display for Config<F> {
 impl<F: FftField> RoundConfig<F> {
     pub fn initial_size(&self) -> usize {
         assert_eq!(
-            self.irs_committer.polynomial_size,
+            self.irs_committer.vector_size,
             self.sumcheck.initial_size
         );
         self.sumcheck.initial_size
@@ -718,8 +718,8 @@ impl<F: FftField> RoundConfig<F> {
     }
 
     pub fn initial_num_variables(&self) -> usize {
-        assert!(self.irs_committer.polynomial_size.is_power_of_two());
-        self.irs_committer.polynomial_size.ilog2() as usize
+        assert!(self.irs_committer.vector_size.is_power_of_two());
+        self.irs_committer.vector_size.ilog2() as usize
     }
 
     pub fn final_num_variables(&self) -> usize {
@@ -890,8 +890,8 @@ mod tests {
             RoundConfig {
                 irs_committer: irs_commit::Config {
                     embedding: Typed::new(embedding::Identity::new()),
-                    num_polynomials: 1,
-                    polynomial_size: 1 << 10,
+                    num_vectors: 1,
+                    vector_size: 1 << 10,
                     expansion: 1 << 3,
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
@@ -910,8 +910,8 @@ mod tests {
             RoundConfig {
                 irs_committer: irs_commit::Config {
                     embedding: Typed::new(embedding::Identity::new()),
-                    num_polynomials: 1,
-                    polynomial_size: 1 << 10,
+                    num_vectors: 1,
+                    vector_size: 1 << 10,
                     expansion: 1 << 4,
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),

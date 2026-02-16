@@ -53,7 +53,7 @@ impl<F: FftField> Config<F> {
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let num_polynomials = commitments.len() * self.initial_committer.num_polynomials;
+        let num_polynomials = commitments.len() * self.initial_committer.num_vectors;
         verify!(weights.len() * num_polynomials == evaluations.len());
         if num_polynomials == 0 {
             return Ok((MultilinearPoint::default(), Vec::new()));

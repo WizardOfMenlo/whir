@@ -13,7 +13,7 @@ use whir::{
         embedding::Basefield,
         fields,
         linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
-        polynomials::{CoefficientList, MultilinearPoint},
+        MultilinearPoint,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -258,10 +258,9 @@ where
         let mut evaluations = Vec::new();
 
         for point in &points {
-            let eval = vector.mixed_evaluate(&Basefield::new(), point);
-            let weight = MultilinearEvaluation::new(point.0.clone());
-            weights.push(Box::new(weight));
-            evaluations.push(eval);
+            let linear_form = MultilinearEvaluation::new(point.0.clone());
+            evaluations.push(linear_form.evaluate(params.embedding(), &vector));
+            weights.push(Box::new(linear_form));
         }
 
         HASH_COUNTER.reset();

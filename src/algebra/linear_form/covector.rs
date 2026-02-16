@@ -49,6 +49,6 @@ impl<F: Field> Covector<F> {
 impl<M: Embedding> Evaluate<M> for Covector<M::Target> {
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         assert_eq!(self.vector.len(), vector.len());
-        mixed_dot(embedding, &self.vector, &vector)
+        mixed_dot(embedding, &self.vector, vector)
     }
 }

@@ -46,7 +46,7 @@ impl<F: FftField> Config<F> {
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&[F::BasePrimeField]],
+        vectors: &[&[F::BasePrimeField]],
         witnesses: &[&Witness<F>],
         linear_forms: &[&dyn LinearForm<F>],
         evaluations: &[F],
@@ -62,11 +62,11 @@ impl<F: FftField> Config<F> {
     {
         // Input validation
         assert_eq!(
-            polynomials.len(),
-            witnesses.len() * self.initial_committer.num_polynomials
+            vectors.len(),
+            witnesses.len() * self.initial_committer.num_vectors
         );
-        assert_eq!(evaluations.len(), polynomials.len() * linear_forms.len());
-        for polynomial in polynomials {
+        assert_eq!(evaluations.len(), vectors.len() * linear_forms.len());
+        for polynomial in vectors {
             assert_eq!(polynomial.len(), self.initial_size());
         }
         for weight in linear_forms {
@@ -74,18 +74,15 @@ impl<F: FftField> Config<F> {
         }
         #[cfg(debug_assertions)]
         for (&weight, evaluations) in
-            zip_strict(linear_forms, evaluations.chunks_exact(polynomials.len()))
+            zip_strict(linear_forms, evaluations.chunks_exact(vectors.len()))
         {
             use crate::algebra::linear_form::Covector;
             let covector = Covector::from(weight);
-            for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
-                debug_assert_eq!(
-                    covector.evaluate(self.embedding(), &polynomial),
-                    *evaluation
-                );
+            for (&vector, evaluation) in zip_strict(vectors, evaluations) {
+                debug_assert_eq!(covector.evaluate(self.embedding(), vector), *evaluation);
             }
         }
-        if polynomials.is_empty() {
+        if vectors.is_empty() {
             // TODO: Should we draw a random evaluation point of the right size?
             return (MultilinearPoint::default(), Vec::new());
         }
@@ -102,7 +99,7 @@ impl<F: FftField> Config<F> {
                     witness.out_of_domain().evaluators(self.initial_size()),
                     witness.out_of_domain().rows(),
                 ) {
-                    for (j, &polynomial) in polynomials.iter().enumerate() {
+                    for (j, &polynomial) in vectors.iter().enumerate() {
                         if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
                             debug_assert_eq!(
                                 oods_row[j - polynomial_offset],
@@ -124,11 +121,10 @@ impl<F: FftField> Config<F> {
         };
 
         // Random linear combination of the polynomials.
-        let mut polynomial_rlc_coeffs: Vec<F> =
-            geometric_challenge(prover_state, polynomials.len());
+        let mut polynomial_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, vectors.len());
         let mut vector = vec![F::ZERO; self.initial_size()];
         assert_eq!(polynomial_rlc_coeffs[0], F::ONE);
-        for (rlc_coeff, &polynomial) in zip_strict(&polynomial_rlc_coeffs, polynomials) {
+        for (rlc_coeff, &polynomial) in zip_strict(&polynomial_rlc_coeffs, vectors) {
             mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, polynomial);
         }
         let mut prev_witness = RoundWitness::Initial(witnesses);
@@ -147,7 +143,7 @@ impl<F: FftField> Config<F> {
         // Compute "The Sum"
         let mut the_sum = zip_strict(
             intial_weights_rlc_coeffs,
-            evaluations.chunks_exact(polynomials.len()),
+            evaluations.chunks_exact(vectors.len()),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
         .sum();
@@ -156,7 +152,7 @@ impl<F: FftField> Config<F> {
 
         // Add OODS constraints
         UnivariateEvaluation::accumulate_many(&oods_weights, &mut covector, oods_rlc_coeffs);
-        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(polynomials.len()))
+        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(vectors.len()))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&polynomial_rlc_coeffs, row))
             .sum::<F>();
 
