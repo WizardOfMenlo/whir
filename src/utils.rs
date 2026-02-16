@@ -120,11 +120,7 @@ mod tests {
     use ark_ff::{AdditiveGroup, Field};
 
     use super::*;
-    use crate::algebra::{
-        eval_eq,
-        fields::Field64,
-        polynomials::{lagrange_iterator::LagrangePolynomialIterator, MultilinearPoint},
-    };
+    use crate::algebra::fields::Field64;
 
     #[test]
     fn test_base_decomposition_binary() {
@@ -232,21 +228,6 @@ mod tests {
     fn test_base_decomposition_invalid_base() {
         // Base cannot be 0 or 1 (should panic)
         base_decomposition(10, 0, 5);
-    }
-
-    #[test]
-    fn test_eval_eq() {
-        let eval = vec![Field64::from(3), Field64::from(5)];
-        let mut out = vec![Field64::ZERO; 4];
-        eval_eq(&mut out, &eval, Field64::ONE);
-
-        let point = MultilinearPoint(eval);
-        let mut expected = vec![Field64::ZERO; 4];
-        for (prefix, lag) in LagrangePolynomialIterator::from(&point) {
-            expected[prefix.0] = lag;
-        }
-
-        assert_eq!(&out, &expected);
     }
 
     #[test]

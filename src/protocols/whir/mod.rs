@@ -19,7 +19,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_2},
             linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
-            polynomials::MultilinearPoint,
+            MultilinearPoint,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},

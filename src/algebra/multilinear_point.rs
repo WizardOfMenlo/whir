@@ -3,7 +3,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{distributions::Standard, prelude::Distribution, Rng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use super::hypercube::BinaryHypercubePoint;
 use crate::utils::zip_strict;
 
 /// A point `(x_1, ..., x_n)` in `F^n` for some field `F`.
@@ -31,12 +30,12 @@ where
     /// ```ignore
     /// [b_{n-1}, b_{n-2}, ..., b_1, b_0]
     /// ```
-    pub fn from_binary_hypercube_point(point: BinaryHypercubePoint, num_variables: usize) -> Self {
+    pub fn from_binary_hypercube_point(point: usize, num_variables: usize) -> Self {
         Self(
             (0..num_variables)
                 .rev()
                 .map(|i| {
-                    if (point.0 >> i) & 1 == 1 {
+                    if (point >> i) & 1 == 1 {
                         F::ONE
                     } else {
                         F::ZERO
@@ -53,19 +52,16 @@ where
     /// b_{n-1} * 2^{n-1} + b_{n-2} * 2^{n-2} + ... + b_1 * 2^1 + b_0 * 2^0
     /// ```
     /// Returns `None` if any coordinate is non-binary.
-    pub fn to_hypercube(&self) -> Option<BinaryHypercubePoint> {
-        self.0
-            .iter()
-            .try_fold(0, |acc, &coord| {
-                if coord == F::ZERO {
-                    Some(acc << 1)
-                } else if coord == F::ONE {
-                    Some((acc << 1) | 1)
-                } else {
-                    None
-                }
-            })
-            .map(BinaryHypercubePoint)
+    pub fn to_hypercube(&self) -> Option<usize> {
+        self.0.iter().try_fold(0, |acc, &coord| {
+            if coord == F::ZERO {
+                Some(acc << 1)
+            } else if coord == F::ONE {
+                Some((acc << 1) | 1)
+            } else {
+                None
+            }
+        })
     }
 
     /// Converts a univariate evaluation point into a multilinear one.
@@ -103,16 +99,16 @@ where
     /// which evaluates to `1` if `c == p`, and `0` otherwise.
     ///
     /// `p` is interpreted as a **big-endian** binary number.
-    pub fn eq_poly(&self, mut point: BinaryHypercubePoint) -> F {
+    pub fn eq_poly(&self, mut point: usize) -> F {
         let n_variables = self.num_variables();
-        assert!(*point < (1 << n_variables)); // Ensure correct length
+        assert!(point < (1 << n_variables)); // Ensure correct length
 
         let mut acc = F::ONE;
 
         for val in self.0.iter().rev() {
-            let b = *point % 2;
+            let b = point % 2;
             acc *= if b == 1 { *val } else { F::ONE - *val };
-            *point >>= 1;
+            point >>= 1;
         }
 
         acc
@@ -121,7 +117,6 @@ where
     /// Computes eq(c, p) on the hypercube for all p.
     pub fn eq_weights(&self) -> Vec<F> {
         (0..1 << self.0.len())
-            .map(BinaryHypercubePoint)
             .map(|point| self.eq_poly(point))
             .collect()
     }
@@ -234,7 +229,7 @@ mod tests {
     fn test_from_binary_hypercube_point_all_zeros() {
         let num_variables = 5;
         // Represents (0,0,0,0,0)
-        let binary_point = BinaryHypercubePoint(0);
+        let binary_point = 0;
         let ml_point =
             MultilinearPoint::<Field64>::from_binary_hypercube_point(binary_point, num_variables);
 
@@ -246,7 +241,7 @@ mod tests {
     fn test_from_binary_hypercube_point_all_ones() {
         let num_variables = 4;
         // Represents (1,1,1,1)
-        let binary_point = BinaryHypercubePoint((1 << num_variables) - 1);
+        let binary_point = (1 << num_variables) - 1;
         let ml_point =
             MultilinearPoint::<Field64>::from_binary_hypercube_point(binary_point, num_variables);
 
@@ -258,7 +253,7 @@ mod tests {
     fn test_from_binary_hypercube_point_mixed_bits() {
         let num_variables = 6;
         // Represents (1,0,1,0,1,0)
-        let binary_point = BinaryHypercubePoint(0b10_1010);
+        let binary_point = 0b10_1010;
         let ml_point =
             MultilinearPoint::<Field64>::from_binary_hypercube_point(binary_point, num_variables);
 
@@ -277,7 +272,7 @@ mod tests {
     fn test_from_binary_hypercube_point_truncation() {
         let num_variables = 3;
         // Should only use last 3 bits (101)
-        let binary_point = BinaryHypercubePoint(0b10101);
+        let binary_point = 0b10101;
         let ml_point =
             MultilinearPoint::<Field64>::from_binary_hypercube_point(binary_point, num_variables);
 
@@ -289,7 +284,7 @@ mod tests {
     fn test_from_binary_hypercube_point_expansion() {
         let num_variables = 8;
         // Represents (0,0,0,0,1,0,1,0)
-        let binary_point = BinaryHypercubePoint(0b1010);
+        let binary_point = 0b1010;
         let ml_point =
             MultilinearPoint::<Field64>::from_binary_hypercube_point(binary_point, num_variables);
 
@@ -314,13 +309,13 @@ mod tests {
             Field64::ZERO,
             Field64::ZERO,
         ]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0)));
+        assert_eq!(point.to_hypercube(), Some(0));
     }
 
     #[test]
     fn test_to_hypercube_all_ones() {
         let point = MultilinearPoint(vec![Field64::ONE, Field64::ONE, Field64::ONE, Field64::ONE]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0b1111)));
+        assert_eq!(point.to_hypercube(), Some(0b1111));
     }
 
     #[test]
@@ -331,16 +326,16 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0b1010)));
+        assert_eq!(point.to_hypercube(), Some(0b1010));
     }
 
     #[test]
     fn test_to_hypercube_single_bit() {
         let point = MultilinearPoint(vec![Field64::ONE]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(1)));
+        assert_eq!(point.to_hypercube(), Some(1));
 
         let point = MultilinearPoint(vec![Field64::ZERO]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0)));
+        assert_eq!(point.to_hypercube(), Some(0));
     }
 
     #[test]
@@ -355,10 +350,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        assert_eq!(
-            point.to_hypercube(),
-            Some(BinaryHypercubePoint(0b1101_0110))
-        );
+        assert_eq!(point.to_hypercube(), Some(0b1101_0110));
     }
 
     #[test]
@@ -371,7 +363,7 @@ mod tests {
     #[test]
     fn test_to_hypercube_empty_vector() {
         let point = MultilinearPoint::<Field64>(vec![]);
-        assert_eq!(point.to_hypercube(), Some(BinaryHypercubePoint(0)));
+        assert_eq!(point.to_hypercube(), Some(0));
     }
 
     #[test]
@@ -469,7 +461,7 @@ mod tests {
     fn test_eq_poly_all_zeros() {
         // Multilinear point (0,0,0,0)
         let ml_point = MultilinearPoint(vec![Field64::ZERO; 4]);
-        let binary_point = BinaryHypercubePoint(0b0000);
+        let binary_point = 0b0000;
 
         // eq_poly should evaluate to 1 since c_i = p_i = 0
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -479,7 +471,7 @@ mod tests {
     fn test_eq_poly_all_ones() {
         // Multilinear point (1,1,1,1)
         let ml_point = MultilinearPoint(vec![Field64::ONE; 4]);
-        let binary_point = BinaryHypercubePoint(0b1111);
+        let binary_point = 0b1111;
 
         // eq_poly should evaluate to 1 since c_i = p_i = 1
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -494,7 +486,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        let binary_point = BinaryHypercubePoint(0b1010);
+        let binary_point = 0b1010;
 
         // eq_poly should evaluate to 1 since c_i = p_i for all i
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -509,7 +501,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        let binary_point = BinaryHypercubePoint(0b1100); // Differs at second bit
+        let binary_point = 0b1100; // Differs at second bit
 
         // eq_poly should evaluate to 0 since there is at least one mismatch
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ZERO);
@@ -519,7 +511,7 @@ mod tests {
     fn test_eq_poly_single_variable_match() {
         // Multilinear point (1)
         let ml_point = MultilinearPoint(vec![Field64::ONE]);
-        let binary_point = BinaryHypercubePoint(0b1);
+        let binary_point = 0b1;
 
         // eq_poly should evaluate to 1 since c_1 = p_1 = 1
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -529,7 +521,7 @@ mod tests {
     fn test_eq_poly_single_variable_mismatch() {
         // Multilinear point (1)
         let ml_point = MultilinearPoint(vec![Field64::ONE]);
-        let binary_point = BinaryHypercubePoint(0b0);
+        let binary_point = 0b0;
 
         // eq_poly should evaluate to 0 since c_1 != p_1
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ZERO);
@@ -548,7 +540,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        let binary_point = BinaryHypercubePoint(0b1101_0110);
+        let binary_point = 0b1101_0110;
 
         // eq_poly should evaluate to 1 since c_i = p_i for all i
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -567,7 +559,7 @@ mod tests {
             Field64::ONE,
             Field64::ZERO,
         ]);
-        let binary_point = BinaryHypercubePoint(0b1101_0111); // Last bit differs
+        let binary_point = 0b1101_0111; // Last bit differs
 
         // eq_poly should evaluate to 0 since there is a mismatch
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ZERO);
@@ -577,7 +569,7 @@ mod tests {
     fn test_eq_poly_empty_vector() {
         // Empty Multilinear Point
         let ml_point = MultilinearPoint::<Field64>(vec![]);
-        let binary_point = BinaryHypercubePoint(0);
+        let binary_point = 0;
 
         // eq_poly should evaluate to 1 since both are trivially equal
         assert_eq!(ml_point.eq_poly(binary_point), Field64::ONE);
@@ -856,16 +848,16 @@ mod tests {
     #[test]
     fn test_equality() {
         let point = MultilinearPoint(vec![Field64::from(0), Field64::from(0)]);
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b00)), Field64::from(1));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b01)), Field64::from(0));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b10)), Field64::from(0));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b11)), Field64::from(0));
+        assert_eq!(point.eq_poly(0b00), Field64::from(1));
+        assert_eq!(point.eq_poly(0b01), Field64::from(0));
+        assert_eq!(point.eq_poly(0b10), Field64::from(0));
+        assert_eq!(point.eq_poly(0b11), Field64::from(0));
 
         let point = MultilinearPoint(vec![Field64::from(1), Field64::from(0)]);
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b00)), Field64::from(0));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b01)), Field64::from(0));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b10)), Field64::from(1));
-        assert_eq!(point.eq_poly(BinaryHypercubePoint(0b11)), Field64::from(0));
+        assert_eq!(point.eq_poly(0b00), Field64::from(0));
+        assert_eq!(point.eq_poly(0b01), Field64::from(0));
+        assert_eq!(point.eq_poly(0b10), Field64::from(1));
+        assert_eq!(point.eq_poly(0b11), Field64::from(0));
     }
 
     #[test]

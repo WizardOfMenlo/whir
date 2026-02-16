@@ -11,8 +11,8 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        polynomials::MultilinearPoint,
         sumcheck::{compute_sumcheck_polynomial, fold},
+        MultilinearPoint,
     },
     ensure,
     protocols::proof_of_work,

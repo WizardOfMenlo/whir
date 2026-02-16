@@ -3,12 +3,13 @@ pub mod embedding;
 pub mod fields;
 pub mod linear_form;
 mod multilinear;
+mod multilinear_point;
 pub mod ntt;
-pub mod polynomials;
 pub mod sumcheck;
 
 use ark_ff::{AdditiveGroup, Field};
 pub use multilinear::{eval_eq, mixed_multilinear_extend, multilinear_extend};
+pub use multilinear_point::MultilinearPoint;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
