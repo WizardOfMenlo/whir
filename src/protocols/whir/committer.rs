@@ -7,10 +7,7 @@ use tracing::instrument;
 
 use super::Config;
 use crate::{
-    algebra::{
-        ntt::{inverse_wavelet_transform, wavelet_transform},
-        polynomials::CoefficientList,
-    },
+    algebra::ntt::inverse_wavelet_transform,
     hash::Hash,
     protocols::irs_commit,
     transcript::{

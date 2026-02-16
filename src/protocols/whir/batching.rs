@@ -25,8 +25,6 @@
 ///
 #[cfg(test)]
 mod batching_tests {
-    use std::iter;
-
     use ark_std::UniformRand;
 
     use super::super::Config;
@@ -35,7 +33,7 @@ mod batching_tests {
             embedding::Basefield,
             fields::Field64,
             linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
-            polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            polynomials::MultilinearPoint,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -45,12 +43,11 @@ mod batching_tests {
     /// Field type used in the tests.
     type F = Field64;
 
-    fn random_poly(num_coefficients: usize) -> CoefficientList<F> {
+    fn random_vector(num_coefficients: usize) -> Vec<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
         let mut rng = ark_std::rand::thread_rng();
         (0..num_coefficients).for_each(|_| store.push(F::rand(&mut rng)));
-
-        CoefficientList::new(store)
+        store
     }
 
     /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
@@ -101,12 +98,8 @@ mod batching_tests {
         // Build global configuration from multivariate + protocol parameters
         let params = Config::new(mv_params, &whir_params);
 
-        let mut poly_list = Vec::<CoefficientList<F>>::with_capacity(batch_size);
-
-        (0..batch_size).for_each(|_| poly_list.push(random_poly(num_coeffs)));
-
-        // Construct a coefficient vector for linear sumcheck constraint
-        let weight_poly = CoefficientList::new((0..1 << num_variables).map(F::from).collect());
+        let vectors: Vec<Vec<F>> = (0..batch_size).map(|_| random_vector(num_coeffs)).collect();
+        let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
 
         // Generate `num_points` random points in the multilinear domain
         let points: Vec<_> = (0..num_points)
@@ -122,42 +115,36 @@ mod batching_tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let vecs = poly_list.iter().map(|p| p.to_evals()).collect::<Vec<_>>();
-        let poly_refs = vecs.iter().map(|p| p.as_slice()).collect::<Vec<_>>();
-        let batched_witness = params.commit(&mut prover_state, &poly_refs);
-
-        let embedding = Basefield::new();
+        let batched_witness = params.commit(&mut prover_state, &vec_refs);
 
         // Create a weights matrix and evaluations for each polynomial
-        let linear_weight_list: EvaluationsList<F> = weight_poly.into();
-        let weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = points
+        let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        for point in points {
+            linear_forms.push(Box::new(MultilinearEvaluation {
+                point: point.0.to_vec(),
+            }));
+        }
+        linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..1 << num_variables).map(F::from).collect(),
+        }));
+        let values = linear_forms
             .iter()
-            .map(|point| {
-                Box::new(MultilinearEvaluation::new(point.0.clone()))
-                    as Box<dyn Evaluate<Basefield<F>>>
-            })
-            .chain(iter::once(
-                Box::new(Covector::new(linear_weight_list.evals().to_vec()))
-                    as Box<dyn Evaluate<Basefield<F>>>,
-            ))
-            .collect();
-        let values = weights
-            .iter()
-            .flat_map(|weights| {
-                poly_list
+            .flat_map(|linear_form| {
+                vec_refs
                     .iter()
-                    .map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
+                    .map(|vec| linear_form.evaluate_evals(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 
-        // Generate a STARK proof for the given statement and witness
-        let weights_dyn_refs = weights
+        // Generate a proof for the given statement and witness
+        let weights_dyn_refs = linear_forms
             .iter()
             .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &poly_refs,
+            &vec_refs,
             &[&batched_witness],
             &weights_dyn_refs,
             &values,
