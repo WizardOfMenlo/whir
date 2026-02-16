@@ -96,7 +96,7 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
 
 impl<M: Embedding> Evaluate<M> for UnivariateEvaluation<M::Target> {
     // Evaluate a vector in coefficient form.
-    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         mixed_univariate_evaluate(embedding, vector, self.point)
     }
 }

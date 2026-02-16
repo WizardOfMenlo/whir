@@ -111,7 +111,7 @@ mod tests {
         let poly = EvaluationsList::from(polynomial.lift(&embedding));
 
         // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.evaluate(&embedding, poly.to_coeffs().coeffs());
+        let sum = linear_claim_weight.evaluate_coeffs(&embedding, poly.to_coeffs().coeffs());
 
         // Add linear constraint to the statement
         weights.push(linear_claim_weight);
@@ -146,7 +146,7 @@ mod tests {
 
         // Compute the weighted sum for geometric constraint
         let geometric_sum =
-            geometric_claim_weight.evaluate(&embedding, poly_base.to_coeffs().coeffs());
+            geometric_claim_weight.evaluate_coeffs(&embedding, poly_base.to_coeffs().coeffs());
 
         // Add geometric constraint to statement
         weights.push(geometric_claim_weight);
@@ -346,7 +346,7 @@ mod tests {
             .flat_map(|weights| {
                 poly_refs
                     .iter()
-                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                    .map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
             })
             .collect::<Vec<_>>();
 
@@ -511,7 +511,7 @@ mod tests {
         let evaluations = weights
             .iter()
             .flat_map(|weights| {
-                [&poly1, &poly_wrong].map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                [&poly1, &poly_wrong].map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
             })
             .collect::<Vec<_>>();
 
@@ -638,7 +638,7 @@ mod tests {
             .flat_map(|weights| {
                 polynomial_refs
                     .iter()
-                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                    .map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
             })
             .collect::<Vec<_>>();
 

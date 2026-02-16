@@ -145,7 +145,7 @@ mod batching_tests {
             .flat_map(|weights| {
                 poly_list
                     .iter()
-                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                    .map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
             })
             .collect::<Vec<_>>();
 

@@ -38,7 +38,7 @@ impl<F: Field> LinearForm<F> for MultilinearEvaluation<F> {
 }
 
 impl<M: Embedding> Evaluate<M> for MultilinearEvaluation<M::Target> {
-    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         mixed_eval(embedding, vector, &self.point, M::Target::ONE)
     }
 }

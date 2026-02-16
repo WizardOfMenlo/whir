@@ -226,7 +226,10 @@ impl<F: FftField> Config<F> {
                 .coeff_weights(false),
             )),
         ) {
-            verify!(weights.evaluate(&Identity::<F>::new(), final_coefficients.coeffs()) == evals);
+            verify!(
+                weights.evaluate_coeffs(&Identity::<F>::new(), final_coefficients.coeffs())
+                    == evals
+            );
         }
 
         // Final sumcheck

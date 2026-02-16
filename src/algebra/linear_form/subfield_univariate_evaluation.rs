@@ -93,7 +93,7 @@ impl<M: Embedding> LinearForm<M::Target> for SubfieldUnivariateEvaluation<M> {
 
 /// Evaluate over a vector in the subfield.
 impl<M: Embedding> Evaluate<M> for SubfieldUnivariateEvaluation<M> {
-    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         assert_eq!(&self.embedding, embedding);
         self.embedding.map(univariate_evaluate(vector, self.point))
     }
@@ -105,7 +105,11 @@ impl<M: Embedding> Evaluate<M> for SubfieldUnivariateEvaluation<M> {
 impl<N: Embedding, M: Embedding<Source = N::Target>> Evaluate<embedding::Compose<N, M>>
     for SubfieldUnivariateEvaluation<M>
 {
-    fn evaluate(&self, embedding: &embedding::Compose<N, M>, vector: &[N::Source]) -> M::Target {
+    fn evaluate_coeffs(
+        &self,
+        embedding: &embedding::Compose<N, M>,
+        vector: &[N::Source],
+    ) -> M::Target {
         assert_eq!(embedding.outer(), &self.embedding);
         self.embedding.map(mixed_univariate_evaluate(
             embedding.inner(),

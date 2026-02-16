@@ -62,6 +62,15 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        // Convert all polynomials to evaluation basis
+        // We will alter push this outward to change the fn signature itself.
+        let evaluation_basis_polys = polynomials
+            .iter()
+            .map(|&p| EvaluationsList::from(p.clone()).evals().to_vec())
+            .collect::<Vec<_>>();
+        let polynomials = evaluation_basis_polys.iter().collect::<Vec<_>>();
+        let polynomials = polynomials.as_slice();
+
         // Input validation
         assert_eq!(
             polynomials.len(),
@@ -69,7 +78,7 @@ impl<F: FftField> Config<F> {
         );
         assert_eq!(evaluations.len(), polynomials.len() * linear_forms.len());
         for polynomial in polynomials {
-            assert_eq!(polynomial.num_coeffs(), self.initial_size());
+            assert_eq!(polynomial.len(), self.initial_size());
         }
         for weight in linear_forms {
             assert_eq!(weight.size(), self.initial_size());
@@ -82,7 +91,7 @@ impl<F: FftField> Config<F> {
             let covector = Covector::from(weight);
             for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
                 debug_assert_eq!(
-                    covector.evaluate(self.embedding(), polynomial.coeffs()),
+                    covector.evaluate_evals(self.embedding(), &polynomial),
                     *evaluation
                 );
             }
@@ -108,12 +117,12 @@ impl<F: FftField> Config<F> {
                         if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
                             debug_assert_eq!(
                                 oods_row[j - polynomial_offset],
-                                weights.evaluate(self.embedding(), polynomial.coeffs())
+                                weights.evaluate_evals(self.embedding(), polynomial)
                             );
 
                             oods_matrix.push(oods_row[j - polynomial_offset]);
                         } else {
-                            let eval = weights.evaluate(self.embedding(), polynomial.coeffs());
+                            let eval = weights.evaluate_evals(self.embedding(), polynomial);
                             prover_state.prover_message(&eval);
                             oods_matrix.push(eval);
                         }
@@ -131,12 +140,7 @@ impl<F: FftField> Config<F> {
         let mut vector = vec![F::ZERO; self.initial_size()];
         assert_eq!(polynomial_rlc_coeffs[0], F::ONE);
         for (rlc_coeff, &polynomial) in zip_strict(&polynomial_rlc_coeffs, polynomials) {
-            mixed_scalar_mul_add(
-                self.embedding(),
-                &mut vector,
-                *rlc_coeff,
-                EvaluationsList::from(polynomial.clone()).evals(),
-            );
+            mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, polynomial);
         }
         let mut prev_witness = RoundWitness::Initial(witnesses);
 

@@ -16,6 +16,7 @@ pub use self::{
 use crate::algebra::{
     embedding::{self, Embedding},
     fields,
+    ntt::{inverse_wavelet_transform, wavelet_transform},
 };
 
 /// Represents a linear function $𝔽^n → 𝔽$ used in WHIR openings.
@@ -64,9 +65,21 @@ pub trait Evaluate<M: Embedding>: LinearForm<M::Target> {
     /// - `embedding` is an embedding $𝔾 → 𝔽$.
     /// - `vector` is a vector in $𝔾^n$.
     ///
-    /// *TODO*. This is actually false at the moment, it takes `vector` in coefficient basis.
+    fn evaluate_evals(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        let mut coeffs = vector.to_vec();
+        inverse_wavelet_transform(&mut coeffs);
+        self.evaluate_coeffs(embedding, &coeffs)
+    }
+
+    /// Evaluate linear form on a inverse_wavelet_transformed vector.
     ///
-    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target;
+    /// This happens to correspond to the MLE evaluation → coefficient transform.
+    // TODO: Deprecate
+    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        let mut evals = vector.to_vec();
+        wavelet_transform(&mut evals);
+        self.evaluate_evals(embedding, &evals)
+    }
 }
 
 assert_obj_safe!(LinearForm<fields::Field64>);
