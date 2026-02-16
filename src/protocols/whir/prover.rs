@@ -9,7 +9,6 @@ use crate::{
         dot,
         linear_form::{Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
-        ntt::inverse_wavelet_transform,
         sumcheck::fold,
         tensor_product, MultilinearPoint,
     },
@@ -191,9 +190,7 @@ impl<F: FftField> Config<F> {
         // Execute standard WHIR rounds on the batched polynomial
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
             // Commit to the polynomial, this generates out-of-domain evaluations.
-            let mut coeffs = vector.clone();
-            inverse_wavelet_transform(&mut coeffs);
-            let witness = round_config.irs_committer.commit(prover_state, &[&coeffs]);
+            let witness = round_config.irs_committer.commit(prover_state, &[&vector]);
 
             // Proof of work before in-domain challenges
             round_config.pow.prove(prover_state);
@@ -223,7 +220,7 @@ impl<F: FftField> Config<F> {
                 .values(&[F::ONE])
                 .chain(in_domain.values(&tensor_product(
                     &polynomial_rlc_coeffs,
-                    &folding_randomness.coeff_weights(true),
+                    &folding_randomness.eq_weights(),
                 )))
                 .collect::<Vec<_>>();
             let stir_rlc_coeffs = geometric_challenge(prover_state, stir_challenges.len());

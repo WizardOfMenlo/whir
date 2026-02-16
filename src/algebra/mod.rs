@@ -130,3 +130,29 @@ pub fn mixed_dot<F: Field, G: Field>(
 
     result
 }
+
+/// Compute `accumulator[i] += sum_j scalars[j] * points[j]^i`
+pub fn geometric_accumulate<F: Field>(accumulator: &mut [F], mut scalars: Vec<F>, points: &[F]) {
+    #[cfg(feature = "parallel")]
+    if accumulator.len() > workload_size::<F>() {
+        let half = accumulator.len() / 2;
+        let (low, high) = accumulator.split_at_mut(half);
+        let scalars_high = scalars
+            .iter()
+            .zip(points)
+            .map(|(s, x)| *s * x.pow([half as u64]))
+            .collect();
+        rayon::join(
+            || geometric_accumulate(low, scalars, points),
+            || geometric_accumulate(high, scalars_high, points),
+        );
+        return;
+    }
+
+    for entry in accumulator {
+        for (scalar, point) in scalars.iter_mut().zip(points) {
+            *entry += *scalar;
+            *scalar *= *point; // TODO: Skip on last
+        }
+    }
+}

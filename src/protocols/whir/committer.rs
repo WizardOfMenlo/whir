@@ -7,7 +7,6 @@ use tracing::instrument;
 
 use super::Config;
 use crate::{
-    algebra::ntt::inverse_wavelet_transform,
     hash::Hash,
     protocols::irs_commit,
     transcript::{
@@ -32,21 +31,7 @@ impl<F: FftField> Config<F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let coefficient_form = polynomials
-            .iter()
-            .map(|p| {
-                let mut coeffs = p.to_vec();
-                inverse_wavelet_transform(&mut coeffs);
-                coeffs
-            })
-            .collect::<Vec<_>>();
-        let poly_refs = coefficient_form
-            .iter()
-            .map(|p| p.as_slice())
-            .collect::<Vec<_>>();
-
-        self.initial_committer
-            .commit(prover_state, poly_refs.as_slice())
+        self.initial_committer.commit(prover_state, polynomials)
     }
 
     pub fn receive_commitment<H>(

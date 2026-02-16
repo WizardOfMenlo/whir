@@ -166,7 +166,7 @@ impl<F: FftField> Config<F> {
                 .values(&[F::ONE])
                 .chain(in_domain.values(&tensor_product(
                     &poly_rlc,
-                    &round_folding_randomness.last().unwrap().coeff_weights(true),
+                    &round_folding_randomness.last().unwrap().eq_weights(),
                 )))
                 .collect::<Vec<_>>();
             let constraint_rlc_coeffs =
@@ -210,17 +210,7 @@ impl<F: FftField> Config<F> {
             in_domain.evaluators(final_vector.len()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
-                &MultilinearPoint(
-                    round_folding_randomness
-                        .last()
-                        .unwrap()
-                        .0
-                        .iter()
-                        .rev()
-                        .copied()
-                        .collect(),
-                )
-                .coeff_weights(false),
+                &round_folding_randomness.last().unwrap().eq_weights(),
             )),
         ) {
             verify!(weights.evaluate(&Identity::<F>::new(), &final_vector) == evals);

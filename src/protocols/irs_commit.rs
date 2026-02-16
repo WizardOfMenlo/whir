@@ -22,11 +22,6 @@
 //! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
 //! - Support mixed `num_polys` openings.
 
-// COMMIT NOTES:
-// Changes compared to previous version:
-// - OODS answer are (poly,point) order, not (point,poly). This is for consistency with the in-domain samples.
-// - Matrix commitment is over the subfield. This performs better when the subfield is smaller.
-
 use std::fmt;
 
 use ark_ff::{FftField, Field};
