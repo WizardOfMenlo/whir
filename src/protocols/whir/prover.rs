@@ -249,12 +249,9 @@ impl<F: FftField> Config<F> {
         }
 
         // Directly send coefficients of the polynomial to the verifier.
-        // TODO: Also send in eval form.
         assert_eq!(vector.len(), self.final_sumcheck.initial_size);
-        let mut coeffs = vector.clone();
-        inverse_wavelet_transform(&mut coeffs);
-        for coeff in coeffs {
-            prover_state.prover_message(&coeff);
+        for coeff in &vector {
+            prover_state.prover_message(coeff);
         }
 
         // PoW

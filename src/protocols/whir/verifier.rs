@@ -182,9 +182,8 @@ impl<F: FftField> Config<F> {
             prev_commitment = RoundCommitment::Round { commitment };
         }
 
-        // Final round (we receive the full polynomial instead of a commitment)
-        let final_coefficients =
-            verifier_state.prover_messages_vec(self.final_sumcheck.initial_size)?;
+        // Final round (we receive the full vector instead of a commitment)
+        let final_vector = verifier_state.prover_messages_vec(self.final_sumcheck.initial_size)?;
 
         // Final proof of work.
         self.final_pow.verify(verifier_state)?;
@@ -209,7 +208,7 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.evaluators(final_coefficients.len()),
+            in_domain.evaluators(final_vector.len()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
                 &MultilinearPoint(
@@ -225,7 +224,7 @@ impl<F: FftField> Config<F> {
                 .coeff_weights(false),
             )),
         ) {
-            verify!(weights.evaluate_coeffs(&Identity::<F>::new(), &final_coefficients) == evals);
+            verify!(weights.evaluate_evals(&Identity::<F>::new(), &final_vector) == evals);
         }
 
         // Final sumcheck
@@ -270,7 +269,7 @@ impl<F: FftField> Config<F> {
 
         // Check the final sumcheck equation
         let poly_eval = MultilinearEvaluation::new(final_sumcheck_randomness.0)
-            .evaluate_coeffs(&Identity::new(), &final_coefficients);
+            .evaluate_evals(&Identity::new(), &final_vector);
         verify!(poly_eval * weight_eval == the_sum);
 
         // Return the evaluation point and the claimed values of the deferred weights.
