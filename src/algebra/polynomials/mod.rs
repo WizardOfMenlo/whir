@@ -1,13 +1,10 @@
-mod coeffs;
-mod evals;
-pub mod fold;
-pub mod hypercube;
-pub mod lagrange_iterator;
+pub(crate) mod hypercube;
+pub(crate) mod lagrange_iterator;
 mod multilinear;
 
 use ark_ff::Field;
 
-pub use self::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint};
+pub use self::multilinear::MultilinearPoint;
 
 /// Evaluates the mle of a polynomial from evaluations in a geometric progression.
 ///

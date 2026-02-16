@@ -5,8 +5,8 @@ use crate::{
     algebra::{
         dot,
         embedding::Identity,
-        linear_form::{Evaluate, LinearForm},
-        polynomials::{CoefficientList, MultilinearPoint},
+        linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
+        polynomials::MultilinearPoint,
         tensor_product,
     },
     hash::Hash,
@@ -183,9 +183,8 @@ impl<F: FftField> Config<F> {
         }
 
         // Final round (we receive the full polynomial instead of a commitment)
-        let final_coefficients = CoefficientList::new(
-            verifier_state.prover_messages_vec(self.final_sumcheck.initial_size)?,
-        );
+        let final_coefficients =
+            verifier_state.prover_messages_vec(self.final_sumcheck.initial_size)?;
 
         // Final proof of work.
         self.final_pow.verify(verifier_state)?;
@@ -210,7 +209,7 @@ impl<F: FftField> Config<F> {
 
         // Verify in-domain constraints directly
         for (weights, evals) in zip_strict(
-            in_domain.evaluators(final_coefficients.num_coeffs()),
+            in_domain.evaluators(final_coefficients.len()),
             in_domain.values(&tensor_product(
                 &poly_rlc,
                 &MultilinearPoint(
@@ -226,10 +225,7 @@ impl<F: FftField> Config<F> {
                 .coeff_weights(false),
             )),
         ) {
-            verify!(
-                weights.evaluate_coeffs(&Identity::<F>::new(), final_coefficients.coeffs())
-                    == evals
-            );
+            verify!(weights.evaluate_coeffs(&Identity::<F>::new(), &final_coefficients) == evals);
         }
 
         // Final sumcheck
@@ -273,7 +269,8 @@ impl<F: FftField> Config<F> {
         verify!(deferred_iter.next().is_none());
 
         // Check the final sumcheck equation
-        let poly_eval = final_coefficients.evaluate(&final_sumcheck_randomness);
+        let poly_eval = MultilinearEvaluation::new(final_sumcheck_randomness.0)
+            .evaluate_coeffs(&Identity::new(), &final_coefficients);
         verify!(poly_eval * weight_eval == the_sum);
 
         // Return the evaluation point and the claimed values of the deferred weights.
