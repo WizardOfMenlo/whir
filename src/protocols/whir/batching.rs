@@ -122,7 +122,8 @@ mod batching_tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let poly_refs = poly_list.iter().collect::<Vec<_>>();
+        let vecs = poly_list.iter().map(|p| p.to_evals()).collect::<Vec<_>>();
+        let poly_refs = vecs.iter().map(|p| p.as_slice()).collect::<Vec<_>>();
         let batched_witness = params.commit(&mut prover_state, &poly_refs);
 
         let embedding = Basefield::new();

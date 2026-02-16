@@ -60,6 +60,12 @@ impl<F: Field> CoefficientList<F> {
         &mut self.coeffs
     }
 
+    pub fn to_evals(&self) -> Vec<F> {
+        let mut evals = self.coeffs.clone();
+        wavelet_transform(&mut evals);
+        evals
+    }
+
     pub fn into_coeffs(self) -> Vec<F> {
         self.coeffs
     }

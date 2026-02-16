@@ -7,7 +7,10 @@ use tracing::instrument;
 
 use super::Config;
 use crate::{
-    algebra::polynomials::CoefficientList,
+    algebra::{
+        ntt::{inverse_wavelet_transform, wavelet_transform},
+        polynomials::CoefficientList,
+    },
     hash::Hash,
     protocols::irs_commit,
     transcript::{
@@ -20,11 +23,11 @@ pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
 impl<F: FftField> Config<F> {
     /// Commit to one or more polynomials in coefficient form.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().len())))]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&CoefficientList<F::BasePrimeField>],
+        polynomials: &[&[F::BasePrimeField]],
     ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
@@ -32,10 +35,19 @@ impl<F: FftField> Config<F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        let poly_refs = polynomials
+        let coefficient_form = polynomials
             .iter()
-            .map(|poly| poly.coeffs())
+            .map(|p| {
+                let mut coeffs = p.to_vec();
+                inverse_wavelet_transform(&mut coeffs);
+                coeffs
+            })
             .collect::<Vec<_>>();
+        let poly_refs = coefficient_form
+            .iter()
+            .map(|p| p.as_slice())
+            .collect::<Vec<_>>();
+
         self.initial_committer
             .commit(prover_state, poly_refs.as_slice())
     }

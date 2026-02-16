@@ -10,7 +10,7 @@ use crate::{
         linear_form::{Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
         ntt::inverse_wavelet_transform,
-        polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+        polynomials::MultilinearPoint,
         sumcheck::fold,
         tensor_product,
     },
@@ -48,7 +48,7 @@ impl<F: FftField> Config<F> {
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&CoefficientList<F::BasePrimeField>],
+        polynomials: &[&[F::BasePrimeField]],
         witnesses: &[&Witness<F>],
         linear_forms: &[&dyn LinearForm<F>],
         evaluations: &[F],
@@ -62,15 +62,6 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        // Convert all polynomials to evaluation basis
-        // We will alter push this outward to change the fn signature itself.
-        let evaluation_basis_polys = polynomials
-            .iter()
-            .map(|&p| EvaluationsList::from(p.clone()).evals().to_vec())
-            .collect::<Vec<_>>();
-        let polynomials = evaluation_basis_polys.iter().collect::<Vec<_>>();
-        let polynomials = polynomials.as_slice();
-
         // Input validation
         assert_eq!(
             polynomials.len(),

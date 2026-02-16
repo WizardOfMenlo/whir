@@ -152,6 +152,8 @@ mod tests {
         weights.push(geometric_claim_weight);
         evaluations.push(geometric_sum);
 
+        let vec = polynomial.to_evals();
+
         // Define the Fiat-Shamir domain separator for committing and proving
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
@@ -161,7 +163,7 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let witness = params.commit(&mut prover_state, &[&polynomial]);
+        let witness = params.commit(&mut prover_state, &[&vec]);
 
         // Generate a STARK proof for the given statement and witness
         let weight_dyn_refs = weights
@@ -170,7 +172,7 @@ mod tests {
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &[&polynomial],
+            &[&vec],
             &[&witness],
             &weight_dyn_refs,
             &evaluations,
@@ -322,6 +324,9 @@ mod tests {
             .collect();
         let poly_refs = polynomials.iter().collect::<Vec<_>>();
 
+        let vectors = polynomials.iter().map(|p| p.to_evals()).collect::<Vec<_>>();
+        let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+
         let embedding = Basefield::new();
 
         // Create weights to constraint the polynomials with.
@@ -359,8 +364,8 @@ mod tests {
 
         // Commit to each polynomial and generate witnesses
         let mut witnesses = Vec::new();
-        for poly in &polynomials {
-            let witness = params.commit(&mut prover_state, &[poly]);
+        for &vec in &vec_refs {
+            let witness = params.commit(&mut prover_state, &[vec]);
             witnesses.push(witness);
         }
         let witness_refs = witnesses.iter().collect::<Vec<_>>();
@@ -372,7 +377,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            &poly_refs,
+            &vec_refs,
             &witness_refs,
             &weights_dyn_refs,
             &evaluations,
@@ -496,6 +501,10 @@ mod tests {
         let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
         let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
 
+        let vec1 = poly1.to_evals();
+        let vec2 = poly2.to_evals();
+        let vec_wrong = poly_wrong.to_evals();
+
         let embedding = Basefield::new();
 
         // Create test weights
@@ -521,8 +530,8 @@ mod tests {
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
-        let witness1 = params.commit(&mut prover_state, &[&poly1]);
-        let witness2 = params.commit(&mut prover_state, &[&poly2]);
+        let witness1 = params.commit(&mut prover_state, &[&vec1]);
+        let witness2 = params.commit(&mut prover_state, &[&vec2]);
 
         // Generate proof with mismatched polynomials
         // The prover will compute cross-terms using poly_wrong, not poly2
@@ -532,7 +541,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
-            &[&poly1, &poly_wrong],
+            &[&vec1, &vec_wrong],
             &[&witness1, &witness2],
             &weights_dyn_ref,
             &evaluations,
@@ -609,10 +618,13 @@ mod tests {
                 .collect();
             all_polynomials.push(witness_polys);
         }
-        let polynomial_refs = all_polynomials
+        // convert to evals
+        let poly_evals = all_polynomials
             .iter()
             .flat_map(|ps| ps.iter())
+            .map(|p| p.to_evals())
             .collect::<Vec<_>>();
+        let polynomial_refs = poly_evals.iter().map(|p| p.as_slice()).collect::<Vec<_>>();
 
         // Create weights for constraints
         let embedding = Basefield::new();
@@ -638,7 +650,7 @@ mod tests {
             .flat_map(|weights| {
                 polynomial_refs
                     .iter()
-                    .map(|poly| weights.evaluate_coeffs(&embedding, poly.coeffs()))
+                    .map(|poly| weights.evaluate_evals(&embedding, poly))
             })
             .collect::<Vec<_>>();
 
@@ -650,9 +662,8 @@ mod tests {
 
         // Commit using commit_batch (stacks batch_size polynomials per witness)
         let mut witnesses = Vec::new();
-        for witness_polys in &all_polynomials {
-            let poly_refs: Vec<_> = witness_polys.iter().collect::<Vec<_>>();
-            let witness = params.commit(&mut prover_state, &poly_refs);
+        for witness_polys in polynomial_refs.chunks(batch_size) {
+            let witness = params.commit(&mut prover_state, witness_polys);
             witnesses.push(witness);
         }
         let witness_refs = witnesses.iter().collect::<Vec<_>>();
