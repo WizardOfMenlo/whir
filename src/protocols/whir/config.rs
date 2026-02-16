@@ -701,10 +701,7 @@ impl<F: FftField> Display for Config<F> {
 
 impl<F: FftField> RoundConfig<F> {
     pub fn initial_size(&self) -> usize {
-        assert_eq!(
-            self.irs_committer.vector_size,
-            self.sumcheck.initial_size
-        );
+        assert_eq!(self.irs_committer.vector_size, self.sumcheck.initial_size);
         self.sumcheck.initial_size
     }
 

@@ -121,7 +121,7 @@ mod batching_tests {
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         for point in points {
             linear_forms.push(Box::new(MultilinearEvaluation {
-                point: point.0.to_vec(),
+                point: point.0.clone(),
             }));
         }
         linear_forms.push(Box::new(Covector {
