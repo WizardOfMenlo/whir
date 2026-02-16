@@ -11,8 +11,8 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        polynomials::{EvaluationsList, MultilinearPoint},
-        sumcheck::compute_sumcheck_polynomial,
+        polynomials::MultilinearPoint,
+        sumcheck::{compute_sumcheck_polynomial, fold},
     },
     ensure,
     protocols::proof_of_work,
@@ -67,8 +67,8 @@ impl<F: Field> Config<F> {
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        a: &mut EvaluationsList<F>,
-        b: &mut EvaluationsList<F>,
+        a: &mut Vec<F>,
+        b: &mut Vec<F>,
         sum: &mut F,
     ) -> MultilinearPoint<F>
     where
@@ -79,14 +79,14 @@ impl<F: Field> Config<F> {
         U64: Codec<[H::U]>,
     {
         self.validate().expect("Invalid configuration");
-        assert_eq!(a.num_evals(), self.initial_size);
-        assert_eq!(b.num_evals(), self.initial_size);
-        debug_assert_eq!(dot(a.evals(), b.evals()), *sum);
+        assert_eq!(a.len(), self.initial_size);
+        assert_eq!(b.len(), self.initial_size);
+        debug_assert_eq!(dot(a, b), *sum);
 
         let mut res = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
             // Send sumcheck polynomial c0 and c2
-            let (c0, c2) = compute_sumcheck_polynomial(a.evals(), b.evals());
+            let (c0, c2) = compute_sumcheck_polynomial(a, b);
             let c1 = *sum - c0.double() - c2;
             prover_state.prover_message(&c0);
             prover_state.prover_message(&c2);
@@ -99,8 +99,8 @@ impl<F: Field> Config<F> {
             res.push(folding_randomness);
 
             // Fold the inputs
-            a.fold_in_place(folding_randomness);
-            b.fold_in_place(folding_randomness);
+            fold(a, folding_randomness);
+            fold(b, folding_randomness);
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
         }
 
