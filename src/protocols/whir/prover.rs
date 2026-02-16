@@ -81,7 +81,7 @@ impl<F: FftField> Config<F> {
             let covector = Covector::from(weight);
             for (&polynomial, evaluation) in zip_strict(polynomials, evaluations) {
                 debug_assert_eq!(
-                    covector.evaluate_evals(self.embedding(), &polynomial),
+                    covector.evaluate(self.embedding(), &polynomial),
                     *evaluation
                 );
             }
@@ -107,12 +107,12 @@ impl<F: FftField> Config<F> {
                         if j >= polynomial_offset && j < oods_row.len() + polynomial_offset {
                             debug_assert_eq!(
                                 oods_row[j - polynomial_offset],
-                                weights.evaluate_evals(self.embedding(), polynomial)
+                                weights.evaluate(self.embedding(), polynomial)
                             );
 
                             oods_matrix.push(oods_row[j - polynomial_offset]);
                         } else {
-                            let eval = weights.evaluate_evals(self.embedding(), polynomial);
+                            let eval = weights.evaluate(self.embedding(), polynomial);
                             prover_state.prover_message(&eval);
                             oods_matrix.push(eval);
                         }

@@ -93,7 +93,7 @@ mod tests {
             let linear_form = MultilinearEvaluation {
                 point: point.0.clone(),
             };
-            evaluations.push(linear_form.evaluate_evals(params.embedding(), &vector));
+            evaluations.push(linear_form.evaluate(params.embedding(), &vector));
             linear_forms.push(Box::new(linear_form));
         }
 
@@ -104,7 +104,7 @@ mod tests {
         };
 
         // Compute the weighted sum of the vector
-        let sum = covector.evaluate_evals(params.embedding(), &vector);
+        let sum = covector.evaluate(params.embedding(), &vector);
 
         // Add linear constraint to the statement
         linear_forms.push(Box::new(covector));
@@ -300,7 +300,7 @@ mod tests {
             .flat_map(|linear_form| {
                 vec_refs
                     .iter()
-                    .map(|vec| linear_form.evaluate_evals(params.embedding(), vec))
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 
@@ -464,7 +464,7 @@ mod tests {
         // Create valid evaluations for (poly1, polywrong)
         let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate_evals(&embedding, v)))
+            .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate(&embedding, v)))
             .collect::<Vec<_>>();
 
         // Commit to the correct polynomials
@@ -574,7 +574,7 @@ mod tests {
             .flat_map(|linear_form| {
                 vec_refs
                     .iter()
-                    .map(|vec| linear_form.evaluate_evals(&embedding, vec))
+                    .map(|vec| linear_form.evaluate(&embedding, vec))
             })
             .collect::<Vec<_>>();
 

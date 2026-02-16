@@ -133,7 +133,7 @@ mod batching_tests {
             .flat_map(|linear_form| {
                 vec_refs
                     .iter()
-                    .map(|vec| linear_form.evaluate_evals(params.embedding(), vec))
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 

@@ -8,7 +8,7 @@ use whir::{
         embedding::Basefield,
         fields,
         linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
-        polynomials::MultilinearPoint,
+        MultilinearPoint,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
@@ -265,7 +265,7 @@ where
 
     for point in &points {
         let linear_form = MultilinearEvaluation::new(point.0.clone());
-        evaluations.push(linear_form.evaluate_evals(params.embedding(), &vector));
+        evaluations.push(linear_form.evaluate(params.embedding(), &vector));
         linear_forms.push(Box::new(linear_form));
     }
 
@@ -275,7 +275,7 @@ where
             deferred: false,
             vector: (0..num_coeffs).map(F::from).collect(),
         };
-        evaluations.push(covector.evaluate_evals(params.embedding(), &vector));
+        evaluations.push(covector.evaluate(params.embedding(), &vector));
         linear_forms.push(Box::new(covector));
     }
 

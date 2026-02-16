@@ -2,7 +2,7 @@ use ark_ff::Field;
 
 use super::{Evaluate, LinearForm};
 use crate::{
-    algebra::{eval_eq, linear_form::UnivariateEvaluation, sumcheck::mixed_eval, Embedding},
+    algebra::{eval_eq, linear_form::UnivariateEvaluation, mixed_multilinear_extend, Embedding},
     utils::zip_strict,
 };
 
@@ -38,8 +38,8 @@ impl<F: Field> LinearForm<F> for MultilinearEvaluation<F> {
 }
 
 impl<M: Embedding> Evaluate<M> for MultilinearEvaluation<M::Target> {
-    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
-        mixed_eval(embedding, vector, &self.point, M::Target::ONE)
+    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        mixed_multilinear_extend(embedding, vector, &self.point)
     }
 }
 

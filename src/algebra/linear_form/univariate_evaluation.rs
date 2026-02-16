@@ -1,7 +1,10 @@
 use ark_ff::Field;
 
 use super::LinearForm;
-use crate::algebra::{embedding::Embedding, linear_form::Evaluate, mixed_univariate_evaluate};
+use crate::algebra::{
+    embedding::Embedding,
+    linear_form::{Evaluate, MultilinearEvaluation},
+};
 #[cfg(feature = "parallel")]
 use crate::utils::zip_strict;
 
@@ -95,9 +98,8 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
 }
 
 impl<M: Embedding> Evaluate<M> for UnivariateEvaluation<M::Target> {
-    // Evaluate a vector in coefficient form.
-    fn evaluate_coeffs(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
-        mixed_univariate_evaluate(embedding, vector, self.point)
+    fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
+        MultilinearEvaluation::from_univariate(self).evaluate(embedding, vector)
     }
 }
 

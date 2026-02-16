@@ -223,7 +223,7 @@ impl<F: FftField> Config<F> {
                 .coeff_weights(false),
             )),
         ) {
-            verify!(weights.evaluate_evals(&Identity::<F>::new(), &final_vector) == evals);
+            verify!(weights.evaluate(&Identity::<F>::new(), &final_vector) == evals);
         }
 
         // Final sumcheck
@@ -268,7 +268,7 @@ impl<F: FftField> Config<F> {
 
         // Check the final sumcheck equation
         let poly_eval = MultilinearEvaluation::new(final_sumcheck_randomness.0)
-            .evaluate_evals(&Identity::new(), &final_vector);
+            .evaluate(&Identity::new(), &final_vector);
         verify!(poly_eval * weight_eval == the_sum);
 
         // Return the evaluation point and the claimed values of the deferred weights.
