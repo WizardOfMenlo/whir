@@ -2,7 +2,7 @@ use ark_ff::Field;
 
 use super::{Evaluate, LinearForm};
 use crate::{
-    algebra::{eval_eq, linear_form::UnivariateEvaluation, mixed_multilinear_extend, Embedding},
+    algebra::{eval_eq, mixed_multilinear_extend, Embedding},
     utils::zip_strict,
 };
 
@@ -15,6 +15,12 @@ use crate::{
 ///
 pub struct MultilinearExtension<F: Field> {
     pub point: Vec<F>,
+}
+
+impl<F: Field> MultilinearExtension<F> {
+    pub const fn new(point: Vec<F>) -> Self {
+        Self { point }
+    }
 }
 
 impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
@@ -40,25 +46,5 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
 impl<M: Embedding> Evaluate<M> for MultilinearExtension<M::Target> {
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target {
         mixed_multilinear_extend(embedding, vector, &self.point)
-    }
-}
-
-impl<F: Field> MultilinearExtension<F> {
-    pub const fn new(point: Vec<F>) -> Self {
-        Self { point }
-    }
-
-    /// A [`UnivariateEvaluation`] can be represented as a [`MultilinearEvaluation`].
-    pub fn from_univariate(univariate: &UnivariateEvaluation<F>) -> Self {
-        assert!(univariate.size().is_power_of_two());
-        let num_variables = univariate.size().trailing_zeros() as usize;
-        let mut point = Vec::with_capacity(num_variables);
-        let mut pow2k = univariate.point;
-        for _ in 0..num_variables {
-            point.push(pow2k);
-            pow2k.square_in_place(); // Compute x^(2^k) at each step
-        }
-        point.reverse(); // Match big-endian convention used by multilinear evaluations.
-        Self { point }
     }
 }

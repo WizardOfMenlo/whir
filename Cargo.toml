@@ -64,8 +64,8 @@ divan = { version = "4.2", package = "codspeed-divan-compat" }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
-debug = true
-# lto = "fat"
+debug = "line-tables-only"
+lto = "fat"
 
 [features]
 default = ["parallel"]
@@ -90,10 +90,10 @@ opt-level = 1
 codegen-units = 16
 incremental = true
 
+[profile.samply]
+inherits = "release"
+lto = "thin" # LTO breaks line attribution.
+
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
 opt-level = 3
-
-[profile.samply]
-inherits = "release"
-debug = true
