@@ -32,7 +32,7 @@ mod batching_tests {
         algebra::{
             embedding::Basefield,
             fields::Field64,
-            linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
         hash,
@@ -120,7 +120,7 @@ mod batching_tests {
         // Create a weights matrix and evaluations for each polynomial
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         for point in points {
-            linear_forms.push(Box::new(MultilinearEvaluation {
+            linear_forms.push(Box::new(MultilinearExtension {
                 point: point.0.clone(),
             }));
         }

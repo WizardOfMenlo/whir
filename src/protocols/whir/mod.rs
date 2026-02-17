@@ -18,7 +18,7 @@ mod tests {
         algebra::{
             embedding::Basefield,
             fields::{Field64, Field64_2},
-            linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
         hash,
@@ -90,7 +90,7 @@ mod tests {
 
         // For each random point, evaluate the mle of the vector and create a constraint
         for point in &points {
-            let linear_form = MultilinearEvaluation {
+            let linear_form = MultilinearExtension {
                 point: point.0.clone(),
             };
             evaluations.push(linear_form.evaluate(params.embedding(), &vector));
@@ -284,7 +284,7 @@ mod tests {
         // Add random point constraints
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
-            linear_forms.push(Box::new(MultilinearEvaluation {
+            linear_forms.push(Box::new(MultilinearExtension {
                 point: MultilinearPoint::rand(&mut rng, num_variables).0,
             }));
         }
@@ -454,10 +454,10 @@ mod tests {
 
         // Create test weights
         let linear_forms: [Box<dyn Evaluate<Basefield<EF>>>; 2] = [
-            Box::new(MultilinearEvaluation {
+            Box::new(MultilinearExtension {
                 point: MultilinearPoint::rand(&mut rng, num_variables).0,
             }),
-            Box::new(MultilinearEvaluation {
+            Box::new(MultilinearExtension {
                 point: MultilinearPoint::rand(&mut rng, num_variables).0,
             }),
         ];
@@ -558,7 +558,7 @@ mod tests {
 
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
-            linear_forms.push(Box::new(MultilinearEvaluation {
+            linear_forms.push(Box::new(MultilinearExtension {
                 point: MultilinearPoint::rand(&mut rng, num_variables).0,
             }));
         }

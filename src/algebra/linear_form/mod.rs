@@ -1,14 +1,14 @@
 //! Linear Forms that commited vectors can be openened against.
 
 mod covector;
-mod multilinear_evaluation;
+mod multilinear_extension;
 mod univariate_evaluation;
 
 use ark_ff::Field;
 use static_assertions::assert_obj_safe;
 
 pub use self::{
-    covector::Covector, multilinear_evaluation::MultilinearEvaluation,
+    covector::Covector, multilinear_extension::MultilinearExtension,
     univariate_evaluation::UnivariateEvaluation,
 };
 use crate::algebra::{

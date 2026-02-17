@@ -12,7 +12,7 @@ use whir::{
     algebra::{
         embedding::Basefield,
         fields,
-        linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
+        linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
     bits::Bits,
@@ -258,7 +258,7 @@ where
         let mut evaluations = Vec::new();
 
         for point in &points {
-            let linear_form = MultilinearEvaluation::new(point.0.clone());
+            let linear_form = MultilinearExtension::new(point.0.clone());
             evaluations.push(linear_form.evaluate(params.embedding(), &vector));
             weights.push(Box::new(linear_form));
         }

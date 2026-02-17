@@ -2,18 +2,12 @@ use ark_ff::Field;
 
 use super::LinearForm;
 use crate::algebra::{
-    embedding::Embedding,
-    geometric_accumulate,
-    linear_form::{Covector, Evaluate},
-    mixed_univariate_evaluate,
+    embedding::Embedding, geometric_accumulate, linear_form::Evaluate, mixed_univariate_evaluate,
 };
 
 /// Linear form to represent univariate polynomial evaluation.
 ///
 /// Given a vector $v ∈ 𝔽^n$ it computes $sum_i v_i · x^i$ for some fixed $x$.
-///
-/// **TODO**. This actually first converts $v$ from a multilinear evaluation basis
-/// to a coefficient basis.
 pub struct UnivariateEvaluation<F: Field> {
     /// Univariate evaluation doesn't have an inherent size, so we need to store one.
     pub size: usize,
@@ -53,7 +47,15 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
-        Covector::from(self).mle_evaluate(point)
+        // Multilinear extension of (1, x, x^2, ..) = ⨂_i (1, x^2^i).
+        let mut x2i = self.point;
+        let mut result = F::ONE;
+        for &r in point.iter().rev() {
+            // TODO: Why rev?
+            result *= (F::ONE - r) + r * x2i;
+            x2i.square_in_place();
+        }
+        result
     }
 
     /// See also [`accumulate_many`] for a more efficient batched version.

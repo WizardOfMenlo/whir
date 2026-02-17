@@ -5,7 +5,7 @@ use crate::{
     algebra::{
         dot,
         embedding::Identity,
-        linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
+        linear_form::{Evaluate, LinearForm, MultilinearExtension},
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
@@ -257,7 +257,7 @@ impl<F: FftField> Config<F> {
         verify!(deferred_iter.next().is_none());
 
         // Check the final sumcheck equation
-        let poly_eval = MultilinearEvaluation::new(final_sumcheck_randomness.0)
+        let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
             .evaluate(&Identity::new(), &final_vector);
         verify!(poly_eval * weight_eval == the_sum);
 
