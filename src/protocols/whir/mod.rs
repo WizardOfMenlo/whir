@@ -33,11 +33,11 @@ mod tests {
     /// Extension field type used in the tests.
     type EF = Field64_2;
 
-    /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
+    /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     ///
     /// This function:
     /// - builds a multilinear polynomial with a specified number of variables,
-    /// - constructs a STARK statement with constraints based on evaluations and linear relations,
+    /// - constructs a statement with constraints based on evaluations and linear relations,
     /// - commits to the polynomial using a Merkle-based commitment scheme,
     /// - generates a proof using the WHIR prover,
     /// - verifies the proof using the WHIR verifier.

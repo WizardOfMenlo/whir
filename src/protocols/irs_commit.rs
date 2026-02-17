@@ -1,21 +1,21 @@
 //! Interleaved Reed-Solomon Commitment Protocol
 //!
-//! Commits to a `num_polynomials` by `polynomial_size` matrix over `F`.
+//! Commits to a `num_vectorss` by `vector_size` matrix over `F`.
 //!
-//! This will be reshaped into a `polynomial_size / interleaving_depth` by
-//! `num_polynomials * interleaving_depth` matrix. Then each row is encoded
-//! using an NTT friendly Reed-Solomon code to produce a `num_polynomials * interleaving_depth`
+//! This will be reshaped into a `vector_size / interleaving_depth` by
+//! `num_vectors * interleaving_depth` matrix. Then each row is encoded
+//! using an NTT friendly Reed-Solomon code to produce a `num_vectors * interleaving_depth`
 //! by `codeword_size` matrix. This matrix is committed using the [`matrix_commit`] protocol.
 //!
 //! After committing the encoded matrix, the protocol generates a random Reed-Solomon code of
 //! length `out_domain_samples` over an extension field `G` of `F` and encodes the original
-//! matrix using this code to produce a `num_polynomials` by `out_domain_samples` matrix over `G`.
+//! matrix using this code to produce a `num_vectors` by `out_domain_samples` matrix over `G`.
 //! Together, these two encoded matrices form a commitment to the original matrix.
 //!
 //! On opening the commitment, the protocol randomly selects `in_domain_samples` rows and opens
 //! it using the [`matrix_commit`] protocol. Sampling is done with replacement, so may produce
 //! fewer than `in_domain_samples` distinct rows. This produces `in_domain_samples` evaluation
-//! points in `F` and `in_domain_samples` by `num_polynomials * interleaving_depth`.
+//! points in `F` and `in_domain_samples` by `num_vectors * interleaving_depth`.
 //!
 //! *To do:*:
 //! - Consistently Reframe as vector commitment protocol (or, with batching, a matrix commitment protocol).
@@ -156,9 +156,7 @@ where
         1.0 / self.expansion as f64
     }
 
-    /// Commit to one or more polynomials.
-    ///
-    /// Polynomials are given in coefficient form.
+    /// Commit to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn commit<H, R>(
         &self,
@@ -186,7 +184,7 @@ where
         assert_eq!(vectors.len(), self.num_vectors);
         assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
-        // Interleaved RS Encode the polynomials
+        // Interleaved RS Encode the vectorss
         let matrix = interleaved_rs_encode(vectors, self.expansion, self.interleaving_depth);
 
         // Commit to the matrix
@@ -196,8 +194,8 @@ where
         let oods_points: Vec<G> = prover_state.verifier_message_vec(self.out_domain_samples);
         let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_vectors);
         for &point in &oods_points {
-            for &polynomial in vectors {
-                let value = mixed_univariate_evaluate(&*self.embedding, polynomial, point);
+            for &vector in vectors {
+                let value = mixed_univariate_evaluate(&*self.embedding, vector, point);
                 prover_state.prover_message(&value);
                 oods_matrix.push(value);
             }
@@ -213,7 +211,7 @@ where
         }
     }
 
-    /// Receive a commitment to one or more polynomials.
+    /// Receive a commitment to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn receive_commitment<H>(
         &self,
@@ -237,7 +235,7 @@ where
         })
     }
 
-    /// Opens the commitment and returns the evaluations of the polynomials.
+    /// Opens the commitment and returns the evaluations of the vectors.
     ///
     /// Constraints are returned as a pair of evaluation point and values
     /// for each row.
@@ -376,7 +374,7 @@ impl<G: Field> Commitment<G> {
         &self.out_of_domain
     }
 
-    pub fn num_polynomials(&self) -> usize {
+    pub fn num_vectors(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
@@ -387,7 +385,7 @@ impl<F: FftField, G: Field> Witness<F, G> {
         &self.out_of_domain
     }
 
-    pub fn num_polynomials(&self) -> usize {
+    pub fn num_vectors(&self) -> usize {
         self.out_of_domain().num_columns()
     }
 }
@@ -474,16 +472,16 @@ mod tests {
     // Create a [`Strategy`] for generating [`irs_commit`] configurations.
     pub fn config<M: Embedding + Clone>(
         embedding: M,
-        num_polynomials: usize,
-        polynomial_size: usize,
+        num_vectors: usize,
+        vector_size: usize,
         interleaving_depth: usize,
     ) -> impl Strategy<Value = Config<M::Source, M::Target, M>>
     where
         M::Source: FftField,
     {
         assert!(interleaving_depth != 0);
-        assert!(polynomial_size.is_multiple_of(interleaving_depth));
-        let base = polynomial_size / interleaving_depth;
+        assert!(vector_size.is_multiple_of(interleaving_depth));
+        let base = vector_size / interleaving_depth;
 
         // Compute supported NTT domains for F
         let valid_expansions = (1..=30)
@@ -496,8 +494,8 @@ mod tests {
             (
                 Just(expansion),
                 matrix_commit::tests::config::<M::Source>(
-                    polynomial_size * expansion / interleaving_depth,
-                    interleaving_depth * num_polynomials,
+                    vector_size * expansion / interleaving_depth,
+                    interleaving_depth * num_vectors,
                 ),
             )
         });
@@ -510,8 +508,8 @@ mod tests {
                 deduplicate_in_domain,
             )| Config {
                 embedding: Typed::new(embedding.clone()),
-                num_vectors: num_polynomials,
-                vector_size: polynomial_size,
+                num_vectors,
+                vector_size,
                 expansion,
                 interleaving_depth,
                 matrix_commit,
@@ -536,7 +534,7 @@ mod tests {
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
-        let polynomials = (0..config.num_vectors)
+        let vectors = (0..config.num_vectors)
             .map(|_| {
                 (0..config.vector_size)
                     .map(|_| rng.gen::<M::Source>())
@@ -550,7 +548,7 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit(
             &mut prover_state,
-            &polynomials.iter().map(|p| p.as_slice()).collect::<Vec<_>>(),
+            &vectors.iter().map(|p| p.as_slice()).collect::<Vec<_>>(),
         );
         assert_eq!(
             witness.out_of_domain().points.len(),
@@ -568,9 +566,9 @@ mod tests {
                     .matrix
                     .chunks_exact(config.num_vectors),
             ) {
-                for (polynomial, expected) in zip_strict(polynomials.iter(), evals.iter()) {
+                for (vector, expected) in zip_strict(vectors.iter(), evals.iter()) {
                     assert_eq!(
-                        mixed_univariate_evaluate(config.embedding(), polynomial, *point),
+                        mixed_univariate_evaluate(config.embedding(), vector, *point),
                         *expected
                     );
                 }
@@ -601,7 +599,7 @@ mod tests {
                     .matrix
                     .chunks_exact(config.num_vectors * config.interleaving_depth),
             ) {
-                let expected_iter = polynomials.iter().flat_map(|poly| {
+                let expected_iter = vectors.iter().flat_map(|poly| {
                     (0..config.interleaving_depth).map(|j| {
                         // coefficients in the contiguous block for this interleaving index
                         let start = j * base;
@@ -637,10 +635,10 @@ mod tests {
         let size = select(valid_sizes);
 
         let config = (0_usize..=3, size, 1_usize..=10).prop_flat_map(
-            |(num_polynomials, size, interleaving_depth)| {
+            |(num_vectors, size, interleaving_depth)| {
                 config(
                     embedding.clone(),
-                    num_polynomials,
+                    num_vectors,
                     size * interleaving_depth,
                     interleaving_depth,
                 )

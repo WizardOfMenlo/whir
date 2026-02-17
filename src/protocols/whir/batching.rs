@@ -1,14 +1,14 @@
 ///
-/// High level idea of batching multiple polynomials is as follows:
+/// High level idea of batching multiple vectors is as follows:
 ///
-/// - Prover commits to multiple Merkle roots of evaluations of each polynomial
+/// - Prover commits to multiple Merkle roots of evaluations of each vector
 ///
 /// - Verifier samples a batching_randomness field element. For soundness
 ///   reasons, batching_randomness must be sampled after the Merkle roots have
 ///   been committed.
 ///
-/// - Prover computes the weighted sum of each individual polynomial based on
-///   batching_randomness to compute a single polynomial to proceed during
+/// - Prover computes the weighted sum of each individual vector based on
+///   batching_randomness to compute a single vector to proceed during
 ///   Sumcheck rounds and any other future round.
 ///
 /// - In the first round of the proof, Prover includes the STIR queries from
@@ -50,14 +50,7 @@ mod batching_tests {
         store
     }
 
-    /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
-    ///
-    /// This function:
-    /// - builds a multilinear polynomial with a specified number of variables,
-    /// - constructs a STARK statement with constraints based on evaluations and linear relations,
-    /// - commits to the polynomial using a Merkle-based commitment scheme,
-    /// - generates a proof using the WHIR prover,
-    /// - verifies the proof using the WHIR verifier.
+    /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     fn make_batched_whir_things(
         batch_size: usize,
         num_variables: usize,
@@ -68,7 +61,7 @@ mod batching_tests {
     ) {
         eprintln!("\n---------------------");
         eprintln!("Test parameters: ");
-        eprintln!("  num_polynomials: {batch_size}");
+        eprintln!("  num_vectors: {batch_size}");
         eprintln!("  num_variables  : {num_variables}");
         eprintln!("  folding_factor : {:?}", &folding_factor);
         eprintln!("  num_points     : {num_points:?}");

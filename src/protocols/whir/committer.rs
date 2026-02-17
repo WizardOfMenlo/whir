@@ -19,11 +19,11 @@ pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
 impl<F: FftField> Config<F> {
     /// Commit to one or more vectors.
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().len())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = vectors.first().unwrap().len())))]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&[F::BasePrimeField]],
+        vectors: &[&[F::BasePrimeField]],
     ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
@@ -31,7 +31,7 @@ impl<F: FftField> Config<F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        self.initial_committer.commit(prover_state, polynomials)
+        self.initial_committer.commit(prover_state, vectors)
     }
 
     /// Receive a commitment to vectors.

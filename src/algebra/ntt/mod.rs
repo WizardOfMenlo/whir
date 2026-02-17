@@ -127,7 +127,7 @@ fn ark_ntt<F: FftField>(coeffs: &[&[F]], expansion: usize, interleaving_depth: u
         }
     }
 
-    // NTT each block, then transpose to row-major order with polynomials
+    // NTT each block, then transpose to row-major order with vectorss
     // stacked horizontally.
     ntt_batch(&mut result, expanded_block);
     transpose(
