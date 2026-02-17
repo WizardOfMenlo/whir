@@ -71,10 +71,7 @@ debug = true
 default = ["parallel"]
 # Verifier panics instead of returning errors. Useful for debuging.
 verifier_panics = []
-parallel = [
-    "dep:rayon",
-    "ark-ff/parallel",
-]
+parallel = ["dep:rayon"]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 tracing = ["dep:tracing"]
