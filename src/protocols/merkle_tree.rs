@@ -78,6 +78,12 @@ impl Config {
         (1 << (self.layers.len() + 1)) - 1
     }
 
+    /// Soundness error of a single opening.
+    pub fn soundness_error(&self) -> f64 {
+        // TODO: Allow different hash fns to supply their own soundness errors.
+        256.0_f64.powi(-(size_of::<Hash>() as i32))
+    }
+
     #[cfg_attr(feature = "tracing", instrument(skip(prover_state, leaves), fields(self = %self)))]
     pub fn commit<H, R>(&self, prover_state: &mut ProverState<H, R>, leaves: Vec<Hash>) -> Witness
     where

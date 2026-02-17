@@ -169,6 +169,12 @@ impl<T: Immutable + IntoBytes> Encoder<T> for ZeroCopyEncoder {
 }
 
 impl<T: TypeInfo + Encodable + Send + Sync> Config<T> {
+    /// Soundness error of a single opening.
+    pub fn soundess_error(&self) -> f64 {
+        // TODO: Take specifics of the hash fn into account.
+        self.merkle_tree.soundness_error()
+    }
+
     /// Create a new matrix commit configuration with the recommended hash function.
     pub fn new(num_rows: usize, num_cols: usize) -> Self {
         // Select a leaf hash function.

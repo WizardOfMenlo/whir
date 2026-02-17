@@ -28,16 +28,18 @@ use ark_ff::{FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use crate::{
     algebra::{
         dot,
         embedding::{Basefield, Embedding, Identity},
+        fields::FieldWithSize,
         lift,
         linear_form::UnivariateEvaluation,
         mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
+        solver::grid,
     },
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
@@ -148,6 +150,7 @@ where
         &self.embedding
     }
 
+    /// Generator of the RS evaluation domain.
     pub fn generator(&self) -> F {
         ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
     }
@@ -156,7 +159,68 @@ where
         1.0 / self.expansion as f64
     }
 
+    pub fn soundness_error(&self) -> f64 {
+        // TODO: More edge cases like vector_size ∈ {0, 1}.
+        if self.expansion <= 1 || self.in_domain_samples == 0 {
+            return 1.0;
+        }
+
+        // Error in the Merkle openings (generally negilble).
+        let merkle_error = (self.in_domain_samples as f64) * self.matrix_commit.soundess_error();
+
+        // Soundess error of OODS to distinguish two vectors
+        // TODO: Use modulus instead of bits.
+        let field_size = 2.0_f64.powi(M::Target::field_size_in_bits() as i32);
+        let oods_schwartz_zippel =
+            ((self.vector_size as f64 - 1.0) / field_size).powi(self.out_domain_samples as i32);
+
+        // List decoding regimes
+        let unique_bound = (1.0 - self.rate()) / 2.0;
+        let johnson_bound = 1.0 - self.rate().sqrt();
+
+        // Find the best decoding regime with a small grid search.
+        // TODO: Use a more direct solver for the regimes. Unique decoding can be
+        // solved exactly. Johnson we can do a targeted minimizer.
+        let mut best_radius = 0.0;
+        let mut best_error = 1.0;
+        for radius in grid(unique_bound..=johnson_bound, 1000) {
+            let decoding_error = (1.0_f64 - radius).powi(self.in_domain_samples as i32);
+
+            // List size for the radius
+            let list_size = if radius <= unique_bound {
+                1.0
+            } else if radius < johnson_bound {
+                1.0 / (2.0 * (johnson_bound - radius) * self.rate().sqrt())
+            } else {
+                f64::INFINITY
+            };
+            assert!(list_size >= 1.0);
+
+            // WHIR lemma 4.25 gives OODS error is (L(δ) / 2 ) · (k / |𝔽|)^q_oods
+            // We use the slightly tighter bound (L · (L- 1) / 2) · ((k - 1) / |𝔽|)^q_oods as this
+            // correctly handles the unqiue decoding L = 1 case where the oods_error is always zero.
+            let list_pairs = list_size * (list_size - 1.0) / 2.0;
+            let oods_error = (list_pairs * oods_schwartz_zippel).min(1.0);
+
+            let error = (merkle_error + decoding_error + oods_error).min(1.0);
+            if error <= best_error {
+                best_radius = radius;
+                best_error = error;
+            }
+        }
+        if best_radius <= unique_bound && self.out_domain_samples > 0 {
+            #[cfg(feature = "tracing")]
+            warn!(
+                "Out-of-domain samples not selected by minimization (Unique Decoding regime wins)."
+            );
+        }
+
+        best_error
+    }
+
     /// Commit to one or more vectors.
+    ///
+    /// Polynomials are given in coefficient form.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn commit<H, R>(
         &self,

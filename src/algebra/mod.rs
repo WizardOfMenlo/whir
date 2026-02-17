@@ -4,6 +4,7 @@ pub mod linear_form;
 mod multilinear;
 mod multilinear_point;
 pub mod ntt;
+pub mod solver;
 pub mod sumcheck;
 
 use ark_ff::{AdditiveGroup, Field};
