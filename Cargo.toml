@@ -36,7 +36,6 @@ redundant_closure_for_method_calls = "allow"
 ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
-ark-poly = "0.5"
 blake3 = { version = "1.5", features = ["digest", "traits-preview"] }
 sha3 = { version = "0.10.7", features = ["asm", "oid"] }
 clap = { version = "4.4", features = ["derive"] }
@@ -65,8 +64,8 @@ divan = { version = "4.2", package = "codspeed-divan-compat" }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
-debug = "line-tables-only"
-lto = "fat"
+debug = true
+# lto = "fat"
 
 [features]
 default = ["parallel"]
@@ -74,7 +73,6 @@ default = ["parallel"]
 verifier_panics = []
 parallel = [
     "dep:rayon",
-    "ark-poly/parallel",
     "ark-ff/parallel",
 ]
 rayon = ["dep:rayon"]

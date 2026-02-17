@@ -6,12 +6,10 @@ use std::{
 };
 
 use ark_ff::FftField;
-use ark_poly::EvaluationDomain;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     algebra::{
-        domain::Domain,
         embedding::{self, Basefield},
         fields::FieldWithSize,
     },
@@ -77,12 +75,7 @@ where
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = mv_parameters.num_variables;
 
-        let starting_domain = Domain::new(1 << mv_parameters.num_variables, log_inv_rate)
-            .expect("Should have found an appropriate domain - check Field 2 adicity?");
-
-        let mut domain_size = starting_domain.size();
-        let mut domain_gen: F = starting_domain.backing_domain.group_gen();
-        let mut domain_gen_inv = starting_domain.backing_domain.group_gen_inv();
+        let mut domain_size = 1 << (mv_parameters.num_variables + log_inv_rate);
 
         let (num_rounds, final_sumcheck_rounds) = whir_parameters
             .folding_factor
@@ -212,8 +205,6 @@ where
             num_variables -= next_folding_factor;
             log_inv_rate = next_rate;
             domain_size /= 2;
-            domain_gen = domain_gen.square();
-            domain_gen_inv = domain_gen_inv.square();
         }
 
         let final_queries = Self::queries(
