@@ -55,7 +55,7 @@ impl FromStr for SoundnessType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MultivariateParameters<F> {
-    /// The number of variables in the polynomial.
+    /// The number of values in the vector.
     pub num_variables: usize,
     #[serde(skip)]
     _field: PhantomData<F>,
@@ -82,7 +82,7 @@ impl<F> Display for MultivariateParameters<F> {
 pub enum FoldingFactorError {
     /// The folding factor is larger than the number of variables.
     #[error(
-        "Folding factor {0} is greater than the number of variables {1}. Polynomial too small, just send it directly."
+        "Folding factor {0} is greater than the number of variables {1}. Vector too small, just send it directly."
     )]
     TooLarge(usize, usize),
 
@@ -91,7 +91,7 @@ pub enum FoldingFactorError {
     ZeroFactor,
 }
 
-/// Defines the folding factor for polynomial commitments.
+/// Defines the folding factor for vector commitments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoldingFactor {
     /// A fixed folding factor used in all rounds.
@@ -220,7 +220,7 @@ pub struct ProtocolParameters {
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
     pub pow_bits: usize,
-    /// Number of polynomials committed in the batch.
+    /// Number of vectors committed in the batch.
     pub batch_size: usize,
     /// Hash function identifier.
     pub hash_id: EngineId,

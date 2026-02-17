@@ -18,8 +18,8 @@ mod tests {
         algebra::{
             embedding::Basefield,
             fields::{Field64, Field64_2},
-            linear_form::{Covector, Evaluate, LinearForm, MultilinearEvaluation},
-            polynomials::{CoefficientList, EvaluationsList, MultilinearPoint},
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+            MultilinearPoint,
         },
         hash,
         parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
@@ -33,11 +33,11 @@ mod tests {
     /// Extension field type used in the tests.
     type EF = Field64_2;
 
-    /// Run a complete WHIR STARK proof lifecycle: commit, prove, and verify.
+    /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     ///
     /// This function:
     /// - builds a multilinear polynomial with a specified number of variables,
-    /// - constructs a STARK statement with constraints based on evaluations and linear relations,
+    /// - constructs a statement with constraints based on evaluations and linear relations,
     /// - commits to the polynomial using a Merkle-based commitment scheme,
     /// - generates a proof using the WHIR prover,
     /// - verifies the proof using the WHIR verifier.
@@ -76,8 +76,8 @@ mod tests {
         // Test that the config is serializable
         test_serde(&params);
 
-        // Define the multilinear polynomial: constant 1 across all inputs
-        let polynomial = CoefficientList::new(vec![F::ONE; num_coeffs]);
+        // Our test vector is all ones in the basefield.
+        let vector = vec![F::ONE; num_coeffs];
 
         // Generate `num_points` random points in the multilinear domain
         let points: Vec<_> = (0..num_points)
@@ -85,72 +85,30 @@ mod tests {
             .collect();
 
         // Initialize a statement with no constraints yet
-        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        let mut linear_forms: Vec<Box<dyn LinearForm<EF>>> = Vec::new();
         let mut evaluations = Vec::new();
 
-        let embedding = Basefield::new();
-
-        // For each random point, evaluate the polynomial and create a constraint
+        // For each random point, evaluate the mle of the vector and create a constraint
         for point in &points {
-            weights.push(Box::new(MultilinearEvaluation::new(point.0.clone())));
-            evaluations.push(polynomial.mixed_evaluate(&embedding, point));
+            let linear_form = MultilinearExtension {
+                point: point.0.clone(),
+            };
+            evaluations.push(linear_form.evaluate(params.embedding(), &vector));
+            linear_forms.push(Box::new(linear_form));
         }
 
-        // Construct a coefficient vector for linear sumcheck constraint
-        let input = CoefficientList::new(
-            (0..1 << num_variables)
-                .map(<EF as Field>::BasePrimeField::from)
-                .collect(),
-        );
+        // Construct a covector for linear sumcheck constraint
+        let covector = Covector {
+            deferred: false,
+            vector: (0..1 << num_variables).map(EF::from).collect(),
+        };
 
-        // Define weights for linear combination
-        let linear_weight_list: EvaluationsList<F> = input.into();
-        let linear_claim_weight = Box::new(Covector::new(linear_weight_list.evals().to_vec()));
-
-        // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(polynomial.lift(&embedding));
-
-        // Compute the weighted sum of the polynomial (for sumcheck)
-        let sum = linear_claim_weight.evaluate(&embedding, poly.to_coeffs().coeffs());
+        // Compute the weighted sum of the vector
+        let sum = covector.evaluate(params.embedding(), &vector);
 
         // Add linear constraint to the statement
-        weights.push(linear_claim_weight);
+        linear_forms.push(Box::new(covector));
         evaluations.push(sum);
-
-        // Base of the geometric progression [1, 2, 4, 8, 0, ...]
-        let geometric_base = F::from(2u64);
-
-        // Number of non-zero terms in the progression.
-        let geometric_n = num_coeffs - 1;
-
-        // Create geometric progression weights: [1, a, a^2, a^3, ..., a^(n-1), 0, 0, ..., 0]
-        let mut geometric_weights = vec![F::ONE];
-        let mut current_power = geometric_base;
-        for _i in 1..geometric_n {
-            geometric_weights.push(current_power);
-            current_power *= geometric_base;
-        }
-
-        // Fill remaining corners with zeros
-        geometric_weights.resize(num_coeffs, F::from(0));
-
-        // Create EvaluationsList from the geometric progression
-        let geometric_weight_list = EvaluationsList::new(geometric_weights);
-
-        // Create geometric weight function
-        let geometric_claim_weight =
-            Box::new(Covector::new(geometric_weight_list.evals().to_vec()));
-
-        // Convert polynomial to base field evaluation form for weighted_sum
-        let poly_base = EvaluationsList::from(polynomial.clone());
-
-        // Compute the weighted sum for geometric constraint
-        let geometric_sum =
-            geometric_claim_weight.evaluate(&embedding, poly_base.to_coeffs().coeffs());
-
-        // Add geometric constraint to statement
-        weights.push(geometric_claim_weight);
-        evaluations.push(geometric_sum);
 
         // Define the Fiat-Shamir domain separator for committing and proving
         let ds = DomainSeparator::protocol(&params)
@@ -161,18 +119,18 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
 
         // Create a commitment to the polynomial and generate auxiliary witness data
-        let witness = params.commit(&mut prover_state, &[&polynomial]);
+        let witness = params.commit(&mut prover_state, &[&vector]);
 
         // Generate a STARK proof for the given statement and witness
-        let weight_dyn_refs = weights
+        let linear_form_refs = linear_forms
             .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &[&polynomial],
+            &[&vector],
             &[&witness],
-            &weight_dyn_refs,
+            &linear_form_refs,
             &evaluations,
         );
 
@@ -188,7 +146,7 @@ mod tests {
             .verify(
                 &mut verifier_state,
                 &[&commitment],
-                &weight_dyn_refs,
+                &linear_form_refs,
                 &evaluations,
             )
             .unwrap();
@@ -291,7 +249,7 @@ mod tests {
         num_variables: usize,
         folding_factor: FoldingFactor,
         num_points_per_poly: usize,
-        num_polynomials: usize,
+        num_vectors: usize,
         soundness_type: SoundnessType,
         pow_bits: usize,
     ) {
@@ -313,40 +271,36 @@ mod tests {
         let params = Config::new(mv_params, &whir_params);
         eprintln!("{params}");
 
-        // Create N different polynomials
-        let polynomials: Vec<_> = (0..num_polynomials)
+        // Create N different vectors
+        let vectors: Vec<_> = (0..num_vectors)
             .map(|i| {
-                // Different polynomials: first is all 1s, second is all 2s, etc.
-                CoefficientList::new(vec![F::from((i + 1) as u64); num_coeffs])
+                // Different vectors: first is all 1s, second is all 2s, etc.
+                vec![F::from((i + 1) as u64); num_coeffs]
             })
             .collect();
-        let poly_refs = polynomials.iter().collect::<Vec<_>>();
-
-        let embedding = Basefield::new();
+        let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
 
         // Create weights to constraint the polynomials with.
         // Add random point constraints
-        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
-            let point = MultilinearPoint::rand(&mut rng, num_variables);
-            weights.push(Box::new(MultilinearEvaluation::new(point.0)));
+            linear_forms.push(Box::new(MultilinearExtension {
+                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+            }));
         }
         // Add linear constraint
-        let input = CoefficientList::new(
-            (0..1 << num_variables)
-                .map(<EF as Field>::BasePrimeField::from)
-                .collect(),
-        );
-        let linear_weight_list: EvaluationsList<F> = input.into();
-        weights.push(Box::new(Covector::new(linear_weight_list.evals().to_vec())));
+        linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: ((0..1 << num_variables).map(EF::from).collect()),
+        }));
 
         // Evaluate all polys on all weights to get constraints
-        let evaluations = weights
+        let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| {
-                poly_refs
+            .flat_map(|linear_form| {
+                vec_refs
                     .iter()
-                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 
@@ -359,22 +313,22 @@ mod tests {
 
         // Commit to each polynomial and generate witnesses
         let mut witnesses = Vec::new();
-        for poly in &polynomials {
-            let witness = params.commit(&mut prover_state, &[poly]);
+        for &vec in &vec_refs {
+            let witness = params.commit(&mut prover_state, &[vec]);
             witnesses.push(witness);
         }
         let witness_refs = witnesses.iter().collect::<Vec<_>>();
 
         // Batch prove all polynomials together
-        let weights_dyn_refs = weights
+        let linear_form_refs = linear_forms
             .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            &poly_refs,
+            &vec_refs,
             &witness_refs,
-            &weights_dyn_refs,
+            &linear_form_refs,
             &evaluations,
         );
 
@@ -384,7 +338,7 @@ mod tests {
 
         // Parse all N commitments from the transcript
         let mut commitments = Vec::new();
-        for _ in 0..num_polynomials {
+        for _ in 0..num_vectors {
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             commitments.push(commitment);
         }
@@ -395,7 +349,7 @@ mod tests {
             .verify(
                 &mut verifier_state,
                 &commitment_refs,
-                &weights_dyn_refs,
+                &linear_form_refs,
                 &evaluations,
             )
             .unwrap();
@@ -477,7 +431,7 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::<F>::new(num_variables);
+        let mv_params = MultivariateParameters::<EF>::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
@@ -489,30 +443,28 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(mv_params, &whir_params);
+        let params = Config::<EF>::new(mv_params, &whir_params);
 
-        // Create test polynomials
-        let poly1 = CoefficientList::new(vec![F::ONE; num_coeffs]);
-        let poly2 = CoefficientList::new(vec![F::from(2u64); num_coeffs]);
-        let poly_wrong = CoefficientList::new(vec![F::from(999u64); num_coeffs]);
+        let embedding = Basefield::<EF>::new();
 
-        let embedding = Basefield::new();
+        // Create test vectors
+        let vec1 = vec![F::ONE; num_coeffs];
+        let vec2 = vec![F::from(2u64); num_coeffs];
+        let vec_wrong = vec![F::from(999u64); num_coeffs];
 
         // Create test weights
-        let weights: [Box<dyn Evaluate<Basefield<F>>>; 2] = [
-            Box::new(MultilinearEvaluation::new(
-                MultilinearPoint::rand(&mut rng, num_variables).0,
-            )),
-            Box::new(MultilinearEvaluation::new(
-                MultilinearPoint::rand(&mut rng, num_variables).0,
-            )),
+        let linear_forms: [Box<dyn Evaluate<Basefield<EF>>>; 2] = [
+            Box::new(MultilinearExtension {
+                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+            }),
+            Box::new(MultilinearExtension {
+                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+            }),
         ];
         // Create valid evaluations for (poly1, polywrong)
-        let evaluations = weights
+        let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| {
-                [&poly1, &poly_wrong].map(|poly| weights.evaluate(&embedding, poly.coeffs()))
-            })
+            .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate(&embedding, v)))
             .collect::<Vec<_>>();
 
         // Commit to the correct polynomials
@@ -521,20 +473,20 @@ mod tests {
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
-        let witness1 = params.commit(&mut prover_state, &[&poly1]);
-        let witness2 = params.commit(&mut prover_state, &[&poly2]);
+        let witness1 = params.commit(&mut prover_state, &[&vec1]);
+        let witness2 = params.commit(&mut prover_state, &[&vec2]);
 
         // Generate proof with mismatched polynomials
         // The prover will compute cross-terms using poly_wrong, not poly2
-        let weights_dyn_ref = weights
+        let linear_form_refs = linear_forms
             .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
-            &[&poly1, &poly_wrong],
+            &[&vec1, &vec_wrong],
             &[&witness1, &witness2],
-            &weights_dyn_ref,
+            &linear_form_refs,
             &evaluations,
         );
 
@@ -551,7 +503,7 @@ mod tests {
         let verify_result = params.verify(
             &mut verifier_state,
             &[&commitments[0], &commitments[1]],
-            &weights_dyn_ref,
+            &linear_form_refs,
             &evaluations,
         );
         assert!(
@@ -592,53 +544,37 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(mv_params, &whir_params);
-
-        // Create polynomials for each witness
-        // Each witness will contain batch_size polynomials committed together
-        let mut all_polynomials: Vec<Vec<CoefficientList<F>>> = Vec::new();
-        for w in 0..num_witnesses {
-            let witness_polys: Vec<_> = (0..batch_size)
-                .map(|b| {
-                    // Different polynomials: witness 0 batch 0 = all 1s, witness 0 batch 1 = all 2s, etc.
-                    CoefficientList::new(vec![
-                        F::from(((w * batch_size + b) + 1) as u64);
-                        num_coeffs
-                    ])
-                })
-                .collect();
-            all_polynomials.push(witness_polys);
-        }
-        let polynomial_refs = all_polynomials
-            .iter()
-            .flat_map(|ps| ps.iter())
-            .collect::<Vec<_>>();
+        let params = Config::<EF>::new(mv_params, &whir_params);
 
         // Create weights for constraints
         let embedding = Basefield::new();
 
-        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        // Create polynomials for each witness
+        // Each witness will contain batch_size polynomials committed together
+        let all_vectors: Vec<Vec<F>> = (0..num_witnesses * batch_size)
+            .map(|i| vec![F::from((i + 1) as u64); num_coeffs])
+            .collect::<Vec<_>>();
+        let vec_refs = all_vectors.iter().map(|p| p.as_slice()).collect::<Vec<_>>();
+
+        let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
         for _ in 0..num_points_per_poly {
-            weights.push(Box::new(MultilinearEvaluation::new(
-                MultilinearPoint::rand(&mut rng, num_variables).0,
-            )));
+            linear_forms.push(Box::new(MultilinearExtension {
+                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+            }));
         }
         // Add a linear constraint
-        let input = CoefficientList::new(
-            (0..1 << num_variables)
-                .map(<EF as Field>::BasePrimeField::from)
-                .collect(),
-        );
-        let linear_weight_list: EvaluationsList<F> = input.into();
-        weights.push(Box::new(Covector::new(linear_weight_list.evals().to_vec())));
+        linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..1 << num_variables).map(EF::from).collect(),
+        }));
 
         // Create evaluations for each constraint and polynomial
-        let evaluations = weights
+        let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| {
-                polynomial_refs
+            .flat_map(|linear_form| {
+                vec_refs
                     .iter()
-                    .map(|poly| weights.evaluate(&embedding, poly.coeffs()))
+                    .map(|vec| linear_form.evaluate(&embedding, vec))
             })
             .collect::<Vec<_>>();
 
@@ -650,23 +586,22 @@ mod tests {
 
         // Commit using commit_batch (stacks batch_size polynomials per witness)
         let mut witnesses = Vec::new();
-        for witness_polys in &all_polynomials {
-            let poly_refs: Vec<_> = witness_polys.iter().collect::<Vec<_>>();
-            let witness = params.commit(&mut prover_state, &poly_refs);
+        for witness_polys in vec_refs.chunks(batch_size) {
+            let witness = params.commit(&mut prover_state, witness_polys);
             witnesses.push(witness);
         }
         let witness_refs = witnesses.iter().collect::<Vec<_>>();
 
         // Batch prove all witnesses together
-        let weights_dyn_ref = weights
+        let linear_form_refs = linear_forms
             .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            &polynomial_refs,
+            &vec_refs,
             &witness_refs,
-            &weights_dyn_ref,
+            &linear_form_refs,
             &evaluations,
         );
 
@@ -684,7 +619,7 @@ mod tests {
         let verify_result = params.verify(
             &mut verifier_state,
             &commitment_refs,
-            &weights_dyn_ref,
+            &linear_form_refs,
             &evaluations,
         );
         assert!(

@@ -1,16 +1,14 @@
 //! Linear Forms that commited vectors can be openened against.
 
 mod covector;
-mod multilinear_evaluation;
-mod subfield_univariate_evaluation;
+mod multilinear_extension;
 mod univariate_evaluation;
 
 use ark_ff::Field;
 use static_assertions::assert_obj_safe;
 
 pub use self::{
-    covector::Covector, multilinear_evaluation::MultilinearEvaluation,
-    subfield_univariate_evaluation::SubfieldUnivariateEvaluation,
+    covector::Covector, multilinear_extension::MultilinearExtension,
     univariate_evaluation::UnivariateEvaluation,
 };
 use crate::algebra::{
@@ -28,7 +26,8 @@ pub trait LinearForm<F: Field> {
 
     /// Indicate if the verifier should evaluate this directly or defer it to the caller.
     ///
-    /// If this returns `true`, the verifier will not call [`mle_evaluate`] but instead `verify`
+    /// If this returns `true`, the verifier will not call [`LinearForm::mle_evaluate`] but
+    /// instead [`crate::protocols::whir::Config::verify`]
     /// will return `(point, value)` pairs and it becomes **the callers responsibility** to verify
     /// `self.mle_evaluate(point) == value`. This allows the verifier to use more efficient means
     /// than direct evaluation (e.g. the Spartan Spark protocol).
@@ -63,8 +62,6 @@ pub trait Evaluate<M: Embedding>: LinearForm<M::Target> {
     /// - `self` is a linear form $𝔽^n → 𝔽$.
     /// - `embedding` is an embedding $𝔾 → 𝔽$.
     /// - `vector` is a vector in $𝔾^n$.
-    ///
-    /// *TODO*. This is actually false at the moment, it takes `vector` in coefficient basis.
     ///
     fn evaluate(&self, embedding: &M, vector: &[M::Source]) -> M::Target;
 }

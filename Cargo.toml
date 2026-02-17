@@ -36,7 +36,6 @@ redundant_closure_for_method_calls = "allow"
 ark-std = { version = "0.5", features = ["std"] }
 ark-ff = { version = "0.5", features = ["asm", "std"] }
 ark-serialize = "0.5"
-ark-poly = "0.5"
 blake3 = { version = "1.5", features = ["digest", "traits-preview"] }
 sha3 = { version = "0.10.7", features = ["asm", "oid"] }
 clap = { version = "4.4", features = ["derive"] }
@@ -72,11 +71,7 @@ lto = "fat"
 default = ["parallel"]
 # Verifier panics instead of returning errors. Useful for debuging.
 verifier_panics = []
-parallel = [
-    "dep:rayon",
-    "ark-poly/parallel",
-    "ark-ff/parallel",
-]
+parallel = ["dep:rayon"]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
 tracing = ["dep:tracing"]
@@ -95,10 +90,10 @@ opt-level = 1
 codegen-units = 16
 incremental = true
 
+[profile.samply]
+inherits = "release"
+lto = "thin" # LTO breaks line attribution.
+
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
 opt-level = 3
-
-[profile.samply]
-inherits = "release"
-debug = true

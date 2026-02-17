@@ -12,8 +12,8 @@ use whir::{
     algebra::{
         embedding::Basefield,
         fields,
-        linear_form::{Evaluate, LinearForm, MultilinearEvaluation},
-        polynomials::{CoefficientList, MultilinearPoint},
+        linear_form::{Evaluate, LinearForm, MultilinearExtension},
+        MultilinearPoint,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
@@ -142,11 +142,9 @@ where
         hash_id: args.hash.hash_id(),
     };
 
-    let polynomial = CoefficientList::new(
-        (0..num_coeffs)
-            .map(<F as Field>::BasePrimeField::from)
-            .collect(),
-    );
+    let vector = (0..num_coeffs)
+        .map(<F as Field>::BasePrimeField::from)
+        .collect::<Vec<_>>();
 
     let (
         whir_ldt_prover_time,
@@ -177,7 +175,7 @@ where
 
         HASH_COUNTER.reset();
 
-        let witness = params.commit(&mut prover_state, &[&polynomial]);
+        let witness = params.commit(&mut prover_state, &[&vector]);
 
         let weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
         let evaluations: Vec<F> = Vec::new();
@@ -188,7 +186,7 @@ where
 
         params.prove(
             &mut prover_state,
-            &[&polynomial],
+            &[&vector],
             &[&witness],
             &weight_refs,
             &evaluations,
@@ -260,16 +258,15 @@ where
         let mut evaluations = Vec::new();
 
         for point in &points {
-            let eval = polynomial.mixed_evaluate(&Basefield::new(), point);
-            let weight = MultilinearEvaluation::new(point.0.clone());
-            weights.push(Box::new(weight));
-            evaluations.push(eval);
+            let linear_form = MultilinearExtension::new(point.0.clone());
+            evaluations.push(linear_form.evaluate(params.embedding(), &vector));
+            weights.push(Box::new(linear_form));
         }
 
         HASH_COUNTER.reset();
         let whir_prover_time = Instant::now();
 
-        let witness = params.commit(&mut prover_state, &[&polynomial]);
+        let witness = params.commit(&mut prover_state, &[&vector]);
 
         let weight_refs = weights
             .iter()
@@ -277,7 +274,7 @@ where
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &[&polynomial],
+            &[&vector],
             &[&witness],
             &weight_refs,
             &evaluations,

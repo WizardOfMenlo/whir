@@ -46,7 +46,7 @@ pub trait Encoder<T> {
 
     /// Encodes a slice of values into a byte slice.
     ///
-    /// The byte slice must be exactly [`values.len()`] times [`T::encoded_size()`] bytes long.
+    /// The byte slice must be exactly `values.len()` times `T::encoded_size()` bytes long.
     ///
     /// It can be a reference to an internal buffer in the encoder, or a reference to the values.
     fn encode<'e, 'd>(&'e mut self, values: &'d [T]) -> &'e [u8]
