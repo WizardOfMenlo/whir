@@ -18,7 +18,7 @@ pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
 pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
 impl<F: FftField> Config<F> {
-    /// Commit to one or more polynomials in coefficient form.
+    /// Commit to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().len())))]
     pub fn commit<H, R>(
         &self,
@@ -34,6 +34,7 @@ impl<F: FftField> Config<F> {
         self.initial_committer.commit(prover_state, polynomials)
     }
 
+    /// Receive a commitment to vectors.
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,

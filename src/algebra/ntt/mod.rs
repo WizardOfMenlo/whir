@@ -58,7 +58,7 @@ impl type_map::Family for NttFamily {
     type Dyn<F: 'static> = dyn ReedSolomon<F>;
 }
 
-/// Trait for replacing the default Reed Solomon encoding ([`RSDefault`]) with an specialised Reed Solomon encoder for the FFTField and BasePrimeField.
+/// Trait for a Reed-Solomon encoder implementation for a given field `F`.
 pub trait ReedSolomon<F>: Debug + Send + Sync {
     fn interleaved_encode(
         &self,

@@ -58,7 +58,7 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
         result
     }
 
-    /// See also [`accumulate_many`] for a more efficient batched version.
+    /// See also [`Self::accumulate_many`] for a more efficient batched version.
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         assert_eq!(accumulator.len(), self.size);
         let mut power = scalar;

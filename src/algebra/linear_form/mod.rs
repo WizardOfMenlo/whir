@@ -26,7 +26,8 @@ pub trait LinearForm<F: Field> {
 
     /// Indicate if the verifier should evaluate this directly or defer it to the caller.
     ///
-    /// If this returns `true`, the verifier will not call [`mle_evaluate`] but instead `verify`
+    /// If this returns `true`, the verifier will not call [`LinearForm::mle_evaluate`] but
+    /// instead [`crate::protocols::whir::Config::verify`]
     /// will return `(point, value)` pairs and it becomes **the callers responsibility** to verify
     /// `self.mle_evaluate(point) == value`. This allows the verifier to use more efficient means
     /// than direct evaluation (e.g. the Spartan Spark protocol).

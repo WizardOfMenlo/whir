@@ -62,7 +62,7 @@ pub fn scalar_mul_add<F: Field>(accumulator: &mut [F], weight: F, vector: &[F]) 
 
 /// Mixed scalar-mul add
 ///
-/// accumulator[i] += weight * vector[i]
+/// `accumulator[i] += weight * vector[i]`
 pub fn mixed_scalar_mul_add<M: Embedding>(
     embedding: &M,
     accumulator: &mut [M::Target],
