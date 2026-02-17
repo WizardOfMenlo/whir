@@ -78,8 +78,8 @@ where
     /// The number of coefficients in each vector.
     pub vector_size: usize,
 
-    /// The Reed-Solomon expansion factor.
-    pub expansion: usize,
+    /// The Reed-Solomon codeword length.
+    pub codeword_length: usize,
 
     /// The number of independent codewords that are interleaved together.
     pub interleaving_depth: usize,
@@ -156,12 +156,16 @@ where
     }
 
     pub fn rate(&self) -> f64 {
-        1.0 / self.expansion as f64
+        (self.vector_size / self.interleaving_depth) as f64 / self.codeword_length as f64
     }
 
     pub fn soundness_error(&self) -> f64 {
-        // TODO: More edge cases like vector_size ∈ {0, 1}.
-        if self.expansion <= 1 || self.in_domain_samples == 0 {
+        if self.codeword_length == 0 || self.rate() >= 1.0 || self.in_domain_samples == 0 {
+            dbg!(
+                self.codeword_length,
+                self.vector_size,
+                self.in_domain_samples
+            );
             return 1.0;
         }
 
@@ -203,6 +207,7 @@ where
             let oods_error = (list_pairs * oods_schwartz_zippel).min(1.0);
 
             let error = (merkle_error + decoding_error + oods_error).min(1.0);
+
             if error <= best_error {
                 best_radius = radius;
                 best_error = error;
@@ -235,10 +240,7 @@ where
     {
         // Validate config
         assert!((self.vector_size).is_multiple_of(self.interleaving_depth));
-        assert_eq!(
-            self.matrix_commit.num_rows(),
-            (self.vector_size / self.interleaving_depth) * self.expansion
-        );
+        assert_eq!(self.matrix_commit.num_rows(), self.codeword_length);
         assert_eq!(
             self.matrix_commit.num_cols,
             self.num_vectors * self.interleaving_depth
@@ -249,7 +251,7 @@ where
         assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
         // Interleaved RS Encode the vectorss
-        let matrix = interleaved_rs_encode(vectors, self.expansion, self.interleaving_depth);
+        let matrix = interleaved_rs_encode(vectors, self.codeword_length, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
@@ -504,16 +506,13 @@ where
             "size {}×{}/{}",
             self.num_vectors, self.vector_size, self.interleaving_depth,
         )?;
-        if self.expansion.is_power_of_two() {
-            write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
-        } else {
-            write!(f, " rate 1/{}", self.expansion,)?;
-        }
+        write!(f, " rate 2⁻{:.2}", -self.rate().log2())?;
         write!(
             f,
             " samples {} in- {} out-domain",
             self.in_domain_samples, self.out_domain_samples
-        )
+        )?;
+        write!(f, " ε ≤ 2⁻{:.2}", -self.soundness_error().log2())
     }
 }
 
@@ -554,9 +553,9 @@ mod tests {
         let expansion = select(valid_expansions);
 
         // Combine with a matrix commitment config
-        let expansion_matrix = expansion.prop_flat_map(move |expansion| {
+        let codeword_matrix = expansion.prop_flat_map(move |expansion| {
             (
-                Just(expansion),
+                Just(base * expansion),
                 matrix_commit::tests::config::<M::Source>(
                     vector_size * expansion / interleaving_depth,
                     interleaving_depth * num_vectors,
@@ -564,9 +563,9 @@ mod tests {
             )
         });
 
-        (expansion_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
+        (codeword_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
             move |(
-                (expansion, matrix_commit),
+                (codeword_length, matrix_commit),
                 in_domain_samples,
                 out_domain_samples,
                 deduplicate_in_domain,
@@ -574,7 +573,7 @@ mod tests {
                 embedding: Typed::new(embedding.clone()),
                 num_vectors,
                 vector_size,
-                expansion,
+                codeword_length,
                 interleaving_depth,
                 matrix_commit,
                 in_domain_samples,

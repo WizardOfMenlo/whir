@@ -63,7 +63,7 @@ pub trait ReedSolomon<F>: Debug + Send + Sync {
     fn interleaved_encode(
         &self,
         interleaved_coeffs: &[&[F]],
-        expansion: usize,
+        codeword_length: usize,
         interleaving_depth: usize,
     ) -> Vec<F>;
 }
@@ -77,20 +77,20 @@ impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
     fn interleaved_encode(
         &self,
         interleaved_coeffs: &[&[F]],
-        expansion: usize,
+        codeword_length: usize,
         interleaving_depth: usize,
     ) -> Vec<F> {
-        ark_ntt(interleaved_coeffs, expansion, interleaving_depth)
+        ark_ntt(interleaved_coeffs, codeword_length, interleaving_depth)
     }
 }
 
 pub fn interleaved_rs_encode<F: 'static>(
     interleaved_coeffs: &[&[F]],
-    expansion: usize,
+    codeword_length: usize,
     interleaving_depth: usize,
 ) -> Vec<F> {
     let engine = NTT.get::<F>().expect("Unsupported field");
-    engine.interleaved_encode(interleaved_coeffs, expansion, interleaving_depth)
+    engine.interleaved_encode(interleaved_coeffs, codeword_length, interleaving_depth)
 }
 
 ///
@@ -101,8 +101,11 @@ pub fn interleaved_rs_encode<F: 'static>(
 /// outputs the interleaved alphabets in the same order as the input.
 ///
 #[cfg_attr(feature = "tracing", instrument(level = "debug", skip(coeffs), fields(size = coeffs.len())))]
-fn ark_ntt<F: FftField>(coeffs: &[&[F]], expansion: usize, interleaving_depth: usize) -> Vec<F> {
-    assert!(expansion > 0);
+fn ark_ntt<F: FftField>(
+    coeffs: &[&[F]],
+    codeword_length: usize,
+    interleaving_depth: usize,
+) -> Vec<F> {
     if coeffs.is_empty() {
         return Vec::new();
     }
@@ -114,26 +117,25 @@ fn ark_ntt<F: FftField>(coeffs: &[&[F]], expansion: usize, interleaving_depth: u
     }
 
     let block_size = poly_size / interleaving_depth;
-    let expanded_block = block_size * expansion;
-    let per_poly_size = expanded_block * interleaving_depth;
+    let per_poly_size = codeword_length * interleaving_depth;
     let expanded_size = per_poly_size * coeffs.len();
 
     // Lay out coefficients in contiguous blocks and zero-pad each block.
     let mut result = vec![F::ZERO; expanded_size];
     for (poly_index, poly) in coeffs.iter().enumerate() {
         for (block_index, block) in poly.chunks_exact(block_size).enumerate() {
-            let dst = poly_index * per_poly_size + block_index * expanded_block;
+            let dst = poly_index * per_poly_size + block_index * codeword_length;
             result[dst..dst + block_size].copy_from_slice(block);
         }
     }
 
     // NTT each block, then transpose to row-major order with vectorss
     // stacked horizontally.
-    ntt_batch(&mut result, expanded_block);
+    ntt_batch(&mut result, codeword_length);
     transpose(
         &mut result,
         coeffs.len() * interleaving_depth,
-        expanded_block,
+        codeword_length,
     );
     result
 }
@@ -325,6 +327,7 @@ mod tests {
         let count = 1 << 20;
         let expansion = 4;
         let folding_factor = 6;
+        let codeword_length = count * expansion >> folding_factor;
 
         let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
 
@@ -344,7 +347,7 @@ mod tests {
 
         // Compute things the new way
         let interleaved_ntt =
-            interleaved_rs_encode(&[poly.as_slice()], expansion, 1 << folding_factor);
+            interleaved_rs_encode(&[poly.as_slice()], codeword_length, 1 << folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

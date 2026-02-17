@@ -182,7 +182,7 @@ where
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << num_variables,
-                    expansion: 1 << next_rate,
+                    codeword_length: 1 << (num_variables + next_rate - next_folding_factor),
                     interleaving_depth: 1 << next_folding_factor,
                     matrix_commit: matrix_committer.clone(),
                     in_domain_samples: Self::queries(
@@ -232,7 +232,9 @@ where
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
                 vector_size: 1 << mv_parameters.num_variables,
-                expansion: 1 << whir_parameters.starting_log_inv_rate,
+                codeword_length: 1
+                    << (mv_parameters.num_variables + whir_parameters.starting_log_inv_rate
+                        - whir_parameters.folding_factor.at_round(0)),
                 interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
                 matrix_commit: matrix_commit::Config::with_hash(
                     whir_parameters.hash_id,
@@ -701,8 +703,7 @@ impl<F: FftField> RoundConfig<F> {
     }
 
     pub fn log_inv_rate(&self) -> usize {
-        assert!(self.irs_committer.expansion.is_power_of_two());
-        self.irs_committer.expansion.ilog2() as usize
+        -self.irs_committer.rate().log2() as usize
     }
 
     pub fn initial_num_variables(&self) -> usize {
@@ -880,7 +881,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 3,
+                    codeword_length: 1 << (10 + 3 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
                     in_domain_samples: 5,
@@ -900,7 +901,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 4,
+                    codeword_length: 1 << (10 + 4 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
                     in_domain_samples: 6,
