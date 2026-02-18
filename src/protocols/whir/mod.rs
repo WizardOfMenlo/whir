@@ -11,6 +11,8 @@ pub use self::{
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use ark_ff::Field;
 
     use super::*;
@@ -124,10 +126,10 @@ mod tests {
 
         params.prove(
             &mut prover_state,
-            vec![vector],
-            vec![witness],
+            vec![Cow::from(vector)],
+            vec![Cow::Owned(witness)],
             prove_linear_forms,
-            evaluations.clone(),
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         let proof = prover_state.proof();
@@ -325,10 +327,13 @@ mod tests {
 
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            vectors.clone(),
-            witnesses,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            witnesses.into_iter().map(Cow::Owned).collect(),
             prove_linear_forms,
-            evaluations.clone(),
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         let proof = prover_state.proof();
@@ -487,10 +492,10 @@ mod tests {
         ];
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
-            vec![vec1.clone(), vec_wrong],
-            vec![witness1, witness2],
+            vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
+            vec![Cow::Owned(witness1), Cow::Owned(witness2)],
             prove_linear_forms,
-            evaluations.clone(),
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         // Verification should fail because the cross-terms don't match the commitment
@@ -612,10 +617,13 @@ mod tests {
 
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            all_vectors.clone(),
-            witnesses,
+            all_vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            witnesses.into_iter().map(Cow::Owned).collect(),
             prove_linear_forms,
-            evaluations.clone(),
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         let proof = prover_state.proof();

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::OpenOptions,
     io::Write,
     time::{Duration, Instant},
@@ -179,10 +180,10 @@ where
 
         params.prove(
             &mut prover_state,
-            vec![vector.clone()],
-            vec![witness],
+            vec![Cow::Borrowed(vector.as_slice())],
+            vec![Cow::Owned(witness)],
             vec![],
-            vec![],
+            Cow::Owned(vec![]),
         );
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -266,10 +267,10 @@ where
 
         params.prove(
             &mut prover_state,
-            vec![vector.clone()],
-            vec![witness],
+            vec![Cow::Borrowed(vector.as_slice())],
+            vec![Cow::Owned(witness)],
             prove_linear_forms,
-            evaluations.clone(),
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         let whir_prover_time = whir_prover_time.elapsed();

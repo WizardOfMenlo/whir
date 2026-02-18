@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{borrow::Cow, time::Instant};
 
 use ark_ff::{FftField, Field};
 use ark_serialize::CanonicalSerialize;
@@ -165,10 +165,10 @@ where
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
-        vec![vector],
-        vec![witness],
+        vec![Cow::from(vector)],
+        vec![Cow::Owned(witness)],
         vec![],
-        vec![],
+        Cow::Owned(vec![]),
     );
     let whir_prove_time = whir_prove_time.elapsed();
 
@@ -300,10 +300,10 @@ where
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
-        vec![vector.clone()],
-        vec![witness],
+        vec![Cow::Borrowed(vector.as_slice())],
+        vec![Cow::Owned(witness)],
         prove_linear_forms,
-        evaluations.clone(),
+        Cow::Borrowed(evaluations.as_slice()),
     );
     let whir_prove_time = whir_prove_time.elapsed();
 

@@ -25,6 +25,8 @@
 ///
 #[cfg(test)]
 mod batching_tests {
+    use std::borrow::Cow;
+
     use ark_std::UniformRand;
 
     use super::super::Config;
@@ -143,10 +145,13 @@ mod batching_tests {
 
         params.prove(
             &mut prover_state,
-            vectors.clone(),
-            vec![batched_witness],
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            vec![Cow::Owned(batched_witness)],
             prove_linear_forms,
-            values.clone(),
+            Cow::Borrowed(values.as_slice()),
         );
 
         let proof = prover_state.proof();
