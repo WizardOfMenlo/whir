@@ -1,17 +1,86 @@
-mod batching;
-mod committer;
+#![allow(type_alias_bounds)] // We need the bound to reference F::BasePrimeField.
+
 mod config;
 mod prover;
 mod verifier;
 
-pub use self::{
-    committer::{Commitment, Witness},
-    config::{Config, RoundConfig},
+use std::fmt::Debug;
+
+use ark_ff::{FftField, Field};
+use ark_std::rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
+
+use crate::{
+    hash::Hash,
+    protocols::{irs_commit, proof_of_work, sumcheck},
+    transcript::{
+        Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
+    },
 };
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "F: FftField")]
+pub struct Config<F>
+where
+    F: FftField,
+{
+    pub initial_committer: irs_commit::BasefieldConfig<F>,
+    pub initial_sumcheck: sumcheck::Config<F>,
+    pub round_configs: Vec<RoundConfig<F>>,
+    pub final_sumcheck: sumcheck::Config<F>,
+    pub final_pow: proof_of_work::Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: FftField")]
+pub struct RoundConfig<F>
+where
+    F: FftField,
+{
+    pub irs_committer: irs_commit::Config<F>,
+    pub sumcheck: sumcheck::Config<F>,
+    pub pow: proof_of_work::Config,
+}
+
+pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
+pub type Commitment<F: Field> = irs_commit::Commitment<F>;
+
+impl<F: FftField> Config<F> {
+    /// Commit to one or more vectors.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = vectors.first().unwrap().len())))]
+    pub fn commit<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        vectors: &[&[F::BasePrimeField]],
+    ) -> Witness<F>
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        self.initial_committer.commit(prover_state, vectors)
+    }
+
+    /// Receive a commitment to vectors.
+    pub fn receive_commitment<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+    ) -> VerificationResult<Commitment<F>>
+    where
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        self.initial_committer.receive_commitment(verifier_state)
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::Field;
+    use ark_ff::{Field, UniformRand};
 
     use super::*;
     use crate::{
@@ -628,6 +697,151 @@ mod tests {
                         false,
                         0, // pow_bits
                     );
+                }
+            }
+        }
+    }
+
+    fn random_vector(num_coefficients: usize) -> Vec<F> {
+        let mut store = Vec::<F>::with_capacity(num_coefficients);
+        let mut rng = ark_std::rand::thread_rng();
+        (0..num_coefficients).for_each(|_| store.push(F::rand(&mut rng)));
+        store
+    }
+
+    /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
+    fn make_batched_whir_things(
+        batch_size: usize,
+        num_variables: usize,
+        folding_factor: FoldingFactor,
+        num_points: usize,
+        unique_decoding: bool,
+        pow_bits: usize,
+    ) {
+        eprintln!("\n---------------------");
+        eprintln!("Test parameters: ");
+        eprintln!("  num_vectors     : {batch_size}");
+        eprintln!("  num_variables   : {num_variables}");
+        eprintln!("  folding_factor  : {:?}", &folding_factor);
+        eprintln!("  num_points      : {num_points:?}");
+        eprintln!("  unique_decoding : {unique_decoding:?}");
+        eprintln!("  pow_bits        : {pow_bits}");
+
+        // Number of coefficients in the multilinear polynomial (2^num_variables)
+        let num_coeffs = 1 << num_variables;
+
+        // Randomness source
+        let mut rng = ark_std::test_rng();
+
+        // Configure the WHIR protocol parameters
+        let whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: 32,
+            pow_bits,
+            folding_factor,
+            unique_decoding,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+
+        // Build global configuration from multivariate + protocol parameters
+        let params = Config::new(1 << num_variables, &whir_params);
+
+        let vectors: Vec<Vec<F>> = (0..batch_size).map(|_| random_vector(num_coeffs)).collect();
+        let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+
+        // Generate `num_points` random points in the multilinear domain
+        let points: Vec<_> = (0..num_points)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+
+        // Define the Fiat-Shamir IOPattern for committing and proving
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        // Initialize the Merlin transcript from the domain separator
+        let mut prover_state = ProverState::new_std(&ds);
+
+        // Create a commitment to the polynomial and generate auxiliary witness data
+        let batched_witness = params.commit(&mut prover_state, &vec_refs);
+
+        // Create a weights matrix and evaluations for each polynomial
+        let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        for point in points {
+            linear_forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..1 << num_variables).map(F::from).collect(),
+        }));
+        let values = linear_forms
+            .iter()
+            .flat_map(|linear_form| {
+                vec_refs
+                    .iter()
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
+            })
+            .collect::<Vec<_>>();
+
+        // Generate a proof for the given statement and witness
+        let weights_dyn_refs = linear_forms
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .collect::<Vec<_>>();
+        params.prove(
+            &mut prover_state,
+            &vec_refs,
+            &[&batched_witness],
+            &weights_dyn_refs,
+            &values,
+        );
+
+        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
+        let proof = prover_state.proof();
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+
+        // Verify that the generated proof satisfies the statement
+        assert!(params
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &weights_dyn_refs,
+                &values
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_batched_whir() {
+        let folding_factors = [1, 4];
+        let unique_decoding_options = [false, true];
+        let num_points = [0, 2];
+        let pow_bits = [0, 10];
+
+        for folding_factor in folding_factors {
+            let num_variables = (2 * folding_factor)..=3 * folding_factor;
+            for num_variable in num_variables {
+                for num_points in num_points {
+                    for unique_decoding in unique_decoding_options {
+                        for pow_bits in pow_bits {
+                            for batch_size in 1..=4 {
+                                make_batched_whir_things(
+                                    batch_size,
+                                    num_variable,
+                                    FoldingFactor::Constant(folding_factor),
+                                    num_points,
+                                    unique_decoding,
+                                    pow_bits,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

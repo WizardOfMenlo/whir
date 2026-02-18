@@ -3,7 +3,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{committer::Witness, config::Config};
+use super::{Config, Witness};
 use crate::{
     algebra::{
         dot,
