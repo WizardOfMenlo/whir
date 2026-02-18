@@ -163,7 +163,13 @@ where
     let whir_commit_time = whir_commit_time.elapsed();
 
     let whir_prove_time = Instant::now();
-    params.prove(&mut prover_state, &[&vector], &[&witness], &[], &[]);
+    params.prove(
+        &mut prover_state,
+        vec![vector],
+        vec![witness],
+        vec![],
+        vec![],
+    );
     let whir_prove_time = whir_prove_time.elapsed();
 
     // Serialize proof
@@ -279,17 +285,25 @@ where
         linear_forms.push(Box::new(covector));
     }
 
-    let weight_dyn_refs = linear_forms
-        .iter()
-        .map(|w| w.as_ref() as &dyn LinearForm<F>)
-        .collect::<Vec<_>>();
+    // Build owned linear forms for prove (consumed), keep originals for verify
+    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+    for point in &points {
+        prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
+    }
+    for _ in 0..num_linear_constraints {
+        prove_linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..num_coeffs).map(F::from).collect(),
+        }));
+    }
+
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
-        &[&vector],
-        &[&witness],
-        &weight_dyn_refs,
-        &evaluations,
+        vec![vector.clone()],
+        vec![witness],
+        prove_linear_forms,
+        evaluations.clone(),
     );
     let whir_prove_time = whir_prove_time.elapsed();
 
@@ -302,6 +316,11 @@ where
         "Proof size: {:.1} KiB",
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
+
+    let weight_dyn_refs = linear_forms
+        .iter()
+        .map(|w| w.as_ref() as &dyn LinearForm<F>)
+        .collect::<Vec<_>>();
 
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();

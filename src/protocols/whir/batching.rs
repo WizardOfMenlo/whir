@@ -110,9 +110,8 @@ mod batching_tests {
         // Create a commitment to the polynomial and generate auxiliary witness data
         let batched_witness = params.commit(&mut prover_state, &vec_refs);
 
-        // Create a weights matrix and evaluations for each polynomial
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
-        for point in points {
+        for point in &points {
             linear_forms.push(Box::new(MultilinearExtension {
                 point: point.0.clone(),
             }));
@@ -130,26 +129,35 @@ mod batching_tests {
             })
             .collect::<Vec<_>>();
 
-        // Generate a proof for the given statement and witness
-        let weights_dyn_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
+        // Build a second set of owned linear forms for prove (which consumes them).
+        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in &points {
+            prove_linear_forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        prove_linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..1 << num_variables).map(F::from).collect(),
+        }));
+
         params.prove(
             &mut prover_state,
-            &vec_refs,
-            &[&batched_witness],
-            &weights_dyn_refs,
-            &values,
+            vectors.clone(),
+            vec![batched_witness],
+            prove_linear_forms,
+            values.clone(),
         );
 
-        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
-        // Verify that the generated proof satisfies the statement
+        let weights_dyn_refs = linear_forms
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .collect::<Vec<_>>();
         assert!(params
             .verify(
                 &mut verifier_state,
