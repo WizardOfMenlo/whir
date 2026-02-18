@@ -25,8 +25,6 @@ use crate::{
     utils::zip_strict,
 };
 
-/// Holds the witness for the current round. Owned witnesses are freed after
-/// opening; borrowed witnesses remain alive in the caller.
 enum RoundWitness<'a, F: FftField, M: Embedding<Target = F>>
 where
     M::Source: FftField,
@@ -41,20 +39,15 @@ where
     M: Embedding<Target = F>,
     M::Source: FftField,
 {
-    /// Prove a WHIR opening (ownership-based for memory efficiency).
-    ///
-    /// All large inputs are consumed and freed as soon as they are no longer
-    /// needed, significantly reducing peak memory during proving.
+    /// Prove a WHIR opening.
     ///
     /// * `prover_state` the mutable transcript to write the proof to.
-    /// * `vectors` all the vectors we are opening (consumed after RLC).
-    /// * `witnesses` witnesses corresponding to the `vectors` (consumed
-    ///   after opening). Multiple vectors may share the same witness, in
-    ///   which case only one witness should be provided.
-    /// * `linear_forms` the covectors (if any) to evaluate each vector at
-    ///   (consumed; deferred forms kept until the end).
-    /// * `evaluations` a matrix of each vector evaluated at each linear form
-    ///   (consumed after computing the initial sum).
+    /// * `vectors` all the vectors we are opening.
+    /// * `witnesses` witnesses corresponding to the `vectors`, in the same
+    ///   order. Multiple vectors may share the same witness, in which case
+    ///   only one witness should be provided.
+    /// * `linear_forms` the covectors (if any) to evaluate each vector at.
+    /// * `evaluations` a matrix of each vector evaluated at each linear form.
     ///
     /// The `evaluations` matrix is in row-major order with the number of rows
     /// equal to the `linear_forms.len()` and the number of columns equal to
@@ -79,7 +72,6 @@ where
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        // Save count before any moves — used after vectors are dropped.
         let num_vectors = vectors.len();
 
         // Input validation
@@ -165,9 +157,7 @@ where
         // TODO: Flip order.
         let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_evals.len());
-        // Recycle a Covector buffer as the initial accumulator (mirrors vector recycling).
-        // We downcast to read the data and scale it, avoiding a separate zero-allocation
-        // and one accumulate pass.
+        // Recycle a Covector buffer as the initial accumulator.
         let (mut covector, recycled_index) = if has_constraints {
             let found = initial_forms_rlc_coeffs
                 .iter()
@@ -251,16 +241,13 @@ where
             // Proof of work before in-domain challenges
             round_config.pow.prove(prover_state);
 
-            // Open and consume the previous round's witness, freeing its memory.
+            // Open the previous round's witness.
             let in_domain = match prev_witness {
                 RoundWitness::Initial(init_witnesses) => {
                     let witness_refs: Vec<&_> = init_witnesses.iter().map(|c| &**c).collect();
-                    let result = self
-                        .initial_committer
+                    self.initial_committer
                         .open(prover_state, &witness_refs)
-                        .lift(self.embedding());
-                    drop(init_witnesses);
-                    result
+                        .lift(self.embedding())
                 }
                 RoundWitness::Round(old_witness) => {
                     let prev_round_config = &self.round_configs[round_index - 1];
