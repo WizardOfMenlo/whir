@@ -5,8 +5,7 @@ use crate::{
     algebra::linear_form::LinearForm,
     hash::Hash,
     protocols::whir_zk::utils::{
-        batch_with_challenge, compute_per_polynomial_claims, construct_batched_eq_weights,
-        recombine_doc_claim_from_components, BlindingEvaluations,
+        construct_batched_eq_weights_from_gammas, recombine_doc_claim_from_components,
     },
     transcript::{ProverMessage, VerificationError, VerifierMessage},
 };
@@ -58,28 +57,28 @@ impl<F: FftField> Config<F> {
         let num_witness_vars = self.num_witness_variables();
         let tau1: F = verifier_state.verifier_message();
         let tau2: F = verifier_state.verifier_message();
-        let raw_eval_count = h_gammas.len() * num_polynomials * (1 + num_witness_vars);
-        let raw_blinding_evals_flat: Vec<F> = verifier_state.prover_messages_vec(raw_eval_count)?;
-        let mut raw_blinding_evals_per_poly =
-            vec![Vec::with_capacity(h_gammas.len()); num_polynomials];
-        let mut cursor = 0usize;
-        for gamma in h_gammas.iter().copied() {
-            for poly_evals in &mut raw_blinding_evals_per_poly {
+        let mut m_claims = vec![F::ZERO; num_polynomials];
+        let mut g_hat_claims_per_poly = vec![vec![F::ZERO; num_witness_vars]; num_polynomials];
+        let mut expected_batched_h_claims = vec![F::ZERO; num_polynomials];
+        let mut tau2_power = F::ONE;
+        for &gamma in &h_gammas {
+            for poly_idx in 0..num_polynomials {
                 // Parse `(m_eval, g_hat_1_eval, ..., g_hat_mu_eval)` for each (gamma, polynomial).
-                let m_eval = raw_blinding_evals_flat[cursor];
-                cursor += 1;
-                let g_hat_evals =
-                    raw_blinding_evals_flat[cursor..cursor + num_witness_vars].to_vec();
-                cursor += num_witness_vars;
-                poly_evals.push(BlindingEvaluations {
-                    gamma,
-                    m_eval,
-                    g_hat_evals,
-                });
+                let m_eval: F = verifier_state.prover_message()?;
+                let mut h_value = m_eval;
+                let mut blinding_power = blinding_challenge;
+                let mut gamma_power = gamma;
+                m_claims[poly_idx] += tau2_power * m_eval;
+                for g_hat_idx in 0..num_witness_vars {
+                    let g_hat_eval: F = verifier_state.prover_message()?;
+                    g_hat_claims_per_poly[poly_idx][g_hat_idx] += tau2_power * g_hat_eval;
+                    h_value += blinding_power * gamma_power * g_hat_eval;
+                    blinding_power *= blinding_challenge;
+                    gamma_power = gamma_power.square();
+                }
+                expected_batched_h_claims[poly_idx] += tau2_power * h_value;
             }
-        }
-        if cursor != raw_blinding_evals_flat.len() {
-            return Err(VerificationError);
+            tau2_power *= tau2;
         }
         let combined_doc_claims: Vec<F> = verifier_state.prover_messages_vec(num_polynomials)?;
         let batched_h_claims: Vec<F> = verifier_state.prover_messages_vec(num_polynomials)?;
@@ -93,37 +92,22 @@ impl<F: FftField> Config<F> {
             .verify(verifier_state, &commitments, weights, &modified_evaluations)
             .map(|_| ())?;
 
-        let expected_batched_h_claims = (0..num_polynomials)
-            .map(|poly_idx| {
-                batch_with_challenge(
-                    raw_blinding_evals_per_poly[poly_idx]
-                        .iter()
-                        .map(|eval| eval.compute_h_value(blinding_challenge)),
-                    tau2,
-                )
-            })
-            .collect::<Vec<_>>();
-        for eval_idx in 0..evaluations.len() {
-            let recomposed = masking_challenge * evaluations[eval_idx] + g_evals[eval_idx];
-            if recomposed != modified_evaluations[eval_idx] {
-                return Err(VerificationError);
-            }
-        }
         if batched_h_claims != expected_batched_h_claims {
             return Err(VerificationError);
         }
         let mut expected_combined_doc_claims = Vec::with_capacity(num_polynomials);
         let mut expected_batched_blinding_subproof_claims =
             Vec::with_capacity(num_polynomials * (1 + num_witness_vars));
-        for blinding_evals in &raw_blinding_evals_per_poly {
-            let (m_claim, g_hat_claims) = compute_per_polynomial_claims(blinding_evals, tau2);
+        for poly_idx in 0..num_polynomials {
+            let m_claim = m_claims[poly_idx];
+            let g_hat_claims = &g_hat_claims_per_poly[poly_idx];
             expected_combined_doc_claims.push(recombine_doc_claim_from_components(
                 m_claim,
-                &g_hat_claims,
+                g_hat_claims,
                 tau1,
             ));
             expected_batched_blinding_subproof_claims.push(m_claim);
-            for g_hat_claim in g_hat_claims {
+            for &g_hat_claim in g_hat_claims {
                 expected_batched_blinding_subproof_claims.push(g_hat_claim);
             }
         }
@@ -133,8 +117,8 @@ impl<F: FftField> Config<F> {
 
         // Verify the blinding WHIR subproof against the same batched beq form used to
         // derive raw round-0 claims at (gamma, -rho).
-        let beq_weights = construct_batched_eq_weights(
-            &raw_blinding_evals_per_poly[0],
+        let beq_weights = construct_batched_eq_weights_from_gammas(
+            &h_gammas,
             masking_challenge,
             tau2,
             self.num_blinding_variables(),

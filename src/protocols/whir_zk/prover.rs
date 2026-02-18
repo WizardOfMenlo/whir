@@ -5,11 +5,50 @@ use crate::{
     algebra::linear_form::{Covector, Evaluate, LinearForm},
     hash::Hash,
     protocols::whir_zk::utils::{
-        batch_with_challenge, compute_per_polynomial_claims, construct_batched_eq_weights,
-        recombine_doc_claim_from_components,
+        beq_covector_at_gamma, recombine_doc_claim_from_components, BlindingEvaluations,
+        BlindingPolynomials,
     },
     transcript::{ProverMessage, VerifierMessage},
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Precompute per-gamma evaluation data for the round-0 blinding consistency check.
+///
+/// For each gamma, a single `beq_covector` is built and shared across all polynomials
+/// (avoiding recomputing the eq-weights tensor product once per polynomial), and its
+/// weight vector is kept for inline accumulation of the batched blinding linear form.
+///
+/// Parallel feature: gammas are evaluated concurrently; the sequential write pass
+/// (transcript + accumulation) happens in the caller.
+fn precompute_gamma_data<F: FftField>(
+    h_gammas: &[F],
+    blinding_polynomials: &[BlindingPolynomials<F>],
+    masking_challenge: F,
+    num_blinding_variables: usize,
+) -> Vec<(Vec<F>, Vec<BlindingEvaluations<F>>)> {
+    // Embed each polynomial's g_hats once; the result is reused for every gamma.
+    let embedded_g_hats_per_poly: Vec<_> = blinding_polynomials
+        .iter()
+        .map(|p| p.embedded_g_hats())
+        .collect();
+
+    let eval_one_gamma = |&gamma: &F| {
+        let beq_cov = beq_covector_at_gamma(gamma, masking_challenge, num_blinding_variables);
+        let evals = blinding_polynomials
+            .iter()
+            .zip(embedded_g_hats_per_poly.iter())
+            .map(|(bp, eg)| bp.evaluate_with_covector(&beq_cov, eg, gamma))
+            .collect();
+        (beq_cov.vector, evals)
+    };
+
+    #[cfg(feature = "parallel")]
+    return h_gammas.par_iter().map(eval_one_gamma).collect();
+
+    #[cfg(not(feature = "parallel"))]
+    return h_gammas.iter().map(eval_one_gamma).collect();
+}
 
 impl<F: FftField> Config<F> {
     pub fn prove<H, R>(
@@ -69,7 +108,6 @@ impl<F: FftField> Config<F> {
             "zkWHIR requires non-zero masking challenge rho"
         );
 
-        let mut g_evaluations = Vec::with_capacity(evaluations.len());
         let mut modified_evaluations = Vec::with_capacity(evaluations.len());
         let embedding = self.blinded_commitment.embedding();
         for (weight_idx, weight) in weights.iter().enumerate() {
@@ -80,7 +118,7 @@ impl<F: FftField> Config<F> {
                 // Enforce L = rho * f + g with L instantiated by the committed masked witness f_hat.
                 let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
                 prover_state.prover_message(&g_eval);
-                g_evaluations.push(g_eval);
+                debug_assert_eq!(masking_challenge * evaluations[idx] + g_eval, f_hat_eval);
                 modified_evaluations.push(f_hat_eval);
             }
         }
@@ -99,72 +137,63 @@ impl<F: FftField> Config<F> {
         let tau1: F = prover_state.verifier_message();
         let tau2: F = prover_state.verifier_message();
 
-        // Raw round-0 claims at each gamma:
+        let num_polynomials = polynomials.len();
+        let num_blinding_variables = self.num_blinding_variables();
+
+        // Parallel-compute per-gamma evaluation data (one beq_covector shared per gamma).
+        // Returns (beq_weights_vec, per_poly_evals) for each gamma, ready for sequential output.
+        let all_gamma_data = precompute_gamma_data(
+            &h_gammas,
+            &witness.blinding_polynomials,
+            masking_challenge,
+            num_blinding_variables,
+        );
+
+        // Stream transcript payload and accumulate claims + batched beq linear form.
         // m_eval = M(gamma, -rho), g_hat_eval_j = g_hat_j(gamma, -rho).
-        let raw_blinding_evals_per_poly = witness
-            .blinding_polynomials
-            .iter()
-            .map(|blinding_polynomial| {
-                h_gammas
-                    .iter()
-                    .copied()
-                    .map(|gamma| blinding_polynomial.evaluate_at(gamma, masking_challenge))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        for gamma_idx in 0..h_gammas.len() {
-            for poly_idx in 0..polynomials.len() {
-                let eval = &raw_blinding_evals_per_poly[poly_idx][gamma_idx];
+        let mut m_claims = vec![F::ZERO; num_polynomials];
+        let mut g_hat_claims_per_poly = vec![vec![F::ZERO; num_witness_vars]; num_polynomials];
+        let mut batched_h_claims = vec![F::ZERO; num_polynomials];
+        let mut beq_weight_accum = vec![F::ZERO; 1 << (num_blinding_variables + 1)];
+        let mut tau2_power = F::ONE;
+        for (beq_weights, per_poly_evals) in &all_gamma_data {
+            for (poly_idx, eval) in per_poly_evals.iter().enumerate() {
                 prover_state.prover_message(&eval.m_eval);
                 for g_hat_eval in &eval.g_hat_evals {
                     prover_state.prover_message(g_hat_eval);
                 }
+                m_claims[poly_idx] += tau2_power * eval.m_eval;
+                for (claim, &g_hat_eval) in g_hat_claims_per_poly[poly_idx]
+                    .iter_mut()
+                    .zip(eval.g_hat_evals.iter())
+                {
+                    *claim += tau2_power * g_hat_eval;
+                }
+                batched_h_claims[poly_idx] += tau2_power * eval.compute_h_value(blinding_challenge);
             }
+            for (acc, &w) in beq_weight_accum.iter_mut().zip(beq_weights.iter()) {
+                *acc += tau2_power * w;
+            }
+            tau2_power *= tau2;
         }
-        let mut combined_doc_claims = Vec::with_capacity(polynomials.len());
-        let mut batched_h_claims = Vec::with_capacity(polynomials.len());
+
+        let mut combined_doc_claims = Vec::with_capacity(num_polynomials);
         let mut batched_blinding_subproof_claims =
-            Vec::with_capacity(polynomials.len() * (1 + num_witness_vars));
-        for blinding_evals in &raw_blinding_evals_per_poly {
-            // Keep per-vector claims for the internal WHIR subproof input.
-            let (m_claim, g_hat_claims) = compute_per_polynomial_claims(blinding_evals, tau2);
+            Vec::with_capacity(num_polynomials * (1 + num_witness_vars));
+        for poly_idx in 0..num_polynomials {
+            let m_claim = m_claims[poly_idx];
+            let g_hat_claims = &g_hat_claims_per_poly[poly_idx];
             batched_blinding_subproof_claims.push(m_claim);
-            batched_blinding_subproof_claims.extend_from_slice(&g_hat_claims);
-
-            // Public doc-faithful claim path:
-            // S = M + Σ_j tau1^j * g_j, then outer tau2 batching over Gamma with factor 2.
-            combined_doc_claims.push(recombine_doc_claim_from_components(
-                m_claim,
-                &g_hat_claims,
-                tau1,
-            ));
-
-            // tau2 batching for h(gamma) values.
-            let h_claim = batch_with_challenge(
-                blinding_evals
-                    .iter()
-                    .map(|eval| eval.compute_h_value(blinding_challenge)),
-                tau2,
-            );
-            batched_h_claims.push(h_claim);
+            batched_blinding_subproof_claims.extend_from_slice(g_hat_claims);
+            combined_doc_claims
+                .push(recombine_doc_claim_from_components(m_claim, g_hat_claims, tau1));
         }
-        let beq_weights = construct_batched_eq_weights(
-            &raw_blinding_evals_per_poly[0],
-            masking_challenge,
-            tau2,
-            self.num_blinding_variables(),
-        );
+        let beq_weights = Covector::new(beq_weight_accum);
         for claim in &combined_doc_claims {
             prover_state.prover_message(claim);
         }
         for h_claim in &batched_h_claims {
             prover_state.prover_message(h_claim);
-        }
-        for (idx, g_eval) in g_evaluations.iter().copied().enumerate() {
-            debug_assert_eq!(
-                masking_challenge * evaluations[idx] + g_eval,
-                modified_evaluations[idx]
-            );
         }
 
         let vectors = witness
@@ -181,7 +210,6 @@ impl<F: FftField> Config<F> {
         );
 
         let blinding_forms: Vec<&dyn LinearForm<F>> = vec![&beq_weights];
-
         let blinding_vectors = witness
             .blinding_vectors
             .iter()

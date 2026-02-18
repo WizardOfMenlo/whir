@@ -160,9 +160,7 @@ impl<F: FftField> Config<F> {
     pub fn num_blinding_variables(&self) -> usize {
         self.blinding_commitment.initial_num_variables() - 1
     }
-}
 
-impl<F: FftField> Config<F> {
     /// Interleaving depth of the initial IRS commitment (= 2^folding_factor).
     pub(super) const fn interleaving_depth(&self) -> usize {
         self.blinded_commitment.initial_committer.interleaving_depth

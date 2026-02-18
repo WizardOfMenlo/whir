@@ -1,5 +1,3 @@
-#![allow(type_alias_bounds)]
-
 use ark_ff::FftField;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 

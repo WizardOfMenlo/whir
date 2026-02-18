@@ -17,6 +17,20 @@ where
         self.0.len()
     }
 
+    /// Build the squaring-ladder point `(γ, γ², γ⁴, …, γ^(2^(n-1)))`.
+    ///
+    /// Used wherever a single field element is "unfolded" into an `n`-dimensional
+    /// multilinear evaluation point via successive squarings, e.g. in the ZK-WHIR
+    /// `beq((pow(γ), -ρ), .)` blinding evaluation.
+    pub fn power_of_two_basis(mut gamma: F, n: usize) -> Self {
+        let mut point = Vec::with_capacity(n);
+        for _ in 0..n {
+            point.push(gamma);
+            gamma = gamma.square();
+        }
+        Self(point)
+    }
+
     /// Computes the equality polynomial `eq(c, p)`, where `p` is binary.
     ///
     /// The **equality polynomial** is defined as:
