@@ -14,7 +14,7 @@ use crate::{
         fields::FieldWithSize,
     },
     bits::Bits,
-    parameters::{MultivariateParameters, ProtocolParameters, SoundnessType},
+    parameters::{ProtocolParameters, SoundnessType},
     protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
     type_info::{Type, Typed},
 };
@@ -53,13 +53,17 @@ where
     F: FftField + FieldWithSize,
 {
     #[allow(clippy::too_many_lines)]
-    pub fn new(
-        mv_parameters: MultivariateParameters<F>,
-        whir_parameters: &ProtocolParameters,
-    ) -> Self {
+    pub fn new(size: usize, whir_parameters: &ProtocolParameters) -> Self {
+        assert!(
+            size.is_power_of_two(),
+            "Only powers of two size are supported at the moment."
+        );
+        let num_variables = size.trailing_zeros() as usize;
+        let initial_num_variables = num_variables;
+
         whir_parameters
             .folding_factor
-            .check_validity(mv_parameters.num_variables)
+            .check_validity(num_variables)
             .unwrap();
 
         // Proof of work constructor with the requested hash function.
@@ -73,13 +77,13 @@ where
             .saturating_sub(whir_parameters.pow_bits);
         let field_size_bits = F::field_size_in_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
-        let mut num_variables = mv_parameters.num_variables;
+        let mut num_variables = initial_num_variables;
 
-        let mut domain_size = 1 << (mv_parameters.num_variables + log_inv_rate);
+        let mut domain_size = 1 << (initial_num_variables + log_inv_rate);
 
         let (num_rounds, final_sumcheck_rounds) = whir_parameters
             .folding_factor
-            .compute_number_of_rounds(mv_parameters.num_variables);
+            .compute_number_of_rounds(initial_num_variables);
 
         let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate as f64);
 
@@ -231,12 +235,12 @@ where
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
-                vector_size: 1 << mv_parameters.num_variables,
+                vector_size: 1 << initial_num_variables,
                 expansion: 1 << whir_parameters.starting_log_inv_rate,
                 interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
                 matrix_commit: matrix_commit::Config::with_hash(
                     whir_parameters.hash_id,
-                    1 << (mv_parameters.num_variables + whir_parameters.starting_log_inv_rate
+                    1 << (initial_num_variables + whir_parameters.starting_log_inv_rate
                         - whir_parameters.folding_factor.at_round(0)),
                     whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
                 ),
@@ -250,7 +254,7 @@ where
             },
             initial_sumcheck: sumcheck::Config {
                 field: Type::<F>::new(),
-                initial_size: 1 << mv_parameters.num_variables,
+                initial_size: 1 << initial_num_variables,
                 round_pow: pow(starting_folding_pow_bits),
                 num_rounds: whir_parameters.folding_factor.at_round(0),
             },
@@ -757,8 +761,7 @@ mod tests {
     fn test_whir_config_serde() {
         let params = default_whir_params();
 
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = Config::<Field64>::new(mv_params, &params);
+        let config = Config::<Field64>::new(1 << 10, &params);
 
         test_serde(&config);
     }
@@ -766,8 +769,7 @@ mod tests {
     #[test]
     fn test_n_rounds() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = Config::<Field64>::new(mv_params, &params);
+        let config = Config::<Field64>::new(1 << 10, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
@@ -865,8 +867,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = Config::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Field64>::new(1 << 10, &params);
 
         // Set all values within limits
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -926,8 +927,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = Config::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Field64>::new(1 << 10, &params);
 
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));

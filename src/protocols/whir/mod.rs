@@ -22,7 +22,7 @@ mod tests {
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{FoldingFactor, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
     };
@@ -54,9 +54,6 @@ mod tests {
         // Randomness source
         let mut rng = ark_std::test_rng();
 
-        // Configure multivariate polynomial parameters
-        let mv_params = MultivariateParameters::new(num_variables);
-
         // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters {
             initial_statement: true,
@@ -69,8 +66,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        // Build global configuration from multivariate + protocol parameters
-        let params = Config::new(mv_params, &whir_params);
+        // Build global configuration from protocol parameters
+        let params = Config::new(1 << num_variables, &whir_params);
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -256,7 +253,6 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
@@ -268,7 +264,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(mv_params, &whir_params);
+        let params = Config::new(1 << num_variables, &whir_params);
         eprintln!("{params}");
 
         // Create N different vectors
@@ -431,7 +427,6 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::<EF>::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
@@ -443,7 +438,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(mv_params, &whir_params);
+        let params = Config::<EF>::new(1 << num_variables, &whir_params);
 
         let embedding = Basefield::<EF>::new();
 
@@ -532,7 +527,6 @@ mod tests {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 32,
@@ -544,7 +538,7 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(mv_params, &whir_params);
+        let params = Config::<EF>::new(1 << num_variables, &whir_params);
 
         // Create weights for constraints
         let embedding = Basefield::new();

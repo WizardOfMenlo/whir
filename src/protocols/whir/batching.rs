@@ -36,7 +36,7 @@ mod batching_tests {
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::{FoldingFactor, ProtocolParameters, SoundnessType},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
     };
 
@@ -73,8 +73,6 @@ mod batching_tests {
 
         // Randomness source
         let mut rng = ark_std::test_rng();
-        // Configure multivariate polynomial parameters
-        let mv_params = MultivariateParameters::new(num_variables);
 
         // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters {
@@ -89,7 +87,7 @@ mod batching_tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = Config::new(mv_params, &whir_params);
+        let params = Config::new(1 << num_variables, &whir_params);
 
         let vectors: Vec<Vec<F>> = (0..batch_size).map(|_| random_vector(num_coeffs)).collect();
         let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();

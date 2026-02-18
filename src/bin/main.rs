@@ -13,9 +13,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     hash::HASH_COUNTER,
-    parameters::{
-        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
+    parameters::{default_max_pow, FoldingFactor, ProtocolParameters, SoundnessType},
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -122,8 +120,6 @@ where
 
     let num_coeffs = 1 << num_variables;
 
-    let mv_params = MultivariateParameters::<F>::new(num_variables);
-
     let whir_params = ProtocolParameters {
         initial_statement: false,
         security_level,
@@ -138,7 +134,7 @@ where
         hash_id,
     };
 
-    let params = Config::<F>::new(mv_params, &whir_params);
+    let params = Config::<F>::new(1 << num_variables, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -215,8 +211,6 @@ where
 
     let num_coeffs = 1 << num_variables;
 
-    let mv_params = MultivariateParameters::<F>::new(num_variables);
-
     let whir_params = ProtocolParameters {
         initial_statement: true,
         security_level,
@@ -231,7 +225,7 @@ where
         hash_id,
     };
 
-    let params = Config::<F>::new(mv_params, &whir_params);
+    let params = Config::<F>::new(1 << num_variables, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))

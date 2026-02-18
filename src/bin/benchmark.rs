@@ -18,9 +18,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
-    parameters::{
-        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
+    parameters::{default_max_pow, FoldingFactor, ProtocolParameters, SoundnessType},
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -126,8 +124,6 @@ where
 
     let num_coeffs = 1 << num_variables;
 
-    let mv_params = MultivariateParameters::<F>::new(num_variables);
-
     let whir_params = ProtocolParameters {
         initial_statement: true,
         security_level,
@@ -160,7 +156,7 @@ where
             initial_statement: false,
             ..whir_params
         };
-        let params = Config::<F>::new(mv_params, &whir_params);
+        let params = Config::<F>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -239,7 +235,7 @@ where
         // Run PCS
         use whir::protocols::whir::Config;
 
-        let params = Config::<F>::new(mv_params, &whir_params);
+        let params = Config::<F>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }

@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    marker::PhantomData,
     str::FromStr,
 };
 
@@ -48,32 +47,6 @@ impl FromStr for SoundnessType {
             "UniqueDecoding" => Ok(Self::UniqueDecoding),
             _ => Err(format!("Invalid soundness specification: {s}")),
         }
-    }
-}
-
-/// Represents the parameters for a multivariate polynomial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct MultivariateParameters<F> {
-    /// The number of values in the vector.
-    pub num_variables: usize,
-    #[serde(skip)]
-    _field: PhantomData<F>,
-}
-
-impl<F> MultivariateParameters<F> {
-    /// Creates new multivariate parameters.
-    pub const fn new(num_variables: usize) -> Self {
-        Self {
-            num_variables,
-            _field: PhantomData,
-        }
-    }
-}
-
-impl<F> Display for MultivariateParameters<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Number of variables: {}", self.num_variables)
     }
 }
 
@@ -245,7 +218,6 @@ impl Display for ProtocolParameters {
 mod tests {
 
     use super::*;
-    use crate::{algebra::fields::Field256, utils::test_serde};
 
     #[test]
     fn test_default_max_pow() {
@@ -283,18 +255,6 @@ mod tests {
         // Invalid cases
         assert!(SoundnessType::from_str("InvalidType").is_err());
         assert!(SoundnessType::from_str("").is_err()); // Empty string
-    }
-
-    #[test]
-    fn test_multivariate_parameters() {
-        let params = MultivariateParameters::<u32>::new(5);
-        assert_eq!(params.num_variables, 5);
-        assert_eq!(params.to_string(), "Number of variables: 5");
-    }
-
-    #[test]
-    fn test_multivariate_parameters_serde() {
-        test_serde(&MultivariateParameters::<Field256>::new(10));
     }
 
     #[test]
