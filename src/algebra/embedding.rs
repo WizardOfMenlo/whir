@@ -35,10 +35,6 @@ pub trait Embedding:
         cod + self.map(dom)
     }
 
-    /// Map a vector element-wise.
-    ///
-    /// The default implementation allocates a fresh vector. Embeddings that
-    /// are the identity can override this to return the input directly.
     fn map_vec(&self, source: Vec<Self::Source>) -> Vec<Self::Target> {
         source.into_iter().map(|e| self.map(e)).collect()
     }

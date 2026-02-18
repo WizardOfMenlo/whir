@@ -527,7 +527,7 @@ where
     }
 }
 
-impl<F: FftField + FieldWithSize> Display for Config<F> {
+impl<F: FftField> Display for Config<F> {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
