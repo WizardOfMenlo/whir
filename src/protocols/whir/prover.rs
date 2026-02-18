@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{any::Any, borrow::Cow};
 
 use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
@@ -91,7 +91,7 @@ where
             zip_strict(&linear_forms, evaluations.chunks_exact(num_vectors))
         {
             use crate::algebra::linear_form::Covector;
-            let covector = Covector::from(&**linear_form);
+            let covector = Covector::from(linear_form.as_ref());
             for (vector, evaluation) in zip_strict(&vectors, evaluations) {
                 debug_assert_eq!(covector.evaluate(self.embedding(), vector), *evaluation);
             }
@@ -164,7 +164,7 @@ where
                 .zip(linear_forms.iter())
                 .enumerate()
                 .find_map(|(i, (&coeff, form))| {
-                    form.as_any()
+                    (form.as_ref() as &dyn Any)
                         .downcast_ref::<Covector<F>>()
                         .map(|cov| (i, coeff, &cov.vector))
                 });
@@ -196,6 +196,7 @@ where
         .sum();
 
         drop(evaluations);
+
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Add OODS constraints
@@ -206,6 +207,7 @@ where
 
         drop(oods_evals);
         drop(oods_matrix);
+
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Run initial sumcheck on batched vectors with combined statement

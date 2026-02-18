@@ -55,9 +55,6 @@ pub trait LinearForm<F: Field>: Any {
     ///
     /// This function is only called by the prover.
     fn accumulate(&self, accumulator: &mut [F], scalar: F);
-
-    /// Upcast to `Any` for dynamic downcasting of concrete types.
-    fn as_any(&self) -> &dyn Any;
 }
 
 /// A linear form that can be evaluated on a subfield vector.

@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use ark_ff::Field;
 
 use super::LinearForm;
@@ -68,10 +66,6 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
             *entry += power;
             power *= self.point;
         }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

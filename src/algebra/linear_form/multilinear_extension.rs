@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use ark_ff::Field;
 
 use super::{Evaluate, LinearForm};
@@ -42,10 +40,6 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         eval_eq(accumulator, &self.point, scalar);
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
