@@ -1,15 +1,166 @@
 mod committer;
-mod config;
 mod prover;
 mod utils;
 mod verifier;
 
-pub use self::{
-    committer::{Commitment, Witness},
-    config::Config,
+use ark_ff::{FftField, Field};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    algebra::fields::FieldWithSize,
+    parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+    protocols::whir,
 };
 
-use ark_ff::{FftField, Field};
+pub use self::{
+    committer::{Commitment, Witness},
+};
+
+/// Policy inputs for doc-driven `ell` computation:
+/// `q_ub = k*q_delta_1 + q_delta_2 + t1 + t2 + 4*mu`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct BlindingSizePolicy {
+    pub q_delta_1: usize,
+    pub q_delta_2: usize,
+    pub t1: usize,
+    pub t2: usize,
+}
+
+/// ZK WHIR configuration.
+///
+/// This mirrors the two-commitment view from the protocol notes:
+/// - `blinded_commitment` for the witness-side WHIR,
+/// - `blinding_commitment` for batched blinding polynomials.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "F: FftField")]
+pub struct Config<F: FftField> {
+    pub blinded_commitment: whir::Config<F>,
+    pub blinding_commitment: whir::Config<F>,
+}
+
+impl<F> Config<F>
+where
+    F: FftField + FieldWithSize,
+{
+    fn default_blinding_size_policy(main_whir_params: &ProtocolParameters) -> BlindingSizePolicy {
+        let protocol_security_level_main = main_whir_params
+            .security_level
+            .saturating_sub(main_whir_params.pow_bits);
+        let q_delta_1 = whir::Config::<F>::queries(
+            main_whir_params.soundness_type,
+            protocol_security_level_main,
+            main_whir_params.starting_log_inv_rate,
+        );
+        let q_delta_2 = whir::Config::<F>::queries(
+            SoundnessType::ConjectureList,
+            main_whir_params.security_level,
+            main_whir_params.starting_log_inv_rate,
+        );
+
+        // Default send-in-clear thresholds match query complexities.
+        BlindingSizePolicy {
+            q_delta_1,
+            q_delta_2,
+            t1: q_delta_1,
+            t2: q_delta_2,
+        }
+    }
+
+    /// Build a draft zkWHIR config from upstream WHIR as source of truth.
+    ///
+    /// The blinding side follows the same security/hash parameters and uses
+    /// `ConjectureList` soundness with `pow_bits = 0`, as captured in the
+    /// local zk notes.
+    pub fn new(
+        main_mv_params: MultivariateParameters<F>,
+        main_whir_params: &ProtocolParameters,
+        blinding_folding_factor: FoldingFactor,
+        num_polynomials: usize,
+    ) -> Self {
+        let size_policy = Self::default_blinding_size_policy(main_whir_params);
+        Self::new_with_blinding_size_policy(
+            main_mv_params,
+            main_whir_params,
+            blinding_folding_factor,
+            num_polynomials,
+            size_policy,
+        )
+    }
+
+    pub fn new_with_blinding_size_policy(
+        main_mv_params: MultivariateParameters<F>,
+        main_whir_params: &ProtocolParameters,
+        blinding_folding_factor: FoldingFactor,
+        num_polynomials: usize,
+        size_policy: BlindingSizePolicy,
+    ) -> Self {
+        let blinded_commitment = whir::Config::new(main_mv_params, main_whir_params);
+        let num_witness_variables = blinded_commitment.initial_num_variables();
+        let num_blinding_variables =
+            Self::compute_num_blinding_variables(&blinded_commitment, size_policy);
+
+        let blinding_mv_params = MultivariateParameters::new(num_blinding_variables + 1);
+        let blinding_whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: main_whir_params.security_level,
+            pow_bits: 0,
+            folding_factor: blinding_folding_factor,
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: main_whir_params.starting_log_inv_rate,
+            batch_size: num_polynomials * (num_witness_variables + 1),
+            hash_id: main_whir_params.hash_id,
+        };
+        let blinding_commitment = whir::Config::new(blinding_mv_params, &blinding_whir_params);
+
+        Self {
+            blinded_commitment,
+            blinding_commitment,
+        }
+    }
+
+    fn compute_num_blinding_variables(
+        blinded: &whir::Config<F>,
+        size_policy: BlindingSizePolicy,
+    ) -> usize {
+        // Doc formula:
+        // q_ub = k*q(delta1) + q(delta2) + T1 + T2 + 4*mu,
+        // choose smallest ell with 2^ell > q_ub.
+        let num_witness_variables = blinded.initial_num_variables();
+        assert!(
+            size_policy.t1 >= size_policy.q_delta_1,
+            "invalid blinding size policy: T1 must satisfy T1 >= q(delta1)"
+        );
+        assert!(
+            size_policy.t2 >= size_policy.q_delta_2,
+            "invalid blinding size policy: T2 must satisfy T2 >= q(delta2)"
+        );
+        let k = 1usize << blinded.initial_sumcheck.num_rounds;
+        let query_upper_bound = k
+            .saturating_mul(size_policy.q_delta_1)
+            .saturating_add(size_policy.q_delta_2)
+            .saturating_add(size_policy.t1)
+            .saturating_add(size_policy.t2)
+            .saturating_add(4usize.saturating_mul(num_witness_variables));
+
+        let mut num_blinding_variables = 0usize;
+        while (1usize << num_blinding_variables) <= query_upper_bound {
+            num_blinding_variables += 1;
+        }
+        assert!(num_blinding_variables < num_witness_variables);
+        assert!((1usize << num_blinding_variables) > query_upper_bound);
+        num_blinding_variables
+    }
+}
+
+impl<F: FftField> Config<F> {
+    pub fn num_witness_variables(&self) -> usize {
+        self.blinded_commitment.initial_num_variables()
+    }
+
+    pub fn num_blinding_variables(&self) -> usize {
+        self.blinding_commitment.initial_num_variables() - 1
+    }
+}
 
 impl<F: FftField> Config<F> {
     /// Interleaving depth of the initial IRS commitment (= 2^folding_factor).
@@ -105,6 +256,15 @@ mod tests {
     type F = Field64;
     type EF = Field64_2;
 
+    fn test_blinding_size_policy() -> BlindingSizePolicy {
+        BlindingSizePolicy {
+            q_delta_1: 4,
+            q_delta_2: 4,
+            t1: 4,
+            t2: 4,
+        }
+    }
+
     #[test]
     fn test_whir_zk_stage1_single_poly() {
         let num_variables = 8usize;
@@ -122,7 +282,13 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        let params = Config::<EF>::new(mv_params, &whir_params, FoldingFactor::Constant(2), 1);
+        let params = Config::<EF>::new_with_blinding_size_policy(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(2),
+            1,
+            test_blinding_size_policy(),
+        );
 
         let vector = vec![F::ONE; num_coeffs];
         let point = MultilinearPoint::rand(&mut rng, num_variables);
@@ -182,7 +348,13 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        let params = Config::<EF>::new(mv_params, &whir_params, FoldingFactor::Constant(2), 2);
+        let params = Config::<EF>::new_with_blinding_size_policy(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(2),
+            2,
+            test_blinding_size_policy(),
+        );
 
         let vector_0 = vec![F::ONE; num_coeffs];
         let vector_1 = (0..num_coeffs)
@@ -265,7 +437,13 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        let params = Config::<EF>::new(mv_params, &whir_params, FoldingFactor::Constant(2), 2);
+        let params = Config::<EF>::new_with_blinding_size_policy(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(2),
+            2,
+            test_blinding_size_policy(),
+        );
 
         let vector_0 = vec![F::ONE; num_coeffs];
         let vector_1 = (0..num_coeffs)
@@ -351,7 +529,13 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        let params = Config::<EF>::new(mv_params, &whir_params, FoldingFactor::Constant(2), 2);
+        let params = Config::<EF>::new_with_blinding_size_policy(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(2),
+            2,
+            test_blinding_size_policy(),
+        );
 
         let vector_0 = vec![F::ONE; num_coeffs];
         let vector_1 = (0..num_coeffs)

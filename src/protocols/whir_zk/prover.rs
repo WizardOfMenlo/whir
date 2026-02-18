@@ -2,13 +2,12 @@ use ark_ff::FftField;
 
 use super::{Config, Witness};
 use crate::{
-    algebra::{
-        linear_form::{Covector, Evaluate, LinearForm},
-    },
-    protocols::whir_zk::utils::{
-        compute_per_polynomial_claims, construct_batched_eq_weights,
-    },
+    algebra::linear_form::{Covector, Evaluate, LinearForm},
     hash::Hash,
+    protocols::whir_zk::utils::{
+        batch_with_challenge, compute_per_polynomial_claims, construct_batched_eq_weights,
+        recombine_doc_claim_from_components,
+    },
     transcript::{ProverMessage, VerifierMessage},
 };
 
@@ -31,8 +30,7 @@ impl<F: FftField> Config<F> {
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(
-            self.blinded_commitment.initial_committer.num_vectors,
-            1,
+            self.blinded_commitment.initial_committer.num_vectors, 1,
             "zkWHIR currently expects one vector per commitment"
         );
         assert_eq!(
@@ -51,25 +49,25 @@ impl<F: FftField> Config<F> {
             "blinding vectors/witness mismatch"
         );
         assert_eq!(
-            witness.r_vector_indices.len(),
-            polynomials.len(),
-            "r-index layout mismatch"
-        );
-        assert_eq!(
             evaluations.len(),
             weights.len() * polynomials.len(),
             "evaluation matrix must be row-major weights x polynomials"
         );
 
-        // Transcript order for round-0 relation:
-        // 1) sample beta (blinding challenge),
-        // 2) sample rho (masking challenge),
-        // 3) send g evaluations,
-        // 4) send raw blinding evals (m, g_hats),
-        // 5) sample tau2 (query batching challenge),
-        // 6) send tau2-batched blinding claims and tau2-batched h claims.
+        // Transcript order for the zkWHIR round-0 stitching checks:
+        // 1) sample beta,
+        // 2) sample non-zero rho,
+        // 3) send g-evaluations used in rho*f + g,
+        // 4) sample tau1 and tau2,
+        // 5) send raw openings [m(gamma,-rho), g_1(gamma), ..., g_mu(gamma)] for gamma in Gamma,
+        // 6) send tau1/tau2-combined claims and tau2-batched h(gamma) claims.
         let blinding_challenge: F = prover_state.verifier_message();
         let masking_challenge: F = prover_state.verifier_message();
+        assert_ne!(
+            masking_challenge,
+            F::ZERO,
+            "zkWHIR requires non-zero masking challenge rho"
+        );
 
         let mut g_evaluations = Vec::with_capacity(evaluations.len());
         let mut modified_evaluations = Vec::with_capacity(evaluations.len());
@@ -77,7 +75,8 @@ impl<F: FftField> Config<F> {
         for (weight_idx, weight) in weights.iter().enumerate() {
             for (poly_idx, f_hat_vector) in witness.f_hat_vectors.iter().enumerate() {
                 let idx = weight_idx * polynomials.len() + poly_idx;
-                let f_hat_eval = Covector::from(*weight).evaluate(embedding, f_hat_vector.as_slice());
+                let f_hat_eval =
+                    Covector::from(*weight).evaluate(embedding, f_hat_vector.as_slice());
                 // Enforce L = rho * f + g with L instantiated by the committed masked witness f_hat.
                 let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
                 prover_state.prover_message(&g_eval);
@@ -95,6 +94,10 @@ impl<F: FftField> Config<F> {
         // Doc-faithful Gamma surface: expand each base query alpha_i into coset points
         // alpha_i * Omega_k used by the first folding round.
         let h_gammas = self.all_gammas(&initial_in_domain.points);
+
+        // Sample batching challenges before revealing any raw opening payload.
+        let tau1: F = prover_state.verifier_message();
+        let tau2: F = prover_state.verifier_message();
 
         // Raw round-0 claims at each gamma:
         // m_eval = M(gamma, -rho), g_hat_eval_j = g_hat_j(gamma, -rho).
@@ -118,33 +121,40 @@ impl<F: FftField> Config<F> {
                 }
             }
         }
-        let query_batching_challenge: F = prover_state.verifier_message();
-        let mut computed_doc_claims = Vec::with_capacity(polynomials.len() * (1 + num_witness_vars));
+        let mut combined_doc_claims = Vec::with_capacity(polynomials.len());
         let mut batched_h_claims = Vec::with_capacity(polynomials.len());
+        let mut batched_blinding_subproof_claims =
+            Vec::with_capacity(polynomials.len() * (1 + num_witness_vars));
         for blinding_evals in &raw_blinding_evals_per_poly {
-            // tau2 batching for blinding opening claims.
-            let (m_claim, g_hat_claims) =
-                compute_per_polynomial_claims(blinding_evals, query_batching_challenge);
-            computed_doc_claims.push(m_claim);
-            computed_doc_claims.extend_from_slice(&g_hat_claims);
+            // Keep per-vector claims for the internal WHIR subproof input.
+            let (m_claim, g_hat_claims) = compute_per_polynomial_claims(blinding_evals, tau2);
+            batched_blinding_subproof_claims.push(m_claim);
+            batched_blinding_subproof_claims.extend_from_slice(&g_hat_claims);
+
+            // Public doc-faithful claim path:
+            // S = M + Σ_j tau1^j * g_j, then outer tau2 batching over Gamma with factor 2.
+            combined_doc_claims.push(recombine_doc_claim_from_components(
+                m_claim,
+                &g_hat_claims,
+                tau1,
+            ));
 
             // tau2 batching for h(gamma) values.
-            let mut h_claim = F::ZERO;
-            let mut batching_power = F::ONE;
-            for eval in blinding_evals {
-                h_claim += batching_power * eval.compute_h_value(blinding_challenge);
-                batching_power *= query_batching_challenge;
-            }
+            let h_claim = batch_with_challenge(
+                blinding_evals
+                    .iter()
+                    .map(|eval| eval.compute_h_value(blinding_challenge)),
+                tau2,
+            );
             batched_h_claims.push(h_claim);
         }
-        let batched_blinding_claims = computed_doc_claims;
         let beq_weights = construct_batched_eq_weights(
             &raw_blinding_evals_per_poly[0],
             masking_challenge,
-            query_batching_challenge,
+            tau2,
             self.num_blinding_variables(),
         );
-        for claim in &batched_blinding_claims {
+        for claim in &combined_doc_claims {
             prover_state.prover_message(claim);
         }
         for h_claim in &batched_h_claims {
@@ -162,14 +172,13 @@ impl<F: FftField> Config<F> {
             .iter()
             .map(Vec::as_slice)
             .collect::<Vec<_>>();
-        let result = self.blinded_commitment
-            .prove(
-                prover_state,
-                &vectors,
-                &witness_refs,
-                weights,
-                &modified_evaluations,
-            );
+        let result = self.blinded_commitment.prove(
+            prover_state,
+            &vectors,
+            &witness_refs,
+            weights,
+            &modified_evaluations,
+        );
 
         let blinding_forms: Vec<&dyn LinearForm<F>> = vec![&beq_weights];
 
@@ -184,7 +193,7 @@ impl<F: FftField> Config<F> {
             &blinding_vectors,
             &blinding_witnesses,
             &blinding_forms,
-            &batched_blinding_claims,
+            &batched_blinding_subproof_claims,
         );
 
         result
