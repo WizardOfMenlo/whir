@@ -35,6 +35,27 @@ mod tests {
     /// Extension field type used in the tests.
     type EF = Field64_2;
 
+    /// Build owned linear forms for `prove()` (which consumes them).
+    fn build_prove_forms<F: Field>(
+        points: &[MultilinearPoint<F>],
+        num_variables: usize,
+        include_covector: bool,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        let mut forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in points {
+            forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        if include_covector {
+            forms.push(Box::new(Covector {
+                deferred: false,
+                vector: (0..1 << num_variables).map(F::from).collect(),
+            }));
+        }
+        forms
+    }
+
     /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     ///
     /// This function:
@@ -105,25 +126,20 @@ mod tests {
         linear_forms.push(Box::new(covector));
         evaluations.push(sum);
 
+        // Define the Fiat-Shamir domain separator for committing and proving
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
 
+        // Initialize the Merlin transcript from the domain separator
         let mut prover_state = ProverState::new_std(&ds);
+
+        // Commit to the polynomial and generate auxiliary witness data
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        // Build a second set of owned linear forms for prove (which consumes them).
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<EF>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension {
-                point: point.0.clone(),
-            }));
-        }
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..1 << num_variables).map(EF::from).collect(),
-        }));
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
+        // Generate a proof for the given statement and witness
         params.prove(
             &mut prover_state,
             vec![Cow::from(vector)],
@@ -132,10 +148,12 @@ mod tests {
             Cow::Borrowed(evaluations.as_slice()),
         );
 
+        // Reconstruct verifier's view of the transcript
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
+        // Verify the proof
         let linear_form_refs = linear_forms
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
@@ -302,29 +320,22 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        // Set up domain separator for batch proving
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
+        // Commit to each polynomial and generate witnesses
         let mut witnesses = Vec::new();
         for &vec in &vec_refs {
             let witness = params.commit(&mut prover_state, &[vec]);
             witnesses.push(witness);
         }
 
-        // Build a second set of owned linear forms for prove (which consumes them).
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<EF>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension {
-                point: point.0.clone(),
-            }));
-        }
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..1 << num_variables).map(EF::from).collect(),
-        }));
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
+        // Batch prove all polynomials together
         let (_point, _evals) = params.prove(
             &mut prover_state,
             vectors
@@ -336,6 +347,7 @@ mod tests {
             Cow::Borrowed(evaluations.as_slice()),
         );
 
+        // Reconstruct verifier's transcript view
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
@@ -346,6 +358,7 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
+        // Verify the batched proof
         let linear_form_refs = linear_forms
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
@@ -482,14 +495,9 @@ mod tests {
         let witness1 = params.commit(&mut prover_state, &[&vec1]);
         let witness2 = params.commit(&mut prover_state, &[&vec2]);
 
-        let prove_linear_forms: Vec<Box<dyn LinearForm<EF>>> = vec![
-            Box::new(MultilinearExtension {
-                point: constraint_points[0].0.clone(),
-            }),
-            Box::new(MultilinearExtension {
-                point: constraint_points[1].0.clone(),
-            }),
-        ];
+        let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
+
+        // Generate proof with mismatched polynomials
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
@@ -592,29 +600,22 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        // Set up domain separator
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
 
+        // Commit using commit_batch (stacks batch_size polynomials per witness)
         let mut witnesses = Vec::new();
         for witness_polys in vec_refs.chunks(batch_size) {
             let witness = params.commit(&mut prover_state, witness_polys);
             witnesses.push(witness);
         }
 
-        // Build a second set of owned linear forms for prove (which consumes them).
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<EF>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension {
-                point: point.0.clone(),
-            }));
-        }
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..1 << num_variables).map(EF::from).collect(),
-        }));
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
+        // Batch prove all witnesses together
         let (_point, _evals) = params.prove(
             &mut prover_state,
             all_vectors
@@ -626,6 +627,7 @@ mod tests {
             Cow::Borrowed(evaluations.as_slice()),
         );
 
+        // Verify
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 

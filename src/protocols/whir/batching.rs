@@ -45,6 +45,27 @@ mod batching_tests {
     /// Field type used in the tests.
     type F = Field64;
 
+    /// Build owned linear forms for `prove()` (which consumes them).
+    fn build_prove_forms<F: ark_ff::Field>(
+        points: &[MultilinearPoint<F>],
+        num_variables: usize,
+        include_covector: bool,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        let mut forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in points {
+            forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        if include_covector {
+            forms.push(Box::new(Covector {
+                deferred: false,
+                vector: (0..1 << num_variables).map(F::from).collect(),
+            }));
+        }
+        forms
+    }
+
     fn random_vector(num_coefficients: usize) -> Vec<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
         let mut rng = ark_std::rand::thread_rng();
@@ -131,18 +152,9 @@ mod batching_tests {
             })
             .collect::<Vec<_>>();
 
-        // Build a second set of owned linear forms for prove (which consumes them).
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension {
-                point: point.0.clone(),
-            }));
-        }
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..1 << num_variables).map(F::from).collect(),
-        }));
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
+        // Generate a proof for the given statement and witness
         params.prove(
             &mut prover_state,
             vectors
@@ -154,11 +166,13 @@ mod batching_tests {
             Cow::Borrowed(values.as_slice()),
         );
 
+        // Reconstruct verifier's view of the transcript
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
+        // Verify that the generated proof satisfies the statement
         let weights_dyn_refs = linear_forms
             .iter()
             .map(|w| w.as_ref() as &dyn LinearForm<F>)

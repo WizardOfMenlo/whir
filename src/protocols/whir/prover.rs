@@ -149,13 +149,13 @@ impl<F: FftField> Config<F> {
             geometric_challenge(prover_state, linear_forms.len() + oods_evals.len());
         let has_constraints = !constraint_rlc_coeffs.is_empty();
         // TODO: Flip order.
-        let (oods_rlc_coeffs, intial_forms_rlc_coeffs) =
+        let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_evals.len());
         // Recycle a Covector buffer as the initial accumulator (mirrors vector recycling).
         // We downcast to read the data and scale it, avoiding a separate zero-allocation
         // and one accumulate pass.
         let (mut covector, recycled_index) = if has_constraints {
-            let found = intial_forms_rlc_coeffs
+            let found = initial_forms_rlc_coeffs
                 .iter()
                 .zip(linear_forms.iter())
                 .enumerate()
@@ -175,7 +175,7 @@ impl<F: FftField> Config<F> {
             (Vec::new(), None)
         };
         for (i, (rlc_coeff, linear_form)) in
-            zip_strict(intial_forms_rlc_coeffs, &linear_forms).enumerate()
+            zip_strict(initial_forms_rlc_coeffs, &linear_forms).enumerate()
         {
             if Some(i) == recycled_index {
                 continue;
@@ -185,7 +185,7 @@ impl<F: FftField> Config<F> {
 
         // Compute "The Sum"
         let mut the_sum: F = zip_strict(
-            intial_forms_rlc_coeffs,
+            initial_forms_rlc_coeffs,
             evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
