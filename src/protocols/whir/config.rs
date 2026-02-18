@@ -316,9 +316,151 @@ where
         true
     }
 
-    pub fn security_level(&self) -> f64 {
-        // todo!("Compute actual security level from parameters.")
-        0.0
+    pub fn security_level(&self, num_vectors: usize, num_linear_forms: usize) -> f64 {
+        let field_size_bits = F::field_size_in_bits();
+        let mut num_variables = self.initial_num_variables();
+        let mut security_level = f64::INFINITY;
+
+        let initial_vector_rlc =
+            Self::rbr_soundness_initial_rlc_combination(field_size_bits, num_vectors);
+        security_level = security_level.min(initial_vector_rlc);
+        
+        let initial_covector_rlc =
+            Self::rbr_soundness_initial_rlc_combination(field_size_bits, num_linear_forms);
+        security_level = security_level.min(initial_covector_rlc);
+
+        let initial_log_inv_rate = self.initial_committer.rate().log2().neg();
+        let initial_unique_decoding = self.initial_committer.unique_decoding();
+        let initial_log_eta = if initial_unique_decoding {
+            0.0
+        } else {
+            Self::log_eta(initial_log_inv_rate)
+        };
+
+        if !initial_unique_decoding {
+            let ood_error = Self::rbr_ood_sample(
+                num_variables,
+                initial_log_inv_rate,
+                initial_log_eta,
+                field_size_bits,
+                self.initial_committer.out_domain_samples,
+            );
+            security_level = security_level.min(ood_error);
+        }
+
+        let initial_prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
+            initial_unique_decoding,
+            field_size_bits,
+            num_variables,
+            initial_log_inv_rate,
+            initial_log_eta,
+        );
+        let initial_sumcheck_error = Self::rbr_soundness_fold_sumcheck(
+            initial_unique_decoding,
+            field_size_bits,
+            num_variables,
+            initial_log_inv_rate,
+            initial_log_eta,
+        );
+        let initial_fold_error = initial_prox_gaps_error.min(initial_sumcheck_error)
+            + f64::from(self.initial_sumcheck.round_pow.difficulty());
+        security_level = security_level.min(initial_fold_error);
+
+        num_variables -= self.initial_sumcheck.num_rounds;
+
+        for round in &self.round_configs {
+            let round_unique_decoding = round.irs_committer.unique_decoding();
+            // Query soundness is computed at the old rate, while all fold and OOD terms use the new rate.
+            let round_log_inv_rate = round.log_inv_rate() as f64;
+            let next_log_inv_rate = (round.log_inv_rate() + (round.sumcheck.num_rounds - 1)) as f64;
+            let log_eta = if round_unique_decoding {
+                0.0
+            } else {
+                Self::log_eta(next_log_inv_rate)
+            };
+
+            if !round_unique_decoding {
+                let ood_error = Self::rbr_ood_sample(
+                    num_variables,
+                    next_log_inv_rate,
+                    log_eta,
+                    field_size_bits,
+                    round.irs_committer.out_domain_samples,
+                );
+                security_level = security_level.min(ood_error);
+            }
+
+            let query_error = Self::rbr_queries(
+                round_unique_decoding,
+                round_log_inv_rate,
+                round.irs_committer.in_domain_samples,
+            );
+            let combination_error = Self::rbr_soundness_queries_combination(
+                round_unique_decoding,
+                field_size_bits,
+                num_variables,
+                next_log_inv_rate,
+                log_eta,
+                round.irs_committer.out_domain_samples,
+                round.irs_committer.in_domain_samples,
+            );
+            let round_query_error =
+                query_error.min(combination_error) + f64::from(round.pow.difficulty());
+            security_level = security_level.min(round_query_error);
+
+            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
+                round_unique_decoding,
+                field_size_bits,
+                num_variables,
+                next_log_inv_rate,
+                log_eta,
+            );
+            let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
+                round_unique_decoding,
+                field_size_bits,
+                num_variables,
+                next_log_inv_rate,
+                log_eta,
+            );
+            let round_fold_error = prox_gaps_error.min(sumcheck_error)
+                + f64::from(round.sumcheck.round_pow.difficulty());
+            security_level = security_level.min(round_fold_error);
+
+            num_variables -= round.sumcheck.num_rounds;
+        }
+
+        let final_unique_decoding = self
+            .round_configs
+            .last()
+            .map(|round| round.irs_committer.unique_decoding())
+            .unwrap_or(initial_unique_decoding);
+
+        let final_query_error = Self::rbr_queries(
+            final_unique_decoding,
+            self.final_rate().log2().neg(),
+            self.final_in_domain_samples(),
+        ) + f64::from(self.final_pow.difficulty());
+        security_level = security_level.min(final_query_error);
+
+        if self.final_sumcheck.num_rounds > 0 {
+            let final_combination_error =
+                field_size_bits as f64 - 1. + f64::from(self.final_sumcheck.round_pow.difficulty());
+            security_level = security_level.min(final_combination_error);
+        }
+
+        if security_level.is_finite() {
+            security_level
+        } else {
+            0.0
+        }
+    }
+
+    pub fn rbr_soundness_initial_rlc_combination(field_size_bits: usize, num_terms: usize) -> f64 {
+        if num_terms <= 1 {
+            f64::INFINITY
+        } else {
+            field_size_bits as f64 - ((num_terms - 1) as f64).log2()
+        }
     }
 
     pub const fn log_eta(log_inv_rate: f64) -> f64 {
@@ -493,8 +635,8 @@ impl<F: FftField> Display for Config<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Security level: {} bits using {} decoding security",
-            self.security_level(),
+            "Security level: {} bits using {} decoding",
+            self.security_level(self.initial_committer.num_vectors, 1),
             if self.unique_decoding() {
                 "unique"
             } else {
@@ -539,14 +681,14 @@ impl<F: FftField> Display for Config<F> {
         };
 
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            self.initial_committer.out_domain_samples > 0,
+            self.initial_committer.unique_decoding(),
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
             log_eta,
         );
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            self.initial_committer.out_domain_samples > 0,
+            self.initial_committer.unique_decoding(),
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
@@ -662,7 +804,7 @@ impl<F: FftField> Display for Config<F> {
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + f64::from(self.final_pow.difficulty()),
+                combination_error + f64::from(self.final_sumcheck.round_pow.difficulty()),
                 self.final_sumcheck.num_rounds,
                 combination_error,
                 self.final_sumcheck.round_pow.difficulty(),
