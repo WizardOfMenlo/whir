@@ -191,9 +191,7 @@ impl<F: FftField> Config<F> {
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
         .sum();
 
-        // ── Evaluations are fully consumed; free them. ──
         drop(evaluations);
-
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Add OODS constraints
@@ -202,10 +200,8 @@ impl<F: FftField> Config<F> {
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
             .sum::<F>();
 
-        // ── OODS intermediates are fully consumed; free them. ──
         drop(oods_evals);
         drop(oods_matrix);
-
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Run initial sumcheck on batched vectors with combined statement
