@@ -30,9 +30,6 @@ where
     pub round_configs: Vec<RoundConfig<F>>,
     pub final_sumcheck: sumcheck::Config<F>,
     pub final_pow: proof_of_work::Config,
-
-    // TODO: These don't belong in the config.
-    pub security_level: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,7 +236,6 @@ where
             0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
 
         Self {
-            security_level: whir_parameters.security_level,
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
@@ -303,16 +299,13 @@ where
         self.round_configs.len()
     }
 
+    // True if we only use the unique decoding regime.
     pub fn unique_decoding(&self) -> bool {
-        if self.initial_committer.out_domain_samples > 0 {
-            return false;
-        }
-        for round in &self.round_configs {
-            if round.irs_committer.out_domain_samples > 0 {
-                return false;
-            }
-        }
-        return true;
+        self.initial_committer.unique_decoding()
+            && self
+                .round_configs
+                .iter()
+                .all(|r| r.irs_committer.unique_decoding())
     }
 
     pub fn final_rate(&self) -> f64 {
@@ -349,6 +342,11 @@ where
             return false;
         }
         true
+    }
+
+    pub fn security_level(&self) -> f64 {
+        // todo!("Compute actual security level from parameters.")
+        0.0
     }
 
     pub const fn log_eta(log_inv_rate: f64) -> f64 {
@@ -524,7 +522,7 @@ impl<F: FftField> Display for Config<F> {
         writeln!(
             f,
             "Security level: {} bits using {} decoding security",
-            self.security_level,
+            self.security_level(),
             if self.unique_decoding() {
                 "unique"
             } else {
