@@ -9,7 +9,7 @@ use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
         dot, lift,
-        linear_form::{Evaluate, LinearForm, UnivariateEvaluation},
+        linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
         sumcheck::fold,
         tensor_product, MultilinearPoint,
@@ -151,12 +151,35 @@ impl<F: FftField> Config<F> {
         // TODO: Flip order.
         let (oods_rlc_coeffs, intial_forms_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_evals.len());
-        let mut covector = if has_constraints {
-            vec![F::ZERO; self.initial_size()]
+        // Recycle a Covector buffer as the initial accumulator (mirrors vector recycling).
+        // We downcast to read the data and scale it, avoiding a separate zero-allocation
+        // and one accumulate pass.
+        let (mut covector, recycled_index) = if has_constraints {
+            let found = intial_forms_rlc_coeffs
+                .iter()
+                .zip(linear_forms.iter())
+                .enumerate()
+                .find_map(|(i, (&coeff, form))| {
+                    form.as_any()
+                        .downcast_ref::<Covector<F>>()
+                        .map(|cov| (i, coeff, &cov.vector))
+                });
+            match found {
+                Some((idx, coeff, data)) => {
+                    let buf: Vec<F> = data.iter().map(|&x| x * coeff).collect();
+                    (buf, Some(idx))
+                }
+                None => (vec![F::ZERO; self.initial_size()], None),
+            }
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
-        for (rlc_coeff, linear_form) in zip_strict(intial_forms_rlc_coeffs, &linear_forms) {
+        for (i, (rlc_coeff, linear_form)) in
+            zip_strict(intial_forms_rlc_coeffs, &linear_forms).enumerate()
+        {
+            if Some(i) == recycled_index {
+                continue;
+            }
             linear_form.accumulate(&mut covector, *rlc_coeff);
         }
 
