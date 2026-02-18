@@ -487,7 +487,7 @@ mod tests {
         ];
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
-            vec![vec1.clone(), vec_wrong.clone()],
+            vec![vec1.clone(), vec_wrong],
             vec![witness1, witness2],
             prove_linear_forms,
             evaluations.clone(),

@@ -48,7 +48,7 @@ impl<F: FftField> Config<F> {
     /// `vectors.len()`.
     ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -315,7 +315,7 @@ impl<F: FftField> Config<F> {
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec);
         let deferred = linear_forms
-            .iter()
+            .into_iter()
             .filter(|w| w.deferred())
             .map(|w| w.mle_evaluate(&constraint_eval.0))
             .collect();
