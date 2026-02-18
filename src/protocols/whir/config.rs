@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     algebra::{
-        embedding::{self, Basefield},
+        embedding::{self, Basefield, Embedding},
         fields::FieldWithSize,
     },
     bits::Bits,
@@ -20,12 +20,14 @@ use crate::{
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField")]
-pub struct Config<F>
+#[serde(bound = "F: FftField, M: Embedding<Target = F>, M::Source: FftField")]
+pub struct Config<F, M = Basefield<F>>
 where
     F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
 {
-    pub initial_committer: irs_commit::BasefieldConfig<F>,
+    pub initial_committer: irs_commit::Config<M::Source, F, M>,
     pub initial_sumcheck: sumcheck::Config<F>,
     pub round_configs: Vec<RoundConfig<F>>,
     pub final_sumcheck: sumcheck::Config<F>,
@@ -48,7 +50,7 @@ where
     pub pow: proof_of_work::Config,
 }
 
-impl<F> Config<F>
+impl<F> Config<F, Basefield<F>>
 where
     F: FftField + FieldWithSize,
 {
@@ -265,47 +267,6 @@ where
         }
     }
 
-    pub fn embedding(&self) -> &Basefield<F> {
-        self.initial_committer.embedding()
-    }
-
-    #[deprecated]
-    pub const fn allows_statement(&self) -> bool {
-        true
-    }
-
-    pub const fn initial_size(&self) -> usize {
-        self.initial_committer.vector_size
-    }
-
-    pub fn initial_num_variables(&self) -> usize {
-        assert!(self.initial_size().is_power_of_two());
-        self.initial_size().trailing_zeros() as usize
-    }
-
-    pub const fn final_size(&self) -> usize {
-        self.final_sumcheck.final_size()
-    }
-
-    pub const fn n_rounds(&self) -> usize {
-        self.round_configs.len()
-    }
-
-    pub fn final_rate(&self) -> f64 {
-        self.round_configs.last().map_or_else(
-            || self.initial_committer.rate(),
-            |round_config| round_config.irs_committer.rate(),
-        )
-    }
-
-    pub fn final_in_domain_samples(&self) -> usize {
-        self.round_configs
-            .last()
-            .map_or(self.initial_committer.in_domain_samples, |round_config| {
-                round_config.irs_committer.in_domain_samples
-            })
-    }
-
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
         if self.initial_sumcheck.round_pow.difficulty() > max_bits {
             return false;
@@ -518,7 +479,55 @@ where
     }
 }
 
-impl<F: FftField> Display for Config<F> {
+impl<F, M> Config<F, M>
+where
+    F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
+{
+    pub fn embedding(&self) -> &M {
+        self.initial_committer.embedding()
+    }
+
+    #[deprecated]
+    pub const fn allows_statement(&self) -> bool {
+        true
+    }
+
+    pub const fn initial_size(&self) -> usize {
+        self.initial_committer.vector_size
+    }
+
+    pub fn initial_num_variables(&self) -> usize {
+        assert!(self.initial_size().is_power_of_two());
+        self.initial_size().trailing_zeros() as usize
+    }
+
+    pub const fn final_size(&self) -> usize {
+        self.final_sumcheck.final_size()
+    }
+
+    pub const fn n_rounds(&self) -> usize {
+        self.round_configs.len()
+    }
+
+    pub fn final_rate(&self) -> f64 {
+        self.round_configs.last().map_or_else(
+            || self.initial_committer.rate(),
+            |round_config| round_config.irs_committer.rate(),
+        )
+    }
+
+    pub fn final_in_domain_samples(&self) -> usize {
+        self.round_configs
+            .last()
+            .map_or(self.initial_committer.in_domain_samples, |round_config| {
+                round_config.irs_committer.in_domain_samples
+            })
+    }
+}
+
+impl<F: FftField + FieldWithSize> Display for Config<F> {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(

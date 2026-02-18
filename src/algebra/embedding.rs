@@ -34,6 +34,14 @@ pub trait Embedding:
     fn mixed_add(&self, cod: Self::Target, dom: Self::Source) -> Self::Target {
         cod + self.map(dom)
     }
+
+    /// Map a vector element-wise.
+    ///
+    /// The default implementation allocates a fresh vector. Embeddings that
+    /// are the identity can override this to return the input directly.
+    fn map_vec(&self, source: Vec<Self::Source>) -> Vec<Self::Target> {
+        source.into_iter().map(|e| self.map(e)).collect()
+    }
 }
 
 /// The identiy embedding of a field in into itself.
@@ -126,6 +134,11 @@ impl<F: Field> Embedding for Identity<F> {
     #[inline]
     fn map(&self, dom: Self::Source) -> Self::Target {
         dom
+    }
+
+    #[inline]
+    fn map_vec(&self, source: Vec<F>) -> Vec<F> {
+        source
     }
 }
 

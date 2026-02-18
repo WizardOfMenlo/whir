@@ -8,7 +8,9 @@ use tracing::instrument;
 use super::{committer::Witness, config::Config};
 use crate::{
     algebra::{
-        dot, lift,
+        dot,
+        embedding::Embedding,
+        lift,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
         sumcheck::fold,
@@ -25,12 +27,20 @@ use crate::{
 
 /// Holds the witness for the current round. Owned witnesses are freed after
 /// opening; borrowed witnesses remain alive in the caller.
-enum RoundWitness<'a, F: FftField> {
-    Initial(Vec<Cow<'a, irs_commit::Witness<F::BasePrimeField, F>>>),
+enum RoundWitness<'a, F: FftField, M: Embedding<Target = F>>
+where
+    M::Source: FftField,
+{
+    Initial(Vec<Cow<'a, irs_commit::Witness<M::Source, F>>>),
     Round(irs_commit::Witness<F, F>),
 }
 
-impl<F: FftField> Config<F> {
+impl<F, M> Config<F, M>
+where
+    F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
+{
     /// Prove a WHIR opening (ownership-based for memory efficiency).
     ///
     /// All large inputs are consumed and freed as soon as they are no longer
@@ -55,8 +65,8 @@ impl<F: FftField> Config<F> {
     pub fn prove<'a, H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: Vec<Cow<'a, [F::BasePrimeField]>>,
-        witnesses: Vec<Cow<'a, Witness<F>>>,
+        vectors: Vec<Cow<'a, [M::Source]>>,
+        witnesses: Vec<Cow<'a, Witness<F, M>>>,
         linear_forms: Vec<Box<dyn LinearForm<F>>>,
         evaluations: Cow<'a, [F]>,
     ) -> (MultilinearPoint<F>, Vec<F>)
@@ -137,12 +147,16 @@ impl<F: FftField> Config<F> {
         assert_eq!(vector_rlc_coeffs[0], F::ONE);
         // Recycle the first input as the accumulator (its coefficient is always ONE).
         let mut vectors = vectors.into_iter();
-        let mut vector = lift(self.embedding(), &vectors.next().expect("non-empty"));
+        let first = vectors.next().expect("non-empty");
+        let mut vector = match first {
+            Cow::Borrowed(slice) => lift(self.embedding(), slice),
+            Cow::Owned(vec) => self.embedding().map_vec(vec),
+        };
         for (rlc_coeff, input_vector) in zip_strict(&vector_rlc_coeffs[1..], vectors) {
             mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, &input_vector);
         }
 
-        let mut prev_witness = RoundWitness::Initial(witnesses);
+        let mut prev_witness: RoundWitness<'a, F, M> = RoundWitness::Initial(witnesses);
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
