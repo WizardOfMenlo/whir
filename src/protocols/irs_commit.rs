@@ -156,6 +156,10 @@ where
         1.0 / self.expansion as f64
     }
 
+    pub fn unique_decoding(&self) -> bool {
+        self.out_domain_samples == 0
+    }
+
     /// Commit to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(self = %self)))]
     pub fn commit<H, R>(

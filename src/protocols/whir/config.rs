@@ -32,7 +32,6 @@ where
     pub final_pow: proof_of_work::Config,
 
     // TODO: These don't belong in the config.
-    pub unique_decoding: bool,
     pub security_level: usize,
 }
 
@@ -84,20 +83,24 @@ where
             .folding_factor
             .compute_number_of_rounds(initial_num_variables);
 
-        let log_eta_start = Self::log_eta(whir_parameters.unique_decoding, log_inv_rate as f64);
-
-        let commitment_ood_samples = if whir_parameters.initial_statement {
-            Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.unique_decoding,
-                num_variables,
-                log_inv_rate as f64,
-                log_eta_start,
-                field_size_bits,
-            )
+        let log_eta_start = if whir_parameters.unique_decoding {
+            0.0
         } else {
-            0
+            Self::log_eta(log_inv_rate as f64)
         };
+
+        let commitment_ood_samples =
+            if whir_parameters.initial_statement && !whir_parameters.unique_decoding {
+                Self::ood_samples(
+                    whir_parameters.security_level,
+                    num_variables,
+                    log_inv_rate as f64,
+                    log_eta_start,
+                    field_size_bits,
+                )
+            } else {
+                0
+            };
 
         let starting_folding_pow_bits = if whir_parameters.initial_statement {
             Self::folding_pow_bits(
@@ -128,7 +131,11 @@ where
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
 
-            let log_next_eta = Self::log_eta(whir_parameters.unique_decoding, next_rate as f64);
+            let log_next_eta = if whir_parameters.unique_decoding {
+                0.0
+            } else {
+                Self::log_eta(next_rate as f64)
+            };
 
             let num_queries = Self::queries(
                 whir_parameters.unique_decoding,
@@ -136,14 +143,17 @@ where
                 log_inv_rate,
             );
 
-            let ood_samples = Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.unique_decoding,
-                num_variables,
-                next_rate as f64,
-                log_next_eta,
-                field_size_bits,
-            );
+            let ood_samples = if whir_parameters.unique_decoding {
+                0
+            } else {
+                Self::ood_samples(
+                    whir_parameters.security_level,
+                    num_variables,
+                    next_rate as f64,
+                    log_next_eta,
+                    field_size_bits,
+                )
+            };
 
             let query_error = Self::rbr_queries(
                 whir_parameters.unique_decoding,
@@ -230,7 +240,6 @@ where
 
         Self {
             security_level: whir_parameters.security_level,
-            unique_decoding: whir_parameters.unique_decoding,
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
@@ -294,6 +303,18 @@ where
         self.round_configs.len()
     }
 
+    pub fn unique_decoding(&self) -> bool {
+        if self.initial_committer.out_domain_samples > 0 {
+            return false;
+        }
+        for round in &self.round_configs {
+            if round.irs_committer.out_domain_samples > 0 {
+                return false;
+            }
+        }
+        return true;
+    }
+
     pub fn final_rate(&self) -> f64 {
         self.round_configs.last().map_or_else(
             || self.initial_committer.rate(),
@@ -330,40 +351,25 @@ where
         true
     }
 
-    pub const fn log_eta(unique_decoding: bool, log_inv_rate: f64) -> f64 {
+    pub const fn log_eta(log_inv_rate: f64) -> f64 {
         // Ask me how I did this? At the time, only God and I knew. Now only God knows
-        if unique_decoding {
-            0.
-        } else {
-            -(0.5 * log_inv_rate + LOG2_10 + 1.)
-        }
+        -(0.5 * log_inv_rate + LOG2_10 + 1.)
     }
 
-    pub const fn list_size_bits(
-        unique_decoding: bool,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-    ) -> f64 {
-        if unique_decoding {
-            0.0
-        } else {
-            let _ = num_variables;
-            let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
-            log_inv_sqrt_rate - (1. + log_eta)
-        }
+    pub const fn list_size_bits(num_variables: usize, log_inv_rate: f64, log_eta: f64) -> f64 {
+        let _ = num_variables;
+        let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
+        log_inv_sqrt_rate - (1. + log_eta)
     }
 
     pub const fn rbr_ood_sample(
-        unique_decoding: bool,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
         field_size_bits: usize,
         ood_samples: usize,
     ) -> f64 {
-        let list_size_bits =
-            Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
+        let list_size_bits = Self::list_size_bits(num_variables, log_inv_rate, log_eta);
 
         let error = 2. * list_size_bits + (num_variables * ood_samples) as f64;
         (ood_samples * field_size_bits) as f64 + 1. - error
@@ -371,28 +377,22 @@ where
 
     pub fn ood_samples(
         security_level: usize, // We don't do PoW for OOD
-        unique_decoding: bool,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
         field_size_bits: usize,
     ) -> usize {
-        if unique_decoding {
-            0
-        } else {
-            (1..64)
-                .find(|&ood_samples| {
-                    Self::rbr_ood_sample(
-                        unique_decoding,
-                        num_variables,
-                        log_inv_rate,
-                        log_eta,
-                        field_size_bits,
-                        ood_samples,
-                    ) >= security_level as f64
-                })
-                .unwrap_or_else(|| panic!("Could not find an appropriate number of OOD samples"))
-        }
+        (1..64)
+            .find(|&ood_samples| {
+                Self::rbr_ood_sample(
+                    num_variables,
+                    log_inv_rate,
+                    log_eta,
+                    field_size_bits,
+                    ood_samples,
+                ) >= security_level as f64
+            })
+            .unwrap_or_else(|| panic!("Could not find an appropriate number of OOD samples"))
     }
 
     // Compute the proximity gaps term of the fold
@@ -421,7 +421,11 @@ where
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
-        let list_size = Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
+        let list_size = if unique_decoding {
+            0.0
+        } else {
+            Self::list_size_bits(num_variables, log_inv_rate, log_eta)
+        };
 
         field_size_bits as f64 - (list_size + 1.)
     }
@@ -502,7 +506,11 @@ where
         ood_samples: usize,
         num_queries: usize,
     ) -> f64 {
-        let list_size = Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
+        let list_size = if unique_decoding {
+            0.0
+        } else {
+            Self::list_size_bits(num_variables, log_inv_rate, log_eta)
+        };
 
         let log_combination = ((ood_samples + num_queries) as f64).log2();
 
@@ -517,7 +525,7 @@ impl<F: FftField> Display for Config<F> {
             f,
             "Security level: {} bits using {} decoding security",
             self.security_level,
-            if self.unique_decoding {
+            if self.unique_decoding() {
                 "unique"
             } else {
                 "list"
@@ -540,18 +548,16 @@ impl<F: FftField> Display for Config<F> {
         writeln!(f, "------------------------------------")?;
 
         let field_size_bits = F::field_size_in_bits();
-        let log_eta = Self::log_eta(
-            self.unique_decoding,
-            self.initial_committer.rate().log2().neg(),
-        );
         let mut num_variables = self.initial_num_variables();
 
-        if self.initial_committer.out_domain_samples > 0 {
+        let log_eta = if self.initial_committer.unique_decoding() {
+            0.0
+        } else {
+            let log_eta = Self::log_eta(self.initial_committer.rate().log2().neg());
             writeln!(
                 f,
                 "{:.1} bits -- OOD commitment",
                 Self::rbr_ood_sample(
-                    self.unique_decoding,
                     num_variables,
                     self.initial_committer.rate().log2().neg(),
                     log_eta,
@@ -559,17 +565,18 @@ impl<F: FftField> Display for Config<F> {
                     self.initial_committer.out_domain_samples
                 )
             )?;
-        }
+            log_eta
+        };
 
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            self.unique_decoding,
+            self.initial_committer.out_domain_samples > 0,
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
             log_eta,
         );
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            self.unique_decoding,
+            self.initial_committer.out_domain_samples > 0,
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
@@ -590,14 +597,17 @@ impl<F: FftField> Display for Config<F> {
 
         for r in &self.round_configs {
             let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
-            let log_eta = Self::log_eta(self.unique_decoding, next_rate);
+            let log_eta = if r.irs_committer.unique_decoding() {
+                0.0
+            } else {
+                Self::log_eta(next_rate)
+            };
 
-            if r.irs_committer.out_domain_samples > 0 {
+            if !r.irs_committer.unique_decoding() {
                 writeln!(
                     f,
                     "{:.1} bits -- OOD sample",
                     Self::rbr_ood_sample(
-                        self.unique_decoding,
                         num_variables,
                         next_rate,
                         log_eta,
@@ -608,12 +618,12 @@ impl<F: FftField> Display for Config<F> {
             }
 
             let query_error = Self::rbr_queries(
-                self.unique_decoding,
+                r.irs_committer.unique_decoding(),
                 r.log_inv_rate() as f64,
                 r.irs_committer.in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
-                self.unique_decoding,
+                r.irs_committer.unique_decoding(),
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -631,14 +641,14 @@ impl<F: FftField> Display for Config<F> {
             )?;
 
             let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                self.unique_decoding,
+                r.irs_committer.unique_decoding(),
                 field_size_bits,
                 num_variables,
                 next_rate,
                 log_eta,
             );
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-                self.unique_decoding,
+                r.irs_committer.unique_decoding(),
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -658,8 +668,14 @@ impl<F: FftField> Display for Config<F> {
             num_variables -= r.sumcheck.num_rounds;
         }
 
+        let last_unique = self
+            .round_configs
+            .last()
+            .map(|r| r.irs_committer.unique_decoding())
+            .unwrap_or_else(|| self.initial_committer.unique_decoding());
+
         let query_error = Self::rbr_queries(
-            self.unique_decoding,
+            last_unique,
             self.final_rate().log2().neg(),
             self.final_in_domain_samples(),
         );
@@ -931,33 +947,9 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result =
-                Config::<Field64>::list_size_bits(false, num_variables, log_inv_rate, log_eta);
+            let result = Config::<Field64>::list_size_bits(num_variables, log_inv_rate, log_eta);
             assert!(
                 (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_list_size_bits_unique_decoding() {
-        // UniqueDecoding: always returns 0.0
-
-        let cases = vec![
-            (10, 5.0, 2.0),
-            (0, 5.0, 2.0),
-            (10, 0.0, 2.0),
-            (10, 5.0, 0.0),
-            (10, 5.0, 10.0),
-        ];
-
-        for (num_variables, log_inv_rate, log_eta) in cases {
-            let result =
-                Config::<Field64>::list_size_bits(true, num_variables, log_inv_rate, log_eta);
-            assert!(
-                (result - 0.0) < 1e-6,
                 "Failed for {:?}",
                 (num_variables, log_inv_rate, log_eta)
             );
@@ -1006,7 +998,6 @@ mod tests {
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
             let result = Config::<Field64>::rbr_ood_sample(
-                false,
                 num_variables,
                 log_inv_rate,
                 log_eta,
@@ -1028,21 +1019,12 @@ mod tests {
     }
 
     #[test]
-    fn test_ood_samples_unique_decoding() {
-        // UniqueDecoding should always return 0 regardless of parameters
-        assert_eq!(
-            Config::<Field64>::ood_samples(100, true, 10, 3.0, 1.5, 256),
-            0
-        );
-    }
-
-    #[test]
     fn test_ood_samples_valid_case() {
         // Testing a valid case where the function finds an appropriate `ood_samples`
         assert_eq!(
             Config::<Field64>::ood_samples(
-                50, // security level
-                false, 15,  // num_variables
+                50,  // security level
+                15,  // num_variables
                 4.0, // log_inv_rate
                 2.0, // log_eta
                 256, // field_size_bits
@@ -1056,8 +1038,8 @@ mod tests {
         // Lower security level should require fewer OOD samples
         assert_eq!(
             Config::<Field64>::ood_samples(
-                30, // Lower security level
-                false, 20,  // num_variables
+                30,  // Lower security level
+                20,  // num_variables
                 5.0, // log_inv_rate
                 2.5, // log_eta
                 512, // field_size_bits
@@ -1071,8 +1053,8 @@ mod tests {
         // Higher security level should require more OOD samples
         assert_eq!(
             Config::<Field64>::ood_samples(
-                100, // High security level
-                false, 25,   // num_variables
+                100,  // High security level
+                25,   // num_variables
                 6.0,  // log_inv_rate
                 3.0,  // log_eta
                 1024  // field_size_bits
@@ -1086,10 +1068,10 @@ mod tests {
         assert_eq!(
             Config::<Field64>::ood_samples(
                 1000, // Extremely high security level
-                false, 10,  // num_variables
-                5.0, // log_inv_rate
-                2.0, // log_eta
-                256, // field_size_bits
+                10,   // num_variables
+                5.0,  // log_inv_rate
+                2.0,  // log_eta
+                256,  // field_size_bits
             ),
             5
         );
