@@ -36,7 +36,7 @@ mod batching_tests {
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, ProtocolParameters, SoundnessType},
+        parameters::{FoldingFactor, ProtocolParameters},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
     };
 
@@ -56,17 +56,17 @@ mod batching_tests {
         num_variables: usize,
         folding_factor: FoldingFactor,
         num_points: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         eprintln!("\n---------------------");
         eprintln!("Test parameters: ");
-        eprintln!("  num_vectors: {batch_size}");
-        eprintln!("  num_variables  : {num_variables}");
-        eprintln!("  folding_factor : {:?}", &folding_factor);
-        eprintln!("  num_points     : {num_points:?}");
-        eprintln!("  soundness_type : {soundness_type:?}");
-        eprintln!("  pow_bits       : {pow_bits}");
+        eprintln!("  num_vectors     : {batch_size}");
+        eprintln!("  num_variables   : {num_variables}");
+        eprintln!("  folding_factor  : {:?}", &folding_factor);
+        eprintln!("  num_points      : {num_points:?}");
+        eprintln!("  unique_decoding : {unique_decoding:?}");
+        eprintln!("  pow_bits        : {pow_bits}");
 
         // Number of coefficients in the multilinear polynomial (2^num_variables)
         let num_coeffs = 1 << num_variables;
@@ -80,7 +80,7 @@ mod batching_tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size,
             hash_id: hash::SHA2,
@@ -161,11 +161,7 @@ mod batching_tests {
     #[test]
     fn test_whir() {
         let folding_factors = [1, 4];
-        let soundness_type = [
-            SoundnessType::ConjectureList,
-            SoundnessType::ProvableList,
-            SoundnessType::UniqueDecoding,
-        ];
+        let unique_decoding_options = [false, true];
         let num_points = [0, 2];
         let pow_bits = [0, 10];
 
@@ -173,7 +169,7 @@ mod batching_tests {
             let num_variables = (2 * folding_factor)..=3 * folding_factor;
             for num_variable in num_variables {
                 for num_points in num_points {
-                    for soundness_type in soundness_type {
+                    for unique_decoding in unique_decoding_options {
                         for pow_bits in pow_bits {
                             for batch_size in 1..=4 {
                                 make_batched_whir_things(
@@ -181,7 +177,7 @@ mod batching_tests {
                                     num_variable,
                                     FoldingFactor::Constant(folding_factor),
                                     num_points,
-                                    soundness_type,
+                                    unique_decoding,
                                     pow_bits,
                                 );
                             }

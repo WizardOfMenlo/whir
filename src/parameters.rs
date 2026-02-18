@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-    str::FromStr,
-};
+use std::fmt::{Debug, Display};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -14,40 +11,6 @@ use crate::engines::EngineId;
 /// and the logarithmic inverse rate.
 pub const fn default_max_pow(num_variables: usize, log_inv_rate: usize) -> usize {
     num_variables + log_inv_rate - 3
-}
-
-/// Defines the soundness type for the proof system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SoundnessType {
-    /// Unique decoding guarantees a single valid witness.
-    UniqueDecoding,
-    /// Provable list decoding allows multiple valid witnesses but provides proof.
-    ProvableList,
-    /// Conjecture-based list decoding with no strict guarantees.
-    ConjectureList,
-}
-
-impl Display for SoundnessType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::ProvableList => "ProvableList",
-            Self::ConjectureList => "ConjectureList",
-            Self::UniqueDecoding => "UniqueDecoding",
-        })
-    }
-}
-
-impl FromStr for SoundnessType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ProvableList" => Ok(Self::ProvableList),
-            "ConjectureList" => Ok(Self::ConjectureList),
-            "UniqueDecoding" => Ok(Self::UniqueDecoding),
-            _ => Err(format!("Invalid soundness specification: {s}")),
-        }
-    }
 }
 
 /// Errors that can occur when validating a folding factor.
@@ -187,8 +150,8 @@ pub struct ProtocolParameters {
     pub starting_log_inv_rate: usize,
     /// The folding factor strategy.
     pub folding_factor: FoldingFactor,
-    /// The type of soundness guarantee.
-    pub soundness_type: SoundnessType,
+    /// Wheter to require unique decoding.
+    pub unique_decoding: bool,
     /// The security level in bits.
     pub security_level: usize,
     /// The number of bits required for proof-of-work (PoW).
@@ -203,8 +166,14 @@ impl Display for ProtocolParameters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Targeting {}-bits of security with {}-bits of PoW - soundness: {:?}",
-            self.security_level, self.pow_bits, self.soundness_type
+            "Targeting {}-bits of security with {}-bits of PoW using {} decoding",
+            self.security_level,
+            self.pow_bits,
+            if self.unique_decoding {
+                "unique"
+            } else {
+                "list"
+            }
         )?;
         writeln!(
             f,
@@ -228,33 +197,6 @@ mod tests {
         // Edge cases
         assert_eq!(default_max_pow(1, 3), 1); // Smallest valid input
         assert_eq!(default_max_pow(0, 3), 0); // Zero variables (should not happen in practice)
-    }
-
-    #[test]
-    fn test_soundness_type_display() {
-        assert_eq!(SoundnessType::ProvableList.to_string(), "ProvableList");
-        assert_eq!(SoundnessType::ConjectureList.to_string(), "ConjectureList");
-        assert_eq!(SoundnessType::UniqueDecoding.to_string(), "UniqueDecoding");
-    }
-
-    #[test]
-    fn test_soundness_type_from_str() {
-        assert_eq!(
-            SoundnessType::from_str("ProvableList"),
-            Ok(SoundnessType::ProvableList)
-        );
-        assert_eq!(
-            SoundnessType::from_str("ConjectureList"),
-            Ok(SoundnessType::ConjectureList)
-        );
-        assert_eq!(
-            SoundnessType::from_str("UniqueDecoding"),
-            Ok(SoundnessType::UniqueDecoding)
-        );
-
-        // Invalid cases
-        assert!(SoundnessType::from_str("InvalidType").is_err());
-        assert!(SoundnessType::from_str("").is_err()); // Empty string
     }
 
     #[test]

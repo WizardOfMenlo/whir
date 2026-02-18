@@ -22,7 +22,7 @@ mod tests {
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, ProtocolParameters, SoundnessType},
+        parameters::{FoldingFactor, ProtocolParameters},
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
     };
@@ -45,7 +45,7 @@ mod tests {
         num_variables: usize,
         folding_factor: FoldingFactor,
         num_points: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         // Number of coefficients in the multilinear polynomial (2^num_variables)
@@ -60,7 +60,7 @@ mod tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
@@ -151,27 +151,18 @@ mod tests {
 
     #[test]
     fn test_whir_1() {
-        let folding_factors = [1, 2, 3, 4];
-        let soundness_type = [
-            SoundnessType::ConjectureList,
-            SoundnessType::ProvableList,
-            SoundnessType::UniqueDecoding,
-        ];
-        let num_points = [0, 1, 2];
-        let pow_bits = [0, 5, 10];
-
-        for folding_factor in folding_factors {
+        for folding_factor in [1, 2, 3, 4] {
             let num_variables = folding_factor..=3 * folding_factor;
             for num_variable in num_variables {
-                for num_points in num_points {
-                    for soundness_type in soundness_type {
-                        for pow_bits in pow_bits {
+                for num_points in [0, 1, 2] {
+                    for unique_decoding in [true, false] {
+                        for pow_bits in [0, 5, 10] {
                             eprintln!();
                             dbg!(
                                 folding_factor,
                                 num_variable,
                                 num_points,
-                                soundness_type,
+                                unique_decoding,
                                 pow_bits
                             );
 
@@ -179,7 +170,7 @@ mod tests {
                                 num_variable,
                                 FoldingFactor::Constant(folding_factor),
                                 num_points,
-                                soundness_type,
+                                unique_decoding,
                                 pow_bits,
                             );
                         }
@@ -191,13 +182,7 @@ mod tests {
 
     #[test]
     fn test_fail() {
-        make_whir_things(
-            3,
-            FoldingFactor::Constant(2),
-            0,
-            SoundnessType::ConjectureList,
-            0,
-        );
+        make_whir_things(3, FoldingFactor::Constant(2), 0, false, 0);
     }
 
     #[test]
@@ -229,7 +214,7 @@ mod tests {
                                 folding_factor,
                             ),
                             num_points,
-                            SoundnessType::ProvableList,
+                            false,
                             5,
                         );
                     }
@@ -247,7 +232,7 @@ mod tests {
         folding_factor: FoldingFactor,
         num_points_per_poly: usize,
         num_vectors: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         let num_coeffs = 1 << num_variables;
@@ -258,7 +243,7 @@ mod tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
@@ -385,7 +370,7 @@ mod tests {
                                 },
                                 num_points_per_poly,
                                 num_polys,
-                                SoundnessType::ConjectureList,
+                                false,
                                 0, // pow_bits
                             );
                         }
@@ -403,7 +388,7 @@ mod tests {
             FoldingFactor::Constant(2),
             2, // num_points_per_poly
             1, // num_polynomials (single!)
-            SoundnessType::ConjectureList,
+            false,
             0,
         );
     }
@@ -432,7 +417,7 @@ mod tests {
             security_level: 32,
             pow_bits: 0,
             folding_factor,
-            soundness_type: SoundnessType::ConjectureList,
+            unique_decoding: false,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
@@ -521,7 +506,7 @@ mod tests {
         num_points_per_poly: usize,
         num_witnesses: usize,
         batch_size: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         let num_coeffs = 1 << num_variables;
@@ -532,7 +517,7 @@ mod tests {
             security_level: 32,
             pow_bits,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size, // KEY: batch_size > 1
             hash_id: hash::SHA2,
@@ -640,7 +625,7 @@ mod tests {
                         1, // num_points_per_poly
                         num_witness,
                         batch_size,
-                        SoundnessType::ConjectureList,
+                        false,
                         0, // pow_bits
                     );
                 }

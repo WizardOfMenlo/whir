@@ -14,7 +14,7 @@ use crate::{
         fields::FieldWithSize,
     },
     bits::Bits,
-    parameters::{ProtocolParameters, SoundnessType},
+    parameters::ProtocolParameters,
     protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
     type_info::{Type, Typed},
 };
@@ -31,9 +31,8 @@ where
     pub final_sumcheck: sumcheck::Config<F>,
     pub final_pow: proof_of_work::Config,
 
-    // TODO: These don't belong in the config. Instead there should be
-    // fn like `WhirConfig::soundness(&self, assumptions: SoundnessType) -> Bits`.
-    pub soundness_type: SoundnessType,
+    // TODO: These don't belong in the config.
+    pub unique_decoding: bool,
     pub security_level: usize,
 }
 
@@ -85,12 +84,12 @@ where
             .folding_factor
             .compute_number_of_rounds(initial_num_variables);
 
-        let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate as f64);
+        let log_eta_start = Self::log_eta(whir_parameters.unique_decoding, log_inv_rate as f64);
 
         let commitment_ood_samples = if whir_parameters.initial_statement {
             Self::ood_samples(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 num_variables,
                 log_inv_rate as f64,
                 log_eta_start,
@@ -103,7 +102,7 @@ where
         let starting_folding_pow_bits = if whir_parameters.initial_statement {
             Self::folding_pow_bits(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 field_size_bits,
                 num_variables,
                 log_inv_rate as f64,
@@ -112,7 +111,7 @@ where
         } else {
             {
                 let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                    whir_parameters.soundness_type,
+                    whir_parameters.unique_decoding,
                     field_size_bits,
                     num_variables,
                     log_inv_rate as f64,
@@ -129,17 +128,17 @@ where
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
 
-            let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate as f64);
+            let log_next_eta = Self::log_eta(whir_parameters.unique_decoding, next_rate as f64);
 
             let num_queries = Self::queries(
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 protocol_security_level,
                 log_inv_rate,
             );
 
             let ood_samples = Self::ood_samples(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 num_variables,
                 next_rate as f64,
                 log_next_eta,
@@ -147,13 +146,13 @@ where
             );
 
             let query_error = Self::rbr_queries(
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 log_inv_rate as f64,
                 num_queries,
             );
 
             let combination_error = Self::rbr_soundness_queries_combination(
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 field_size_bits,
                 num_variables,
                 next_rate as f64,
@@ -167,7 +166,7 @@ where
 
             let folding_pow_bits = Self::folding_pow_bits(
                 whir_parameters.security_level,
-                whir_parameters.soundness_type,
+                whir_parameters.unique_decoding,
                 field_size_bits,
                 num_variables,
                 next_rate as f64,
@@ -190,7 +189,7 @@ where
                     interleaving_depth: 1 << next_folding_factor,
                     matrix_commit: matrix_committer.clone(),
                     in_domain_samples: Self::queries(
-                        whir_parameters.soundness_type,
+                        whir_parameters.unique_decoding,
                         protocol_security_level,
                         next_rate,
                     ),
@@ -212,7 +211,7 @@ where
         }
 
         let final_queries = Self::queries(
-            whir_parameters.soundness_type,
+            whir_parameters.unique_decoding,
             protocol_security_level,
             log_inv_rate,
         );
@@ -220,7 +219,7 @@ where
         let final_pow_bits = 0_f64.max(
             whir_parameters.security_level as f64
                 - Self::rbr_queries(
-                    whir_parameters.soundness_type,
+                    whir_parameters.unique_decoding,
                     log_inv_rate as f64,
                     final_queries,
                 ),
@@ -231,7 +230,7 @@ where
 
         Self {
             security_level: whir_parameters.security_level,
-            soundness_type: whir_parameters.soundness_type,
+            unique_decoding: whir_parameters.unique_decoding,
             initial_committer: irs_commit::Config {
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
@@ -245,7 +244,7 @@ where
                     whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
                 ),
                 in_domain_samples: Self::queries(
-                    whir_parameters.soundness_type,
+                    whir_parameters.unique_decoding,
                     protocol_security_level,
                     whir_parameters.starting_log_inv_rate,
                 ),
@@ -331,33 +330,32 @@ where
         true
     }
 
-    pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: f64) -> f64 {
+    pub const fn log_eta(unique_decoding: bool, log_inv_rate: f64) -> f64 {
         // Ask me how I did this? At the time, only God and I knew. Now only God knows
-        match soundness_type {
-            SoundnessType::ProvableList => -(0.5 * log_inv_rate + LOG2_10 + 1.),
-            SoundnessType::UniqueDecoding => 0.,
-            SoundnessType::ConjectureList => -(log_inv_rate + 1.),
+        if unique_decoding {
+            0.
+        } else {
+            -(0.5 * log_inv_rate + LOG2_10 + 1.)
         }
     }
 
     pub const fn list_size_bits(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
-        match soundness_type {
-            SoundnessType::ConjectureList => num_variables as f64 + log_inv_rate - log_eta,
-            SoundnessType::ProvableList => {
-                let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
-                log_inv_sqrt_rate - (1. + log_eta)
-            }
-            SoundnessType::UniqueDecoding => 0.0,
+        if unique_decoding {
+            0.0
+        } else {
+            let _ = num_variables;
+            let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
+            log_inv_sqrt_rate - (1. + log_eta)
         }
     }
 
     pub const fn rbr_ood_sample(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
@@ -365,7 +363,7 @@ where
         ood_samples: usize,
     ) -> f64 {
         let list_size_bits =
-            Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
+            Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
 
         let error = 2. * list_size_bits + (num_variables * ood_samples) as f64;
         (ood_samples * field_size_bits) as f64 + 1. - error
@@ -373,18 +371,19 @@ where
 
     pub fn ood_samples(
         security_level: usize, // We don't do PoW for OOD
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
         field_size_bits: usize,
     ) -> usize {
-        match soundness_type {
-            SoundnessType::UniqueDecoding => 0,
-            _ => (1..64)
+        if unique_decoding {
+            0
+        } else {
+            (1..64)
                 .find(|&ood_samples| {
                     Self::rbr_ood_sample(
-                        soundness_type,
+                        unique_decoding,
                         num_variables,
                         log_inv_rate,
                         log_eta,
@@ -392,57 +391,58 @@ where
                         ood_samples,
                     ) >= security_level as f64
                 })
-                .unwrap_or_else(|| panic!("Could not find an appropriate number of OOD samples")),
+                .unwrap_or_else(|| panic!("Could not find an appropriate number of OOD samples"))
         }
     }
 
     // Compute the proximity gaps term of the fold
     pub const fn rbr_soundness_fold_prox_gaps(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         field_size_bits: usize,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
         // Recall, at each round we are only folding by two at a time
-        let error = match soundness_type {
-            SoundnessType::ConjectureList => num_variables as f64 + log_inv_rate - log_eta,
-            SoundnessType::ProvableList => LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64,
-            SoundnessType::UniqueDecoding => num_variables as f64 + log_inv_rate,
+        let error = if unique_decoding {
+            num_variables as f64 + log_inv_rate
+        } else {
+            let _ = log_eta;
+            LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64
         };
 
         field_size_bits as f64 - error
     }
 
     pub const fn rbr_soundness_fold_sumcheck(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         field_size_bits: usize,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
-        let list_size = Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
+        let list_size = Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
 
         field_size_bits as f64 - (list_size + 1.)
     }
 
     pub const fn folding_pow_bits(
         security_level: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         field_size_bits: usize,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            soundness_type,
+            unique_decoding,
             field_size_bits,
             num_variables,
             log_inv_rate,
             log_eta,
         );
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            soundness_type,
+            unique_decoding,
             field_size_bits,
             num_variables,
             log_inv_rate,
@@ -466,47 +466,35 @@ where
     // Used to select the number of queries
     #[allow(clippy::cast_sign_loss)]
     pub fn queries(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         protocol_security_level: usize,
         log_inv_rate: usize,
     ) -> usize {
-        let num_queries_f = match soundness_type {
-            SoundnessType::UniqueDecoding => {
-                let rate = 1. / f64::from(1 << log_inv_rate);
-                let denom = (0.5 * (1. + rate)).log2();
-
-                -(protocol_security_level as f64) / denom
-            }
-            SoundnessType::ProvableList => {
-                (2 * protocol_security_level) as f64 / log_inv_rate as f64
-            }
-            SoundnessType::ConjectureList => protocol_security_level as f64 / log_inv_rate as f64,
+        let num_queries_f = if unique_decoding {
+            let rate = 1. / f64::from(1 << log_inv_rate);
+            let denom = (0.5 * (1. + rate)).log2();
+            -(protocol_security_level as f64) / denom
+        } else {
+            (2 * protocol_security_level) as f64 / log_inv_rate as f64
         };
         num_queries_f.ceil() as usize
     }
 
     // This is the bits of security of the query step
-    pub fn rbr_queries(
-        soundness_type: SoundnessType,
-        log_inv_rate: f64,
-        num_queries: usize,
-    ) -> f64 {
+    pub fn rbr_queries(unique_decoding: bool, log_inv_rate: f64, num_queries: usize) -> f64 {
         let num_queries = num_queries as f64;
 
-        match soundness_type {
-            SoundnessType::UniqueDecoding => {
-                let rate = 1. / log_inv_rate.exp2();
-                let denom = -(0.5 * (1. + rate)).log2();
-
-                num_queries * denom
-            }
-            SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate,
-            SoundnessType::ConjectureList => num_queries * log_inv_rate,
+        if unique_decoding {
+            let rate = 1. / log_inv_rate.exp2();
+            let denom = -(0.5 * (1. + rate)).log2();
+            num_queries * denom
+        } else {
+            num_queries * 0.5 * log_inv_rate
         }
     }
 
     pub fn rbr_soundness_queries_combination(
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         field_size_bits: usize,
         num_variables: usize,
         log_inv_rate: f64,
@@ -514,7 +502,7 @@ where
         ood_samples: usize,
         num_queries: usize,
     ) -> f64 {
-        let list_size = Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
+        let list_size = Self::list_size_bits(unique_decoding, num_variables, log_inv_rate, log_eta);
 
         let log_combination = ((ood_samples + num_queries) as f64).log2();
 
@@ -527,8 +515,13 @@ impl<F: FftField> Display for Config<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Security level: {} bits using {} security",
-            self.security_level, self.soundness_type
+            "Security level: {} bits using {} decoding security",
+            self.security_level,
+            if self.unique_decoding {
+                "unique"
+            } else {
+                "list"
+            }
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
         writeln!(f, "  sumcheck {}", self.initial_sumcheck)?;
@@ -548,7 +541,7 @@ impl<F: FftField> Display for Config<F> {
 
         let field_size_bits = F::field_size_in_bits();
         let log_eta = Self::log_eta(
-            self.soundness_type,
+            self.unique_decoding,
             self.initial_committer.rate().log2().neg(),
         );
         let mut num_variables = self.initial_num_variables();
@@ -558,7 +551,7 @@ impl<F: FftField> Display for Config<F> {
                 f,
                 "{:.1} bits -- OOD commitment",
                 Self::rbr_ood_sample(
-                    self.soundness_type,
+                    self.unique_decoding,
                     num_variables,
                     self.initial_committer.rate().log2().neg(),
                     log_eta,
@@ -569,14 +562,14 @@ impl<F: FftField> Display for Config<F> {
         }
 
         let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            self.soundness_type,
+            self.unique_decoding,
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
             log_eta,
         );
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            self.soundness_type,
+            self.unique_decoding,
             field_size_bits,
             num_variables,
             self.initial_committer.rate().log2().neg(),
@@ -597,14 +590,14 @@ impl<F: FftField> Display for Config<F> {
 
         for r in &self.round_configs {
             let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
-            let log_eta = Self::log_eta(self.soundness_type, next_rate);
+            let log_eta = Self::log_eta(self.unique_decoding, next_rate);
 
             if r.irs_committer.out_domain_samples > 0 {
                 writeln!(
                     f,
                     "{:.1} bits -- OOD sample",
                     Self::rbr_ood_sample(
-                        self.soundness_type,
+                        self.unique_decoding,
                         num_variables,
                         next_rate,
                         log_eta,
@@ -615,12 +608,12 @@ impl<F: FftField> Display for Config<F> {
             }
 
             let query_error = Self::rbr_queries(
-                self.soundness_type,
+                self.unique_decoding,
                 r.log_inv_rate() as f64,
                 r.irs_committer.in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
-                self.soundness_type,
+                self.unique_decoding,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -638,14 +631,14 @@ impl<F: FftField> Display for Config<F> {
             )?;
 
             let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                self.soundness_type,
+                self.unique_decoding,
                 field_size_bits,
                 num_variables,
                 next_rate,
                 log_eta,
             );
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-                self.soundness_type,
+                self.unique_decoding,
                 field_size_bits,
                 num_variables,
                 next_rate,
@@ -666,7 +659,7 @@ impl<F: FftField> Display for Config<F> {
         }
 
         let query_error = Self::rbr_queries(
-            self.soundness_type,
+            self.unique_decoding,
             self.final_rate().log2().neg(),
             self.final_in_domain_samples(),
         );
@@ -741,10 +734,10 @@ mod tests {
     fn default_whir_params() -> ProtocolParameters {
         ProtocolParameters {
             initial_statement: true,
-            security_level: 100,
+            security_level: 80, // We can't hope for much with a 128bit field.
             pow_bits: 20,
             folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-            soundness_type: SoundnessType::ConjectureList,
+            unique_decoding: false,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::BLAKE3,
@@ -753,7 +746,6 @@ mod tests {
 
     #[test]
     fn test_whir_params_serde() {
-        test_serde(&default_whir_params());
         test_serde(&default_whir_params());
     }
 
@@ -777,11 +769,11 @@ mod tests {
     #[test]
     fn test_folding_pow_bits() {
         let field_size_bits = 64;
-        let soundness = SoundnessType::ConjectureList;
+        let unique_decoding = false;
 
         let pow_bits = Config::<Field64>::folding_pow_bits(
             100, // Security level
-            soundness,
+            unique_decoding,
             field_size_bits,
             10,   // Number of variables
             5.0,  // Log inverse rate
@@ -797,8 +789,7 @@ mod tests {
         let security_level = 100;
         let log_inv_rate = 5;
 
-        let result =
-            Config::<Field64>::queries(SoundnessType::UniqueDecoding, security_level, log_inv_rate);
+        let result = Config::<Field64>::queries(true, security_level, log_inv_rate);
 
         assert_eq!(result, 105);
     }
@@ -808,8 +799,7 @@ mod tests {
         let security_level = 128;
         let log_inv_rate = 8;
 
-        let result =
-            Config::<Field64>::queries(SoundnessType::ProvableList, security_level, log_inv_rate);
+        let result = Config::<Field64>::queries(false, security_level, log_inv_rate);
 
         assert_eq!(result, 32);
     }
@@ -819,10 +809,9 @@ mod tests {
         let security_level = 256;
         let log_inv_rate = 16;
 
-        let result =
-            Config::<Field64>::queries(SoundnessType::ConjectureList, security_level, log_inv_rate);
+        let result = Config::<Field64>::queries(false, security_level, log_inv_rate);
 
-        assert_eq!(result, 16);
+        assert_eq!(result, 32);
     }
 
     #[test]
@@ -830,11 +819,7 @@ mod tests {
         let log_inv_rate = 5.0; // log_inv_rate = 5
         let num_queries = 10; // Number of queries
 
-        let result = Config::<Field64>::rbr_queries(
-            SoundnessType::UniqueDecoding,
-            log_inv_rate,
-            num_queries,
-        );
+        let result = Config::<Field64>::rbr_queries(true, log_inv_rate, num_queries);
 
         assert!((result - 9.556_058_806_415_466).abs() < 1e-6);
     }
@@ -844,8 +829,7 @@ mod tests {
         let log_inv_rate = 8.0; // log_inv_rate = 8
         let num_queries = 16; // Number of queries
 
-        let result =
-            Config::<Field64>::rbr_queries(SoundnessType::ProvableList, log_inv_rate, num_queries);
+        let result = Config::<Field64>::rbr_queries(false, log_inv_rate, num_queries);
 
         assert!((result - 64.0) < 1e-6);
     }
@@ -855,13 +839,9 @@ mod tests {
         let log_inv_rate = 4.0; // log_inv_rate = 4
         let num_queries = 20; // Number of queries
 
-        let result = Config::<Field64>::rbr_queries(
-            SoundnessType::ConjectureList,
-            log_inv_rate,
-            num_queries,
-        );
+        let result = Config::<Field64>::rbr_queries(false, log_inv_rate, num_queries);
 
-        assert!((result - 80.) < 1e-6);
+        assert!((result - 40.) < 1e-6);
     }
 
     #[test]
@@ -940,33 +920,6 @@ mod tests {
     }
 
     #[test]
-    fn test_list_size_bits_conjecture_list() {
-        // ConjectureList: list_size_bits = num_variables + log_inv_rate - log_eta
-
-        let cases = vec![
-            (10, 5.0, 2.0, 13.0), // Basic case
-            (0, 5.0, 2.0, 3.0),   // Edge case: num_variables = 0
-            (10, 0.0, 2.0, 8.0),  // Edge case: log_inv_rate = 0
-            (10, 5.0, 0.0, 15.0), // Edge case: log_eta = 0
-            (10, 5.0, 10.0, 5.0), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::ConjectureList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
     fn test_list_size_bits_provable_list() {
         // ProvableList: list_size_bits = (log_inv_rate / 2) - (1 + log_eta)
 
@@ -978,12 +931,8 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::ProvableList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
+            let result =
+                Config::<Field64>::list_size_bits(false, num_variables, log_inv_rate, log_eta);
             assert!(
                 (result - expected).abs() < 1e-6,
                 "Failed for {:?}",
@@ -1005,87 +954,12 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::UniqueDecoding,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
+            let result =
+                Config::<Field64>::list_size_bits(true, num_variables, log_inv_rate, log_eta);
             assert!(
                 (result - 0.0) < 1e-6,
                 "Failed for {:?}",
                 (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_rbr_ood_sample_conjecture_list() {
-        // ConjectureList: rbr_ood_sample = (ood_samples * field_size_bits) + 1 - (2 * list_size_bits + num_variables * ood_samples)
-
-        let cases = vec![
-            (
-                10,
-                5.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 13.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                0,
-                5.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (0.0 * 3.0)),
-            ), // Edge case: num_variables = 0
-            (
-                10,
-                0.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 8.0 + (10.0 * 3.0)),
-            ), // Edge case: log_inv_rate = 0
-            (
-                10,
-                5.0,
-                0.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 15.0 + (10.0 * 3.0)),
-            ), // Edge case: log_eta = 0
-            (
-                10,
-                5.0,
-                10.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 5.0 + (10.0 * 3.0)),
-            ), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
-        {
-            let result = Config::<Field64>::rbr_ood_sample(
-                SoundnessType::ConjectureList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-                field_size_bits,
-                ood_samples,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
             );
         }
     }
@@ -1132,7 +1006,7 @@ mod tests {
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
             let result = Config::<Field64>::rbr_ood_sample(
-                SoundnessType::ProvableList,
+                false,
                 num_variables,
                 log_inv_rate,
                 log_eta,
@@ -1157,7 +1031,7 @@ mod tests {
     fn test_ood_samples_unique_decoding() {
         // UniqueDecoding should always return 0 regardless of parameters
         assert_eq!(
-            Config::<Field64>::ood_samples(100, SoundnessType::UniqueDecoding, 10, 3.0, 1.5, 256),
+            Config::<Field64>::ood_samples(100, true, 10, 3.0, 1.5, 256),
             0
         );
     }
@@ -1168,8 +1042,7 @@ mod tests {
         assert_eq!(
             Config::<Field64>::ood_samples(
                 50, // security level
-                SoundnessType::ProvableList,
-                15,  // num_variables
+                false, 15,  // num_variables
                 4.0, // log_inv_rate
                 2.0, // log_eta
                 256, // field_size_bits
@@ -1184,8 +1057,7 @@ mod tests {
         assert_eq!(
             Config::<Field64>::ood_samples(
                 30, // Lower security level
-                SoundnessType::ConjectureList,
-                20,  // num_variables
+                false, 20,  // num_variables
                 5.0, // log_inv_rate
                 2.5, // log_eta
                 512, // field_size_bits
@@ -1200,8 +1072,7 @@ mod tests {
         assert_eq!(
             Config::<Field64>::ood_samples(
                 100, // High security level
-                SoundnessType::ProvableList,
-                25,   // num_variables
+                false, 25,   // num_variables
                 6.0,  // log_inv_rate
                 3.0,  // log_eta
                 1024  // field_size_bits
@@ -1215,8 +1086,7 @@ mod tests {
         assert_eq!(
             Config::<Field64>::ood_samples(
                 1000, // Extremely high security level
-                SoundnessType::ConjectureList,
-                10,  // num_variables
+                false, 10,  // num_variables
                 5.0, // log_inv_rate
                 2.0, // log_eta
                 256, // field_size_bits
