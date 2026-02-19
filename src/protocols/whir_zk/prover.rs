@@ -101,14 +101,15 @@ impl<F: FftField> Config<F> {
             };
             for (poly_idx, f_hat_vector) in f_hat_vectors.iter().enumerate() {
                 let idx = weight_idx * polynomials.len() + poly_idx;
-                let f_hat_eval = if let Some(mle) = maybe_mle {
-                    mle.evaluate(embedding, f_hat_vector.as_slice())
-                } else {
-                    fallback_cov
-                        .as_ref()
-                        .unwrap()
-                        .evaluate(embedding, f_hat_vector.as_slice())
-                };
+                let f_hat_eval = maybe_mle.map_or_else(
+                    || {
+                        fallback_cov
+                            .as_ref()
+                            .unwrap()
+                            .evaluate(embedding, f_hat_vector.as_slice())
+                    },
+                    |mle| mle.evaluate(embedding, f_hat_vector.as_slice()),
+                );
                 // Enforce L = rho * f + g with L instantiated by the committed masked witness.
                 let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
                 prover_state.prover_message_field(&g_eval);
@@ -157,7 +158,7 @@ impl<F: FftField> Config<F> {
         let beq_weight_accum = {
             let batch = {
                 let cores = rayon::current_num_threads();
-                ((num_gammas + cores - 1) / cores).max(1)
+                num_gammas.div_ceil(cores).max(1)
             };
             let batch_stride = batch * stride_per_gamma;
             eval_results
@@ -295,7 +296,6 @@ impl<F: FftField> Config<F> {
         }
 
         drop(eval_results);
-
         drop(blinding_polynomials);
 
         let mut combined_doc_claims = Vec::with_capacity(num_polynomials);

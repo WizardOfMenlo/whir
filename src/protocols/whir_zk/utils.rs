@@ -199,7 +199,7 @@ pub fn beq_covector_at_gamma<F: FftField>(
     ))
 }
 
-pub(crate) fn eq_weights_at_gamma<F: FftField>(
+fn eq_weights_at_gamma<F: FftField>(
     gamma: F,
     masking_challenge: F,
     num_blinding_variables: usize,
@@ -220,7 +220,7 @@ pub(crate) fn eq_weights_at_gamma<F: FftField>(
 ///
 /// `buf` must have length `>= 2^(num_blinding_variables + 1)`.  Reusing a
 /// single buffer across gamma iterations avoids one 8 KiB allocation per point.
-pub(crate) fn fill_eq_weights_at_gamma<F: FftField>(
+pub fn fill_eq_weights_at_gamma<F: FftField>(
     buf: &mut [F],
     gamma: F,
     masking_challenge: F,
@@ -232,7 +232,7 @@ pub(crate) fn fill_eq_weights_at_gamma<F: FftField>(
     let size = 1usize << n;
     debug_assert!(buf.len() >= size);
 
-    for w in buf[..size].iter_mut() {
+    for w in &mut buf[..size] {
         *w = F::ZERO;
     }
     buf[0] = F::ONE;

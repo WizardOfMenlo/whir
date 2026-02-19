@@ -88,11 +88,6 @@ impl<F: FftField> Config<F> {
             debug_assert_eq!(layout.len(), num_witness_vars + 1);
             blinding_vectors.extend(layout);
         }
-        // for poly_idx in 0..polynomials.len() {
-        //     let layout = blinding_polynomials[poly_idx].layout_vectors();
-        //     debug_assert_eq!(layout.len(), num_witness_vars + 1);
-        //     blinding_vectors.extend(layout);
-        // }
         let blinding_vector_refs = blinding_vectors
             .iter()
             .map(Vec::as_slice)
