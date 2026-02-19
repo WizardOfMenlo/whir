@@ -1,18 +1,20 @@
 //! Benchmark: ZK v1 vs ZK v2 WHIR proving (2 polynomials).
 //!
 //! Run with:
-//!   cargo bench --bench whir_zk
+//!   cargo bench --bench zk_whir
 //!
 //! Or filter to a specific group:
-//!   cargo bench --bench whir_zk -- zk_v1
-//!   cargo bench --bench whir_zk -- zk_v2
+//!   cargo bench --bench zk_whir -- zk_v1
+//!   cargo bench --bench zk_whir -- zk_v2
+
+use std::borrow::Cow;
 
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     algebra::{
         fields::{Field64, Field64_2},
-        linear_form::{Evaluate, LinearForm, MultilinearExtension},
+        linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
     hash,
@@ -245,8 +247,7 @@ fn zk_v1_commit(bencher: Bencher, num_variables: usize) {
 fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
-    let p_polys: Vec<Vec<F>> =
-        bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
+    let p_polys: Vec<Vec<F>> = bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
     let (weights, evaluations) =
         make_zk_v1_weights_and_evaluations(&p_polys, &prove_config, num_variables);
 
@@ -263,13 +264,13 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
             (prover_state, witness)
         })
         .bench_values(|(mut prover_state, witness)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
             black_box(prove_config.prove(
                 &mut prover_state,
-                &p_refs,
-                &[&witness],
-                &weight_refs,
-                &evaluations,
+                p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
+                vec![Cow::Borrowed(&witness)],
+                vec![Box::new(Covector::from(&weights[0] as &dyn LinearForm<EF>))
+                    as Box<dyn LinearForm<EF>>],
+                Cow::Borrowed(evaluations.as_slice()),
             ));
         });
 }
@@ -279,8 +280,7 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
 fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
-    let p_polys: Vec<Vec<F>> =
-        bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
+    let p_polys: Vec<Vec<F>> = bundles.iter().map(|bundle| bundle.p_poly.clone()).collect();
     let (weights, evaluations) =
         make_zk_v1_weights_and_evaluations(&p_polys, &prove_config, num_variables);
 
@@ -294,13 +294,13 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let proof = {
         let mut prover_state = ProverState::new_std(&ds);
         let witness = prove_config.commit(&mut prover_state, &p_refs);
-        let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
         prove_config.prove(
             &mut prover_state,
-            &p_refs,
-            &[&witness],
-            &weight_refs,
-            &evaluations,
+            p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
+            vec![Cow::Borrowed(&witness)],
+            vec![Box::new(Covector::from(&weights[0] as &dyn LinearForm<EF>))
+                as Box<dyn LinearForm<EF>>],
+            Cow::Borrowed(evaluations.as_slice()),
         );
         prover_state.proof()
     };

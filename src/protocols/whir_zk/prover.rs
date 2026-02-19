@@ -1,4 +1,8 @@
+use std::borrow::Cow;
+
 use ark_ff::FftField;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{Config, Witness};
 use crate::{
@@ -10,8 +14,6 @@ use crate::{
     },
     transcript::{ProverMessage, VerifierMessage},
 };
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 /// Precompute per-gamma evaluation data for the round-0 blinding consistency check.
 ///
@@ -185,8 +187,11 @@ impl<F: FftField> Config<F> {
             let g_hat_claims = &g_hat_claims_per_poly[poly_idx];
             batched_blinding_subproof_claims.push(m_claim);
             batched_blinding_subproof_claims.extend_from_slice(g_hat_claims);
-            combined_doc_claims
-                .push(recombine_doc_claim_from_components(m_claim, g_hat_claims, tau1));
+            combined_doc_claims.push(recombine_doc_claim_from_components(
+                m_claim,
+                g_hat_claims,
+                tau1,
+            ));
         }
         let beq_weights = Covector::new(beq_weight_accum);
         for claim in &combined_doc_claims {
@@ -203,13 +208,25 @@ impl<F: FftField> Config<F> {
             .collect::<Vec<_>>();
         let result = self.blinded_commitment.prove(
             prover_state,
-            &vectors,
-            &witness_refs,
-            weights,
-            &modified_evaluations,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(*v))
+                .collect::<Vec<_>>(),
+            witness_refs.iter().map(|w| Cow::Borrowed(*w)).collect(),
+            weights
+                .iter()
+                .map(|w| {
+                    // Materialize the linear form into a Covector, but preserve the
+                    // original `deferred` flag so the verifier follows the same path.
+                    // Changed after the memory opt PR #225
+                    let mut cov = Covector::from(*w);
+                    cov.deferred = w.deferred();
+                    Box::new(cov) as Box<dyn LinearForm<F>>
+                })
+                .collect(),
+            Cow::Borrowed(modified_evaluations.as_slice()),
         );
 
-        let blinding_forms: Vec<&dyn LinearForm<F>> = vec![&beq_weights];
         let blinding_vectors = witness
             .blinding_vectors
             .iter()
@@ -218,10 +235,13 @@ impl<F: FftField> Config<F> {
         let blinding_witnesses = vec![&witness.blinding_witness];
         let _ = self.blinding_commitment.prove(
             prover_state,
-            &blinding_vectors,
-            &blinding_witnesses,
-            &blinding_forms,
-            &batched_blinding_subproof_claims,
+            blinding_vectors.iter().map(|v| Cow::Borrowed(*v)).collect(),
+            blinding_witnesses
+                .iter()
+                .map(|w| Cow::Borrowed(*w))
+                .collect(),
+            vec![Box::new(beq_weights) as Box<dyn LinearForm<F>>],
+            Cow::Borrowed(batched_blinding_subproof_claims.as_slice()),
         );
 
         result

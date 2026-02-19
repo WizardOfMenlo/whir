@@ -195,7 +195,11 @@ pub fn beq_covector_at_gamma<F: FftField>(
     masking_challenge: F,
     num_blinding_variables: usize,
 ) -> Covector<F> {
-    Covector::new(eq_weights_at_gamma(gamma, masking_challenge, num_blinding_variables))
+    Covector::new(eq_weights_at_gamma(
+        gamma,
+        masking_challenge,
+        num_blinding_variables,
+    ))
 }
 
 fn eq_weights_at_gamma<F: FftField>(
@@ -239,7 +243,9 @@ mod tests {
         let mut g_hat_claims = vec![F::ZERO; num_g_hats];
         for (g_hat_idx, claim) in g_hat_claims.iter_mut().enumerate() {
             *claim = batch_with_challenge(
-                blinding_evals.iter().map(|eval| eval.g_hat_evals[g_hat_idx]),
+                blinding_evals
+                    .iter()
+                    .map(|eval| eval.g_hat_evals[g_hat_idx]),
                 tau2,
             );
         }

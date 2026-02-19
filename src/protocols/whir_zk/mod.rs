@@ -6,14 +6,11 @@ mod verifier;
 use ark_ff::{FftField, Field};
 use serde::{Deserialize, Serialize};
 
+pub use self::committer::{Commitment, Witness};
 use crate::{
     algebra::fields::FieldWithSize,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::whir,
-};
-
-pub use self::{
-    committer::{Commitment, Witness},
 };
 
 /// Policy inputs for doc-driven `ell` computation:
