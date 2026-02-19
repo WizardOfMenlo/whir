@@ -193,35 +193,25 @@ impl<F: FftField> Config<F> {
             .expect("query point must be in IRS domain")
     }
 
-    /// Compute the k coset gamma points for a query at `alpha_base`,
-    /// lifted to the extension field via the blinded commitment embedding.
-    pub(super) fn coset_gammas(
-        &self,
-        alpha_base: F::BasePrimeField,
-        omega_powers: &[F::BasePrimeField],
-    ) -> Vec<F> {
-        use crate::algebra::embedding::Embedding;
-        let embedding = self.blinded_commitment.embedding();
-        let idx = Self::query_index(alpha_base, omega_powers);
-        let omega_full = self.omega_full();
-        let zeta = self.zeta();
-        let coset_offset = omega_full.pow([idx as u64]);
-        let interleaving_depth = self.interleaving_depth();
-        (0..interleaving_depth)
-            .map(|coset_elem_idx| {
-                let gamma_base = coset_offset * zeta.pow([coset_elem_idx as u64]);
-                embedding.map(gamma_base)
-            })
-            .collect()
-    }
-
     /// Compute all gamma points for a set of query points (flat list).
     pub(super) fn all_gammas(&self, query_points: &[F::BasePrimeField]) -> Vec<F> {
+        use crate::algebra::embedding::Embedding;
         let omega_powers = self.omega_powers();
-        query_points
-            .iter()
-            .flat_map(|&alpha| self.coset_gammas(alpha, &omega_powers))
-            .collect()
+        let interleaving_depth = self.interleaving_depth();
+        let omega_full = self.omega_full();
+        let zeta = self.zeta();
+        let embedding = self.blinded_commitment.embedding();
+
+        let mut gammas = Vec::with_capacity(query_points.len() * interleaving_depth);
+        for &alpha in query_points {
+            let idx = Self::query_index(alpha, &omega_powers);
+            let coset_offset = omega_full.pow([idx as u64]);
+            for k in 0..interleaving_depth {
+                let gamma_base = coset_offset * zeta.pow([k as u64]);
+                gammas.push(embedding.map(gamma_base));
+            }
+        }
+        gammas
     }
 }
 
