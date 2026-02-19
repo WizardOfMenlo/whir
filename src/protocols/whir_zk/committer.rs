@@ -2,22 +2,26 @@ use ark_ff::FftField;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 
 use super::{utils::BlindingPolynomials, Config};
-use crate::{hash::Hash, transcript::ProverMessage};
+use crate::{
+    hash::Hash,
+    protocols::{irs_commit, whir},
+    transcript::ProverMessage,
+};
 
 /// zkWHIR commitment object.
 pub struct Commitment<F: FftField> {
-    pub f_hat: Vec<crate::protocols::whir::Commitment<F>>,
-    pub blinding: crate::protocols::whir::Commitment<F>,
+    pub f_hat: Vec<whir::Commitment<F>>,
+    pub blinding: whir::Commitment<F>,
 }
 
 /// zkWHIR witness object.
 #[derive(Clone)]
 pub struct Witness<F: FftField> {
-    pub f_hat_witnesses: Vec<crate::protocols::irs_commit::Witness<F::BasePrimeField, F>>,
+    pub f_hat_witnesses: Vec<irs_commit::Witness<F::BasePrimeField, F>>,
     pub f_hat_vectors: Vec<Vec<F::BasePrimeField>>,
     pub blinding_polynomials: Vec<BlindingPolynomials<F>>,
     pub blinding_vectors: Vec<Vec<F::BasePrimeField>>,
-    pub blinding_witness: crate::protocols::irs_commit::Witness<F::BasePrimeField, F>,
+    pub blinding_witness: irs_commit::Witness<F::BasePrimeField, F>,
 }
 
 impl<F: FftField> Config<F> {

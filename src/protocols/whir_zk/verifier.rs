@@ -7,23 +7,27 @@ use crate::{
     protocols::whir_zk::utils::{
         construct_batched_eq_weights_from_gammas, recombine_doc_claim_from_components,
     },
-    transcript::{ProverMessage, VerificationError, VerifierMessage},
+    transcript::{
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
+        VerifierMessage, VerifierState,
+    },
+    verify,
 };
 
 impl<F: FftField> Config<F> {
     pub fn verify<H>(
         &self,
-        verifier_state: &mut crate::transcript::VerifierState<'_, H>,
-        weights: &[&dyn crate::algebra::linear_form::LinearForm<F>],
+        verifier_state: &mut VerifierState<'_, H>,
+        weights: &[&dyn LinearForm<F>],
         evaluations: &[F],
         commitment: &super::Commitment<F>,
-    ) -> crate::transcript::VerificationResult<()>
+    ) -> VerificationResult<()>
     where
-        H: crate::transcript::DuplexSpongeInterface,
-        F: crate::transcript::Codec<[H::U]>,
-        u8: crate::transcript::Decoding<[H::U]>,
-        [u8; 32]: crate::transcript::Decoding<[H::U]>,
-        crate::transcript::codecs::U64: crate::transcript::Codec<[H::U]>,
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(
@@ -31,18 +35,14 @@ impl<F: FftField> Config<F> {
             "zkWHIR currently expects one vector per commitment"
         );
         let num_polynomials = commitment.f_hat.len();
-        if evaluations.len() != weights.len() * num_polynomials {
-            return Err(VerificationError);
-        }
+        verify!(evaluations.len() == weights.len() * num_polynomials);
 
         // Transcript order mirrors prover for round-0 consistency checks:
         // beta, non-zero rho, g-evals, tau1, tau2, raw blinding evals,
         // combined doc claims, batched h claims.
         let blinding_challenge: F = verifier_state.verifier_message();
         let masking_challenge: F = verifier_state.verifier_message();
-        if masking_challenge == F::ZERO {
-            return Err(VerificationError);
-        }
+        verify!(masking_challenge != F::ZERO);
         let g_evals: Vec<F> =
             verifier_state.prover_messages_vec(weights.len() * num_polynomials)?;
         let commitments = commitment.f_hat.iter().collect::<Vec<_>>();
@@ -92,9 +92,7 @@ impl<F: FftField> Config<F> {
             .verify(verifier_state, &commitments, weights, &modified_evaluations)
             .map(|_| ())?;
 
-        if batched_h_claims != expected_batched_h_claims {
-            return Err(VerificationError);
-        }
+        verify!(batched_h_claims == expected_batched_h_claims);
         let mut expected_combined_doc_claims = Vec::with_capacity(num_polynomials);
         let mut expected_batched_blinding_subproof_claims =
             Vec::with_capacity(num_polynomials * (1 + num_witness_vars));
@@ -111,9 +109,7 @@ impl<F: FftField> Config<F> {
                 expected_batched_blinding_subproof_claims.push(g_hat_claim);
             }
         }
-        if combined_doc_claims != expected_combined_doc_claims {
-            return Err(VerificationError);
-        }
+        verify!(combined_doc_claims == expected_combined_doc_claims);
 
         // Verify the blinding WHIR subproof against the same batched beq form used to
         // derive raw round-0 claims at (gamma, -rho).

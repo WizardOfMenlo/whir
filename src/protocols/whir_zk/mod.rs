@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 pub use self::committer::{Commitment, Witness};
 use crate::{
-    algebra::fields::FieldWithSize,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::whir,
 };
@@ -35,10 +34,7 @@ pub struct Config<F: FftField> {
     pub blinding_commitment: whir::Config<F>,
 }
 
-impl<F> Config<F>
-where
-    F: FftField + FieldWithSize,
-{
+impl<F: FftField> Config<F> {
     fn default_blinding_size_policy(main_whir_params: &ProtocolParameters) -> BlindingSizePolicy {
         let protocol_security_level_main = main_whir_params
             .security_level
@@ -147,9 +143,7 @@ where
         assert!((1usize << num_blinding_variables) > query_upper_bound);
         num_blinding_variables
     }
-}
 
-impl<F: FftField> Config<F> {
     pub fn num_witness_variables(&self) -> usize {
         self.blinded_commitment.initial_num_variables()
     }

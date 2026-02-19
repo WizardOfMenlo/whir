@@ -111,13 +111,21 @@ impl<F: FftField> Config<F> {
             "zkWHIR requires non-zero masking challenge rho"
         );
 
+        // Materialize each linear form once for efficient repeated evaluation on all polynomials.
+        let weight_covectors: Vec<Covector<F>> = weights
+            .iter()
+            .map(|w| {
+                let mut cov = Covector::from(*w);
+                cov.deferred = w.deferred();
+                cov
+            })
+            .collect();
         let mut modified_evaluations = Vec::with_capacity(evaluations.len());
         let embedding = self.blinded_commitment.embedding();
-        for (weight_idx, weight) in weights.iter().enumerate() {
+        for (weight_idx, weight_covector) in weight_covectors.iter().enumerate() {
             for (poly_idx, f_hat_vector) in witness.f_hat_vectors.iter().enumerate() {
                 let idx = weight_idx * polynomials.len() + poly_idx;
-                let f_hat_eval =
-                    Covector::from(*weight).evaluate(embedding, f_hat_vector.as_slice());
+                let f_hat_eval = weight_covector.evaluate(embedding, f_hat_vector.as_slice());
                 // Enforce L = rho * f + g with L instantiated by the committed masked witness f_hat.
                 let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
                 prover_state.prover_message(&g_eval);
@@ -214,16 +222,9 @@ impl<F: FftField> Config<F> {
                 .map(|v| Cow::Borrowed(*v))
                 .collect::<Vec<_>>(),
             witness_refs.iter().map(|w| Cow::Borrowed(*w)).collect(),
-            weights
-                .iter()
-                .map(|w| {
-                    // Materialize the linear form into a Covector, but preserve the
-                    // original `deferred` flag so the verifier follows the same path.
-                    // Changed after the memory opt PR #225
-                    let mut cov = Covector::from(*w);
-                    cov.deferred = w.deferred();
-                    Box::new(cov) as Box<dyn LinearForm<F>>
-                })
+            weight_covectors
+                .into_iter()
+                .map(|cov| Box::new(cov) as Box<dyn LinearForm<F>>)
                 .collect(),
             Cow::Borrowed(modified_evaluations.as_slice()),
         );
