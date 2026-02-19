@@ -101,11 +101,16 @@ impl<F: FftField> Config<F> {
             "blinding commitment layout mismatch: expected n*(mu+1) vectors"
         );
         let mut blinding_vectors = Vec::with_capacity(blinding_num_vectors);
-        for poly_idx in 0..polynomials.len() {
-            let layout = blinding_polynomials[poly_idx].layout_vectors();
+        for poly in blinding_polynomials.iter().take(polynomials.len()) {
+            let layout = poly.layout_vectors();
             debug_assert_eq!(layout.len(), num_witness_vars + 1);
             blinding_vectors.extend(layout);
         }
+        // for poly_idx in 0..polynomials.len() {
+        //     let layout = blinding_polynomials[poly_idx].layout_vectors();
+        //     debug_assert_eq!(layout.len(), num_witness_vars + 1);
+        //     blinding_vectors.extend(layout);
+        // }
         let blinding_vector_refs = blinding_vectors
             .iter()
             .map(Vec::as_slice)

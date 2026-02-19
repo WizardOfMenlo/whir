@@ -60,7 +60,7 @@ fn make_weights_and_evaluations_multi(
 ) -> (Vec<MultilinearExtension<EF>>, Vec<EF>) {
     let mut rng = StdRng::seed_from_u64(0xBEEF);
     let point = MultilinearPoint::rand(&mut rng, num_variables);
-    let linear_form = MultilinearExtension::new(point.0.clone());
+    let linear_form = MultilinearExtension::new(point.0);
     let mut evaluations = Vec::with_capacity(polynomials.len());
     for poly in polynomials {
         evaluations.push(linear_form.evaluate(config.embedding(), poly));
@@ -177,7 +177,7 @@ fn make_zk_v1_weights_and_evaluations(
     let mut coords = base_point.0;
     coords.push(EF::from(0u64)); // y = 0
     let extended_point = MultilinearPoint(coords);
-    let linear_form = MultilinearExtension::new(extended_point.0.clone());
+    let linear_form = MultilinearExtension::new(extended_point.0);
     let mut evaluations = Vec::with_capacity(p_polys.len());
     for p_poly in p_polys {
         evaluations.push(linear_form.evaluate(config.embedding(), p_poly));
@@ -425,11 +425,10 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         })
         .bench_values(|(mut verifier_state, commitment)| {
             let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
-            black_box(
-                zk_config
-                    .verify(&mut verifier_state, &weight_refs, &evaluations, &commitment)
-                    .unwrap(),
-            );
+            zk_config
+                .verify(&mut verifier_state, &weight_refs, &evaluations, &commitment)
+                .unwrap();
+            black_box(());
         });
 }
 

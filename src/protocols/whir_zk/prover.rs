@@ -53,6 +53,7 @@ fn precompute_gamma_data<F: FftField>(
 }
 
 impl<F: FftField> Config<F> {
+    #[allow(clippy::too_many_lines)]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut crate::transcript::ProverState<H, R>,
@@ -232,7 +233,7 @@ impl<F: FftField> Config<F> {
             .iter()
             .map(Vec::as_slice)
             .collect::<Vec<_>>();
-        let blinding_witnesses = vec![&witness.blinding_witness];
+        let blinding_witnesses = [&witness.blinding_witness];
         let _ = self.blinding_commitment.prove(
             prover_state,
             blinding_vectors.iter().map(|v| Cow::Borrowed(*v)).collect(),
