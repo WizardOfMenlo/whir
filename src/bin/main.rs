@@ -163,11 +163,12 @@ where
     let whir_commit_time = whir_commit_time.elapsed();
 
     let whir_prove_time = Instant::now();
+    let no_linear_forms: [&dyn LinearForm<F>; 0] = [];
     params.prove(
         &mut prover_state,
         vec![Cow::from(vector)],
         vec![Cow::Owned(witness)],
-        vec![],
+        &no_linear_forms,
         Cow::Owned(vec![]),
     );
     let whir_prove_time = whir_prove_time.elapsed();
@@ -296,13 +297,15 @@ where
             vector: (0..num_coeffs).map(F::from).collect(),
         }));
     }
+    let prove_form_refs: Vec<&dyn LinearForm<F>> =
+        prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
         vec![Cow::Borrowed(vector.as_slice())],
         vec![Cow::Owned(witness)],
-        prove_linear_forms,
+        &prove_form_refs,
         Cow::Borrowed(evaluations.as_slice()),
     );
     let whir_prove_time = whir_prove_time.elapsed();
