@@ -111,7 +111,7 @@ impl<F: FftField> Config<F> {
                 };
                 // Enforce L = rho * f + g with L instantiated by the committed masked witness.
                 let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
-                prover_state.prover_message(&g_eval);
+                prover_state.prover_message_field(&g_eval);
                 debug_assert_eq!(masking_challenge * evaluations[idx] + g_eval, f_hat_eval);
                 modified_evaluations.push(f_hat_eval);
             }
@@ -281,10 +281,8 @@ impl<F: FftField> Config<F> {
                     let g_hat_evals = &eval_results[off + 1..off + 1 + num_witness_vars];
                     let h_val = eval_results[off + 1 + num_witness_vars];
 
-                    prover_state.prover_message(&m_eval);
-                    for g in g_hat_evals {
-                        prover_state.prover_message(g);
-                    }
+                    prover_state.prover_message_field(&m_eval);
+                    prover_state.prover_message_fields(g_hat_evals);
 
                     m_claims[poly_idx] += tau2_pow * m_eval;
                     for (j, &g) in g_hat_evals.iter().enumerate() {
@@ -316,12 +314,8 @@ impl<F: FftField> Config<F> {
             ));
         }
         let beq_weights = Covector::new(beq_weight_accum);
-        for claim in &combined_doc_claims {
-            prover_state.prover_message(claim);
-        }
-        for h_claim in &batched_h_claims {
-            prover_state.prover_message(h_claim);
-        }
+        prover_state.prover_message_fields(&combined_doc_claims);
+        prover_state.prover_message_fields(&batched_h_claims);
 
         let result = {
             #[cfg(feature = "tracing")]
