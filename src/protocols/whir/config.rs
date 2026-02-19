@@ -133,7 +133,6 @@ where
             let combination_error = Self::rbr_soundness_queries_combination(
                 whir_parameters.unique_decoding,
                 field_size_bits,
-                num_variables,
                 next_rate as f64,
                 log_next_eta,
                 ood_samples,
@@ -324,7 +323,7 @@ where
         let initial_vector_rlc =
             Self::rbr_soundness_initial_rlc_combination(field_size_bits, num_vectors);
         security_level = security_level.min(initial_vector_rlc);
-        
+
         let initial_covector_rlc =
             Self::rbr_soundness_initial_rlc_combination(field_size_bits, num_linear_forms);
         security_level = security_level.min(initial_covector_rlc);
@@ -358,7 +357,6 @@ where
         let initial_sumcheck_error = Self::rbr_soundness_fold_sumcheck(
             initial_unique_decoding,
             field_size_bits,
-            num_variables,
             initial_log_inv_rate,
             initial_log_eta,
         );
@@ -398,7 +396,6 @@ where
             let combination_error = Self::rbr_soundness_queries_combination(
                 round_unique_decoding,
                 field_size_bits,
-                num_variables,
                 next_log_inv_rate,
                 log_eta,
                 round.irs_committer.out_domain_samples,
@@ -418,7 +415,6 @@ where
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 round_unique_decoding,
                 field_size_bits,
-                num_variables,
                 next_log_inv_rate,
                 log_eta,
             );
@@ -463,15 +459,23 @@ where
         }
     }
 
+    /// Construct a suitable $log_2 η$, where $η$ is the gap to the Johnson bound.
+    ///
+    /// It is related proiximity distance by
+    ///
+    /// $δ = 1 - sqrt(rate) - η$
     pub const fn log_eta(log_inv_rate: f64) -> f64 {
         // Ask me how I did this? At the time, only God and I knew. Now only God knows
+        // This computes $η = sqrt(ρ) / 20$, which amounts to a Johnson slack of $m = 10$.
+        // TODO: This seems like a high choice of m ?
         -(0.5 * log_inv_rate + LOG2_10 + 1.)
     }
 
-    pub const fn list_size_bits(num_variables: usize, log_inv_rate: f64, log_eta: f64) -> f64 {
-        let _ = num_variables;
-        let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
-        log_inv_sqrt_rate - (1. + log_eta)
+    /// Compute $log_2 L(δ)$, where $L(δ)$ is the Johnson Reed-Solomon list size bound.
+    ///
+    /// This is the Johnson bound $1 / (2 * η ρ)$.
+    pub const fn log_list_size(log_inv_rate: f64, log_eta: f64) -> f64 {
+        0.5 * log_inv_rate - (1. + log_eta)
     }
 
     pub const fn rbr_ood_sample(
@@ -481,12 +485,13 @@ where
         field_size_bits: usize,
         ood_samples: usize,
     ) -> f64 {
-        let list_size_bits = Self::list_size_bits(num_variables, log_inv_rate, log_eta);
+        let list_size_bits = Self::log_list_size(log_inv_rate, log_eta);
 
         let error = 2. * list_size_bits + (num_variables * ood_samples) as f64;
         (ood_samples * field_size_bits) as f64 + 1. - error
     }
 
+    /// Compute the minimal number of out-of-domain samples to reach the security level.
     pub fn ood_samples(
         security_level: usize, // We don't do PoW for OOD
         num_variables: usize,
@@ -508,41 +513,41 @@ where
     }
 
     // Compute the proximity gaps term of the fold
-    pub const fn rbr_soundness_fold_prox_gaps(
+    pub fn rbr_soundness_fold_prox_gaps(
         unique_decoding: bool,
         field_size_bits: usize,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
+        // See WHIR Theorem 4.8
         // Recall, at each round we are only folding by two at a time
         let error = if unique_decoding {
             num_variables as f64 + log_inv_rate
         } else {
-            let _ = log_eta;
-            LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64
+            // Make sure η hits the min bound.
+            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0));
+            7. * LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64
         };
-
         field_size_bits as f64 - error
     }
 
     pub const fn rbr_soundness_fold_sumcheck(
         unique_decoding: bool,
         field_size_bits: usize,
-        num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
         let list_size = if unique_decoding {
             0.0
         } else {
-            Self::list_size_bits(num_variables, log_inv_rate, log_eta)
+            Self::log_list_size(log_inv_rate, log_eta)
         };
 
         field_size_bits as f64 - (list_size + 1.)
     }
 
-    pub const fn folding_pow_bits(
+    pub fn folding_pow_bits(
         security_level: usize,
         unique_decoding: bool,
         field_size_bits: usize,
@@ -560,7 +565,6 @@ where
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
             unique_decoding,
             field_size_bits,
-            num_variables,
             log_inv_rate,
             log_eta,
         );
@@ -601,6 +605,7 @@ where
         let num_queries = num_queries as f64;
 
         if unique_decoding {
+            // (1 - δ)^q for δ = (1 - ρ) / 2.
             let rate = 1. / log_inv_rate.exp2();
             let denom = -(0.5 * (1. + rate)).log2();
             num_queries * denom
@@ -612,7 +617,6 @@ where
     pub fn rbr_soundness_queries_combination(
         unique_decoding: bool,
         field_size_bits: usize,
-        num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
         ood_samples: usize,
@@ -621,7 +625,7 @@ where
         let list_size = if unique_decoding {
             0.0
         } else {
-            Self::list_size_bits(num_variables, log_inv_rate, log_eta)
+            Self::log_list_size(log_inv_rate, log_eta)
         };
 
         let log_combination = ((ood_samples + num_queries) as f64).log2();
@@ -662,6 +666,41 @@ impl<F: FftField> Display for Config<F> {
         let field_size_bits = F::field_size_in_bits();
         let mut num_variables = self.initial_num_variables();
 
+        let vector_rlc_error = Self::rbr_soundness_initial_rlc_combination(
+            field_size_bits,
+            self.initial_committer.num_vectors,
+        );
+        if vector_rlc_error.is_finite() {
+            writeln!(
+                f,
+                "{:.1} bits -- initial vector RLC ({} vectors)",
+                vector_rlc_error, self.initial_committer.num_vectors
+            )?;
+        } else {
+            writeln!(
+                f,
+                "no loss -- initial vector RLC ({} vector)",
+                self.initial_committer.num_vectors
+            )?;
+        }
+
+        let num_linear_forms = 10;
+        let linear_form_rlc_error =
+            Self::rbr_soundness_initial_rlc_combination(field_size_bits, num_linear_forms);
+        if linear_form_rlc_error.is_finite() {
+            writeln!(
+                f,
+                "{:.1} bits -- initial linear-form RLC ({} linear form)",
+                linear_form_rlc_error, num_linear_forms
+            )?;
+        } else {
+            writeln!(
+                f,
+                "no loss -- initial linear-form RLC ({} linear form)",
+                num_linear_forms
+            )?;
+        }
+
         let log_eta = if self.initial_committer.unique_decoding() {
             0.0
         } else {
@@ -690,7 +729,6 @@ impl<F: FftField> Display for Config<F> {
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
             self.initial_committer.unique_decoding(),
             field_size_bits,
-            num_variables,
             self.initial_committer.rate().log2().neg(),
             log_eta,
         );
@@ -737,7 +775,6 @@ impl<F: FftField> Display for Config<F> {
             let combination_error = Self::rbr_soundness_queries_combination(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
-                num_variables,
                 next_rate,
                 log_eta,
                 r.irs_committer.out_domain_samples,
@@ -762,7 +799,6 @@ impl<F: FftField> Display for Config<F> {
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
-                num_variables,
                 next_rate,
                 log_eta,
             );
@@ -1059,7 +1095,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::list_size_bits(num_variables, log_inv_rate, log_eta);
+            let result = Config::<Field64>::log_list_size(log_inv_rate, log_eta);
             assert!(
                 (result - expected).abs() < 1e-6,
                 "Failed for {:?}",
