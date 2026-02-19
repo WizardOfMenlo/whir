@@ -25,6 +25,8 @@
 ///
 #[cfg(test)]
 mod batching_tests {
+    use std::borrow::Cow;
+
     use ark_std::UniformRand;
 
     use super::super::Config;
@@ -42,6 +44,27 @@ mod batching_tests {
 
     /// Field type used in the tests.
     type F = Field64;
+
+    /// Build owned linear forms for `prove()` (which consumes them).
+    fn build_prove_forms<F: ark_ff::Field>(
+        points: &[MultilinearPoint<F>],
+        num_variables: usize,
+        include_covector: bool,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        let mut forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in points {
+            forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        if include_covector {
+            forms.push(Box::new(Covector {
+                deferred: false,
+                vector: (0..1 << num_variables).map(F::from).collect(),
+            }));
+        }
+        forms
+    }
 
     fn random_vector(num_coefficients: usize) -> Vec<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
@@ -110,9 +133,8 @@ mod batching_tests {
         // Create a commitment to the polynomial and generate auxiliary witness data
         let batched_witness = params.commit(&mut prover_state, &vec_refs);
 
-        // Create a weights matrix and evaluations for each polynomial
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
-        for point in points {
+        for point in &points {
             linear_forms.push(Box::new(MultilinearExtension {
                 point: point.0.clone(),
             }));
@@ -130,26 +152,31 @@ mod batching_tests {
             })
             .collect::<Vec<_>>();
 
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
+
         // Generate a proof for the given statement and witness
-        let weights_dyn_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &vec_refs,
-            &[&batched_witness],
-            &weights_dyn_refs,
-            &values,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            vec![Cow::Owned(batched_witness)],
+            prove_linear_forms,
+            Cow::Borrowed(values.as_slice()),
         );
 
-        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
+        // Reconstruct verifier's view of the transcript
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
+        let weights_dyn_refs = linear_forms
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .collect::<Vec<_>>();
         assert!(params
             .verify(
                 &mut verifier_state,
