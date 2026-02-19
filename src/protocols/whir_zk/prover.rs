@@ -3,17 +3,24 @@ use std::{any::Any, borrow::Cow};
 use ark_ff::FftField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::{Config, Witness};
 use crate::{
-    algebra::linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+    algebra::{
+        embedding::Basefield,
+        linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+        mixed_dot_seq,
+    },
     hash::Hash,
-    protocols::whir_zk::utils::{beq_covector_at_gamma, recombine_doc_claim_from_components},
+    protocols::whir_zk::utils::{fill_eq_weights_at_gamma, recombine_doc_claim_from_components},
     transcript::{ProverMessage, VerifierMessage},
 };
 
 impl<F: FftField> Config<F> {
     #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
         prover_state: &mut crate::transcript::ProverState<H, R>,
@@ -56,6 +63,16 @@ impl<F: FftField> Config<F> {
             "evaluation matrix must be row-major weights x polynomials"
         );
 
+        // Destructure witness early so blinding_polynomials can be dropped after the
+        // gamma evaluation block, freeing memory before the inner prove calls.
+        let Witness {
+            f_hat_witnesses,
+            f_hat_vectors,
+            blinding_polynomials,
+            blinding_vectors,
+            blinding_witness,
+        } = witness;
+
         // Transcript order for the zkWHIR round-0 stitching checks:
         // 1) sample beta,
         // 2) sample non-zero rho,
@@ -82,7 +99,7 @@ impl<F: FftField> Config<F> {
             } else {
                 None
             };
-            for (poly_idx, f_hat_vector) in witness.f_hat_vectors.iter().enumerate() {
+            for (poly_idx, f_hat_vector) in f_hat_vectors.iter().enumerate() {
                 let idx = weight_idx * polynomials.len() + poly_idx;
                 let f_hat_eval = if let Some(mle) = maybe_mle {
                     mle.evaluate(embedding, f_hat_vector.as_slice())
@@ -102,7 +119,9 @@ impl<F: FftField> Config<F> {
         }
 
         let initial_in_domain = {
-            let witness_refs: Vec<_> = witness.f_hat_witnesses.iter().collect();
+            #[cfg(feature = "tracing")]
+            let _span = tracing::info_span!("open_f_hat").entered();
+            let witness_refs: Vec<_> = f_hat_witnesses.iter().collect();
             self.blinded_commitment
                 .initial_committer
                 .open(prover_state, &witness_refs)
@@ -125,80 +144,161 @@ impl<F: FftField> Config<F> {
         // Flat layout: g_hat_claims[poly_idx * num_witness_vars + j]
         let mut g_hat_claims = vec![F::ZERO; num_polynomials * num_witness_vars];
         let mut batched_h_claims = vec![F::ZERO; num_polynomials];
-        let mut beq_weight_accum = vec![F::ZERO; 1 << (num_blinding_variables + 1)];
+
+        let weight_size = 1usize << (num_blinding_variables + 1);
+
+        // Flat layout per gamma: [m_eval, g_hat_0, ..., g_hat_{mu-1}, h_val] × num_polynomials.
+        let stride_per_poly = 1 + num_witness_vars + 1;
+        let stride_per_gamma = num_polynomials * stride_per_poly;
+        let num_gammas = h_gammas.len();
+        let mut eval_results = vec![F::ZERO; num_gammas * stride_per_gamma];
+
+        #[cfg(feature = "parallel")]
+        let beq_weight_accum = {
+            let batch = {
+                let cores = rayon::current_num_threads();
+                ((num_gammas + cores - 1) / cores).max(1)
+            };
+            let batch_stride = batch * stride_per_gamma;
+            eval_results
+                .par_chunks_mut(batch_stride)
+                .enumerate()
+                .fold(
+                    || (vec![F::ZERO; weight_size], vec![F::ZERO; weight_size]),
+                    |(mut accum, mut eq_buf), (chunk_idx, chunk)| {
+                        let base_gi = chunk_idx * batch;
+                        let chunk_gammas = chunk.len() / stride_per_gamma;
+                        let embedding = Basefield::<F>::new();
+                        let mut tau2_pow = {
+                            let mut p = F::ONE;
+                            for _ in 0..base_gi {
+                                p *= tau2;
+                            }
+                            p
+                        };
+                        for local in 0..chunk_gammas {
+                            let gamma = h_gammas[base_gi + local];
+                            let slot = &mut chunk
+                                [local * stride_per_gamma..(local + 1) * stride_per_gamma];
+                            fill_eq_weights_at_gamma(
+                                &mut eq_buf,
+                                gamma,
+                                masking_challenge,
+                                num_blinding_variables,
+                            );
+                            for (a, &v) in accum.iter_mut().zip(eq_buf[..weight_size].iter()) {
+                                *a += tau2_pow * v;
+                            }
+                            for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
+                                let eg = &blinding_vectors[poly_idx * num_witness_vars_plus_1 + 1
+                                    ..(poly_idx + 1) * num_witness_vars_plus_1];
+                                let off = poly_idx * stride_per_poly;
+                                slot[off] =
+                                    mixed_dot_seq(&embedding, &eq_buf[..weight_size], &bp.m_poly);
+                                for (j, g_hat_embedded) in eg.iter().enumerate() {
+                                    slot[off + 1 + j] = mixed_dot_seq(
+                                        &embedding,
+                                        &eq_buf[..weight_size],
+                                        g_hat_embedded,
+                                    );
+                                }
+                                let mut h = slot[off];
+                                let mut bp_pow = blinding_challenge;
+                                let mut gp = gamma;
+                                for j in 0..eg.len() {
+                                    h += bp_pow * gp * slot[off + 1 + j];
+                                    bp_pow *= blinding_challenge;
+                                    gp = gp.square();
+                                }
+                                slot[off + 1 + num_witness_vars] = h;
+                            }
+                            tau2_pow *= tau2;
+                        }
+                        (accum, eq_buf)
+                    },
+                )
+                .map(|(accum, _)| accum)
+                .reduce(
+                    || vec![F::ZERO; weight_size],
+                    |mut a, b| {
+                        for (x, &y) in a.iter_mut().zip(b.iter()) {
+                            *x += y;
+                        }
+                        a
+                    },
+                )
+        };
 
         #[cfg(not(feature = "parallel"))]
-        {
-            let mut tau2_power = F::ONE;
-            for &gamma in &h_gammas {
-                let beq_cov =
-                    beq_covector_at_gamma(gamma, masking_challenge, num_blinding_variables);
-                for (poly_idx, bp) in witness.blinding_polynomials.iter().enumerate() {
-                    let eg = &witness.blinding_vectors[poly_idx * num_witness_vars_plus_1 + 1
+        let beq_weight_accum = {
+            let embedding = Basefield::<F>::new();
+            let mut eq_buf = vec![F::ZERO; weight_size];
+            let mut accum = vec![F::ZERO; weight_size];
+            let mut tau2_pow = F::ONE;
+            for (gi, &gamma) in h_gammas.iter().enumerate() {
+                fill_eq_weights_at_gamma(
+                    &mut eq_buf,
+                    gamma,
+                    masking_challenge,
+                    num_blinding_variables,
+                );
+                for (a, &v) in accum.iter_mut().zip(eq_buf[..weight_size].iter()) {
+                    *a += tau2_pow * v;
+                }
+                for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
+                    let eg = &blinding_vectors[poly_idx * num_witness_vars_plus_1 + 1
                         ..(poly_idx + 1) * num_witness_vars_plus_1];
-                    let eval = bp.evaluate_with_covector(&beq_cov, eg, gamma);
-                    prover_state.prover_message(&eval.m_eval);
-                    for g_hat_eval in &eval.g_hat_evals {
-                        prover_state.prover_message(g_hat_eval);
+                    let off = gi * stride_per_gamma + poly_idx * stride_per_poly;
+                    eval_results[off] =
+                        mixed_dot_seq(&embedding, &eq_buf[..weight_size], &bp.m_poly);
+                    for (j, g_hat_embedded) in eg.iter().enumerate() {
+                        eval_results[off + 1 + j] =
+                            mixed_dot_seq(&embedding, &eq_buf[..weight_size], g_hat_embedded);
                     }
-                    m_claims[poly_idx] += tau2_power * eval.m_eval;
-                    for (j, &g) in eval.g_hat_evals.iter().enumerate() {
-                        g_hat_claims[poly_idx * num_witness_vars + j] += tau2_power * g;
+                    let mut h = eval_results[off];
+                    let mut bp_pow = blinding_challenge;
+                    let mut gp = gamma;
+                    for j in 0..eg.len() {
+                        h += bp_pow * gp * eval_results[off + 1 + j];
+                        bp_pow *= blinding_challenge;
+                        gp = gp.square();
                     }
-                    batched_h_claims[poly_idx] +=
-                        tau2_power * eval.compute_h_value(blinding_challenge);
+                    eval_results[off + 1 + num_witness_vars] = h;
                 }
-                for (acc, &w) in beq_weight_accum.iter_mut().zip(beq_cov.vector.iter()) {
-                    *acc += tau2_power * w;
-                }
-                tau2_power *= tau2;
+                tau2_pow *= tau2;
             }
-        }
+            accum
+        };
 
-        // Parallel: compute per-gamma evaluations concurrently, apply sequentially for
-        // transcript ordering.  Uses blinding_vectors slices to avoid extra allocations.
-        #[cfg(feature = "parallel")]
+        // Sequential transcript writes + claim accumulation from the naturally-ordered flat array.
         {
-            let all_gamma_data: Vec<(Vec<F>, Vec<(F, Vec<F>, F)>)> = h_gammas
-                .par_iter()
-                .map(|&gamma| {
-                    let beq_cov =
-                        beq_covector_at_gamma(gamma, masking_challenge, num_blinding_variables);
-                    let poly_data: Vec<(F, Vec<F>, F)> = witness
-                        .blinding_polynomials
-                        .iter()
-                        .enumerate()
-                        .map(|(i, bp)| {
-                            let eg = &witness.blinding_vectors[i * num_witness_vars_plus_1 + 1
-                                ..(i + 1) * num_witness_vars_plus_1];
-                            let eval = bp.evaluate_with_covector(&beq_cov, eg, gamma);
-                            let h_val = eval.compute_h_value(blinding_challenge);
-                            (eval.m_eval, eval.g_hat_evals, h_val)
-                        })
-                        .collect();
-                    (beq_cov.vector, poly_data)
-                })
-                .collect();
+            let mut tau2_pow = F::ONE;
+            for gi in 0..num_gammas {
+                let base = gi * stride_per_gamma;
+                for poly_idx in 0..num_polynomials {
+                    let off = base + poly_idx * stride_per_poly;
+                    let m_eval = eval_results[off];
+                    let g_hat_evals = &eval_results[off + 1..off + 1 + num_witness_vars];
+                    let h_val = eval_results[off + 1 + num_witness_vars];
 
-            let mut tau2_power = F::ONE;
-            for (beq_weights, poly_data) in &all_gamma_data {
-                for (poly_idx, (m_eval, g_hat_evals, h_val)) in poly_data.iter().enumerate() {
-                    prover_state.prover_message(m_eval);
-                    for g_hat_eval in g_hat_evals {
-                        prover_state.prover_message(g_hat_eval);
+                    prover_state.prover_message(&m_eval);
+                    for g in g_hat_evals {
+                        prover_state.prover_message(g);
                     }
-                    m_claims[poly_idx] += tau2_power * *m_eval;
+
+                    m_claims[poly_idx] += tau2_pow * m_eval;
                     for (j, &g) in g_hat_evals.iter().enumerate() {
-                        g_hat_claims[poly_idx * num_witness_vars + j] += tau2_power * g;
+                        g_hat_claims[poly_idx * num_witness_vars + j] += tau2_pow * g;
                     }
-                    batched_h_claims[poly_idx] += tau2_power * *h_val;
+                    batched_h_claims[poly_idx] += tau2_pow * h_val;
                 }
-                for (acc, &w) in beq_weight_accum.iter_mut().zip(beq_weights.iter()) {
-                    *acc += tau2_power * w;
-                }
-                tau2_power *= tau2;
+                tau2_pow *= tau2;
             }
         }
+
+        drop(eval_results);
+
+        drop(blinding_polynomials);
 
         let mut combined_doc_claims = Vec::with_capacity(num_polynomials);
         let mut batched_blinding_subproof_claims =
@@ -223,45 +323,30 @@ impl<F: FftField> Config<F> {
             prover_state.prover_message(h_claim);
         }
 
-        // Build lightweight linear forms for the inner prove calls.
-        let linear_forms_for_prove: Vec<Box<dyn LinearForm<F>>> = weights
-            .iter()
-            .map(|&w| -> Box<dyn LinearForm<F>> {
-                if let Some(mle) = (w as &dyn Any).downcast_ref::<MultilinearExtension<F>>() {
-                    Box::new(MultilinearExtension {
-                        point: mle.point.clone(),
-                    })
-                } else {
-                    let mut cov = Covector::from(w);
-                    cov.deferred = w.deferred();
-                    Box::new(cov)
-                }
-            })
-            .collect();
+        let result = {
+            #[cfg(feature = "tracing")]
+            let _span = tracing::info_span!("inner_blinded_prove").entered();
+            self.blinded_commitment.prove(
+                prover_state,
+                f_hat_vectors.into_iter().map(Cow::Owned).collect(),
+                f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
+                weights,
+                Cow::Borrowed(modified_evaluations.as_slice()),
+            )
+        };
 
-        let Witness {
-            f_hat_witnesses,
-            f_hat_vectors,
-            blinding_polynomials: _,
-            blinding_vectors,
-            blinding_witness,
-        } = witness;
-
-        let result = self.blinded_commitment.prove(
-            prover_state,
-            f_hat_vectors.into_iter().map(Cow::Owned).collect(),
-            f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
-            linear_forms_for_prove,
-            Cow::Borrowed(modified_evaluations.as_slice()),
-        );
-
-        let _ = self.blinding_commitment.prove(
-            prover_state,
-            blinding_vectors.into_iter().map(Cow::Owned).collect(),
-            vec![Cow::Owned(blinding_witness)],
-            vec![Box::new(beq_weights) as Box<dyn LinearForm<F>>],
-            Cow::Borrowed(batched_blinding_subproof_claims.as_slice()),
-        );
+        {
+            #[cfg(feature = "tracing")]
+            let _span = tracing::info_span!("inner_blinding_prove").entered();
+            let beq_weight_ref: &dyn LinearForm<F> = &beq_weights;
+            let _ = self.blinding_commitment.prove(
+                prover_state,
+                blinding_vectors.into_iter().map(Cow::Owned).collect(),
+                vec![Cow::Owned(blinding_witness)],
+                &[beq_weight_ref],
+                Cow::Borrowed(batched_blinding_subproof_claims.as_slice()),
+            );
+        }
 
         result
     }
