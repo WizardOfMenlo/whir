@@ -4,10 +4,7 @@ use ark_std::{
     UniformRand,
 };
 
-use crate::algebra::{
-    linear_form::{Covector, Evaluate},
-    tensor_product, MultilinearPoint,
-};
+use crate::algebra::linear_form::{Covector, Evaluate};
 
 /// Blinding evaluations at one round-0 point `gamma in Gamma`.
 ///
@@ -202,17 +199,61 @@ pub fn beq_covector_at_gamma<F: FftField>(
     ))
 }
 
-fn eq_weights_at_gamma<F: FftField>(
+pub(crate) fn eq_weights_at_gamma<F: FftField>(
     gamma: F,
     masking_challenge: F,
     num_blinding_variables: usize,
 ) -> Vec<F> {
-    // z = (gamma, gamma^2, gamma^4, ...) via the squaring-ladder basis.
-    // The last variable is fixed to -rho, giving beq((z, -rho), .).
-    let z_eq = MultilinearPoint::power_of_two_basis(gamma, num_blinding_variables).eq_weights();
-    let eq_neg_masking_at_0 = F::ONE + masking_challenge;
-    let eq_neg_masking_at_1 = -masking_challenge;
-    tensor_product(&z_eq, &[eq_neg_masking_at_0, eq_neg_masking_at_1])
+    let n = num_blinding_variables + 1;
+    let size = 1usize << n;
+    let mut weights = vec![F::ZERO; size];
+    fill_eq_weights_at_gamma(
+        &mut weights,
+        gamma,
+        masking_challenge,
+        num_blinding_variables,
+    );
+    weights
+}
+
+/// In-place version of [`eq_weights_at_gamma`] that fills an existing buffer.
+///
+/// `buf` must have length `>= 2^(num_blinding_variables + 1)`.  Reusing a
+/// single buffer across gamma iterations avoids one 8 KiB allocation per point.
+pub(crate) fn fill_eq_weights_at_gamma<F: FftField>(
+    buf: &mut [F],
+    gamma: F,
+    masking_challenge: F,
+    num_blinding_variables: usize,
+) {
+    // beq((pow(gamma), -rho), .) on ell+1 variables via iterative tensor expansion.
+    // O(2^(ell+1)) muls instead of O(ell * 2^ell) from per-point eq_poly + tensor_product.
+    let n = num_blinding_variables + 1; // +1 for the masking variable
+    let size = 1usize << n;
+    debug_assert!(buf.len() >= size);
+
+    for w in buf[..size].iter_mut() {
+        *w = F::ZERO;
+    }
+    buf[0] = F::ONE;
+
+    // Variables 0..ell: squaring-ladder basis (gamma, gamma^2, gamma^4, ...)
+    let mut g = gamma;
+    for i in 0..num_blinding_variables {
+        for j in (0..1usize << i).rev() {
+            buf[2 * j + 1] = buf[j] * g;
+            buf[2 * j] = buf[j] - buf[2 * j + 1];
+        }
+        g = g.square();
+    }
+
+    // Last variable (ell): fixed to -masking_challenge.
+    let neg_rho = -masking_challenge;
+    let half = 1usize << num_blinding_variables;
+    for j in (0..half).rev() {
+        buf[2 * j + 1] = buf[j] * neg_rho;
+        buf[2 * j] = buf[j] - buf[2 * j + 1];
+    }
 }
 
 #[cfg(test)]
