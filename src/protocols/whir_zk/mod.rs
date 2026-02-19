@@ -297,7 +297,7 @@ mod tests {
         params.prove(
             &mut prover_state,
             &[&vector],
-            &witness,
+            witness,
             &linear_form_refs,
             &[evaluation],
         );
@@ -382,7 +382,7 @@ mod tests {
         params.prove(
             &mut prover_state,
             &vectors,
-            &witness,
+            witness,
             &linear_form_refs,
             &evaluations,
         );
@@ -466,7 +466,7 @@ mod tests {
         params.prove(
             &mut prover_state,
             &vectors,
-            &witness,
+            witness,
             &linear_form_refs,
             &evaluations,
         );
@@ -554,7 +554,7 @@ mod tests {
         params.prove(
             &mut prover_state,
             &vectors,
-            &witness,
+            witness,
             &linear_form_refs,
             &evaluations,
         );

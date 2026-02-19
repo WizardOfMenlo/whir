@@ -14,7 +14,7 @@ use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     algebra::{
         fields::{Field64, Field64_2},
-        linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+        linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
     hash,
@@ -268,8 +268,10 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
                 &mut prover_state,
                 p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
                 vec![Cow::Borrowed(&witness)],
-                vec![Box::new(Covector::from(&weights[0] as &dyn LinearForm<EF>))
-                    as Box<dyn LinearForm<EF>>],
+                vec![
+                    Box::new(MultilinearExtension::new(weights[0].point.clone()))
+                        as Box<dyn LinearForm<EF>>,
+                ],
                 Cow::Borrowed(evaluations.as_slice()),
             ));
         });
@@ -298,8 +300,10 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
             &mut prover_state,
             p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
             vec![Cow::Borrowed(&witness)],
-            vec![Box::new(Covector::from(&weights[0] as &dyn LinearForm<EF>))
-                as Box<dyn LinearForm<EF>>],
+            vec![
+                Box::new(MultilinearExtension::new(weights[0].point.clone()))
+                    as Box<dyn LinearForm<EF>>,
+            ],
             Cow::Borrowed(evaluations.as_slice()),
         );
         prover_state.proof()
@@ -377,7 +381,7 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
             black_box(zk_config.prove(
                 &mut prover_state,
                 &poly_refs,
-                &zk_witness,
+                zk_witness,
                 &weight_refs,
                 &evaluations,
             ));
@@ -408,7 +412,7 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         zk_config.prove(
             &mut prover_state,
             &poly_refs,
-            &zk_witness,
+            zk_witness,
             &weight_refs,
             &evaluations,
         );
