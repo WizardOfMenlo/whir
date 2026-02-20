@@ -25,36 +25,6 @@ pub struct Witness<F: FftField> {
 }
 
 impl<F: FftField> Config<F> {
-    /// Lift an `ell+1` mask vector to the witness-side `mu` domain size.
-    ///
-    /// The current implementation uses periodic repetition to match the larger
-    /// witness commitment size while keeping the blinding-side commitment in
-    /// the smaller `ell+1` space.
-    fn lift_mask_to_witness_size(
-        mask_vector: &[F::BasePrimeField],
-        witness_size: usize,
-    ) -> Vec<F::BasePrimeField> {
-        assert!(
-            !mask_vector.is_empty(),
-            "blinding mask vector must be non-empty"
-        );
-        assert!(
-            witness_size >= mask_vector.len(),
-            "witness vector smaller than blinding mask vector"
-        );
-        assert_eq!(
-            witness_size % mask_vector.len(),
-            0,
-            "witness size must be multiple of blinding mask size"
-        );
-        let repeats = witness_size / mask_vector.len();
-        let mut lifted = Vec::with_capacity(witness_size);
-        for _ in 0..repeats {
-            lifted.extend_from_slice(mask_vector);
-        }
-        lifted
-    }
-
     pub fn commit<H, R>(
         &self,
         prover_state: &mut crate::transcript::ProverState<H, R>,
@@ -81,14 +51,22 @@ impl<F: FftField> Config<F> {
         for &poly in polynomials {
             let blinding =
                 BlindingPolynomials::sample(&mut blinding_rng, num_blinding_vars, num_witness_vars);
-            let mask_vec = Self::lift_mask_to_witness_size(
-                &blinding.m_poly,
-                self.blinded_commitment.initial_size(),
+            let mask = &blinding.m_poly;
+            let witness_size = self.blinded_commitment.initial_size();
+            assert!(!mask.is_empty(), "blinding mask vector must be non-empty");
+            assert!(
+                witness_size >= mask.len(),
+                "witness vector smaller than blinding mask vector"
+            );
+            assert_eq!(
+                witness_size % mask.len(),
+                0,
+                "witness size must be multiple of blinding mask size"
             );
             let f_hat_vec = poly
                 .iter()
-                .zip(mask_vec.iter())
-                .map(|(&coeff, &mask)| coeff + mask)
+                .enumerate()
+                .map(|(i, &coeff)| coeff + mask[i % mask.len()])
                 .collect::<Vec<_>>();
             let witness = self
                 .blinded_commitment
@@ -110,11 +88,6 @@ impl<F: FftField> Config<F> {
             debug_assert_eq!(layout.len(), num_witness_vars + 1);
             blinding_vectors.extend(layout);
         }
-        // for poly_idx in 0..polynomials.len() {
-        //     let layout = blinding_polynomials[poly_idx].layout_vectors();
-        //     debug_assert_eq!(layout.len(), num_witness_vars + 1);
-        //     blinding_vectors.extend(layout);
-        // }
         let blinding_vector_refs = blinding_vectors
             .iter()
             .map(Vec::as_slice)

@@ -113,21 +113,32 @@ pub fn mixed_dot<F: Field, G: Field>(
 ) -> G {
     assert_eq!(a.len(), b.len());
 
-    #[cfg(not(feature = "parallel"))]
-    let result = a
-        .iter()
-        .zip(b)
-        .map(|(a, b)| embedding.mixed_mul(*a, *b))
-        .sum();
-
     #[cfg(feature = "parallel")]
-    let result = a
-        .par_iter()
+    if a.len() > workload_size::<G>() {
+        return a
+            .par_iter()
+            .zip(b)
+            .map(|(a, b)| embedding.mixed_mul(*a, *b))
+            .sum();
+    }
+
+    a.iter()
         .zip(b)
         .map(|(a, b)| embedding.mixed_mul(*a, *b))
-        .sum();
+        .sum()
+}
 
-    result
+/// Sequential-only mixed dot product for use inside parallel contexts.
+pub fn mixed_dot_seq<F: Field, G: Field>(
+    embedding: &impl Embedding<Source = F, Target = G>,
+    a: &[G],
+    b: &[F],
+) -> G {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| embedding.mixed_mul(*a, *b))
+        .sum()
 }
 
 /// Compute `accumulator[i] += sum_j scalars[j] * points[j]^i`

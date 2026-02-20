@@ -153,6 +153,8 @@ mod batching_tests {
             .collect::<Vec<_>>();
 
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
+        let prove_form_refs: Vec<&dyn LinearForm<F>> =
+            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
         // Generate a proof for the given statement and witness
         params.prove(
@@ -162,7 +164,7 @@ mod batching_tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             vec![Cow::Owned(batched_witness)],
-            prove_linear_forms,
+            &prove_form_refs,
             Cow::Borrowed(values.as_slice()),
         );
 

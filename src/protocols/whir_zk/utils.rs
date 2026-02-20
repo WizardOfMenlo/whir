@@ -4,10 +4,7 @@ use ark_std::{
     UniformRand,
 };
 
-use crate::algebra::{
-    linear_form::{Covector, Evaluate},
-    tensor_product, MultilinearPoint,
-};
+use crate::algebra::linear_form::{Covector, Evaluate};
 
 /// Blinding evaluations at one round-0 point `gamma in Gamma`.
 ///
@@ -168,6 +165,28 @@ pub fn recombine_doc_claim_from_components<F: FftField>(
     m_claim + (F::from(2u64) * inner_g_claim)
 }
 
+/// Fold a full-size weight to the masking period `2^(ℓ+1)`.
+///
+/// For a weight `w` on `μ` variables and period `P = 2^(ℓ+1)`:
+///   `w_folded[j] = Σ_{i ≡ j (mod P)} w[i]`
+///
+/// The inner product `⟨w_folded, m_poly⟩` equals `⟨w, periodic_extension(m_poly)⟩`,
+/// i.e. the masking contribution `M_eval` used for evaluation binding.
+pub fn fold_weight_to_mask_size<F: FftField>(
+    weight: &dyn crate::algebra::linear_form::LinearForm<F>,
+    num_witness_variables: usize,
+    num_blinding_variables: usize,
+) -> Covector<F> {
+    let mask_size = 1usize << (num_blinding_variables + 1);
+    let cov = Covector::from(weight);
+    debug_assert_eq!(cov.vector.len(), 1usize << num_witness_variables);
+    let mut folded = vec![F::ZERO; mask_size];
+    for (i, &v) in cov.vector.iter().enumerate() {
+        folded[i % mask_size] += v;
+    }
+    Covector::new(folded)
+}
+
 /// Build the single batched beq linear form used by the blinding subproof:
 /// `Sum_i tau2^i * beq((pow(gamma_i), -rho), .)`.
 pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
@@ -207,12 +226,56 @@ fn eq_weights_at_gamma<F: FftField>(
     masking_challenge: F,
     num_blinding_variables: usize,
 ) -> Vec<F> {
-    // z = (gamma, gamma^2, gamma^4, ...) via the squaring-ladder basis.
-    // The last variable is fixed to -rho, giving beq((z, -rho), .).
-    let z_eq = MultilinearPoint::power_of_two_basis(gamma, num_blinding_variables).eq_weights();
-    let eq_neg_masking_at_0 = F::ONE + masking_challenge;
-    let eq_neg_masking_at_1 = -masking_challenge;
-    tensor_product(&z_eq, &[eq_neg_masking_at_0, eq_neg_masking_at_1])
+    let n = num_blinding_variables + 1;
+    let size = 1usize << n;
+    let mut weights = vec![F::ZERO; size];
+    fill_eq_weights_at_gamma(
+        &mut weights,
+        gamma,
+        masking_challenge,
+        num_blinding_variables,
+    );
+    weights
+}
+
+/// In-place version of [`eq_weights_at_gamma`] that fills an existing buffer.
+///
+/// `buf` must have length `>= 2^(num_blinding_variables + 1)`.  Reusing a
+/// single buffer across gamma iterations avoids one 8 KiB allocation per point.
+pub fn fill_eq_weights_at_gamma<F: FftField>(
+    buf: &mut [F],
+    gamma: F,
+    masking_challenge: F,
+    num_blinding_variables: usize,
+) {
+    // beq((pow(gamma), -rho), .) on ell+1 variables via iterative tensor expansion.
+    // O(2^(ell+1)) muls instead of O(ell * 2^ell) from per-point eq_poly + tensor_product.
+    let n = num_blinding_variables + 1; // +1 for the masking variable
+    let size = 1usize << n;
+    debug_assert!(buf.len() >= size);
+
+    for w in &mut buf[..size] {
+        *w = F::ZERO;
+    }
+    buf[0] = F::ONE;
+
+    // Variables 0..ell: squaring-ladder basis (gamma, gamma^2, gamma^4, ...)
+    let mut g = gamma;
+    for i in 0..num_blinding_variables {
+        for j in (0..1usize << i).rev() {
+            buf[2 * j + 1] = buf[j] * g;
+            buf[2 * j] = buf[j] - buf[2 * j + 1];
+        }
+        g = g.square();
+    }
+
+    // Last variable (ell): fixed to -masking_challenge.
+    let neg_rho = -masking_challenge;
+    let half = 1usize << num_blinding_variables;
+    for j in (0..half).rev() {
+        buf[2 * j + 1] = buf[j] * neg_rho;
+        buf[2 * j] = buf[j] - buf[2 * j + 1];
+    }
 }
 
 #[cfg(test)]

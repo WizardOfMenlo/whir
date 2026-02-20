@@ -2,10 +2,11 @@ use ark_ff::FftField;
 
 use super::Config;
 use crate::{
-    algebra::linear_form::LinearForm,
+    algebra::linear_form::{Covector, LinearForm},
     hash::Hash,
     protocols::whir_zk::utils::{
-        construct_batched_eq_weights_from_gammas, recombine_doc_claim_from_components,
+        construct_batched_eq_weights_from_gammas, fold_weight_to_mask_size,
+        recombine_doc_claim_from_components,
     },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
@@ -37,14 +38,30 @@ impl<F: FftField> Config<F> {
         let num_polynomials = commitment.f_hat.len();
         verify!(evaluations.len() == weights.len() * num_polynomials);
 
-        // Transcript order mirrors prover for round-0 consistency checks:
-        // beta, non-zero rho, g-evals, tau1, tau2, raw blinding evals,
-        // combined doc claims, batched h claims.
+        // Transcript order mirrors prover for evaluation binding:
+        // beta, w_folded_evals, non-zero rho, Opening#1, tau1, tau2,
+        // raw blinding evals, combined doc claims, batched h claims,
+        // inner blinded WHIR, blinding WHIR with w_folded weights.
         let blinding_challenge: F = verifier_state.verifier_message();
+
+        let num_witness_vars = self.num_witness_variables();
+        let num_blinding_variables = self.num_blinding_variables();
+        let num_witness_vars_plus_1 = num_witness_vars + 1;
+        let num_w_folded_evals = weights.len() * num_polynomials * num_witness_vars_plus_1;
+        let w_folded_blinding_evals: Vec<F> =
+            verifier_state.prover_messages_vec(num_w_folded_evals)?;
+
+        let mut m_evals: Vec<F> = Vec::with_capacity(weights.len() * num_polynomials);
+        for weight_idx in 0..weights.len() {
+            for poly_idx in 0..num_polynomials {
+                let block_offset =
+                    (weight_idx * num_polynomials + poly_idx) * num_witness_vars_plus_1;
+                m_evals.push(w_folded_blinding_evals[block_offset]);
+            }
+        }
+
         let masking_challenge: F = verifier_state.verifier_message();
         verify!(masking_challenge != F::ZERO);
-        let g_evals: Vec<F> =
-            verifier_state.prover_messages_vec(weights.len() * num_polynomials)?;
         let commitments = commitment.f_hat.iter().collect::<Vec<_>>();
         let initial_in_domain = self
             .blinded_commitment
@@ -54,7 +71,6 @@ impl<F: FftField> Config<F> {
         // Doc-faithful Gamma surface: expand each base query alpha_i into coset points
         // alpha_i * Omega_k used by the first folding round.
         let h_gammas = self.all_gammas(&initial_in_domain.points);
-        let num_witness_vars = self.num_witness_variables();
         let tau1: F = verifier_state.verifier_message();
         let tau2: F = verifier_state.verifier_message();
         let mut m_claims = vec![F::ZERO; num_polynomials];
@@ -84,8 +100,8 @@ impl<F: FftField> Config<F> {
         let batched_h_claims: Vec<F> = verifier_state.prover_messages_vec(num_polynomials)?;
         let modified_evaluations: Vec<F> = evaluations
             .iter()
-            .zip(g_evals.iter())
-            .map(|(&eval, &g_eval)| masking_challenge * eval + g_eval)
+            .zip(m_evals.iter())
+            .map(|(&eval, &m_eval)| eval + m_eval)
             .collect();
 
         self.blinded_commitment
@@ -111,21 +127,36 @@ impl<F: FftField> Config<F> {
         }
         verify!(combined_doc_claims == expected_combined_doc_claims);
 
-        // Verify the blinding WHIR subproof against the same batched beq form used to
-        // derive raw round-0 claims at (gamma, -rho).
         let beq_weights = construct_batched_eq_weights_from_gammas(
             &h_gammas,
             masking_challenge,
             tau2,
-            self.num_blinding_variables(),
+            num_blinding_variables,
         );
+        let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
+        for &weight in weights.iter() {
+            w_folded_weights.push(fold_weight_to_mask_size(
+                weight,
+                num_witness_vars,
+                num_blinding_variables,
+            ));
+        }
+        let mut blinding_forms: Vec<&dyn LinearForm<F>> =
+            Vec::with_capacity(1 + w_folded_weights.len());
+        blinding_forms.push(&beq_weights);
+        for wf in &w_folded_weights {
+            blinding_forms.push(wf);
+        }
+        let mut all_expected_blinding_claims =
+            Vec::with_capacity(blinding_forms.len() * num_polynomials * num_witness_vars_plus_1);
+        all_expected_blinding_claims.extend_from_slice(&expected_batched_blinding_subproof_claims);
+        all_expected_blinding_claims.extend_from_slice(&w_folded_blinding_evals);
         let blinding_commitments = vec![&commitment.blinding];
-        let blinding_forms: Vec<&dyn LinearForm<F>> = vec![&beq_weights];
         self.blinding_commitment.verify(
             verifier_state,
             &blinding_commitments,
             &blinding_forms,
-            &expected_batched_blinding_subproof_claims,
+            &all_expected_blinding_claims,
         )?;
 
         Ok(())
