@@ -31,11 +31,7 @@ pub struct BlindingSizePolicy {
     pub sumcheck_round_degree: usize,
 }
 
-/// ZK WHIR configuration.
-///
-/// This mirrors the two-commitment view from the protocol notes:
-/// - `blinded_commitment` for the witness-side WHIR,
-/// - `blinding_commitment` for batched blinding polynomials.
+/// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "")]
 pub struct Config<F: FftField> {
@@ -70,11 +66,7 @@ impl<F: FftField> Config<F> {
         }
     }
 
-    /// Build a draft zkWHIR config from upstream WHIR as source of truth.
-    ///
-    /// The blinding side follows the same security/hash parameters and uses
-    /// `ConjectureList` soundness with `pow_bits = 0`, as captured in the
-    /// local zk notes.
+    /// Build a zkWHIR config from the given WHIR parameters.
     pub fn new(
         main_mv_params: MultivariateParameters<F>,
         main_whir_params: &ProtocolParameters,

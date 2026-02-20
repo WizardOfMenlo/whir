@@ -51,9 +51,8 @@ fn encode_field_into<F: Field>(elem: &F, buf: &mut [u8]) -> usize {
     total_size
 }
 
-/// Thin wrapper around a byte slice that implements `Encoding<[u8]>` (identity)
-/// and `NargSerialize` without heap allocation. Used to bypass the allocating
-/// `Encoding` impl that spongefish provides for arkworks field elements.
+/// Byte slice wrapper implementing `Encoding<[u8]>` to bypass spongefish's
+/// allocating `Encoding` impl for arkworks field elements.
 struct EncodedBytes<'a>(&'a [u8]);
 
 impl Encoding<[u8]> for EncodedBytes<'_> {
@@ -238,8 +237,7 @@ where
         self.inner.prover_message(message);
     }
 
-    /// Allocation-free `prover_message` for a field element.
-    /// Byte-identical sponge state and NARG string to `prover_message(elem)`.
+    /// Allocation-free `prover_message` for a single field element.
     #[cfg_attr(test, track_caller)]
     pub fn prover_message_field<F: Field>(&mut self, elem: &F)
     where
@@ -253,7 +251,6 @@ where
     }
 
     /// Allocation-free `prover_message` for a slice of field elements.
-    /// Each element is a separate message (matching verifier's per-element reads).
     #[cfg_attr(test, track_caller)]
     pub fn prover_message_fields<F: Field>(&mut self, elems: &[F])
     where

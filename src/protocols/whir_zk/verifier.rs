@@ -50,10 +50,6 @@ impl<F: FftField> Config<F> {
         let num_polynomials = commitment.f_hat.len();
         verify!(evaluations.len() == weights.len() * num_polynomials);
 
-        // Transcript order mirrors prover for evaluation binding:
-        // beta, w_folded_evals, non-zero rho, Opening#1, tau1, tau2,
-        // raw blinding evals, combined claims, batched h claims,
-        // inner blinded WHIR, blinding WHIR with w_folded weights.
         let blinding_challenge: F = verifier_state.verifier_message();
 
         let num_witness_variables = self.num_witness_variables();
@@ -73,8 +69,7 @@ impl<F: FftField> Config<F> {
             .initial_committer
             .verify(verifier_state, &commitments)?;
 
-        // Doc-faithful Gamma surface: expand each base query alpha_i into coset points
-        // alpha_i * Omega_k used by the first folding round.
+        // Expand base queries into coset points for the first folding round.
         let h_gammas = self.all_gammas(&initial_in_domain.points);
         let tau1: F = verifier_state.verifier_message();
         let tau2: F = verifier_state.verifier_message();
@@ -84,7 +79,7 @@ impl<F: FftField> Config<F> {
         let mut tau2_power = F::ONE;
         for &gamma in &h_gammas {
             for poly_idx in 0..num_polynomials {
-                // Parse `(m_eval, g_hat_1_eval, ..., g_hat_mu_eval)` for each (gamma, polynomial).
+                // Parse (m_eval, g_hat_evals) per polynomial.
                 let m_eval: F = verifier_state.prover_message()?;
                 let mut h_value = m_eval;
                 let mut blinding_power = blinding_challenge;
