@@ -86,6 +86,19 @@ fn evaluate_gamma_block<F: FftField>(
     let stride_per_gamma = num_polynomials * stride_per_poly;
     let mut eval_results = vec![F::ZERO; num_gammas * stride_per_gamma];
 
+    // Precompute blinding_challenge powers [beta, beta^2, ..., beta^{num_witness_variables}]
+    // to avoid re-multiplying them inside every (gamma, polynomial) pair.
+    let num_g_hats = blinding_polynomials.first().map_or(0, |bp| bp.g_hats.len());
+    let beta_powers: Vec<F> = {
+        let mut powers = Vec::with_capacity(num_g_hats);
+        let mut bp = blinding_challenge;
+        for _ in 0..num_g_hats {
+            powers.push(bp);
+            bp *= blinding_challenge;
+        }
+        powers
+    };
+
     #[cfg(feature = "parallel")]
     let beq_half_accum = {
         let batch = {
@@ -97,8 +110,16 @@ fn evaluate_gamma_block<F: FftField>(
             .par_chunks_mut(batch_stride)
             .enumerate()
             .fold(
-                || (vec![F::ZERO; half_size], vec![F::ZERO; half_size]),
-                |(mut accum, mut eq_buf), (chunk_idx, chunk)| {
+                // Allocate per-thread buffers once; gamma_sq_powers is reused
+                // across all gammas in each chunk to avoid per-gamma heap traffic.
+                || {
+                    (
+                        vec![F::ZERO; half_size],
+                        vec![F::ZERO; half_size],
+                        vec![F::ZERO; num_g_hats],
+                    )
+                },
+                |(mut accum, mut eq_buf, mut gamma_sq_powers), (chunk_idx, chunk)| {
                     let base_gi = chunk_idx * batch;
                     let chunk_gammas = chunk.len() / stride_per_gamma;
                     let embedding = Basefield::<F>::new();
@@ -110,6 +131,17 @@ fn evaluate_gamma_block<F: FftField>(
                             &mut chunk[local * stride_per_gamma..(local + 1) * stride_per_gamma];
                         fill_eq_weights_at_gamma_half(&mut eq_buf, gamma, num_blinding_variables);
                         scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
+
+                        // Compute gamma^{2^j} squaring ladder into the pre-allocated buffer;
+                        // reused across all polynomials to avoid redundant squarings.
+                        {
+                            let mut gp = gamma;
+                            for gsp in gamma_sq_powers.iter_mut() {
+                                *gsp = gp;
+                                gp = gp.square();
+                            }
+                        }
+
                         for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
                             let off = poly_idx * stride_per_poly;
                             slot[off] = eq_buf
@@ -117,25 +149,23 @@ fn evaluate_gamma_block<F: FftField>(
                                 .zip(folded_m_polys[poly_idx].iter())
                                 .map(|(&e, &f)| e * f)
                                 .sum();
-                            for (j, g_hat) in bp.g_hats.iter().enumerate() {
-                                slot[off + 1 + j] =
-                                    one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
-                            }
+                            // Fuse g_hat evaluation with h_val accumulation:
+                            // compute each g_hat dot product and immediately fold
+                            // it into h, eliminating a second pass over the slots.
                             let mut h = slot[off];
-                            let mut bp_pow = blinding_challenge;
-                            let mut gp = gamma;
-                            for j in 0..bp.g_hats.len() {
-                                h += bp_pow * gp * slot[off + 1 + j];
-                                bp_pow *= blinding_challenge;
-                                gp = gp.square();
+                            for (j, g_hat) in bp.g_hats.iter().enumerate() {
+                                let g_eval =
+                                    one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                                slot[off + 1 + j] = g_eval;
+                                h += beta_powers[j] * gamma_sq_powers[j] * g_eval;
                             }
                             slot[off + 1 + num_witness_variables] = h;
                         }
                     }
-                    (accum, eq_buf)
+                    (accum, eq_buf, gamma_sq_powers)
                 },
             )
-            .map(|(accum, _)| accum)
+            .map(|(accum, _, _)| accum)
             .reduce(
                 || vec![F::ZERO; half_size],
                 |mut a, b| {
@@ -152,10 +182,23 @@ fn evaluate_gamma_block<F: FftField>(
         let embedding = Basefield::<F>::new();
         let mut eq_buf = vec![F::ZERO; half_size];
         let mut accum = vec![F::ZERO; half_size];
+        // Pre-allocate gamma squaring buffer once; refilled cheaply each iteration.
+        let mut gamma_sq_powers = vec![F::ZERO; num_g_hats];
         for (gi, &gamma) in h_gammas.iter().enumerate() {
             fill_eq_weights_at_gamma_half(&mut eq_buf, gamma, num_blinding_variables);
             let tau2_pow = tau2_powers[gi];
             scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
+
+            // Compute gamma^{2^j} squaring ladder into the pre-allocated buffer;
+            // reused across all polynomials to avoid redundant squarings.
+            {
+                let mut gp = gamma;
+                for gsp in gamma_sq_powers.iter_mut() {
+                    *gsp = gp;
+                    gp = gp.square();
+                }
+            }
+
             for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
                 let off = gi * stride_per_gamma + poly_idx * stride_per_poly;
                 eval_results[off] = eq_buf
@@ -163,17 +206,14 @@ fn evaluate_gamma_block<F: FftField>(
                     .zip(folded_m_polys[poly_idx].iter())
                     .map(|(&e, &f)| e * f)
                     .sum();
-                for (j, g_hat) in bp.g_hats.iter().enumerate() {
-                    eval_results[off + 1 + j] =
-                        one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
-                }
+                // Fuse g_hat evaluation with h_val accumulation:
+                // compute each g_hat dot product and immediately fold
+                // it into h, eliminating a second pass over the slots.
                 let mut h = eval_results[off];
-                let mut bp_pow = blinding_challenge;
-                let mut gp = gamma;
-                for j in 0..bp.g_hats.len() {
-                    h += bp_pow * gp * eval_results[off + 1 + j];
-                    bp_pow *= blinding_challenge;
-                    gp = gp.square();
+                for (j, g_hat) in bp.g_hats.iter().enumerate() {
+                    let g_eval = one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                    eval_results[off + 1 + j] = g_eval;
+                    h += beta_powers[j] * gamma_sq_powers[j] * g_eval;
                 }
                 eval_results[off + 1 + num_witness_variables] = h;
             }
