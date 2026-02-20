@@ -5,7 +5,7 @@ use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{committer::Witness, config::Config};
+use super::{committer::Witness, config::Config, FinalClaim};
 use crate::{
     algebra::{
         dot,
@@ -62,7 +62,7 @@ where
         witnesses: Vec<Cow<'a, Witness<F, M>>>,
         linear_forms: Vec<Box<dyn LinearForm<F>>>,
         evaluations: Cow<'a, [F]>,
-    ) -> (MultilinearPoint<F>, Vec<F>)
+    ) -> FinalClaim<F>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -98,7 +98,7 @@ where
         }
         if vectors.is_empty() {
             // TODO: Should we draw a random evaluation point of the right size?
-            return (MultilinearPoint::default(), Vec::new());
+            return FinalClaim::default();
         }
 
         // Complete evaluations of EVERY vector at EVERY linear form.
@@ -205,7 +205,10 @@ where
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Run initial sumcheck on batched vectors with combined statement
-        let mut folding_randomness = if constraint_rlc_coeffs.is_empty() {
+        let mut folding_randomness = if has_constraints {
+            self.initial_sumcheck
+                .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
+        } else {
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck vectors would be constant zero)
             // TODO: Don't compute evaluations and constraints in the first place.
@@ -220,13 +223,9 @@ where
             // Covector must be all zeros.
             covector = vec![F::ZERO; self.initial_sumcheck.final_size()];
             MultilinearPoint(folding_randomness)
-        } else {
-            self.initial_sumcheck
-                .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
         };
+        let mut evaluation_point = folding_randomness.0.clone();
 
-        let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
-        randomness_vec.extend(folding_randomness.0.iter().copied());
         debug_assert_eq!(dot(&vector, &covector), the_sum);
 
         // Execute standard WHIR rounds on the batched vectors
@@ -282,7 +281,7 @@ where
                     .sumcheck
                     .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
 
-            randomness_vec.extend(folding_randomness.0.iter().copied());
+            evaluation_point.extend(folding_randomness.0.iter().copied());
             debug_assert_eq!(dot(&vector, &covector), the_sum);
 
             prev_witness = RoundWitness::Round(new_witness);
@@ -316,17 +315,12 @@ where
         let final_folding_randomness =
             self.final_sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
-        randomness_vec.extend(final_folding_randomness.0.iter().copied());
+        evaluation_point.extend(final_folding_randomness.0.iter().copied());
 
-        // Hints for deferred constraints
-        let constraint_eval = MultilinearPoint(randomness_vec);
-        let deferred = linear_forms
-            .into_iter()
-            .filter(|w| w.deferred())
-            .map(|w| w.mle_evaluate(&constraint_eval.0))
-            .collect();
-        prover_state.prover_hint_ark(&deferred);
-
-        (constraint_eval, deferred)
+        FinalClaim {
+            evaluation_point,
+            rlc_coefficients: initial_forms_rlc_coeffs.to_vec(),
+            linear_form_rlc: F::ZERO,
+        }
     }
 }

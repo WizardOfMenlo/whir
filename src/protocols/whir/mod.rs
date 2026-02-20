@@ -4,16 +4,41 @@ mod config;
 mod prover;
 mod verifier;
 
+use ark_ff::Field;
+
 pub use self::{
     committer::{Commitment, Witness},
     config::{Config, RoundConfig},
 };
+use crate::{
+    algebra::linear_form::LinearForm, transcript::VerificationResult, utils::zip_strict, verify,
+};
+
+#[must_use = "The final claim must be checked if there where any linear forms."]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FinalClaim<F: Field> {
+    /// Multinlinear extension evaluation point.
+    pub evaluation_point: Vec<F>,
+    /// The random linear combination coefficients.
+    pub rlc_coefficients: Vec<F>,
+    /// Claimed value of the rlc of the mle of the linears forms in the point.
+    /// Note: not computed on the prover side, set to zero instead.
+    pub linear_form_rlc: F,
+}
+
+impl<F: Field> FinalClaim<F> {
+    pub fn verify(&self, linear_forms: &[&dyn LinearForm<F>]) -> VerificationResult<()> {
+        let rlc = zip_strict(&self.rlc_coefficients, linear_forms)
+            .map(|(&c, l)| c * l.mle_evaluate(&self.evaluation_point))
+            .sum::<F>();
+        verify!(rlc == self.linear_form_rlc);
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-
-    use ark_ff::Field;
 
     use super::*;
     use crate::{
@@ -140,7 +165,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Generate a proof for the given statement and witness
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::from(vector)],
             vec![Cow::Owned(witness)],
@@ -158,7 +183,7 @@ mod tests {
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
-        params
+        let final_claim = params
             .verify(
                 &mut verifier_state,
                 &[&commitment],
@@ -166,6 +191,7 @@ mod tests {
                 &evaluations,
             )
             .unwrap();
+        final_claim.verify(&linear_form_refs).unwrap();
     }
 
     #[test]
@@ -336,7 +362,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all polynomials together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vectors
                 .iter()
@@ -363,7 +389,7 @@ mod tests {
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
-        params
+        let final_claim = params
             .verify(
                 &mut verifier_state,
                 &commitment_refs,
@@ -371,6 +397,7 @@ mod tests {
                 &evaluations,
             )
             .unwrap();
+        final_claim.verify(&linear_form_refs).unwrap();
     }
 
     #[test]
@@ -498,7 +525,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
 
         // Generate proof with mismatched polynomials
-        let (_evalpoint, _values) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
             vec![Cow::Owned(witness1), Cow::Owned(witness2)],
@@ -616,7 +643,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all witnesses together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             all_vectors
                 .iter()

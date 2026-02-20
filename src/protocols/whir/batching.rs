@@ -155,7 +155,7 @@ mod batching_tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Generate a proof for the given statement and witness
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vectors
                 .iter()
@@ -177,14 +177,15 @@ mod batching_tests {
             .iter()
             .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
-        assert!(params
+        let final_claim = params
             .verify(
                 &mut verifier_state,
                 &[&commitment],
                 &weights_dyn_refs,
-                &values
+                &values,
             )
-            .is_ok());
+            .unwrap();
+        final_claim.verify(&weights_dyn_refs).unwrap();
     }
 
     #[test]

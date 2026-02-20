@@ -9,7 +9,7 @@ use crate::{
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
@@ -49,7 +49,7 @@ where
         commitments: &[&Commitment<F>],
         linear_forms: &[&dyn LinearForm<F>],
         evaluations: &[F],
-    ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
+    ) -> VerificationResult<FinalClaim<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -61,7 +61,7 @@ where
         let num_vectors = commitments.len() * self.initial_committer.num_vectors;
         verify!(linear_forms.len() * num_vectors == evaluations.len());
         if num_vectors == 0 {
-            return Ok((MultilinearPoint::default(), Vec::new()));
+            return Ok(FinalClaim::default());
         }
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
@@ -226,47 +226,33 @@ where
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
-        let folding_randomness = MultilinearPoint(
-            round_folding_randomness
-                .into_iter()
-                .flat_map(|poly| poly.0.into_iter())
-                .collect(),
-        );
+        let evaluation_point = round_folding_randomness
+            .into_iter()
+            .flat_map(|poly| poly.0.into_iter())
+            .collect::<Vec<_>>();
 
-        // Evaluate all round constraints weights
-        let mut weight_eval = F::ZERO;
+        // Compute the claimed rlc of the linear form mles from the sumcheck invariant.
+        let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
+            .evaluate(&Identity::new(), &final_vector);
+        let mut linear_form_rlc = the_sum / poly_eval;
+
+        // Subtract all internal linear forms.
         for (round, (weights_rlc_coeffs, weights)) in round_constraints.into_iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
                 || self.initial_num_variables(),
                 |p| self.round_configs[p].initial_num_variables(),
             );
-            let start = folding_randomness.0.len().saturating_sub(num_variables);
+            let start = evaluation_point.len().saturating_sub(num_variables);
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                weight_eval += rlc_coeff * weights.mle_evaluate(&folding_randomness.0[start..]);
+                linear_form_rlc -= rlc_coeff * weights.mle_evaluate(&evaluation_point[start..]);
             }
         }
 
-        // Compute evaluation of non-deferred initial weights in folding randomness point
-        let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
-        let mut deferred_iter = deferred.iter().copied();
-        for (rlc_coeff, weights) in zip_strict(initial_form_rlc_coeffs, linear_forms) {
-            let eval = if weights.deferred() {
-                let deferred = deferred_iter.next();
-                verify!(deferred.is_some());
-                deferred.unwrap()
-            } else {
-                weights.mle_evaluate(&folding_randomness.0)
-            };
-            weight_eval += rlc_coeff * eval;
-        }
-        verify!(deferred_iter.next().is_none());
-
-        // Check the final sumcheck equation
-        let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
-            .evaluate(&Identity::new(), &final_vector);
-        verify!(poly_eval * weight_eval == the_sum);
-
         // Return the evaluation point and the claimed values of the deferred weights.
-        Ok((folding_randomness, deferred))
+        Ok(FinalClaim {
+            evaluation_point,
+            rlc_coefficients: initial_form_rlc_coeffs,
+            linear_form_rlc,
+        })
     }
 }
