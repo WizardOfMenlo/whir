@@ -60,6 +60,9 @@ struct Args {
 
     #[arg(long = "hash", default_value = "Blake3")]
     hash: AvailableHash,
+
+    #[arg(long = "zk")]
+    zk: bool,
 }
 
 fn main() {
@@ -91,9 +94,18 @@ where
 {
     match args.protocol_type {
         WhirType::PCS => {
-            run_whir_pcs::<F>(args);
+            if args.zk {
+                run_whir_pcs_zk::<F>(args);
+            } else {
+                run_whir_pcs::<F>(args);
+            }
         }
         WhirType::LDT => {
+            if args.zk {
+                println!(
+                    "Warning: --zk is currently only supported for PCS mode; running plain LDT."
+                );
+            }
             run_whir_as_ldt::<F>(args);
         }
     }
@@ -149,7 +161,7 @@ where
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params}");
+    println!("{params:?}");
     if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
@@ -249,7 +261,7 @@ where
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params}");
+    println!("{params:?}");
     if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
@@ -337,6 +349,160 @@ where
                 &[&commitment],
                 &weight_dyn_refs,
                 &evaluations,
+            )
+            .unwrap();
+    }
+    println!(
+        "Verifier time: {:.1?}",
+        whir_verifier_time.elapsed() / reps as u32
+    );
+    println!(
+        "Average hashes: {:.1}k",
+        (HASH_COUNTER.get() as f64 / reps as f64) / 1000.0
+    );
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_whir_pcs_zk<F>(args: &Args)
+where
+    F: FftField + CanonicalSerialize + Codec,
+{
+    use whir::protocols::whir_zk::Config;
+
+    let security_level = args.security_level;
+    let pow_bits = args.pow_bits.unwrap();
+    let num_variables = args.num_variables;
+    let starting_rate = args.rate;
+    let reps = args.verifier_repetitions;
+    let first_round_folding_factor = args.first_round_folding_factor;
+    let folding_factor = args.folding_factor;
+    let soundness_type = args.soundness_type;
+    let num_evaluations = args.num_evaluations;
+    let num_linear_constraints = args.num_linear_constraints;
+    let hash_id = args.hash.hash_id();
+
+    if num_evaluations == 0 {
+        println!("Warning: running as PCS but no evaluations specified.");
+    }
+
+    let num_coeffs = 1 << num_variables;
+    let mv_params = MultivariateParameters::<F>::new(num_variables);
+
+    let whir_params = ProtocolParameters {
+        initial_statement: true,
+        security_level,
+        pow_bits,
+        folding_factor: FoldingFactor::ConstantFromSecondRound(
+            first_round_folding_factor,
+            folding_factor,
+        ),
+        soundness_type,
+        starting_log_inv_rate: starting_rate,
+        batch_size: 1,
+        hash_id,
+    };
+
+    let params = Config::<F>::new(mv_params, &whir_params, whir_params.folding_factor, 1);
+
+    let ds = DomainSeparator::protocol(&params)
+        .session(&format!("Example at {}:{}", file!(), line!()))
+        .instance(&Empty);
+
+    let mut prover_state = ProverState::new_std(&ds);
+
+    println!("=========================================");
+    println!("Whir (PCS + ZK) 🌪️");
+    println!("Field: {:?} and hash: {:?}", args.field, args.hash);
+    println!("{params:?}");
+    if !params
+        .blinded_commitment
+        .check_max_pow_bits(Bits::new(whir_params.pow_bits as f64))
+    {
+        println!("WARN: more PoW bits required than what specified.");
+    }
+
+    let vector = (0..num_coeffs)
+        .map(<F as Field>::BasePrimeField::from)
+        .collect::<Vec<_>>();
+
+    let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+    let mut evaluations = Vec::new();
+
+    // Evaluation constraint
+    let points: Vec<_> = (0..num_evaluations)
+        .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
+        .collect();
+
+    for point in &points {
+        let linear_form = MultilinearExtension::new(point.0.clone());
+        evaluations.push(linear_form.evaluate(params.blinded_commitment.embedding(), &vector));
+        linear_forms.push(Box::new(linear_form));
+    }
+
+    // Linear constraint
+    for _ in 0..num_linear_constraints {
+        let covector = Covector {
+            deferred: false,
+            vector: (0..num_coeffs).map(F::from).collect(),
+        };
+        evaluations.push(covector.evaluate(params.blinded_commitment.embedding(), &vector));
+        linear_forms.push(Box::new(covector));
+    }
+
+    // Build owned linear forms for prove (consumed), keep originals for verify
+    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+    for point in &points {
+        prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
+    }
+    for _ in 0..num_linear_constraints {
+        prove_linear_forms.push(Box::new(Covector {
+            deferred: false,
+            vector: (0..num_coeffs).map(F::from).collect(),
+        }));
+    }
+    let prove_form_refs: Vec<&dyn LinearForm<F>> =
+        prove_linear_forms.iter().map(|b| b.as_ref()).collect();
+
+    let whir_commit_time = Instant::now();
+    let witness = params.commit(&mut prover_state, &[vector.as_slice()]);
+    let whir_commit_time = whir_commit_time.elapsed();
+
+    let whir_prove_time = Instant::now();
+    params.prove(
+        &mut prover_state,
+        &[vector.as_slice()],
+        witness,
+        &prove_form_refs,
+        &evaluations,
+    );
+    let whir_prove_time = whir_prove_time.elapsed();
+
+    let proof = prover_state.proof();
+    println!(
+        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
+        whir_commit_time + whir_prove_time,
+    );
+    println!(
+        "Proof size: {:.1} KiB",
+        (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
+    );
+
+    let weight_dyn_refs = linear_forms
+        .iter()
+        .map(|w| w.as_ref() as &dyn LinearForm<F>)
+        .collect::<Vec<_>>();
+
+    HASH_COUNTER.reset();
+    let whir_verifier_time = Instant::now();
+    for _ in 0..reps {
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let commitment = params.receive_commitments(&mut verifier_state, 1).unwrap();
+        params
+            .verify(
+                &mut verifier_state,
+                &weight_dyn_refs,
+                &evaluations,
+                &commitment,
             )
             .unwrap();
     }
