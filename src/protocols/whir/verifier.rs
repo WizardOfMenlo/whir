@@ -100,20 +100,20 @@ where
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
             geometric_challenge(verifier_state, oods_evals.len() + linear_forms.len());
-        let initial_form_rlc_coeffs = constraint_rlc_coeffs[oods_evals.len()..].to_vec();
-        let oods_rlc_coeffs = constraint_rlc_coeffs[..oods_evals.len()].to_vec();
+        let (initial_form_rlc_coeffs, oods_rlc_coeffs) =
+            constraint_rlc_coeffs.split_at(linear_forms.len());
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(
-            &initial_form_rlc_coeffs,
+            initial_form_rlc_coeffs,
             evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
         .sum::<F>();
-        the_sum += zip_strict(&oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
+        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
             .sum::<F>();
-        let mut round_constraints = vec![(oods_rlc_coeffs, oods_evals)];
+        let mut round_constraints = vec![(oods_rlc_coeffs.to_vec(), oods_evals)];
 
         let mut round_folding_randomness = Vec::new();
 
@@ -251,7 +251,7 @@ where
         // Return the evaluation point and the claimed values of the deferred weights.
         Ok(FinalClaim {
             evaluation_point,
-            rlc_coefficients: initial_form_rlc_coeffs,
+            rlc_coefficients: initial_form_rlc_coeffs.to_vec(),
             linear_form_rlc,
         })
     }

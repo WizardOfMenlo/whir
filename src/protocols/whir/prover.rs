@@ -154,11 +154,9 @@ where
         let constraint_rlc_coeffs: Vec<F> =
             geometric_challenge(prover_state, linear_forms.len() + oods_evals.len());
         let has_constraints = !constraint_rlc_coeffs.is_empty();
-        // TODO: Flip order so the one can be assigned to a covector.
-        let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
-            constraint_rlc_coeffs.split_at(oods_evals.len());
+        let (initial_forms_rlc_coeffs, oods_rlc_coeffs) =
+            constraint_rlc_coeffs.split_at(linear_forms.len());
         // Recycle a Covector buffer as the initial accumulator.
-        // TODO: We can't actually do this as we need to evaluate it for the deferred constraint values.
         let mut remaining_forms_rlc_coeffs = initial_forms_rlc_coeffs.to_vec();
         let mut linear_forms = linear_forms;
         let mut covector = if let Some(index) = linear_forms
