@@ -891,7 +891,11 @@ where
 mod tests {
     use super::*;
     use crate::{
-        algebra::fields::Field64, bits::Bits, hash, parameters::FoldingFactor, utils::test_serde,
+        algebra::fields::{Field64, Field64_3},
+        bits::Bits,
+        hash,
+        parameters::FoldingFactor,
+        utils::test_serde,
     };
 
     /// Generates default WHIR parameters
@@ -917,7 +921,7 @@ mod tests {
     fn test_whir_config_serde() {
         let params = default_whir_params();
 
-        let config = Config::<Field64>::new(1 << 10, &params);
+        let config = Config::<Field64_3>::new(1 << 10, &params);
 
         test_serde(&config);
     }
@@ -925,7 +929,7 @@ mod tests {
     #[test]
     fn test_n_rounds() {
         let params = default_whir_params();
-        let config = Config::<Field64>::new(1 << 10, &params);
+        let config = Config::<Field64_3>::new(1 << 10, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
@@ -1011,7 +1015,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
-        let mut config = Config::<Field64>::new(1 << 10, &params);
+        let mut config = Config::<Field64_3>::new(1 << 10, &params);
 
         // Set all values within limits
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -1027,13 +1031,13 @@ mod tests {
                     vector_size: 1 << 10,
                     expansion: 1 << 3,
                     interleaving_depth: 1 << 2,
-                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
                     in_domain_samples: 5,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,
                 },
                 sumcheck: sumcheck::Config {
-                    field: Type::<Field64>::new(),
+                    field: Type::<Field64_3>::new(),
                     initial_size: 1 << 10,
                     round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
                     num_rounds: 2,
@@ -1047,13 +1051,13 @@ mod tests {
                     vector_size: 1 << 10,
                     expansion: 1 << 4,
                     interleaving_depth: 1 << 2,
-                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
                     in_domain_samples: 6,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,
                 },
                 sumcheck: sumcheck::Config {
-                    field: Type::<Field64>::new(),
+                    field: Type::<Field64_3>::new(),
                     initial_size: 1 << 10,
                     round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
                     num_rounds: 2,
@@ -1071,7 +1075,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
-        let mut config = Config::<Field64>::new(1 << 10, &params);
+        let mut config = Config::<Field64_3>::new(1 << 10, &params);
 
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));

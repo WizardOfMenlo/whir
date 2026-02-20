@@ -76,17 +76,32 @@ impl<F: FftField> Config<F> {
     {
         self.initial_committer.receive_commitment(verifier_state)
     }
+
+    /// Disable proof-of-work for test.
+    #[cfg(test)]
+    pub(crate) fn disable_pow(&mut self) {
+        use std::u64;
+        self.initial_sumcheck.round_pow.threshold = u64::MAX;
+        for round in &mut self.round_configs {
+            round.sumcheck.round_pow.threshold = u64::MAX;
+            round.pow.threshold = u64::MAX;
+        }
+        self.final_sumcheck.round_pow.threshold = u64::MAX;
+        self.final_pow.threshold = u64::MAX;
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::u64;
+
     use ark_ff::{Field, UniformRand};
 
     use super::*;
     use crate::{
         algebra::{
             embedding::Basefield,
-            fields::{Field64, Field64_2},
+            fields::{Field64, Field64_3},
             linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
@@ -100,7 +115,7 @@ mod tests {
     type F = Field64;
 
     /// Extension field type used in the tests.
-    type EF = Field64_2;
+    type EF = Field64_3;
 
     /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     ///
@@ -136,7 +151,8 @@ mod tests {
         };
 
         // Build global configuration from protocol parameters
-        let params = Config::new(1 << num_variables, &whir_params);
+        let mut params = Config::new(1 << num_variables, &whir_params);
+        params.disable_pow();
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -318,7 +334,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(1 << num_variables, &whir_params);
+        let mut params = Config::new(1 << num_variables, &whir_params);
+        params.disable_pow();
         eprintln!("{params}");
 
         // Create N different vectors
@@ -492,7 +509,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(1 << num_variables, &whir_params);
+        let mut params = Config::<EF>::new(1 << num_variables, &whir_params);
+        params.disable_pow();
 
         let embedding = Basefield::<EF>::new();
 
@@ -592,7 +610,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(1 << num_variables, &whir_params);
+        let mut params = Config::<EF>::new(1 << num_variables, &whir_params);
+        params.disable_pow();
 
         // Create weights for constraints
         let embedding = Basefield::new();
@@ -746,7 +765,8 @@ mod tests {
         };
 
         // Build global configuration from multivariate + protocol parameters
-        let params = Config::new(1 << num_variables, &whir_params);
+        let mut params = Config::new(1 << num_variables, &whir_params);
+        params.disable_pow();
 
         let vectors: Vec<Vec<F>> = (0..batch_size).map(|_| random_vector(num_coeffs)).collect();
         let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
