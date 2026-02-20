@@ -209,10 +209,41 @@ pub fn fold_weight_to_mask_size<F: FftField>(
     let mask_size = 1usize << (num_blinding_variables + 1);
     let cov = Covector::from(weight);
     debug_assert_eq!(cov.vector.len(), 1usize << num_witness_variables);
-    let mut folded = vec![F::ZERO; mask_size];
-    for (i, &v) in cov.vector.iter().enumerate() {
-        folded[i % mask_size] += v;
-    }
+
+    #[cfg(feature = "parallel")]
+    let folded = {
+        use rayon::prelude::*;
+        cov.vector
+            .par_chunks(mask_size)
+            .fold(
+                || vec![F::ZERO; mask_size],
+                |mut acc, chunk| {
+                    for (j, &v) in chunk.iter().enumerate() {
+                        acc[j] += v;
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || vec![F::ZERO; mask_size],
+                |mut a, b| {
+                    for (j, &v) in b.iter().enumerate() {
+                        a[j] += v;
+                    }
+                    a
+                },
+            )
+    };
+
+    #[cfg(not(feature = "parallel"))]
+    let folded = {
+        let mut f = vec![F::ZERO; mask_size];
+        for (i, &v) in cov.vector.iter().enumerate() {
+            f[i % mask_size] += v;
+        }
+        f
+    };
+
     Covector::new(folded)
 }
 
@@ -302,6 +333,38 @@ pub fn fill_eq_weights_at_gamma<F: FftField>(
     for j in (0..half).rev() {
         buf[2 * j + 1] = buf[j] * neg_rho;
         buf[2 * j] = buf[j] - buf[2 * j + 1];
+    }
+}
+
+/// Half-size beq weights: only the first `ell` squaring-ladder variables,
+/// WITHOUT the final `-rho` expansion.
+///
+/// `buf` must have length `>= 2^num_blinding_variables`.
+///
+/// The full-size beq satisfies `beq_full[2j] = beq_half[j] * (1+rho)` and
+/// `beq_full[2j+1] = beq_half[j] * (-rho)`, so any inner product with a
+/// vector whose odd entries are zero reduces to a half-size mixed dot
+/// multiplied by `(1+rho)`.
+pub fn fill_eq_weights_at_gamma_half<F: FftField>(
+    buf: &mut [F],
+    gamma: F,
+    num_blinding_variables: usize,
+) {
+    let size = 1usize << num_blinding_variables;
+    debug_assert!(buf.len() >= size);
+
+    for w in &mut buf[..size] {
+        *w = F::ZERO;
+    }
+    buf[0] = F::ONE;
+
+    let mut g = gamma;
+    for i in 0..num_blinding_variables {
+        for j in (0..1usize << i).rev() {
+            buf[2 * j + 1] = buf[j] * g;
+            buf[2 * j] = buf[j] - buf[2 * j + 1];
+        }
+        g = g.square();
     }
 }
 
