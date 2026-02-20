@@ -176,12 +176,7 @@ mod batching_tests {
             .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
         let final_claim = params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &weights_dyn_refs,
-                &values,
-            )
+            .verify(&mut verifier_state, &[&commitment], &values)
             .unwrap();
         final_claim.verify(&weights_dyn_refs).unwrap();
     }

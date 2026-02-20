@@ -47,7 +47,6 @@ where
         &self,
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<F>],
-        linear_forms: &[&dyn LinearForm<F>],
         evaluations: &[F],
     ) -> VerificationResult<FinalClaim<F>>
     where
@@ -59,7 +58,8 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         let num_vectors = commitments.len() * self.initial_committer.num_vectors;
-        verify!(linear_forms.len() * num_vectors == evaluations.len());
+        verify!(evaluations.len().is_multiple_of(num_vectors));
+        let num_linear_forms = evaluations.len() / num_vectors;
         if num_vectors == 0 {
             return Ok(FinalClaim::default());
         }
@@ -99,9 +99,9 @@ where
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
-            geometric_challenge(verifier_state, oods_evals.len() + linear_forms.len());
+            geometric_challenge(verifier_state, oods_evals.len() + num_linear_forms);
         let (initial_form_rlc_coeffs, oods_rlc_coeffs) =
-            constraint_rlc_coeffs.split_at(linear_forms.len());
+            constraint_rlc_coeffs.split_at(num_linear_forms);
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(

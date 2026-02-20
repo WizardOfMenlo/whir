@@ -182,12 +182,7 @@ mod tests {
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         let final_claim = params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &linear_form_refs,
-                &evaluations,
-            )
+            .verify(&mut verifier_state, &[&commitment], &evaluations)
             .unwrap();
         final_claim.verify(&linear_form_refs).unwrap();
     }
@@ -387,12 +382,7 @@ mod tests {
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
         let final_claim = params
-            .verify(
-                &mut verifier_state,
-                &commitment_refs,
-                &linear_form_refs,
-                &evaluations,
-            )
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
             .unwrap();
         final_claim.verify(&linear_form_refs).unwrap();
     }
@@ -544,14 +534,16 @@ mod tests {
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &[&commitments[0], &commitments[1]],
-            &linear_form_refs,
-            &evaluations,
-        );
+        let final_claim = params
+            .verify(
+                &mut verifier_state,
+                &[&commitments[0], &commitments[1]],
+                &evaluations,
+            )
+            .unwrap();
+        let verifier_result = final_claim.verify(&linear_form_refs);
         assert!(
-            verify_result.is_err(),
+            verifier_result.is_err(),
             "Verifier should reject mismatched polynomial"
         );
     }
@@ -665,18 +657,10 @@ mod tests {
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &commitment_refs,
-            &linear_form_refs,
-            &evaluations,
-        );
-        assert!(
-            verify_result.is_ok(),
-            "Batch verification with batch_size={} failed: {:?}",
-            batch_size,
-            verify_result.err()
-        );
+        let final_claim = params
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .unwrap();
+        final_claim.verify(&linear_form_refs).unwrap();
     }
 
     #[test]
