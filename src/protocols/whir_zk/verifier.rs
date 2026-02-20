@@ -123,16 +123,49 @@ impl<F: FftField> Config<F> {
             build_combined_and_subproof_claims(&m_claims, &g_hat_slices, tau1);
         verify!(combined_claims == expected_combined_claims);
 
-        let beq_weights = construct_batched_eq_weights_from_gammas(
-            &h_gammas,
-            masking_challenge,
-            tau2,
-            num_blinding_variables,
-        );
-        let w_folded_weights: Vec<Covector<F>> = weights
-            .iter()
-            .map(|&w| fold_weight_to_mask_size(w, num_witness_variables, num_blinding_variables))
-            .collect();
+        // eq_weights and weight folding are independent — overlap them.
+        #[cfg(feature = "parallel")]
+        let (beq_weights, w_folded_weights) = {
+            use rayon::prelude::*;
+            rayon::join(
+                || {
+                    construct_batched_eq_weights_from_gammas(
+                        &h_gammas,
+                        masking_challenge,
+                        tau2,
+                        num_blinding_variables,
+                    )
+                },
+                || {
+                    weights
+                        .par_iter()
+                        .map(|&w| {
+                            fold_weight_to_mask_size(
+                                w,
+                                num_witness_variables,
+                                num_blinding_variables,
+                            )
+                        })
+                        .collect::<Vec<Covector<F>>>()
+                },
+            )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let (beq_weights, w_folded_weights) = {
+            let beq = construct_batched_eq_weights_from_gammas(
+                &h_gammas,
+                masking_challenge,
+                tau2,
+                num_blinding_variables,
+            );
+            let folds: Vec<Covector<F>> = weights
+                .iter()
+                .map(|&w| {
+                    fold_weight_to_mask_size(w, num_witness_variables, num_blinding_variables)
+                })
+                .collect();
+            (beq, folds)
+        };
         let blinding_forms = build_blinding_forms(&beq_weights, &w_folded_weights);
         let all_expected_blinding_claims = [
             &expected_batched_blinding_subproof_claims[..],
