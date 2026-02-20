@@ -55,18 +55,6 @@ pub trait LinearForm<F: Field>: Any {
     ///
     /// This function is only called by the prover.
     fn accumulate(&self, accumulator: &mut [F], scalar: F);
-
-    /// Compute a folded covector of size `2^fold_vars` without materializing the full weight.
-    ///
-    /// The folded entry `j` equals the sum of all weight entries at indices `i ≡ j (mod 2^fold_vars)`.
-    /// Implementors that know their algebraic structure can override this for an asymptotically
-    /// faster path than full materialization + fold.
-    ///
-    /// Returns `None` to signal that the caller should fall back to [`Covector::from`] + fold.
-    fn fold_to_size(&self, fold_vars: usize) -> Option<Vec<F>> {
-        let _ = fold_vars;
-        None
-    }
 }
 
 /// A linear form that can be evaluated on a subfield vector.

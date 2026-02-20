@@ -41,26 +41,6 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         eval_eq(accumulator, &self.point, scalar);
     }
-
-    /// Avoids materializing the full 2^μ weight vector by exploiting the factorization:
-    ///
-    ///   w_folded[j] = Σ_{i ≡ j (mod 2^fold_vars)} eq(α, binary(i))
-    ///               = eq(α[μ-fold_vars .. μ], binary(j))
-    ///
-    /// The inner sum over high-bit combinations equals 1 by the normalization identity
-    /// Σ_k eq(β, k) = 1, leaving only the low-coordinate factor.
-    /// In the `eval_eq` MSB convention the low bits of index j correspond to the *last*
-    /// coordinates of the evaluation point, so we use the suffix `α[μ-fold_vars..]`.
-    fn fold_to_size(&self, fold_vars: usize) -> Option<Vec<F>> {
-        let mu = self.point.len();
-        if fold_vars > mu {
-            return None;
-        }
-        let size = 1 << fold_vars;
-        let mut result = vec![F::ZERO; size];
-        eval_eq(&mut result, &self.point[mu - fold_vars..], F::ONE);
-        Some(result)
-    }
 }
 
 impl<M: Embedding> Evaluate<M> for MultilinearExtension<M::Target> {

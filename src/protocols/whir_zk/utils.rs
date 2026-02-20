@@ -217,24 +217,12 @@ pub fn build_blinding_forms<'a, F: FftField>(
 ///
 /// The inner product `⟨w_folded, m_poly⟩` equals `⟨w, periodic_extension(m_poly)⟩`,
 /// i.e. the masking contribution `M_eval` used for evaluation binding.
-///
-/// When the weight implements [`LinearForm::fold_to_size`], the fold is computed
-/// directly without materializing the full 2^μ weight vector (avoids ~16 MB for μ=20).
 pub fn fold_weight_to_mask_size<F: FftField>(
     weight: &dyn crate::algebra::linear_form::LinearForm<F>,
     num_witness_variables: usize,
     num_blinding_variables: usize,
 ) -> Covector<F> {
     let mask_size = 1usize << (num_blinding_variables + 1);
-    let fold_vars = num_blinding_variables + 1;
-
-    // Fast path: the weight knows how to fold itself without full materialization.
-    if let Some(folded) = weight.fold_to_size(fold_vars) {
-        debug_assert_eq!(folded.len(), mask_size);
-        return Covector::new(folded);
-    }
-
-    // Fallback: materialize the full 2^μ weight vector, then fold mod mask_size.
     let cov = Covector::from(weight);
     debug_assert_eq!(cov.vector.len(), 1usize << num_witness_variables);
 
@@ -382,6 +370,9 @@ pub fn fill_eq_weights_at_gamma_half<F: FftField>(
     let size = 1usize << num_blinding_variables;
     debug_assert!(buf.len() >= size);
 
+    for w in &mut buf[..size] {
+        *w = F::ZERO;
+    }
     buf[0] = F::ONE;
 
     let mut gamma_power = gamma;
