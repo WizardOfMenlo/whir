@@ -1,4 +1,4 @@
-use std::{any::Any, borrow::Cow};
+use std::{any::Any, borrow::Cow, mem};
 
 use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
@@ -156,30 +156,27 @@ where
         let has_constraints = !constraint_rlc_coeffs.is_empty();
         let (initial_forms_rlc_coeffs, oods_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(linear_forms.len());
-        // Recycle a Covector buffer as the initial accumulator.
-        let mut remaining_forms_rlc_coeffs = initial_forms_rlc_coeffs.to_vec();
+        // Try to recycle the first linear form as Covector.
+        let mut covector = vec![];
         let mut linear_forms = linear_forms;
-        let mut covector = if let Some(index) = linear_forms
-            .iter()
-            .position(|l| (l as &dyn Any).is::<Covector<F>>())
-        {
-            let coeff = remaining_forms_rlc_coeffs.swap_remove(index);
-            let linear_form: Box<dyn Any> = linear_forms.swap_remove(index);
-            let mut vector = linear_form.downcast::<Covector<F>>().unwrap().vector;
-            if coeff != F::ONE {
-                vector.iter_mut().for_each(|v| *v *= coeff);
-            }
-            vector
-        } else {
-            if has_constraints {
-                vec![F::ZERO; self.initial_size()]
+        if let Some((first, linear_forms)) = linear_forms.split_first_mut() {
+            debug_assert_eq!(initial_forms_rlc_coeffs[0], F::ONE);
+            if let Some(covector_form) =
+                (first.as_mut() as &mut dyn Any).downcast_mut::<Covector<F>>()
+            {
+                mem::swap(&mut covector, &mut covector_form.vector);
             } else {
-                vec![]
+                covector.resize(self.initial_size(), F::ZERO);
+                first.accumulate(&mut covector, F::ONE);
             }
+            for (rlc_coeff, linear_form) in zip_strict(&initial_forms_rlc_coeffs[1..], linear_forms)
+            {
+                linear_form.accumulate(&mut covector, *rlc_coeff);
+            }
+        } else if has_constraints {
+            covector.resize(self.initial_size(), F::ZERO);
         };
-        for (rlc_coeff, linear_form) in zip_strict(remaining_forms_rlc_coeffs, linear_forms) {
-            linear_form.accumulate(&mut covector, rlc_coeff);
-        }
+        drop(linear_forms);
 
         // Compute "The Sum"
         let mut the_sum: F = zip_strict(
