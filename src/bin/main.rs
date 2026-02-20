@@ -13,7 +13,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     hash::HASH_COUNTER,
-    parameters::{default_max_pow, ProtocolParameters},
+    parameters::ProtocolParameters,
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -26,8 +26,9 @@ struct Args {
     #[arg(short = 'l', long, default_value = "128")]
     security_level: usize,
 
-    #[arg(short = 'p', long)]
-    pow_bits: Option<usize>,
+    /// Maximum proof of work difficulty in bits.
+    #[arg(short = 'p', long, default_value = "30")]
+    pow_bits: usize,
 
     #[arg(short = 'd', long, default_value = "20")]
     num_variables: usize,
@@ -50,6 +51,7 @@ struct Args {
     #[arg(short = 'k', long = "fold", default_value = "4")]
     folding_factor: usize,
 
+    /// Restrict PCS to the Unique Decoding regime. LDT is always UD.
     #[arg(long = "unique-decoding", default_value_t = false)]
     unique_decoding: bool,
 
@@ -61,12 +63,8 @@ struct Args {
 }
 
 fn main() {
-    let mut args = Args::parse();
+    let args = Args::parse();
     let field = args.field;
-
-    if args.pow_bits.is_none() {
-        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
-    }
 
     runner(&args, field);
 }
@@ -105,13 +103,12 @@ where
 
     // Runs as a LDT
     let security_level = args.security_level;
-    let pow_bits = args.pow_bits.unwrap();
+    let pow_bits = args.pow_bits;
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let first_round_folding_factor = args.first_round_folding_factor;
     let folding_factor = args.folding_factor;
-    let unique_decoding = args.unique_decoding;
     let hash_id = args.hash.hash_id();
 
     if args.num_evaluations > 1 {
@@ -121,12 +118,11 @@ where
     let num_coeffs = 1 << num_variables;
 
     let whir_params = ProtocolParameters {
-        initial_statement: false,
         security_level,
         pow_bits,
         initial_folding_factor: first_round_folding_factor,
         folding_factor,
-        unique_decoding,
+        unique_decoding: true,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         hash_id,
@@ -192,7 +188,7 @@ where
 
     // Runs as a PCS
     let security_level = args.security_level;
-    let pow_bits = args.pow_bits.unwrap();
+    let pow_bits = args.pow_bits;
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
@@ -210,7 +206,6 @@ where
     let num_coeffs = 1 << num_variables;
 
     let whir_params = ProtocolParameters {
-        initial_statement: true,
         security_level,
         pow_bits,
         initial_folding_factor: first_round_folding_factor,

@@ -45,9 +45,6 @@ where
 
         let mut domain_size = 1 << (initial_num_variables + log_inv_rate);
 
-        let (num_rounds, final_sumcheck_rounds) =
-            whir_parameters.compute_number_of_rounds(initial_num_variables);
-
         let log_eta_start = if whir_parameters.unique_decoding {
             0.0
         } else {
@@ -87,9 +84,10 @@ where
             (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
         };
 
-        let mut round_parameters = Vec::with_capacity(num_rounds);
+        let mut round_parameters = Vec::new();
+        let mut round = 0;
         num_variables -= initial_folding_factor;
-        for round in 0..num_rounds {
+        while num_variables >= folding_factor {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let round_folding_factor = if round == 0 {
                 initial_folding_factor
@@ -181,6 +179,7 @@ where
                 pow: pow(pow_bits),
             });
 
+            round += 1;
             num_variables -= next_folding_factor;
             log_inv_rate = next_rate;
             domain_size /= 2;
@@ -237,7 +236,7 @@ where
                 field: Type::<F>::new(),
                 initial_size: 1 << num_variables,
                 round_pow: pow(final_folding_pow_bits),
-                num_rounds: final_sumcheck_rounds,
+                num_rounds: num_variables,
             },
             final_pow: pow(final_pow_bits),
         }

@@ -18,7 +18,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
-    parameters::{default_max_pow, ProtocolParameters},
+    parameters::ProtocolParameters,
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -91,10 +91,6 @@ struct BenchmarkOutput {
 fn main() {
     let mut args = Args::parse();
     let field = args.field;
-
-    if args.pow_bits.is_none() {
-        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
-    }
 
     // Type reflection on field
     match field {
