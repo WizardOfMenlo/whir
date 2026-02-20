@@ -12,14 +12,22 @@ use crate::{
     protocols::whir,
 };
 
-/// Policy inputs for doc-driven `ell` computation:
-/// `q_ub = k*q_delta_1 + q_delta_2 + t1 + t2 + 4*mu`.
+/// Policy inputs for `ell` computation.
+///
+/// Leakage upper bound used by the current sizing rule:
+/// `q_ub = k1*q_delta_1 + k2*q_delta_2 + (d+1)*mu + t1 + t2`.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct BlindingSizePolicy {
+    /// Query count for witness-side WHIR first-round leakage term.
     pub q_delta_1: usize,
+    /// Query count for blinding-side WHIR first-round leakage term.
     pub q_delta_2: usize,
+    /// Last-round clear leakage budget for witness-side WHIR.
     pub t1: usize,
+    /// Last-round clear leakage budget for blinding-side WHIR.
     pub t2: usize,
+    /// Degree `d` of each sumcheck round polynomial in the leakage term `(d+1)*mu`.
+    pub sumcheck_round_degree: usize,
 }
 
 /// ZK WHIR configuration.
@@ -56,6 +64,8 @@ impl<F: FftField> Config<F> {
             q_delta_2,
             t1: q_delta_1,
             t2: q_delta_2,
+            // For PCS, round polynomials are cubic (d=3), giving 4*mu.
+            sumcheck_round_degree: 3,
         }
     }
 
@@ -89,8 +99,13 @@ impl<F: FftField> Config<F> {
     ) -> Self {
         let blinded_commitment = whir::Config::new(main_mv_params, main_whir_params);
         let num_witness_variables = blinded_commitment.initial_num_variables();
-        let num_blinding_variables =
-            Self::compute_num_blinding_variables(&blinded_commitment, size_policy);
+        let blinding_first_round_interleaving_depth =
+            1usize << blinding_folding_factor.at_round(0);
+        let num_blinding_variables = Self::compute_num_blinding_variables(
+            &blinded_commitment,
+            blinding_first_round_interleaving_depth,
+            size_policy,
+        );
 
         let blinding_mv_params = MultivariateParameters::new(num_blinding_variables + 1);
         let blinding_whir_params = ProtocolParameters {
@@ -113,10 +128,11 @@ impl<F: FftField> Config<F> {
 
     fn compute_num_blinding_variables(
         blinded: &whir::Config<F>,
+        blinding_first_round_interleaving_depth: usize,
         size_policy: BlindingSizePolicy,
     ) -> usize {
         // Doc formula:
-        // q_ub = k*q(delta1) + q(delta2) + T1 + T2 + 4*mu,
+        // q_ub = k1*q(delta1) + k2*q(delta2) + (d+1)*mu + T1 + T2,
         // choose smallest ell with 2^ell > q_ub.
         let num_witness_variables = blinded.initial_num_variables();
         assert!(
@@ -127,13 +143,18 @@ impl<F: FftField> Config<F> {
             size_policy.t2 >= size_policy.q_delta_2,
             "invalid blinding size policy: T2 must satisfy T2 >= q(delta2)"
         );
-        let k = 1usize << blinded.initial_sumcheck.num_rounds;
-        let query_upper_bound = k
+        let k1 = 1usize << blinded.initial_sumcheck.num_rounds;
+        let k2 = blinding_first_round_interleaving_depth;
+        let sumcheck_coeff_leakage = size_policy
+            .sumcheck_round_degree
+            .saturating_add(1)
+            .saturating_mul(num_witness_variables);
+        let query_upper_bound = k1
             .saturating_mul(size_policy.q_delta_1)
-            .saturating_add(size_policy.q_delta_2)
+            .saturating_add(k2.saturating_mul(size_policy.q_delta_2))
             .saturating_add(size_policy.t1)
             .saturating_add(size_policy.t2)
-            .saturating_add(4usize.saturating_mul(num_witness_variables));
+            .saturating_add(sumcheck_coeff_leakage);
 
         let mut num_blinding_variables = 0usize;
         while (1usize << num_blinding_variables) <= query_upper_bound {
@@ -240,6 +261,7 @@ mod tests {
             q_delta_2: 4,
             t1: 4,
             t2: 4,
+            sumcheck_round_degree: 3,
         }
     }
 
