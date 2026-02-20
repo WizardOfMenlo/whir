@@ -9,14 +9,14 @@ use tracing::instrument;
 use super::{Config, Witness};
 use crate::{
     algebra::{
-        embedding::Basefield,
+        embedding::{Basefield, Embedding},
         linear_form::{Covector, Evaluate, LinearForm},
         mixed_dot_seq, scalar_mul_add, MultilinearPoint,
     },
     hash::Hash,
     protocols::whir_zk::utils::{
-        build_blinding_forms, build_combined_and_subproof_claims, fill_eq_weights_at_gamma,
-        fold_weight_to_mask_size, BlindingPolynomials,
+        build_blinding_forms, build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
+        fold_weight_to_mask_size,
     },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
@@ -24,45 +24,8 @@ use crate::{
     },
 };
 
-/// Evaluate all blinding polynomials at a single gamma point, writing per-polynomial
-/// results `[m_eval, g_hat_0, ..., g_hat_{mu-1}, h_val]` into `output`.
-struct GammaEvaluationParams<'a, F: FftField> {
-    eq_weights: &'a [F],
-    embedding: Basefield<F>,
-    blinding_polynomials: &'a [BlindingPolynomials<F>],
-    blinding_vectors: &'a [Vec<F::BasePrimeField>],
-    blinding_challenge: F,
-    gamma: F,
-    num_witness_variables: usize,
-    num_witness_variables_plus_1: usize,
-    stride_per_poly: usize,
-}
-
-#[inline]
-fn evaluate_polys_at_gamma<F: FftField>(output: &mut [F], params: &GammaEvaluationParams<'_, F>) {
-    for (poly_idx, bp) in params.blinding_polynomials.iter().enumerate() {
-        let embedded_g_hats =
-            &params.blinding_vectors[poly_idx * params.num_witness_variables_plus_1 + 1
-                ..(poly_idx + 1) * params.num_witness_variables_plus_1];
-        let off = poly_idx * params.stride_per_poly;
-        output[off] = mixed_dot_seq(&params.embedding, params.eq_weights, &bp.m_poly);
-        for (j, g_hat) in embedded_g_hats.iter().enumerate() {
-            output[off + 1 + j] = mixed_dot_seq(&params.embedding, params.eq_weights, g_hat);
-        }
-        let mut h = output[off];
-        let mut blinding_pow = params.blinding_challenge;
-        let mut gamma_pow = params.gamma;
-        for j in 0..embedded_g_hats.len() {
-            h += blinding_pow * gamma_pow * output[off + 1 + j];
-            blinding_pow *= params.blinding_challenge;
-            gamma_pow = gamma_pow.square();
-        }
-        output[off + 1 + params.num_witness_variables] = h;
-    }
-}
-
 impl<F: FftField> Config<F> {
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -106,8 +69,7 @@ impl<F: FftField> Config<F> {
             "evaluation matrix must be row-major weights x polynomials"
         );
 
-        // Destructure witness early so blinding_polynomials can be dropped after the
-        // gamma evaluation block, freeing memory before the inner prove calls.
+        // Destructure early; blinding_polynomials is dropped after the gamma block.
         let Witness {
             f_hat_witnesses,
             f_hat_vectors,
@@ -116,16 +78,6 @@ impl<F: FftField> Config<F> {
             blinding_witness,
         } = witness;
 
-        // Transcript order for zkWHIR evaluation binding:
-        // 1) sample beta,
-        // 2) send w_folded evaluations (binding M_eval before rho),
-        // 3) sample non-zero rho,
-        // 4) compute modified_eval = F + M_eval,
-        // 5) Opening#1 of f_hat,
-        // 6) sample tau1, tau2,
-        // 7) send raw blinding openings + combined/batched claims,
-        // 8) inner blinded WHIR,
-        // 9) blinding WHIR with additional w_folded weights.
         let blinding_challenge: F = prover_state.verifier_message();
 
         let embedding = self.blinding_commitment.embedding();
@@ -134,33 +86,35 @@ impl<F: FftField> Config<F> {
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables_plus_1 = num_witness_variables + 1;
 
-        // Compute w_folded evaluations of all blinding vectors BEFORE rho for binding.
-        // For each (weight, polynomial, blinding_vector), w_folded_blinding_evals stores
-        // <w_folded, blinding_vector>.  The v=0 entry per polynomial is
-        // M_eval = <w_folded, m_poly>, the masking contribution to f_hat_eval.
-        let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
-        let mut m_evals: Vec<F> = Vec::with_capacity(evaluations.len());
-        let mut w_folded_blinding_evals: Vec<F> =
-            Vec::with_capacity(weights.len() * num_polynomials * num_witness_variables_plus_1);
+        // Compute w_folded evaluations of all blinding vectors before rho for binding.
+        let (w_folded_weights, m_evals, w_folded_blinding_evals) = {
+            #[cfg(feature = "tracing")]
+            let _span = tracing::info_span!("zk_w_folded_compute").entered();
+            let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
+            let mut m_evals: Vec<F> = Vec::with_capacity(evaluations.len());
+            let mut w_folded_blinding_evals: Vec<F> =
+                Vec::with_capacity(weights.len() * num_polynomials * num_witness_variables_plus_1);
 
-        for &weight in weights {
-            let w_folded =
-                fold_weight_to_mask_size(weight, num_witness_variables, num_blinding_variables);
-            for poly_idx in 0..num_polynomials {
-                let base = poly_idx * num_witness_variables_plus_1;
-                for v in 0..num_witness_variables_plus_1 {
-                    let eval: F = w_folded.evaluate(embedding, &blinding_vectors[base + v]);
-                    w_folded_blinding_evals.push(eval);
-                    if v == 0 {
-                        m_evals.push(eval);
+            for &weight in weights {
+                let w_folded =
+                    fold_weight_to_mask_size(weight, num_witness_variables, num_blinding_variables);
+                for poly_idx in 0..num_polynomials {
+                    let base = poly_idx * num_witness_variables_plus_1;
+                    for v in 0..num_witness_variables_plus_1 {
+                        let eval: F = w_folded.evaluate(embedding, &blinding_vectors[base + v]);
+                        w_folded_blinding_evals.push(eval);
+                        if v == 0 {
+                            m_evals.push(eval);
+                        }
                     }
                 }
+                w_folded_weights.push(w_folded);
             }
-            w_folded_weights.push(w_folded);
-        }
+            (w_folded_weights, m_evals, w_folded_blinding_evals)
+        };
         prover_state.prover_message_fields(&w_folded_blinding_evals);
 
-        // Sample non-zero rho AFTER masking evaluations are committed to the transcript.
+        // Sample non-zero rho after masking evaluations are committed.
         let masking_challenge: F = prover_state.verifier_message();
         assert_ne!(
             masking_challenge,
@@ -168,7 +122,7 @@ impl<F: FftField> Config<F> {
             "zkWHIR requires non-zero masking challenge rho"
         );
 
-        // modified_eval = F + M_eval; for an honest prover this equals <weight, f_hat>.
+        // modified_eval = F_eval + M_eval
         let modified_evaluations: Vec<F> = evaluations
             .iter()
             .zip(m_evals.iter())
@@ -184,11 +138,10 @@ impl<F: FftField> Config<F> {
                 .open(prover_state, &witness_refs)
         };
 
-        // Doc-faithful Gamma surface: expand each base query alpha_i into coset points
-        // alpha_i * Omega_k used by the first folding round.
+        // Expand base queries into coset points for the first folding round.
         let h_gammas = self.all_gammas(&initial_in_domain.points);
 
-        // Sample batching challenges before revealing any raw opening payload.
+        // Sample batching challenges before revealing raw opening data.
         let tau1: F = prover_state.verifier_message();
         let tau2: F = prover_state.verifier_message();
 
@@ -198,15 +151,46 @@ impl<F: FftField> Config<F> {
         let mut batched_h_claims = vec![F::ZERO; num_polynomials];
 
         let weight_size = 1usize << (num_blinding_variables + 1);
+        let half_size = 1usize << num_blinding_variables;
+
+        #[cfg(feature = "tracing")]
+        let gamma_span = tracing::info_span!("zk_gamma_block").entered();
+
+        // Pre-fold m_poly over the -rho variable to halve all gamma-block dot products.
+        let one_plus_rho = F::ONE + masking_challenge;
+        let neg_rho = -masking_challenge;
+        let folded_m_polys: Vec<Vec<F>> = blinding_polynomials
+            .iter()
+            .map(|bp| {
+                let emb = Basefield::<F>::new();
+                (0..half_size)
+                    .map(|j| {
+                        one_plus_rho * emb.map(bp.m_poly[2 * j])
+                            + neg_rho * emb.map(bp.m_poly[2 * j + 1])
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Pre-compute tau2 powers for the parallel gamma loop.
+        let num_gammas = h_gammas.len();
+        let tau2_powers = {
+            let mut powers = Vec::with_capacity(num_gammas);
+            let mut p = F::ONE;
+            for _ in 0..num_gammas {
+                powers.push(p);
+                p *= tau2;
+            }
+            powers
+        };
 
         // Flat layout per gamma: [m_eval, g_hat_0, ..., g_hat_{mu-1}, h_val] × num_polynomials.
         let stride_per_poly = num_witness_variables + 2;
         let stride_per_gamma = num_polynomials * stride_per_poly;
-        let num_gammas = h_gammas.len();
         let mut eval_results = vec![F::ZERO; num_gammas * stride_per_gamma];
 
         #[cfg(feature = "parallel")]
-        let beq_weight_accum = {
+        let beq_half_accum = {
             let batch = {
                 let cores = rayon::current_num_threads();
                 num_gammas.div_ceil(cores).max(1)
@@ -216,43 +200,51 @@ impl<F: FftField> Config<F> {
                 .par_chunks_mut(batch_stride)
                 .enumerate()
                 .fold(
-                    || (vec![F::ZERO; weight_size], vec![F::ZERO; weight_size]),
+                    || (vec![F::ZERO; half_size], vec![F::ZERO; half_size]),
                     |(mut accum, mut eq_buf), (chunk_idx, chunk)| {
                         let base_gi = chunk_idx * batch;
                         let chunk_gammas = chunk.len() / stride_per_gamma;
                         let embedding = Basefield::<F>::new();
-                        let mut tau2_pow = tau2.pow([base_gi as u64]);
                         for local in 0..chunk_gammas {
-                            let gamma = h_gammas[base_gi + local];
-                            fill_eq_weights_at_gamma(
+                            let gi = base_gi + local;
+                            let gamma = h_gammas[gi];
+                            let tau2_pow = tau2_powers[gi];
+                            let slot = &mut chunk
+                                [local * stride_per_gamma..(local + 1) * stride_per_gamma];
+                            fill_eq_weights_at_gamma_half(
                                 &mut eq_buf,
                                 gamma,
-                                masking_challenge,
                                 num_blinding_variables,
                             );
                             scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
-                            let slot = &mut chunk
-                                [local * stride_per_gamma..(local + 1) * stride_per_gamma];
-                            let params = GammaEvaluationParams {
-                                eq_weights: &eq_buf,
-                                embedding,
-                                blinding_polynomials: &blinding_polynomials,
-                                blinding_vectors: &blinding_vectors,
-                                blinding_challenge,
-                                gamma,
-                                num_witness_variables,
-                                num_witness_variables_plus_1,
-                                stride_per_poly,
-                            };
-                            evaluate_polys_at_gamma(slot, &params);
-                            tau2_pow *= tau2;
+                            for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
+                                let off = poly_idx * stride_per_poly;
+                                slot[off] = eq_buf
+                                    .iter()
+                                    .zip(folded_m_polys[poly_idx].iter())
+                                    .map(|(&e, &f)| e * f)
+                                    .sum();
+                                for (j, g_hat) in bp.g_hats.iter().enumerate() {
+                                    slot[off + 1 + j] =
+                                        one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                                }
+                                let mut h = slot[off];
+                                let mut bp_pow = blinding_challenge;
+                                let mut gp = gamma;
+                                for j in 0..bp.g_hats.len() {
+                                    h += bp_pow * gp * slot[off + 1 + j];
+                                    bp_pow *= blinding_challenge;
+                                    gp = gp.square();
+                                }
+                                slot[off + 1 + num_witness_variables] = h;
+                            }
                         }
                         (accum, eq_buf)
                     },
                 )
                 .map(|(accum, _)| accum)
                 .reduce(
-                    || vec![F::ZERO; weight_size],
+                    || vec![F::ZERO; half_size],
                     |mut a, b| {
                         for (x, &y) in a.iter_mut().zip(b.iter()) {
                             *x += y;
@@ -263,40 +255,50 @@ impl<F: FftField> Config<F> {
         };
 
         #[cfg(not(feature = "parallel"))]
-        let beq_weight_accum = {
+        let beq_half_accum = {
             let embedding = Basefield::<F>::new();
-            let mut eq_buf = vec![F::ZERO; weight_size];
-            let mut accum = vec![F::ZERO; weight_size];
-            let mut tau2_pow = F::ONE;
+            let mut eq_buf = vec![F::ZERO; half_size];
+            let mut accum = vec![F::ZERO; half_size];
             for (gi, &gamma) in h_gammas.iter().enumerate() {
-                fill_eq_weights_at_gamma(
-                    &mut eq_buf,
-                    gamma,
-                    masking_challenge,
-                    num_blinding_variables,
-                );
+                fill_eq_weights_at_gamma_half(&mut eq_buf, gamma, num_blinding_variables);
+                let tau2_pow = tau2_powers[gi];
                 scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
-                let params = GammaEvaluationParams {
-                    eq_weights: &eq_buf,
-                    embedding,
-                    blinding_polynomials: &blinding_polynomials,
-                    blinding_vectors: &blinding_vectors,
-                    blinding_challenge,
-                    gamma,
-                    num_witness_variables,
-                    num_witness_variables_plus_1,
-                    stride_per_poly,
-                };
-                evaluate_polys_at_gamma(
-                    &mut eval_results[gi * stride_per_gamma..(gi + 1) * stride_per_gamma],
-                    &params,
-                );
-                tau2_pow *= tau2;
+                for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
+                    let off = gi * stride_per_gamma + poly_idx * stride_per_poly;
+                    eval_results[off] = eq_buf
+                        .iter()
+                        .zip(folded_m_polys[poly_idx].iter())
+                        .map(|(&e, &f)| e * f)
+                        .sum();
+                    for (j, g_hat) in bp.g_hats.iter().enumerate() {
+                        eval_results[off + 1 + j] =
+                            one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                    }
+                    let mut h = eval_results[off];
+                    let mut bp_pow = blinding_challenge;
+                    let mut gp = gamma;
+                    for j in 0..bp.g_hats.len() {
+                        h += bp_pow * gp * eval_results[off + 1 + j];
+                        bp_pow *= blinding_challenge;
+                        gp = gp.square();
+                    }
+                    eval_results[off + 1 + num_witness_variables] = h;
+                }
             }
             accum
         };
 
-        // Sequential transcript writes + claim accumulation from the naturally-ordered flat array.
+        // Reconstruct full-size beq_weight_accum from half-size accumulator.
+        let beq_weight_accum = {
+            let mut full = vec![F::ZERO; weight_size];
+            for j in 0..half_size {
+                full[2 * j] = one_plus_rho * beq_half_accum[j];
+                full[2 * j + 1] = neg_rho * beq_half_accum[j];
+            }
+            full
+        };
+
+        // Transcript writes and claim accumulation (must be sequential).
         {
             let mut tau2_pow = F::ONE;
             for gi in 0..num_gammas {
@@ -322,6 +324,8 @@ impl<F: FftField> Config<F> {
 
         drop(eval_results);
         drop(blinding_polynomials);
+        #[cfg(feature = "tracing")]
+        drop(gamma_span);
 
         let g_hat_slices: Vec<&[F]> = (0..num_polynomials)
             .map(|i| &g_hat_claims[i * num_witness_variables..(i + 1) * num_witness_variables])
