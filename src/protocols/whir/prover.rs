@@ -154,37 +154,33 @@ where
         let constraint_rlc_coeffs: Vec<F> =
             geometric_challenge(prover_state, linear_forms.len() + oods_evals.len());
         let has_constraints = !constraint_rlc_coeffs.is_empty();
-        // TODO: Flip order.
+        // TODO: Flip order so the one can be assigned to a covector.
         let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_evals.len());
         // Recycle a Covector buffer as the initial accumulator.
-        let (mut covector, recycled_index) = if has_constraints {
-            let found = initial_forms_rlc_coeffs
-                .iter()
-                .zip(linear_forms.iter())
-                .enumerate()
-                .find_map(|(i, (&coeff, form))| {
-                    (form.as_ref() as &dyn Any)
-                        .downcast_ref::<Covector<F>>()
-                        .map(|cov| (i, coeff, &cov.vector))
-                });
-            match found {
-                Some((idx, coeff, data)) => {
-                    let buf: Vec<F> = data.iter().map(|&x| x * coeff).collect();
-                    (buf, Some(idx))
-                }
-                None => (vec![F::ZERO; self.initial_size()], None),
-            }
-        } else {
-            (Vec::new(), None)
-        };
-        for (i, (rlc_coeff, linear_form)) in
-            zip_strict(initial_forms_rlc_coeffs, &linear_forms).enumerate()
+        // TODO: We can't actually do this as we need to evaluate it for the deferred constraint values.
+        let mut remaining_forms_rlc_coeffs = initial_forms_rlc_coeffs.to_vec();
+        let mut linear_forms = linear_forms;
+        let mut covector = if let Some(index) = linear_forms
+            .iter()
+            .position(|l| (l as &dyn Any).is::<Covector<F>>())
         {
-            if Some(i) == recycled_index {
-                continue;
+            let coeff = remaining_forms_rlc_coeffs.swap_remove(index);
+            let linear_form: Box<dyn Any> = linear_forms.swap_remove(index);
+            let mut vector = linear_form.downcast::<Covector<F>>().unwrap().vector;
+            if coeff != F::ONE {
+                vector.iter_mut().for_each(|v| *v *= coeff);
             }
-            linear_form.accumulate(&mut covector, *rlc_coeff);
+            vector
+        } else {
+            if has_constraints {
+                vec![F::ZERO; self.initial_size()]
+            } else {
+                vec![]
+            }
+        };
+        for (rlc_coeff, linear_form) in zip_strict(remaining_forms_rlc_coeffs, linear_forms) {
+            linear_form.accumulate(&mut covector, rlc_coeff);
         }
 
         // Compute "The Sum"
@@ -194,7 +190,6 @@ where
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
         .sum();
-
         drop(evaluations);
 
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
@@ -204,7 +199,6 @@ where
         the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
             .sum::<F>();
-
         drop(oods_evals);
         drop(oods_matrix);
 
