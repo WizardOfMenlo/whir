@@ -178,7 +178,7 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
@@ -199,14 +199,10 @@ where
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
-                .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
-                )
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
+            final_claim.verify(&weight_refs).unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -265,7 +261,7 @@ where
             prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
         }
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
@@ -289,14 +285,10 @@ where
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
-                .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
-                )
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
+            final_claim.verify(&weight_refs).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

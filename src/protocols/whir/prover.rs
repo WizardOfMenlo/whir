@@ -175,7 +175,7 @@ where
             }
         } else if has_constraints {
             covector.resize(self.initial_size(), F::ZERO);
-        };
+        }
         drop(linear_forms);
 
         // Compute "The Sum"

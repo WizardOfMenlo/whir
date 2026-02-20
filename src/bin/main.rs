@@ -163,7 +163,7 @@ where
     let whir_commit_time = whir_commit_time.elapsed();
 
     let whir_prove_time = Instant::now();
-    params.prove(
+    let _ = params.prove(
         &mut prover_state,
         vec![Cow::from(vector)],
         vec![Cow::Owned(witness)],
@@ -187,8 +187,8 @@ where
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-        params
-            .verify(&mut verifier_state, &[&commitment], &[], &[])
+        let _ = params
+            .verify(&mut verifier_state, &[&commitment], &[])
             .unwrap();
     }
     dbg!(whir_verifier_time.elapsed() / reps as u32);
@@ -278,7 +278,6 @@ where
     // Linear constraint
     for _ in 0..num_linear_constraints {
         let covector = Covector {
-            deferred: false,
             vector: (0..num_coeffs).map(F::from).collect(),
         };
         evaluations.push(covector.evaluate(params.embedding(), &vector));
@@ -292,13 +291,12 @@ where
     }
     for _ in 0..num_linear_constraints {
         prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..num_coeffs).map(F::from).collect(),
         }));
     }
 
     let whir_prove_time = Instant::now();
-    params.prove(
+    let _ = params.prove(
         &mut prover_state,
         vec![Cow::Borrowed(vector.as_slice())],
         vec![Cow::Owned(witness)],
@@ -328,14 +326,10 @@ where
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-        params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &weight_dyn_refs,
-                &evaluations,
-            )
+        let final_claim = params
+            .verify(&mut verifier_state, &[&commitment], &evaluations)
             .unwrap();
+        final_claim.verify(&weight_dyn_refs).unwrap();
     }
     println!(
         "Verifier time: {:.1?}",
