@@ -316,13 +316,13 @@ pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
 
         // Each gamma's eq_weights computation is independent — parallelise across gammas
         // and reduce by element-wise summation.
-        let weight_evals = gammas
+        // The (acc, buf) tuple lets each rayon task reuse one scratch buffer across its gammas.
+        let (weight_evals, _) = gammas
             .par_iter()
             .zip(tau2_powers.par_iter())
             .fold(
-                || vec![F::ZERO; weight_size],
-                |mut acc, (&gamma, &power)| {
-                    let mut buf = vec![F::ZERO; weight_size];
+                || (vec![F::ZERO; weight_size], vec![F::ZERO; weight_size]),
+                |(mut acc, mut buf), (&gamma, &power)| {
                     fill_eq_weights_at_gamma(
                         &mut buf,
                         gamma,
@@ -332,16 +332,16 @@ pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
                     for (a, &b) in acc.iter_mut().zip(buf.iter()) {
                         *a += power * b;
                     }
-                    acc
+                    (acc, buf)
                 },
             )
             .reduce(
-                || vec![F::ZERO; weight_size],
-                |mut a, b| {
+                || (vec![F::ZERO; weight_size], vec![F::ZERO; weight_size]),
+                |(mut a, buf_a), (b, _)| {
                     for (ai, &bi) in a.iter_mut().zip(b.iter()) {
                         *ai += bi;
                     }
-                    a
+                    (a, buf_a)
                 },
             );
 
