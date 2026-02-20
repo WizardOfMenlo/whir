@@ -42,10 +42,6 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
         self.size
     }
 
-    fn deferred(&self) -> bool {
-        false
-    }
-
     fn mle_evaluate(&self, point: &[F]) -> F {
         // Multilinear extension of (1, x, x^2, ..) = ⨂_i (1, x^2^i).
         let mut x2i = self.point;

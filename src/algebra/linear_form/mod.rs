@@ -29,23 +29,13 @@ pub trait LinearForm<F: Field>: Any {
     /// The dimension of the domain of this linear form.
     fn size(&self) -> usize;
 
-    /// Indicate if the verifier should evaluate this directly or defer it to the caller.
-    ///
-    /// If this returns `true`, the verifier will not call [`LinearForm::mle_evaluate`] but
-    /// instead [`crate::protocols::whir::Config::verify`]
-    /// will return `(point, value)` pairs and it becomes **the callers responsibility** to verify
-    /// `self.mle_evaluate(point) == value`. This allows the verifier to use more efficient means
-    /// than direct evaluation (e.g. the Spartan Spark protocol).
-    fn deferred(&self) -> bool;
-
     /// Evaluate the linear form as a multi-linear extension in a random point.
     ///
     /// Specifically the computed value should be the linear functional applied to vector given by
     /// the tensor product $a = a_0 ⊗ a_1 ⊗ ⋯ ⊗ a_(k-1)$ where $k ≥ ⌈log_2 size⌉$ and
     /// $a_i = (1-point_i, point_i)$ truncated to `self.size()`.
     ///
-    /// If `self.deferred() == false` it is called by the verifier, otherwise it is called by
-    /// the prover.
+    /// This function can be used by the verifier to check the [`FinalClaim`].
     fn mle_evaluate(&self, point: &[F]) -> F;
 
     /// Accumulate the covector representation of the linear form.

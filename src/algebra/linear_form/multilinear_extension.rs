@@ -28,10 +28,6 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
         1 << self.point.len()
     }
 
-    fn deferred(&self) -> bool {
-        false
-    }
-
     fn mle_evaluate(&self, point: &[F]) -> F {
         zip_strict(&self.point, point).fold(F::ONE, |acc, (&l, &r)| {
             acc * (l * r + (F::ONE - l) * (F::ONE - r))

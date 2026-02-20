@@ -74,7 +74,6 @@ mod tests {
         }
         if include_covector {
             forms.push(Box::new(Covector {
-                deferred: false,
                 vector: (0..1 << num_variables).map(F::from).collect(),
             }));
         }
@@ -144,7 +143,6 @@ mod tests {
         }
 
         let covector = Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         };
         let sum = covector.evaluate(params.embedding(), &vector);
@@ -333,7 +331,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: ((0..1 << num_variables).map(EF::from).collect()),
         }));
 
@@ -614,7 +611,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         }));
 

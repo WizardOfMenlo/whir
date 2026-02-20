@@ -59,7 +59,6 @@ mod batching_tests {
         }
         if include_covector {
             forms.push(Box::new(Covector {
-                deferred: false,
                 vector: (0..1 << num_variables).map(F::from).collect(),
             }));
         }
@@ -140,7 +139,6 @@ mod batching_tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(F::from).collect(),
         }));
         let values = linear_forms
