@@ -4,7 +4,10 @@ use ark_std::{
     UniformRand,
 };
 
-use crate::algebra::linear_form::{Covector, Evaluate};
+use crate::algebra::{
+    linear_form::{Covector, Evaluate},
+    scalar_mul_add, univariate_evaluate,
+};
 
 /// Blinding evaluations at one round-0 point `gamma in Gamma`.
 ///
@@ -149,20 +152,34 @@ fn embed_to_ell_plus_one<F: FftField>(coeffs: &[F::BasePrimeField]) -> Vec<F::Ba
     out
 }
 
-/// Recompose the same doc-style combined claim from already tau2-batched
-/// per-vector claims `(m_claim, g_hat_claims)`.
-pub fn recombine_doc_claim_from_components<F: FftField>(
-    m_claim: F,
-    g_hat_claims: &[F],
+/// Recombine a single combined claim from already tau2-batched
+/// per-vector claims `(m_claim, g_hat_claims)` using tau1-batching.
+pub fn combine_claim_from_components<F: FftField>(m_claim: F, g_hat_claims: &[F], tau1: F) -> F {
+    m_claim + F::from(2u64) * tau1 * univariate_evaluate(g_hat_claims, tau1)
+}
+
+/// Build the combined claims and batched blinding subproof claims from
+/// per-polynomial `(m_claim, g_hat_claims)`.
+///
+/// Returns `(combined_claims, batched_subproof_claims)` where the subproof
+/// layout is `[m_0, g_0_0, ..., g_0_{mu-1}, m_1, g_1_0, ...]`.
+pub fn build_combined_and_subproof_claims<F: FftField>(
+    m_claims: &[F],
+    g_hat_claims_per_poly: &[&[F]],
     tau1: F,
-) -> F {
-    let mut inner_g_claim = F::ZERO;
-    let mut tau1_power = tau1;
-    for &g_hat_claim in g_hat_claims {
-        inner_g_claim += tau1_power * g_hat_claim;
-        tau1_power *= tau1;
+) -> (Vec<F>, Vec<F>) {
+    let num_polynomials = m_claims.len();
+    debug_assert_eq!(g_hat_claims_per_poly.len(), num_polynomials);
+    let num_witness_vars = g_hat_claims_per_poly.first().map_or(0, |s| s.len());
+    let mut combined_claims = Vec::with_capacity(num_polynomials);
+    let mut subproof_claims = Vec::with_capacity(num_polynomials * (1 + num_witness_vars));
+    for (poly_idx, &m_claim) in m_claims.iter().enumerate() {
+        let g_hat_slice = g_hat_claims_per_poly[poly_idx];
+        subproof_claims.push(m_claim);
+        subproof_claims.extend_from_slice(g_hat_slice);
+        combined_claims.push(combine_claim_from_components(m_claim, g_hat_slice, tau1));
     }
-    m_claim + (F::from(2u64) * inner_g_claim)
+    (combined_claims, subproof_claims)
 }
 
 /// Fold a full-size weight to the masking period `2^(ℓ+1)`.
@@ -200,9 +217,7 @@ pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
     let mut batching_power = F::ONE;
     for &gamma in gammas {
         let per_gamma = eq_weights_at_gamma(gamma, masking_challenge, num_blinding_variables);
-        for (acc_elem, &eq_val) in weight_evals.iter_mut().zip(per_gamma.iter()) {
-            *acc_elem += batching_power * eq_val;
-        }
+        scalar_mul_add(&mut weight_evals, batching_power, &per_gamma);
         batching_power *= tau2;
     }
     Covector::new(weight_evals)
@@ -423,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn test_doc_combined_claim_matches_opening_side_recomposition() {
+    fn test_combined_claim_matches_opening_side_recomposition() {
         let num_blinding_variables = 3usize;
         let num_witness_variables = 2usize;
         let half = 1usize << num_blinding_variables;
@@ -472,7 +487,7 @@ mod tests {
                     acc + tau2_power * (eval.m_eval + EF::from(2u64) * inner)
                 });
         let (m_claim, g_hat_claims) = compute_per_polynomial_claims(&blinding_evals, tau2);
-        let recomposed_claim = recombine_doc_claim_from_components(m_claim, &g_hat_claims, tau1);
+        let recomposed_claim = combine_claim_from_components(m_claim, &g_hat_claims, tau1);
         assert_eq!(direct_claim, recomposed_claim);
     }
 }

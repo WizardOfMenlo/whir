@@ -155,12 +155,9 @@ impl<F: FftField> Config<F> {
             .saturating_add(size_policy.t2)
             .saturating_add(sumcheck_coeff_leakage);
 
-        let mut num_blinding_variables = 0usize;
-        while (1usize << num_blinding_variables) <= query_upper_bound {
-            num_blinding_variables += 1;
-        }
+        let num_blinding_variables = (usize::BITS - query_upper_bound.leading_zeros()) as usize;
         assert!(num_blinding_variables < num_witness_variables);
-        assert!((1usize << num_blinding_variables) > query_upper_bound);
+        debug_assert!((1usize << num_blinding_variables) > query_upper_bound);
         num_blinding_variables
     }
 
@@ -264,13 +261,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_whir_zk_stage1_single_poly() {
-        let num_variables = 8usize;
-        let num_coeffs = 1 << num_variables;
-        let mut rng = ark_std::test_rng();
+    const TEST_NUM_VARIABLES: usize = 8;
+    const TEST_NUM_COEFFS: usize = 1 << TEST_NUM_VARIABLES;
 
-        let mv_params = MultivariateParameters::new(num_variables);
+    fn make_test_config(num_polynomials: usize) -> Config<EF> {
+        let mv_params = MultivariateParameters::new(TEST_NUM_VARIABLES);
         let whir_params = ProtocolParameters {
             initial_statement: true,
             security_level: 16,
@@ -281,205 +276,150 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        let params = Config::<EF>::new_with_blinding_size_policy(
+        Config::<EF>::new_with_blinding_size_policy(
             mv_params,
             &whir_params,
             FoldingFactor::Constant(2),
-            1,
+            num_polynomials,
             test_blinding_size_policy(),
-        );
+        )
+    }
 
-        let vector = vec![F::ONE; num_coeffs];
-        let point = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form = MultilinearExtension { point: point.0 };
-        let evaluation = linear_form.evaluate(params.blinded_commitment.embedding(), &vector);
-        let linear_forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(linear_form)];
-        let linear_form_refs = linear_forms
+    fn linear_form_refs(forms: &[Box<dyn LinearForm<EF>>]) -> Vec<&dyn LinearForm<EF>> {
+        forms
             .iter()
             .map(|w| w.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
+            .collect()
+    }
 
-        let ds = DomainSeparator::protocol(&params)
-            .session(&format!("zk-stage1 {}:{}", file!(), line!()))
+    fn make_two_poly_vectors(mul: u64, add: u64) -> (Vec<F>, Vec<F>) {
+        let v0 = vec![F::ONE; TEST_NUM_COEFFS];
+        let v1 = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from((i as u64).wrapping_mul(mul).wrapping_add(add)))
+            .collect();
+        (v0, v1)
+    }
+
+    fn compute_evaluations(
+        params: &Config<EF>,
+        forms: &[&MultilinearExtension<EF>],
+        vectors: &[&[F]],
+    ) -> Vec<EF> {
+        let embedding = params.blinded_commitment.embedding();
+        let mut evals = Vec::with_capacity(forms.len() * vectors.len());
+        for &form in forms {
+            for &vector in vectors {
+                evals.push(form.evaluate(embedding, vector));
+            }
+        }
+        evals
+    }
+
+    fn prove_and_verify(
+        params: &Config<EF>,
+        vectors: &[&[F]],
+        linear_form_refs: &[&dyn LinearForm<EF>],
+        evaluations: &[EF],
+        session_tag: &str,
+    ) {
+        let tag = session_tag.to_owned();
+        let ds = DomainSeparator::protocol(params)
+            .session(&tag)
             .instance(&Empty);
-
         let mut prover_state = ProverState::new_std(&ds);
-        let witness = params.commit(&mut prover_state, &[&vector]);
+        let witness = params.commit(&mut prover_state, vectors);
         params.prove(
             &mut prover_state,
-            &[&vector],
+            vectors,
             witness,
-            &linear_form_refs,
-            &[evaluation],
+            linear_form_refs,
+            evaluations,
         );
-
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = params
-            .receive_commitments(&mut verifier_state, 1)
+            .receive_commitments(&mut verifier_state, vectors.len())
             .expect("receive commitments");
         params
             .verify(
                 &mut verifier_state,
-                &linear_form_refs,
-                &[evaluation],
+                linear_form_refs,
+                evaluations,
                 &commitment,
             )
             .expect("verify zk wrapper");
     }
 
     #[test]
-    fn test_whir_zk_stage1_multi_poly_multi_query() {
-        let num_variables = 8usize;
-        let num_coeffs = 1 << num_variables;
+    fn test_whir_zk_stage1_single_poly() {
         let mut rng = ark_std::test_rng();
+        let params = make_test_config(1);
 
-        let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters {
-            initial_statement: true,
-            security_level: 16,
-            pow_bits: 0,
-            folding_factor: FoldingFactor::Constant(2),
-            soundness_type: SoundnessType::ConjectureList,
-            starting_log_inv_rate: 1,
-            batch_size: 1,
-            hash_id: hash::SHA2,
-        };
-        let params = Config::<EF>::new_with_blinding_size_policy(
-            mv_params,
-            &whir_params,
-            FoldingFactor::Constant(2),
-            2,
-            test_blinding_size_policy(),
+        let vector = vec![F::ONE; TEST_NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
+        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(form)];
+        let refs = linear_form_refs(&forms);
+
+        prove_and_verify(
+            &params,
+            &[&vector],
+            &refs,
+            &[evaluation],
+            &format!("zk-stage1 {}:{}", file!(), line!()),
         );
+    }
 
-        let vector_0 = vec![F::ONE; num_coeffs];
-        let vector_1 = (0..num_coeffs)
-            .map(|i| F::from((i as u64).wrapping_mul(17).wrapping_add(3)))
-            .collect::<Vec<_>>();
-        let vectors = [&vector_0[..], &vector_1[..]];
+    #[test]
+    fn test_whir_zk_stage1_multi_poly_multi_query() {
+        let mut rng = ark_std::test_rng();
+        let params = make_test_config(2);
 
-        let point_0 = MultilinearPoint::rand(&mut rng, num_variables);
-        let point_1 = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form_0 = MultilinearExtension {
-            point: point_0.0.clone(),
-        };
-        let linear_form_1 = MultilinearExtension {
-            point: point_1.0.clone(),
-        };
-        let eval_form_0 = MultilinearExtension { point: point_0.0 };
-        let eval_form_1 = MultilinearExtension { point: point_1.0 };
-        let linear_forms: Vec<Box<dyn LinearForm<EF>>> =
-            vec![Box::new(linear_form_0), Box::new(linear_form_1)];
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
+        let (v0, v1) = make_two_poly_vectors(17, 3);
+        let vectors = [&v0[..], &v1[..]];
 
-        // Row-major evaluations: [w0(v0), w0(v1), w1(v0), w1(v1)].
-        let mut evaluations = Vec::new();
-        for lf in [&eval_form_0, &eval_form_1] {
-            for vector in vectors {
-                evaluations.push(lf.evaluate(params.blinded_commitment.embedding(), vector));
-            }
-        }
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let ds = DomainSeparator::protocol(&params)
-            .session(&format!("zk-stage1-multi {}:{}", file!(), line!()))
-            .instance(&Empty);
+        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let refs = linear_form_refs(&forms);
 
-        let mut prover_state = ProverState::new_std(&ds);
-        let witness = params.commit(&mut prover_state, &vectors);
-        params.prove(
-            &mut prover_state,
+        prove_and_verify(
+            &params,
             &vectors,
-            witness,
-            &linear_form_refs,
+            &refs,
             &evaluations,
+            &format!("zk-stage1-multi {}:{}", file!(), line!()),
         );
-
-        let proof = prover_state.proof();
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let commitment = params
-            .receive_commitments(&mut verifier_state, 2)
-            .expect("receive commitments");
-        params
-            .verify(
-                &mut verifier_state,
-                &linear_form_refs,
-                &evaluations,
-                &commitment,
-            )
-            .expect("verify zk wrapper multi");
     }
 
     #[test]
     fn test_whir_zk_stage1_rejects_wrong_evaluations() {
-        let num_variables = 8usize;
-        let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
+        let params = make_test_config(2);
 
-        let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters {
-            initial_statement: true,
-            security_level: 16,
-            pow_bits: 0,
-            folding_factor: FoldingFactor::Constant(2),
-            soundness_type: SoundnessType::ConjectureList,
-            starting_log_inv_rate: 1,
-            batch_size: 1,
-            hash_id: hash::SHA2,
-        };
-        let params = Config::<EF>::new_with_blinding_size_policy(
-            mv_params,
-            &whir_params,
-            FoldingFactor::Constant(2),
-            2,
-            test_blinding_size_policy(),
-        );
+        let (v0, v1) = make_two_poly_vectors(29, 7);
+        let vectors = [&v0[..], &v1[..]];
 
-        let vector_0 = vec![F::ONE; num_coeffs];
-        let vector_1 = (0..num_coeffs)
-            .map(|i| F::from((i as u64).wrapping_mul(29).wrapping_add(7)))
-            .collect::<Vec<_>>();
-        let vectors = [&vector_0[..], &vector_1[..]];
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let point_0 = MultilinearPoint::rand(&mut rng, num_variables);
-        let point_1 = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form_0 = MultilinearExtension {
-            point: point_0.0.clone(),
-        };
-        let linear_form_1 = MultilinearExtension {
-            point: point_1.0.clone(),
-        };
-        let eval_form_0 = MultilinearExtension { point: point_0.0 };
-        let eval_form_1 = MultilinearExtension { point: point_1.0 };
-        let linear_forms: Vec<Box<dyn LinearForm<EF>>> =
-            vec![Box::new(linear_form_0), Box::new(linear_form_1)];
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-
-        let mut evaluations = Vec::new();
-        for lf in [&eval_form_0, &eval_form_1] {
-            for vector in vectors {
-                evaluations.push(lf.evaluate(params.blinded_commitment.embedding(), vector));
-            }
-        }
+        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-negative {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
         let witness = params.commit(&mut prover_state, &vectors);
-        params.prove(
-            &mut prover_state,
-            &vectors,
-            witness,
-            &linear_form_refs,
-            &evaluations,
-        );
+        params.prove(&mut prover_state, &vectors, witness, &refs, &evaluations);
 
         let proof = prover_state.proof();
         let mut wrong_evaluations = evaluations.clone();
@@ -490,12 +430,7 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 2)
                 .expect("receive commitments");
-            params.verify(
-                &mut verifier_state,
-                &linear_form_refs,
-                &wrong_evaluations,
-                &commitment,
-            )
+            params.verify(&mut verifier_state, &refs, &wrong_evaluations, &commitment)
         }));
         if let Ok(result) = verify_outcome {
             assert!(
@@ -507,71 +442,27 @@ mod tests {
 
     #[test]
     fn test_whir_zk_stage1_rejects_tampered_proof() {
-        let num_variables = 8usize;
-        let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
+        let params = make_test_config(2);
 
-        let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters {
-            initial_statement: true,
-            security_level: 16,
-            pow_bits: 0,
-            folding_factor: FoldingFactor::Constant(2),
-            soundness_type: SoundnessType::ConjectureList,
-            starting_log_inv_rate: 1,
-            batch_size: 1,
-            hash_id: hash::SHA2,
-        };
-        let params = Config::<EF>::new_with_blinding_size_policy(
-            mv_params,
-            &whir_params,
-            FoldingFactor::Constant(2),
-            2,
-            test_blinding_size_policy(),
-        );
+        let (v0, v1) = make_two_poly_vectors(13, 11);
+        let vectors = [&v0[..], &v1[..]];
 
-        let vector_0 = vec![F::ONE; num_coeffs];
-        let vector_1 = (0..num_coeffs)
-            .map(|i| F::from((i as u64).wrapping_mul(13).wrapping_add(11)))
-            .collect::<Vec<_>>();
-        let vectors = [&vector_0[..], &vector_1[..]];
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let point_0 = MultilinearPoint::rand(&mut rng, num_variables);
-        let point_1 = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form_0 = MultilinearExtension {
-            point: point_0.0.clone(),
-        };
-        let linear_form_1 = MultilinearExtension {
-            point: point_1.0.clone(),
-        };
-        let eval_form_0 = MultilinearExtension { point: point_0.0 };
-        let eval_form_1 = MultilinearExtension { point: point_1.0 };
-        let linear_forms: Vec<Box<dyn LinearForm<EF>>> =
-            vec![Box::new(linear_form_0), Box::new(linear_form_1)];
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-
-        let mut evaluations = Vec::new();
-        for lf in [&eval_form_0, &eval_form_1] {
-            for vector in vectors {
-                evaluations.push(lf.evaluate(params.blinded_commitment.embedding(), vector));
-            }
-        }
+        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-tamper {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
         let witness = params.commit(&mut prover_state, &vectors);
-        params.prove(
-            &mut prover_state,
-            &vectors,
-            witness,
-            &linear_form_refs,
-            &evaluations,
-        );
+        params.prove(&mut prover_state, &vectors, witness, &refs, &evaluations);
 
         let mut proof = prover_state.proof();
         if let Some(last) = proof.narg_string.last_mut() {
@@ -585,12 +476,7 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 2)
                 .expect("receive commitments");
-            params.verify(
-                &mut verifier_state,
-                &linear_form_refs,
-                &evaluations,
-                &commitment,
-            )
+            params.verify(&mut verifier_state, &refs, &evaluations, &commitment)
         }));
         if let Ok(result) = verify_outcome {
             assert!(
@@ -608,41 +494,17 @@ mod tests {
     /// the prover forge arbitrary evaluation claims.
     #[test]
     fn test_whir_zk_malicious_prover_wrong_evaluation() {
-        let num_variables = 8usize;
-        let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
+        let params = make_test_config(1);
 
-        let mv_params = MultivariateParameters::new(num_variables);
-        let whir_params = ProtocolParameters {
-            initial_statement: true,
-            security_level: 16,
-            pow_bits: 0,
-            folding_factor: FoldingFactor::Constant(2),
-            soundness_type: SoundnessType::ConjectureList,
-            starting_log_inv_rate: 1,
-            batch_size: 1,
-            hash_id: hash::SHA2,
-        };
-        let params = Config::<EF>::new_with_blinding_size_policy(
-            mv_params,
-            &whir_params,
-            FoldingFactor::Constant(2),
-            1,
-            test_blinding_size_policy(),
-        );
-
-        let vector = vec![F::ONE; num_coeffs];
-        let point = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form = MultilinearExtension { point: point.0 };
-        let correct_evaluation =
-            linear_form.evaluate(params.blinded_commitment.embedding(), &vector);
+        let vector = vec![F::ONE; TEST_NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let correct_evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
         let wrong_evaluation = correct_evaluation + EF::from(42u64);
 
-        let linear_forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(linear_form)];
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
+        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(form)];
+        let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-malicious {}:{}", file!(), line!()))
@@ -655,7 +517,7 @@ mod tests {
                 &mut prover_state,
                 &[&vector],
                 witness,
-                &linear_form_refs,
+                &refs,
                 &[wrong_evaluation],
             );
 
@@ -664,12 +526,7 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 1)
                 .expect("receive commitments");
-            params.verify(
-                &mut verifier_state,
-                &linear_form_refs,
-                &[wrong_evaluation],
-                &commitment,
-            )
+            params.verify(&mut verifier_state, &refs, &[wrong_evaluation], &commitment)
         }));
 
         if let Ok(result) = outcome {
