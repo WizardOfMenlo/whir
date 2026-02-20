@@ -1,13 +1,10 @@
-use ark_ff::{AdditiveGroup, FftField};
-use ark_std::{
-    rand::{CryptoRng, RngCore},
-    UniformRand,
-};
+use ark_ff::PrimeField;
+use ark_std::rand::{CryptoRng, RngCore};
 
 #[cfg(not(feature = "parallel"))]
 use crate::algebra::scalar_mul_add;
 use crate::algebra::{
-    embedding::Basefield,
+    embedding::Identity,
     linear_form::{Covector, Evaluate, LinearForm},
     univariate_evaluate,
 };
@@ -18,13 +15,13 @@ use crate::algebra::{
 /// - `m_eval = M(gamma, -rho)`,
 /// - `g_hat_evals[j] = g_hat_j(gamma, -rho)` (with the committed `ell+1` embedding).
 #[derive(Clone, Debug)]
-pub struct BlindingEvaluations<F: FftField> {
+pub struct BlindingEvaluations<F: PrimeField> {
     pub gamma: F,
     pub m_eval: F,
     pub g_hat_evals: Vec<F>,
 }
 
-impl<F: FftField> BlindingEvaluations<F> {
+impl<F: PrimeField> BlindingEvaluations<F> {
     /// Compute
     /// `h(gamma) = m(gamma,-rho) + Sum_j beta^j * gamma^(2^(j-1)) * g_hat_j(gamma,-rho)`.
     pub fn compute_h_value(&self, blinding_challenge: F) -> F {
@@ -46,12 +43,12 @@ impl<F: FftField> BlindingEvaluations<F> {
 /// - `m_poly(z, t)` on `ell + 1` variables by interleaving `(g0_hat, msk)`,
 /// - `g_hats[j](z)` on `ell` variables.
 #[derive(Clone, Debug)]
-pub struct BlindingPolynomials<F: FftField> {
-    pub m_poly: Vec<F::BasePrimeField>,
-    pub g_hats: Vec<Vec<F::BasePrimeField>>,
+pub struct BlindingPolynomials<F: PrimeField> {
+    pub m_poly: Vec<F>,
+    pub g_hats: Vec<Vec<F>>,
 }
 
-impl<F: FftField> BlindingPolynomials<F> {
+impl<F: PrimeField> BlindingPolynomials<F> {
     pub fn sample<R: RngCore + CryptoRng>(
         rng: &mut R,
         num_blinding_variables: usize,
@@ -59,23 +56,15 @@ impl<F: FftField> BlindingPolynomials<F> {
     ) -> Self {
         let half_size = 1usize << num_blinding_variables;
 
-        let msk = (0..half_size)
-            .map(|_| F::BasePrimeField::rand(rng))
-            .collect::<Vec<_>>();
-        let g0_hat = (0..half_size)
-            .map(|_| F::BasePrimeField::rand(rng))
-            .collect::<Vec<_>>();
+        let msk = (0..half_size).map(|_| F::rand(rng)).collect::<Vec<_>>();
+        let g0_hat = (0..half_size).map(|_| F::rand(rng)).collect::<Vec<_>>();
         let m_poly: Vec<_> = g0_hat
             .iter()
             .zip(&msk)
             .flat_map(|(&g, &m)| [g, m])
             .collect();
         let g_hats = (0..num_witness_variables)
-            .map(|_| {
-                (0..half_size)
-                    .map(|_| F::BasePrimeField::rand(rng))
-                    .collect::<Vec<_>>()
-            })
+            .map(|_| (0..half_size).map(|_| F::rand(rng)).collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
         Self { m_poly, g_hats }
@@ -84,14 +73,14 @@ impl<F: FftField> BlindingPolynomials<F> {
     /// Build committed vectors `[M, ĝ_1^emb, ..., ĝ_mu^emb]` on `ell+1` variables.
     ///
     /// This matches the blinding WHIR commitment layout used by prover and verifier.
-    pub fn layout_vectors(&self) -> Vec<Vec<F::BasePrimeField>> {
+    pub fn layout_vectors(&self) -> Vec<Vec<F>> {
         std::iter::once(self.m_poly.clone())
             .chain(self.embedded_g_hats())
             .collect()
     }
 
     /// Precompute `ell+1` embeddings of all `g_hat` vectors.
-    pub fn embedded_g_hats(&self) -> Vec<Vec<F::BasePrimeField>> {
+    pub fn embedded_g_hats(&self) -> Vec<Vec<F>> {
         self.g_hats
             .iter()
             .map(|g_hat| embed_to_ell_plus_one::<F>(g_hat))
@@ -109,7 +98,7 @@ impl<F: FftField> BlindingPolynomials<F> {
         &self,
         gamma: F,
         masking_challenge: F,
-        embedded_g_hats: &[Vec<F::BasePrimeField>],
+        embedded_g_hats: &[Vec<F>],
     ) -> BlindingEvaluations<F> {
         debug_assert_eq!(self.m_poly.len() % 2, 0, "m_poly length must be even");
         let half_size = self.m_poly.len() / 2;
@@ -135,11 +124,11 @@ impl<F: FftField> BlindingPolynomials<F> {
     pub fn evaluate_with_covector(
         &self,
         beq_covector: &Covector<F>,
-        embedded_g_hats: &[Vec<F::BasePrimeField>],
+        embedded_g_hats: &[Vec<F>],
         gamma: F,
     ) -> BlindingEvaluations<F> {
         debug_assert_eq!(embedded_g_hats.len(), self.g_hats.len());
-        let embedding = Basefield::<F>::new();
+        let embedding = Identity::<F>::new();
         let m_eval = beq_covector.evaluate(&embedding, &self.m_poly);
         let g_hat_evals = embedded_g_hats
             .iter()
@@ -159,16 +148,13 @@ impl<F: FftField> BlindingPolynomials<F> {
 /// This effectively treats the original polynomial as depending only on the
 /// even-indexed variable, placing it in the correct position within the
 /// `(ell+1)`-variable commitment layout used by the blinding WHIR.
-fn embed_to_ell_plus_one<F: FftField>(coeffs: &[F::BasePrimeField]) -> Vec<F::BasePrimeField> {
-    coeffs
-        .iter()
-        .flat_map(|&c| [c, F::BasePrimeField::ZERO])
-        .collect()
+fn embed_to_ell_plus_one<F: PrimeField>(coeffs: &[F]) -> Vec<F> {
+    coeffs.iter().flat_map(|&c| [c, F::ZERO]).collect()
 }
 
 /// Recombine a single combined claim from already tau2-batched
 /// per-vector claims `(m_claim, g_hat_claims)` using tau1-batching.
-pub fn combine_claim_from_components<F: FftField>(m_claim: F, g_hat_claims: &[F], tau1: F) -> F {
+pub fn combine_claim_from_components<F: PrimeField>(m_claim: F, g_hat_claims: &[F], tau1: F) -> F {
     // Factor 2 arises because the combined polynomial is
     //   C(tau1) = m + 2 * tau1 * Sum_j tau1^j * g_hat_j
     // The `2` compensates for the embedding interleave: g_hat coefficients
@@ -183,7 +169,7 @@ pub fn combine_claim_from_components<F: FftField>(m_claim: F, g_hat_claims: &[F]
 ///
 /// Returns `(combined_claims, batched_subproof_claims)` where the subproof
 /// layout is `[m_0, g_0_0, ..., g_0_{mu-1}, m_1, g_1_0, ...]`.
-pub fn build_combined_and_subproof_claims<F: FftField>(
+pub fn build_combined_and_subproof_claims<F: PrimeField>(
     m_claims: &[F],
     g_hat_claims_per_poly: &[&[F]],
     tau1: F,
@@ -203,7 +189,7 @@ pub fn build_combined_and_subproof_claims<F: FftField>(
 }
 
 /// Build blinding-side linear forms as `[beq_weights, w_folded_weights...]`.
-pub fn build_blinding_forms<'a, F: FftField>(
+pub fn build_blinding_forms<'a, F: PrimeField>(
     beq_weights: &'a Covector<F>,
     w_folded_weights: &'a [Covector<F>],
 ) -> Vec<&'a dyn LinearForm<F>> {
@@ -223,7 +209,7 @@ pub fn build_blinding_forms<'a, F: FftField>(
     feature = "tracing",
     tracing::instrument(skip_all, name = "fold_weight_to_mask_size")
 )]
-pub fn fold_weight_to_mask_size<F: FftField>(
+pub fn fold_weight_to_mask_size<F: PrimeField>(
     weight: &dyn crate::algebra::linear_form::LinearForm<F>,
     num_witness_variables: usize,
     num_blinding_variables: usize,
@@ -246,7 +232,7 @@ pub fn fold_weight_to_mask_size<F: FftField>(
     fold_vector_to_mask_size(vector, mask_size)
 }
 
-fn fold_vector_to_mask_size<F: FftField>(vector: &[F], mask_size: usize) -> Covector<F> {
+fn fold_vector_to_mask_size<F: PrimeField>(vector: &[F], mask_size: usize) -> Covector<F> {
     #[cfg(feature = "parallel")]
     let folded = {
         use rayon::prelude::*;
@@ -290,7 +276,7 @@ fn fold_vector_to_mask_size<F: FftField>(vector: &[F], mask_size: usize) -> Cove
     feature = "tracing",
     tracing::instrument(skip_all, name = "construct_batched_eq_weights")
 )]
-pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
+pub fn construct_batched_eq_weights_from_gammas<F: PrimeField>(
     gammas: &[F],
     masking_challenge: F,
     tau2: F,
@@ -363,7 +349,7 @@ pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
 
 /// Build `beq((pow(gamma), -rho), .)` as a covector over `ell+1` variables.
 #[cfg(test)]
-pub fn beq_covector_at_gamma<F: FftField>(
+pub fn beq_covector_at_gamma<F: PrimeField>(
     gamma: F,
     masking_challenge: F,
     num_blinding_variables: usize,
@@ -376,7 +362,7 @@ pub fn beq_covector_at_gamma<F: FftField>(
 }
 
 #[cfg(test)]
-fn eq_weights_at_gamma<F: FftField>(
+fn eq_weights_at_gamma<F: PrimeField>(
     gamma: F,
     masking_challenge: F,
     num_blinding_variables: usize,
@@ -397,7 +383,7 @@ fn eq_weights_at_gamma<F: FftField>(
 ///
 /// `buf` must have length `>= 2^(num_blinding_variables + 1)`.  Reusing a
 /// single buffer across gamma iterations avoids one 8 KiB allocation per point.
-pub fn fill_eq_weights_at_gamma<F: FftField>(
+pub fn fill_eq_weights_at_gamma<F: PrimeField>(
     buf: &mut [F],
     gamma: F,
     masking_challenge: F,
@@ -442,7 +428,7 @@ pub fn fill_eq_weights_at_gamma<F: FftField>(
 /// `beq_full[2j+1] = beq_half[j] * (-rho)`, so any inner product with a
 /// vector whose odd entries are zero reduces to a half-size mixed dot
 /// multiplied by `(1+rho)`.
-pub fn fill_eq_weights_at_gamma_half<F: FftField>(
+pub fn fill_eq_weights_at_gamma_half<F: PrimeField>(
     buf: &mut [F],
     gamma: F,
     num_blinding_variables: usize,
@@ -467,12 +453,15 @@ pub fn fill_eq_weights_at_gamma_half<F: FftField>(
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::Field;
+    use ark_ff::{AdditiveGroup, Field};
 
     use super::*;
-    use crate::algebra::{embedding::Basefield, fields::Field64_2};
+    use crate::algebra::{embedding::Identity, fields::Field64};
 
-    fn batch_with_challenge<F: FftField, I: IntoIterator<Item = F>>(values: I, challenge: F) -> F {
+    fn batch_with_challenge<F: PrimeField, I: IntoIterator<Item = F>>(
+        values: I,
+        challenge: F,
+    ) -> F {
         let mut acc = F::ZERO;
         let mut power = F::ONE;
         for value in values {
@@ -482,7 +471,7 @@ mod tests {
         acc
     }
 
-    fn compute_per_polynomial_claims<F: FftField>(
+    fn compute_per_polynomial_claims<F: PrimeField>(
         blinding_evals: &[BlindingEvaluations<F>],
         tau2: F,
     ) -> (F, Vec<F>) {
@@ -503,7 +492,7 @@ mod tests {
     }
 
     /// Convenience wrapper for tests that have already materialized [`BlindingEvaluations`].
-    fn construct_batched_eq_weights<F: FftField>(
+    fn construct_batched_eq_weights<F: PrimeField>(
         blinding_evals: &[BlindingEvaluations<F>],
         masking_challenge: F,
         tau2: F,
@@ -518,16 +507,16 @@ mod tests {
         )
     }
 
-    type EF = Field64_2;
+    type F = Field64;
 
     #[test]
     fn test_compute_h_value_uses_square_ladder() {
-        let gamma = EF::from(5u64);
-        let beta = EF::from(7u64);
+        let gamma = F::from(5u64);
+        let beta = F::from(7u64);
         let eval = BlindingEvaluations {
             gamma,
-            m_eval: EF::from(11u64),
-            g_hat_evals: vec![EF::from(13u64), EF::from(17u64), EF::from(19u64)],
+            m_eval: F::from(11u64),
+            g_hat_evals: vec![F::from(13u64), F::from(17u64), F::from(19u64)],
         };
         let expected = eval.m_eval
             + beta * gamma * eval.g_hat_evals[0]
@@ -542,12 +531,12 @@ mod tests {
         let num_witness_variables = 2usize;
         let half = 1usize << num_blinding_variables;
         let msk = (0..half)
-            .map(|i| <EF as Field>::BasePrimeField::from((i as u64) + 2))
+            .map(|i| F::from((i as u64) + 2))
             .collect::<Vec<_>>();
         let g0_hat = (0..half)
-            .map(|i| <EF as Field>::BasePrimeField::from((3 * i as u64) + 1))
+            .map(|i| F::from((3 * i as u64) + 1))
             .collect::<Vec<_>>();
-        let mut m_poly = vec![<EF as Field>::BasePrimeField::from(0u64); 2 * half];
+        let mut m_poly = vec![F::from(0u64); 2 * half];
         for i in 0..half {
             m_poly[2 * i] = g0_hat[i];
             m_poly[2 * i + 1] = msk[i];
@@ -555,18 +544,18 @@ mod tests {
         let g_hats = (0..num_witness_variables)
             .map(|j| {
                 (0..half)
-                    .map(|i| <EF as Field>::BasePrimeField::from((i as u64) + (j as u64) + 5))
+                    .map(|i| F::from((i as u64) + (j as u64) + 5))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let polys = BlindingPolynomials::<EF> { m_poly, g_hats };
-        let gamma = EF::from(9u64);
-        let rho = EF::from(4u64);
+        let polys = BlindingPolynomials::<F> { m_poly, g_hats };
+        let gamma = F::from(9u64);
+        let rho = F::from(4u64);
         let eval = polys.evaluate_at(gamma, rho);
 
         let beq = eq_weights_at_gamma(gamma, rho, num_blinding_variables);
         let covector = Covector::new(beq);
-        let embedding = Basefield::<EF>::new();
+        let embedding = Identity::<F>::new();
         let layout_vectors = polys.layout_vectors();
 
         assert_eq!(
@@ -583,22 +572,22 @@ mod tests {
 
     #[test]
     fn test_construct_batched_eq_weights_matches_per_gamma_accumulation() {
-        let gammas = [EF::from(3u64), EF::from(6u64), EF::from(10u64)];
-        let rho = EF::from(2u64);
-        let tau2 = EF::from(5u64);
+        let gammas = [F::from(3u64), F::from(6u64), F::from(10u64)];
+        let rho = F::from(2u64);
+        let tau2 = F::from(5u64);
         let num_blinding_variables = 3usize;
         let bevals = gammas
             .into_iter()
             .map(|gamma| BlindingEvaluations {
                 gamma,
-                m_eval: EF::ZERO,
+                m_eval: F::ZERO,
                 g_hat_evals: vec![],
             })
             .collect::<Vec<_>>();
 
         let batched = construct_batched_eq_weights(&bevals, rho, tau2, num_blinding_variables);
-        let mut expected = vec![EF::ZERO; 1 << (num_blinding_variables + 1)];
-        let mut power = EF::ONE;
+        let mut expected = vec![F::ZERO; 1 << (num_blinding_variables + 1)];
+        let mut power = F::ONE;
         for gamma in gammas {
             let per_gamma = eq_weights_at_gamma(gamma, rho, num_blinding_variables);
             for (acc, value) in expected.iter_mut().zip(per_gamma) {
@@ -615,12 +604,12 @@ mod tests {
         let num_witness_variables = 2usize;
         let half = 1usize << num_blinding_variables;
         let msk = (0..half)
-            .map(|i| <EF as Field>::BasePrimeField::from((i as u64) + 7))
+            .map(|i| F::from((i as u64) + 7))
             .collect::<Vec<_>>();
         let g0_hat = (0..half)
-            .map(|i| <EF as Field>::BasePrimeField::from((5 * i as u64) + 2))
+            .map(|i| F::from((5 * i as u64) + 2))
             .collect::<Vec<_>>();
-        let mut m_poly = vec![<EF as Field>::BasePrimeField::from(0u64); 2 * half];
+        let mut m_poly = vec![F::from(0u64); 2 * half];
         for i in 0..half {
             m_poly[2 * i] = g0_hat[i];
             m_poly[2 * i + 1] = msk[i];
@@ -628,16 +617,16 @@ mod tests {
         let g_hats = (0..num_witness_variables)
             .map(|j| {
                 (0..half)
-                    .map(|i| <EF as Field>::BasePrimeField::from((i as u64) + (2 * j as u64) + 11))
+                    .map(|i| F::from((i as u64) + (2 * j as u64) + 11))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let polys = BlindingPolynomials::<EF> { m_poly, g_hats };
+        let polys = BlindingPolynomials::<F> { m_poly, g_hats };
 
-        let gammas = [EF::from(3u64), EF::from(9u64), EF::from(12u64)];
-        let rho = EF::from(4u64);
-        let tau1 = EF::from(6u64);
-        let tau2 = EF::from(5u64);
+        let gammas = [F::from(3u64), F::from(9u64), F::from(12u64)];
+        let rho = F::from(4u64);
+        let tau1 = F::from(6u64);
+        let tau2 = F::from(5u64);
         let blinding_evals = gammas
             .into_iter()
             .map(|gamma| polys.evaluate_at(gamma, rho))
@@ -647,16 +636,16 @@ mod tests {
             blinding_evals
                 .iter()
                 .enumerate()
-                .fold(EF::ZERO, |acc, (gamma_idx, eval)| {
+                .fold(F::ZERO, |acc, (gamma_idx, eval)| {
                     let tau2_power = tau2.pow([gamma_idx as u64]);
                     let inner = eval
                         .g_hat_evals
                         .iter()
                         .enumerate()
-                        .fold(EF::ZERO, |inner_acc, (j, g_eval)| {
+                        .fold(F::ZERO, |inner_acc, (j, g_eval)| {
                             inner_acc + tau1.pow([(j + 1) as u64]) * *g_eval
                         });
-                    acc + tau2_power * (eval.m_eval + EF::from(2u64) * inner)
+                    acc + tau2_power * (eval.m_eval + F::from(2u64) * inner)
                 });
         let (m_claim, g_hat_claims) = compute_per_polynomial_claims(&blinding_evals, tau2);
         let recomposed_claim = combine_claim_from_components(m_claim, &g_hat_claims, tau1);

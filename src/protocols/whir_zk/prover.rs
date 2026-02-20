@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ark_ff::FftField;
+use ark_ff::{FftField, PrimeField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "tracing")]
@@ -9,7 +9,7 @@ use tracing::instrument;
 use super::{Config, Witness};
 use crate::{
     algebra::{
-        embedding::{Basefield, Embedding},
+        embedding::Identity,
         linear_form::{Covector, Evaluate, LinearForm},
         mixed_dot_seq, scalar_mul_add, MultilinearPoint,
     },
@@ -38,7 +38,7 @@ use crate::{
     feature = "tracing",
     instrument(skip_all, name = "evaluate_gamma_block")
 )]
-fn evaluate_gamma_block<F: FftField>(
+fn evaluate_gamma_block<F: FftField + PrimeField>(
     blinding_polynomials: &[BlindingPolynomials<F>],
     h_gammas: &[F],
     masking_challenge: F,
@@ -59,12 +59,8 @@ fn evaluate_gamma_block<F: FftField>(
     let folded_m_polys: Vec<Vec<F>> = blinding_polynomials
         .iter()
         .map(|bp| {
-            let emb = Basefield::<F>::new();
             (0..half_size)
-                .map(|j| {
-                    one_plus_rho * emb.map(bp.m_poly[2 * j])
-                        + neg_rho * emb.map(bp.m_poly[2 * j + 1])
-                })
+                .map(|j| one_plus_rho * bp.m_poly[2 * j] + neg_rho * bp.m_poly[2 * j + 1])
                 .collect()
         })
         .collect();
@@ -101,7 +97,7 @@ fn evaluate_gamma_block<F: FftField>(
                 |(mut accum, mut eq_buf), (chunk_idx, chunk)| {
                     let base_gi = chunk_idx * batch;
                     let chunk_gammas = chunk.len() / stride_per_gamma;
-                    let embedding = Basefield::<F>::new();
+                    let embedding = Identity::<F>::new();
                     for local in 0..chunk_gammas {
                         let gi = base_gi + local;
                         let gamma = h_gammas[gi];
@@ -149,7 +145,7 @@ fn evaluate_gamma_block<F: FftField>(
 
     #[cfg(not(feature = "parallel"))]
     let beq_half_accum = {
-        let embedding = Basefield::<F>::new();
+        let embedding = Identity::<F>::new();
         let mut eq_buf = vec![F::ZERO; half_size];
         let mut accum = vec![F::ZERO; half_size];
         for (gi, &gamma) in h_gammas.iter().enumerate() {
@@ -194,7 +190,7 @@ fn evaluate_gamma_block<F: FftField>(
     (eval_results, beq_weight_accum)
 }
 
-impl<F: FftField> Config<F> {
+impl<F: FftField + PrimeField> Config<F> {
     /// Run the zkWHIR prover: prove evaluation claims on blinded polynomials.
     ///
     /// * `polynomials` — original (unmasked) coefficient vectors.
@@ -209,7 +205,7 @@ impl<F: FftField> Config<F> {
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&[F::BasePrimeField]],
+        polynomials: &[&[F]],
         witness: Witness<F>,
         weights: &[&dyn LinearForm<F>],
         evaluations: &[F],

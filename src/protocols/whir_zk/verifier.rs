@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::{FftField, PrimeField};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -20,7 +20,7 @@ use crate::{
 /// Extract the first element of each `(mu+1)`-sized block: these are the
 /// `M_eval = <w_folded, m_poly>` values needed for evaluation binding.
 #[inline]
-fn extract_m_evals<F: FftField>(
+fn extract_m_evals<F: FftField + PrimeField>(
     w_folded_blinding_evals: &[F],
     num_witness_variables_plus_1: usize,
 ) -> Vec<F> {
@@ -30,7 +30,7 @@ fn extract_m_evals<F: FftField>(
         .collect()
 }
 
-impl<F: FftField> Config<F> {
+impl<F: FftField + PrimeField> Config<F> {
     /// Verify a zkWHIR proof against the given evaluation claims.
     ///
     /// Replays the transcript, recomputes the expected blinding claims, and

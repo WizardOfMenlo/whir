@@ -13,7 +13,8 @@ use ark_std::rand::{rngs::StdRng, SeedableRng};
 use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     algebra::{
-        fields::{Field64, Field64_2},
+        embedding::Embedding,
+        fields::Field64,
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
@@ -27,7 +28,6 @@ use whir::{
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 type F = Field64;
-type EF = Field64_2;
 
 /// Polynomial sizes to benchmark (log₂ of number of coefficients).
 const SIZES: &[usize] = &[20];
@@ -53,11 +53,11 @@ fn make_polynomials(num_variables: usize, num_polynomials: usize) -> Vec<Vec<F>>
 
 /// Build weights + evaluations for multiple polynomials.
 /// Layout: row-major [w₀_p₀, w₀_p₁, …] (one eval per polynomial per weight).
-fn make_weights_and_evaluations_multi(
+fn make_weights_and_evaluations_multi<M: Embedding<Source = F, Target = F>>(
     polynomials: &[Vec<F>],
-    config: &Config<EF>,
+    config: &Config<F, M>,
     num_variables: usize,
-) -> (Vec<MultilinearExtension<EF>>, Vec<EF>) {
+) -> (Vec<MultilinearExtension<F>>, Vec<F>) {
     let mut rng = StdRng::seed_from_u64(0xBEEF);
     let point = MultilinearPoint::rand(&mut rng, num_variables);
     let linear_form = MultilinearExtension::new(point.0);
@@ -75,7 +75,7 @@ fn make_weights_and_evaluations_multi(
 
 /// ZK v1: WHIR config for committing, μ+1 variables.
 /// `batch_size` = number of polynomials × 2 (each poly contributes f̂ and g).
-fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<EF> {
+fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<F> {
     let extended = num_variables + 1;
     let mv = MultivariateParameters::new(extended);
     let params = ProtocolParameters {
@@ -93,7 +93,7 @@ fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<E
 
 /// ZK v1: WHIR config for proving P₁..Pₙ, μ+1 variables.
 /// `batch_size` = number of P polynomials to prove.
-fn zk_v1_prove_config(num_variables: usize, num_polynomials: usize) -> Config<EF> {
+fn zk_v1_prove_config(num_variables: usize, num_polynomials: usize) -> Config<F> {
     let extended = num_variables + 1;
     let mv = MultivariateParameters::new(extended);
     let params = ProtocolParameters {
@@ -169,13 +169,13 @@ fn make_zk_v1_polys(num_variables: usize, num_polynomials: usize) -> Vec<ZkV1Pol
 /// Evaluations layout: row-major [w₀_P₀, w₀_P₁, …].
 fn make_zk_v1_weights_and_evaluations(
     p_polys: &[Vec<F>],
-    config: &Config<EF>,
+    config: &Config<F>,
     num_variables: usize,
-) -> (Vec<MultilinearExtension<EF>>, Vec<EF>) {
+) -> (Vec<MultilinearExtension<F>>, Vec<F>) {
     let mut rng = StdRng::seed_from_u64(0xBEEF);
     let base_point = MultilinearPoint::rand(&mut rng, num_variables);
     let mut coords = base_point.0;
-    coords.push(EF::from(0u64)); // y = 0
+    coords.push(F::from(0u64)); // y = 0
     let extended_point = MultilinearPoint(coords);
     let linear_form = MultilinearExtension::new(extended_point.0);
     let mut evaluations = Vec::with_capacity(p_polys.len());
@@ -190,7 +190,7 @@ fn make_zk_v1_weights_and_evaluations(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// ZK v2 main WHIR parameters (round-0 fold = 2 for small k).
-const fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, ProtocolParameters) {
+const fn zk_main_params(num_variables: usize) -> (MultivariateParameters<F>, ProtocolParameters) {
     let mv = MultivariateParameters::new(num_variables);
     let params = ProtocolParameters {
         initial_statement: true,
@@ -206,7 +206,7 @@ const fn zk_main_params(num_variables: usize) -> (MultivariateParameters<EF>, Pr
 }
 
 /// Build a complete ZK v2 config for the given variable count and polynomial count.
-fn make_zk_v2_config(num_variables: usize, num_polynomials: usize) -> whir_zk::Config<EF> {
+fn make_zk_v2_config(num_variables: usize, num_polynomials: usize) -> whir_zk::Config<F> {
     let (main_mv, main_params) = zk_main_params(num_variables);
     whir_zk::Config::new(
         main_mv,
@@ -264,7 +264,7 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
             (prover_state, witness)
         })
         .bench_values(|(mut prover_state, witness)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
             black_box(prove_config.prove(
                 &mut prover_state,
                 p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
@@ -294,7 +294,7 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let proof = {
         let mut prover_state = ProverState::new_std(&ds);
         let witness = prove_config.commit(&mut prover_state, &p_refs);
-        let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+        let weight_refs = [&weights[0] as &dyn LinearForm<F>];
         prove_config.prove(
             &mut prover_state,
             p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
@@ -314,7 +314,7 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
             (verifier_state, commitment)
         })
         .bench_values(|(mut verifier_state, commitment)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
             black_box(
                 prove_config
                     .verify(
@@ -373,7 +373,7 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
         })
         .bench_values(|(mut prover_state, zk_witness)| {
             let poly_refs: Vec<&[F]> = polynomials.iter().map(Vec::as_slice).collect();
-            let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
             black_box(zk_config.prove(
                 &mut prover_state,
                 &poly_refs,
@@ -404,7 +404,7 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         let mut prover_state = ProverState::new_std(&ds);
         let poly_refs: Vec<&[F]> = polynomials.iter().map(Vec::as_slice).collect();
         let zk_witness = zk_config.commit(&mut prover_state, &poly_refs);
-        let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+        let weight_refs = [&weights[0] as &dyn LinearForm<F>];
         zk_config.prove(
             &mut prover_state,
             &poly_refs,
@@ -424,7 +424,7 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
             (verifier_state, commitment)
         })
         .bench_values(|(mut verifier_state, commitment)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<EF>];
+            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
             zk_config
                 .verify(&mut verifier_state, &weight_refs, &evaluations, &commitment)
                 .unwrap();

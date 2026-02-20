@@ -4,12 +4,12 @@ use std::{
     ops::Neg,
 };
 
-use ark_ff::FftField;
+use ark_ff::{FftField, PrimeField};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     algebra::{
-        embedding::{self, Basefield, Embedding},
+        embedding::{self, Basefield, Embedding, Identity},
         fields::FieldWithSize,
     },
     bits::Bits,
@@ -266,25 +266,20 @@ where
         }
     }
 
-    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
-        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
+    /// Convert a basefield-embedded WHIR config into a single-field Identity embedding.
+    pub fn into_identity(self) -> Config<F, Identity<F>>
+    where
+        F: PrimeField,
+    {
+        Config {
+            initial_committer: self.initial_committer.with_embedding(Identity::new()),
+            initial_sumcheck: self.initial_sumcheck,
+            round_configs: self.round_configs,
+            final_sumcheck: self.final_sumcheck,
+            final_pow: self.final_pow,
+            soundness_type: self.soundness_type,
+            security_level: self.security_level,
         }
-        for round_config in &self.round_configs {
-            if round_config.pow.difficulty() > max_bits {
-                return false;
-            }
-            if round_config.sumcheck.round_pow.difficulty() > max_bits {
-                return false;
-            }
-        }
-        if self.final_pow.difficulty() > max_bits {
-            return false;
-        }
-        if self.final_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
-        }
-        true
     }
 
     pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: f64) -> f64 {
@@ -484,6 +479,27 @@ where
     M: Embedding<Target = F>,
     M::Source: FftField,
 {
+    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
+        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        for round_config in &self.round_configs {
+            if round_config.pow.difficulty() > max_bits {
+                return false;
+            }
+            if round_config.sumcheck.round_pow.difficulty() > max_bits {
+                return false;
+            }
+        }
+        if self.final_pow.difficulty() > max_bits {
+            return false;
+        }
+        if self.final_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        true
+    }
+
     pub fn embedding(&self) -> &M {
         self.initial_committer.embedding()
     }

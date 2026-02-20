@@ -1,11 +1,11 @@
 use std::{borrow::Cow, time::Instant};
 
-use ark_ff::{FftField, Field};
+use ark_ff::{FftField, Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use whir::{
     algebra::{
-        embedding::Basefield,
+        embedding::{Basefield, Identity},
         fields,
         linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
@@ -77,6 +77,22 @@ fn main() {
 }
 
 fn runner(args: &Args, field: AvailableFields) {
+    if args.zk {
+        // zkWHIR is currently pinned to identity embedding over a single field.
+        match field {
+            AvailableFields::Goldilocks1 => run_whir_pcs_zk::<fields::Field64>(args),
+            AvailableFields::Field128 => run_whir_pcs_zk::<fields::Field128>(args),
+            AvailableFields::Field192 => run_whir_pcs_zk::<fields::Field192>(args),
+            AvailableFields::Field256 => run_whir_pcs_zk::<fields::Field256>(args),
+            AvailableFields::Goldilocks2 | AvailableFields::Goldilocks3 => {
+                println!(
+                    "Error: --zk currently supports only single-field configurations (Identity embedding)."
+                );
+            }
+        }
+        return;
+    }
+
     // Type reflection on field
     match field {
         AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(args),
@@ -94,11 +110,7 @@ where
 {
     match args.protocol_type {
         WhirType::PCS => {
-            if args.zk {
-                run_whir_pcs_zk::<F>(args);
-            } else {
-                run_whir_pcs::<F>(args);
-            }
+            run_whir_pcs::<F>(args);
         }
         WhirType::LDT => {
             if args.zk {
@@ -365,7 +377,7 @@ where
 #[allow(clippy::too_many_lines)]
 fn run_whir_pcs_zk<F>(args: &Args)
 where
-    F: FftField + CanonicalSerialize + Codec,
+    F: FftField + PrimeField + CanonicalSerialize + Codec,
 {
     use whir::protocols::whir_zk::Config;
 
@@ -421,11 +433,9 @@ where
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    let vector = (0..num_coeffs)
-        .map(<F as Field>::BasePrimeField::from)
-        .collect::<Vec<_>>();
+    let vector = (0..num_coeffs).map(F::from).collect::<Vec<_>>();
 
-    let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+    let mut linear_forms: Vec<Box<dyn Evaluate<Identity<F>>>> = Vec::new();
     let mut evaluations = Vec::new();
 
     // Evaluation constraint

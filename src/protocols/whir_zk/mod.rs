@@ -3,12 +3,12 @@ mod prover;
 mod utils;
 mod verifier;
 
-use ark_ff::{FftField, Field};
+use ark_ff::{FftField, PrimeField};
 use serde::{Deserialize, Serialize};
 
 pub use self::committer::{Commitment, Witness};
 use crate::{
-    algebra::embedding::Embedding,
+    algebra::embedding::{Embedding, Identity},
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::whir,
 };
@@ -34,12 +34,12 @@ pub struct BlindingSizePolicy {
 /// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "")]
-pub struct Config<F: FftField> {
-    pub blinded_commitment: whir::Config<F>,
-    pub blinding_commitment: whir::Config<F>,
+pub struct Config<F: FftField + PrimeField> {
+    pub blinded_commitment: whir::Config<F, Identity<F>>,
+    pub blinding_commitment: whir::Config<F, Identity<F>>,
 }
 
-impl<F: FftField> Config<F> {
+impl<F: FftField + PrimeField> Config<F> {
     fn default_blinding_size_policy(main_whir_params: &ProtocolParameters) -> BlindingSizePolicy {
         let protocol_security_level_main = main_whir_params
             .security_level
@@ -95,7 +95,8 @@ impl<F: FftField> Config<F> {
         num_polynomials: usize,
         size_policy: BlindingSizePolicy,
     ) -> Self {
-        let blinded_commitment = whir::Config::new(main_mv_params, main_whir_params);
+        let blinded_commitment =
+            whir::Config::new(main_mv_params, main_whir_params).into_identity();
         let num_witness_variables = blinded_commitment.initial_num_variables();
         let blinding_first_round_interleaving_depth = 1usize << blinding_folding_factor.at_round(0);
         let num_blinding_variables = Self::compute_num_blinding_variables(
@@ -115,7 +116,8 @@ impl<F: FftField> Config<F> {
             batch_size: num_polynomials * (num_witness_variables + 1),
             hash_id: main_whir_params.hash_id,
         };
-        let blinding_commitment = whir::Config::new(blinding_mv_params, &blinding_whir_params);
+        let blinding_commitment =
+            whir::Config::new(blinding_mv_params, &blinding_whir_params).into_identity();
 
         Self {
             blinded_commitment,
@@ -124,7 +126,7 @@ impl<F: FftField> Config<F> {
     }
 
     fn compute_num_blinding_variables(
-        blinded: &whir::Config<F>,
+        blinded: &whir::Config<F, Identity<F>>,
         blinding_first_round_interleaving_depth: usize,
         size_policy: BlindingSizePolicy,
     ) -> usize {
@@ -183,7 +185,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Generator ω of the full NTT domain (size = num_rows × interleaving_depth).
-    pub(crate) fn omega_full(&self) -> F::BasePrimeField {
+    pub(crate) fn omega_full(&self) -> F {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         let full_domain_size = num_rows * self.interleaving_depth();
         crate::algebra::ntt::generator(full_domain_size)
@@ -191,27 +193,24 @@ impl<F: FftField> Config<F> {
     }
 
     /// Sub-domain generator (ω_sub = ω^interleaving_depth).
-    fn omega_sub(&self) -> F::BasePrimeField {
+    fn omega_sub(&self) -> F {
         self.blinded_commitment.initial_committer.generator()
     }
 
     /// ζ = ω^num_rows — the interleaving_depth-th root of unity.
-    pub(crate) fn zeta(&self) -> F::BasePrimeField {
+    pub(crate) fn zeta(&self) -> F {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         self.omega_full().pow([num_rows as u64])
     }
 
     /// Precomputed sub-domain powers [1, ω_sub, ω_sub², ..., ω_sub^(num_rows-1)].
-    pub(crate) fn omega_powers(&self) -> Vec<F::BasePrimeField> {
+    pub(crate) fn omega_powers(&self) -> Vec<F> {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         crate::algebra::geometric_sequence(self.omega_sub(), num_rows)
     }
 
     /// Find the index of `alpha_base` in the sub-domain powers.
-    pub(crate) fn query_index(
-        alpha_base: F::BasePrimeField,
-        omega_powers: &[F::BasePrimeField],
-    ) -> usize {
+    pub(crate) fn query_index(alpha_base: F, omega_powers: &[F]) -> usize {
         omega_powers
             .iter()
             .position(|&p| p == alpha_base)
@@ -219,7 +218,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Compute all gamma points for a set of query points (flat list).
-    pub(crate) fn all_gammas(&self, query_points: &[F::BasePrimeField]) -> Vec<F> {
+    pub(crate) fn all_gammas(&self, query_points: &[F]) -> Vec<F> {
         let omega_powers = self.omega_powers();
         let interleaving_depth = self.interleaving_depth();
         let omega_full = self.omega_full();
@@ -245,7 +244,7 @@ mod tests {
     use super::*;
     use crate::{
         algebra::{
-            fields::{Field64, Field64_2},
+            fields::Field64,
             linear_form::{Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
@@ -255,7 +254,6 @@ mod tests {
     };
 
     type F = Field64;
-    type EF = Field64_2;
 
     fn make_test_blinding_size_policy() -> BlindingSizePolicy {
         BlindingSizePolicy {
@@ -270,7 +268,7 @@ mod tests {
     const TEST_NUM_VARIABLES: usize = 8;
     const TEST_NUM_COEFFS: usize = 1 << TEST_NUM_VARIABLES;
 
-    fn make_test_config(num_polynomials: usize) -> Config<EF> {
+    fn make_test_config(num_polynomials: usize) -> Config<F> {
         let mv_params = MultivariateParameters::new(TEST_NUM_VARIABLES);
         let whir_params = ProtocolParameters {
             initial_statement: true,
@@ -282,7 +280,7 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        Config::<EF>::new_with_blinding_size_policy(
+        Config::<F>::new_with_blinding_size_policy(
             mv_params,
             &whir_params,
             FoldingFactor::Constant(2),
@@ -291,10 +289,10 @@ mod tests {
         )
     }
 
-    fn linear_form_refs(forms: &[Box<dyn LinearForm<EF>>]) -> Vec<&dyn LinearForm<EF>> {
+    fn linear_form_refs(forms: &[Box<dyn LinearForm<F>>]) -> Vec<&dyn LinearForm<F>> {
         forms
             .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect()
     }
 
@@ -307,10 +305,10 @@ mod tests {
     }
 
     fn compute_evaluations(
-        params: &Config<EF>,
-        forms: &[&MultilinearExtension<EF>],
+        params: &Config<F>,
+        forms: &[&MultilinearExtension<F>],
         vectors: &[&[F]],
-    ) -> Vec<EF> {
+    ) -> Vec<F> {
         let embedding = params.blinded_commitment.embedding();
         let mut evals = Vec::with_capacity(forms.len() * vectors.len());
         for &form in forms {
@@ -322,10 +320,10 @@ mod tests {
     }
 
     fn prove_and_verify(
-        params: &Config<EF>,
+        params: &Config<F>,
         vectors: &[&[F]],
-        linear_form_refs: &[&dyn LinearForm<EF>],
-        evaluations: &[EF],
+        linear_form_refs: &[&dyn LinearForm<F>],
+        evaluations: &[F],
         session_tag: &str,
     ) {
         let tag = session_tag.to_owned();
@@ -365,7 +363,7 @@ mod tests {
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let form = MultilinearExtension { point: point.0 };
         let evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
-        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(form)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
         let refs = linear_form_refs(&forms);
 
         prove_and_verify(
@@ -391,7 +389,7 @@ mod tests {
         let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
 
         prove_and_verify(
@@ -419,7 +417,7 @@ mod tests {
         let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
@@ -431,7 +429,7 @@ mod tests {
 
         let proof = prover_state.proof();
         let mut wrong_evaluations = evaluations.clone();
-        wrong_evaluations[0] += EF::ONE;
+        wrong_evaluations[0] += F::ONE;
 
         let verify_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
@@ -462,7 +460,7 @@ mod tests {
         let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(f0), Box::new(f1)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
@@ -509,9 +507,9 @@ mod tests {
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let form = MultilinearExtension { point: point.0 };
         let correct_evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
-        let wrong_evaluation = correct_evaluation + EF::from(42u64);
+        let wrong_evaluation = correct_evaluation + F::from(42u64);
 
-        let forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(form)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
         let refs = linear_form_refs(&forms);
 
         let ds = DomainSeparator::protocol(&params)
