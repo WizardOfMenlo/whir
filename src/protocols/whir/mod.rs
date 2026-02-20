@@ -27,7 +27,10 @@ pub struct FinalClaim<F: Field> {
 }
 
 impl<F: Field> FinalClaim<F> {
-    pub fn verify(&self, linear_forms: &[&dyn LinearForm<F>]) -> VerificationResult<()> {
+    pub fn verify<'a>(
+        &'a self,
+        linear_forms: impl IntoIterator<Item = &'a dyn LinearForm<F>>,
+    ) -> VerificationResult<()> {
         let rlc = zip_strict(&self.rlc_coefficients, linear_forms)
             .map(|(&c, l)| c * l.mle_evaluate(&self.evaluation_point))
             .sum::<F>();
@@ -177,14 +180,16 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify the proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let final_claim = params
             .verify(&mut verifier_state, &[&commitment], &evaluations)
             .unwrap();
-        final_claim.verify(&linear_form_refs).unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+            )
+            .unwrap();
     }
 
     #[test]
@@ -377,14 +382,16 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let final_claim = params
             .verify(&mut verifier_state, &commitment_refs, &evaluations)
             .unwrap();
-        final_claim.verify(&linear_form_refs).unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+            )
+            .unwrap();
     }
 
     #[test]
@@ -530,10 +537,6 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let final_claim = params
             .verify(
                 &mut verifier_state,
@@ -541,7 +544,11 @@ mod tests {
                 &evaluations,
             )
             .unwrap();
-        let verifier_result = final_claim.verify(&linear_form_refs);
+        let verifier_result = final_claim.verify(
+            linear_forms
+                .iter()
+                .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+        );
         assert!(
             verifier_result.is_err(),
             "Verifier should reject mismatched polynomial"
@@ -653,14 +660,16 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let final_claim = params
             .verify(&mut verifier_state, &commitment_refs, &evaluations)
             .unwrap();
-        final_claim.verify(&linear_form_refs).unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+            )
+            .unwrap();
     }
 
     #[test]

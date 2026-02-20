@@ -193,7 +193,6 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
-        let weight_refs: Vec<&dyn LinearForm<F>> = vec![];
         let evaluations: Vec<F> = Vec::new();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
@@ -202,7 +201,7 @@ where
             let final_claim = params
                 .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
-            final_claim.verify(&weight_refs).unwrap();
+            final_claim.verify([]).unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -274,11 +273,6 @@ where
         let whir_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_prover_hashes = HASH_COUNTER.get();
 
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
-
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
@@ -288,7 +282,9 @@ where
             let final_claim = params
                 .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
-            final_claim.verify(&weight_refs).unwrap();
+            final_claim
+                .verify(weights.iter().map(|w| w.as_ref() as &dyn LinearForm<F>))
+                .unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();

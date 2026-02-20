@@ -315,11 +315,6 @@ where
         (proof.narg_string.len() + proof.hints.len()) as f64 / 1024.0
     );
 
-    let weight_dyn_refs = linear_forms
-        .iter()
-        .map(|w| w.as_ref() as &dyn LinearForm<F>)
-        .collect::<Vec<_>>();
-
     HASH_COUNTER.reset();
     let whir_verifier_time = Instant::now();
     for _ in 0..reps {
@@ -329,7 +324,13 @@ where
         let final_claim = params
             .verify(&mut verifier_state, &[&commitment], &evaluations)
             .unwrap();
-        final_claim.verify(&weight_dyn_refs).unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|w| w.as_ref() as &dyn LinearForm<F>),
+            )
+            .unwrap();
     }
     println!(
         "Verifier time: {:.1?}",
