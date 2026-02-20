@@ -67,6 +67,7 @@ pub fn fold<F: Field>(values: &mut Vec<F>, weight: F) {
     let (low, high) = values.split_at_mut(half);
     recurse(low, high, weight);
     values.truncate(half);
+    values.shrink_to_fit();
 }
 
 /// Evaluate a coefficient vector at a multilinear point in the target field.

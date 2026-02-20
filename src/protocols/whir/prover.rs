@@ -1,3 +1,5 @@
+use std::{any::Any, borrow::Cow};
+
 use ark_ff::FftField;
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
@@ -7,7 +9,9 @@ use super::{Config, Witness};
 use crate::{
     algebra::{
         dot,
-        linear_form::{Evaluate, LinearForm, UnivariateEvaluation},
+        embedding::Embedding,
+        lift,
+        linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
         sumcheck::fold,
         tensor_product, MultilinearPoint,
@@ -21,16 +25,24 @@ use crate::{
     utils::zip_strict,
 };
 
-enum RoundWitness<'a, F: FftField> {
-    Initial(&'a [&'a irs_commit::Witness<F::BasePrimeField, F>]),
+enum RoundWitness<'a, F: FftField, M: Embedding<Target = F>>
+where
+    M::Source: FftField,
+{
+    Initial(Vec<Cow<'a, irs_commit::Witness<M::Source, F>>>),
     Round(irs_commit::Witness<F, F>),
 }
 
-impl<F: FftField> Config<F> {
+impl<F, M> Config<F, M>
+where
+    F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
+{
     /// Prove a WHIR opening.
     ///
     /// * `prover_state` the mutable transcript to write the proof to.
-    /// * `vectors` are all the vectors we are opening.
+    /// * `vectors` all the vectors we are opening.
     /// * `witnesses` witnesses corresponding to the `vectors`, in the same
     ///   order. Multiple vectors may share the same witness, in which case
     ///   only one witness should be provided.
@@ -42,14 +54,14 @@ impl<F: FftField> Config<F> {
     /// `vectors.len()`.
     ///
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    #[allow(clippy::too_many_lines)]
-    pub fn prove<H, R>(
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    pub fn prove<'a, H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[&[F::BasePrimeField]],
-        witnesses: &[&Witness<F>],
-        linear_forms: &[&dyn LinearForm<F>],
-        evaluations: &[F],
+        vectors: Vec<Cow<'a, [M::Source]>>,
+        witnesses: Vec<Cow<'a, Witness<F, M>>>,
+        linear_forms: Vec<Box<dyn LinearForm<F>>>,
+        evaluations: Cow<'a, [F]>,
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
         H: DuplexSpongeInterface,
@@ -60,25 +72,27 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let num_vectors = vectors.len();
+
         // Input validation
         assert_eq!(
-            vectors.len(),
+            num_vectors,
             witnesses.len() * self.initial_committer.num_vectors
         );
-        assert_eq!(evaluations.len(), vectors.len() * linear_forms.len());
-        for vector in vectors {
+        assert_eq!(evaluations.len(), num_vectors * linear_forms.len());
+        for vector in &vectors {
             assert_eq!(vector.len(), self.initial_size());
         }
-        for linear_form in linear_forms {
+        for linear_form in &linear_forms {
             assert_eq!(linear_form.size(), self.initial_size());
         }
         #[cfg(debug_assertions)]
-        for (&linear_form, evaluations) in
-            zip_strict(linear_forms, evaluations.chunks_exact(vectors.len()))
+        for (linear_form, evaluations) in
+            zip_strict(&linear_forms, evaluations.chunks_exact(num_vectors))
         {
             use crate::algebra::linear_form::Covector;
-            let covector = Covector::from(linear_form);
-            for (&vector, evaluation) in zip_strict(vectors, evaluations) {
+            let covector = Covector::from(linear_form.as_ref());
+            for (vector, evaluation) in zip_strict(&vectors, evaluations) {
                 debug_assert_eq!(covector.evaluate(self.embedding(), vector), *evaluation);
             }
         }
@@ -94,12 +108,12 @@ impl<F: FftField> Config<F> {
 
             // Out of domain samples. Compute missing cross-terms and send to verifier.
             let mut vector_offset = 0;
-            for witness in witnesses {
+            for witness in &witnesses {
                 for (oods_eval, oods_row) in zip_strict(
                     witness.out_of_domain().evaluators(self.initial_size()),
                     witness.out_of_domain().rows(),
                 ) {
-                    for (j, &vector) in vectors.iter().enumerate() {
+                    for (j, vector) in vectors.iter().enumerate() {
                         if j >= vector_offset && j < oods_row.len() + vector_offset {
                             debug_assert_eq!(
                                 oods_row[j - vector_offset],
@@ -121,43 +135,80 @@ impl<F: FftField> Config<F> {
         };
 
         // Random linear combination of the vectors.
-        let mut vector_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, vectors.len());
-        let mut vector = vec![F::ZERO; self.initial_size()];
+        let mut vector_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, num_vectors);
         assert_eq!(vector_rlc_coeffs[0], F::ONE);
-        for (rlc_coeff, &input_vector) in zip_strict(&vector_rlc_coeffs, vectors) {
-            mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, input_vector);
+        // Recycle the first input as the accumulator (its coefficient is always ONE).
+        let mut vectors = vectors.into_iter();
+        let first = vectors.next().expect("non-empty");
+        let mut vector = match first {
+            Cow::Borrowed(slice) => lift(self.embedding(), slice),
+            Cow::Owned(vec) => self.embedding().map_vec(vec),
+        };
+        for (rlc_coeff, input_vector) in zip_strict(&vector_rlc_coeffs[1..], vectors) {
+            mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, &input_vector);
         }
-        let mut prev_witness = RoundWitness::Initial(witnesses);
+
+        let mut prev_witness: RoundWitness<'a, F, M> = RoundWitness::Initial(witnesses);
 
         // Random linear combination of the constraints.
         let constraint_rlc_coeffs: Vec<F> =
             geometric_challenge(prover_state, linear_forms.len() + oods_evals.len());
+        let has_constraints = !constraint_rlc_coeffs.is_empty();
         // TODO: Flip order.
-        let (oods_rlc_coeffs, intial_forms_rlc_coeffs) =
+        let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(oods_evals.len());
-        let mut covector = vec![F::ZERO; self.initial_size()];
-        for (rlc_coeff, linear_form) in zip_strict(intial_forms_rlc_coeffs, linear_forms) {
+        // Recycle a Covector buffer as the initial accumulator.
+        let (mut covector, recycled_index) = if has_constraints {
+            let found = initial_forms_rlc_coeffs
+                .iter()
+                .zip(linear_forms.iter())
+                .enumerate()
+                .find_map(|(i, (&coeff, form))| {
+                    (form.as_ref() as &dyn Any)
+                        .downcast_ref::<Covector<F>>()
+                        .map(|cov| (i, coeff, &cov.vector))
+                });
+            match found {
+                Some((idx, coeff, data)) => {
+                    let buf: Vec<F> = data.iter().map(|&x| x * coeff).collect();
+                    (buf, Some(idx))
+                }
+                None => (vec![F::ZERO; self.initial_size()], None),
+            }
+        } else {
+            (Vec::new(), None)
+        };
+        for (i, (rlc_coeff, linear_form)) in
+            zip_strict(initial_forms_rlc_coeffs, &linear_forms).enumerate()
+        {
+            if Some(i) == recycled_index {
+                continue;
+            }
             linear_form.accumulate(&mut covector, *rlc_coeff);
         }
 
         // Compute "The Sum"
-        let mut the_sum = zip_strict(
-            intial_forms_rlc_coeffs,
-            evaluations.chunks_exact(vectors.len()),
+        let mut the_sum: F = zip_strict(
+            initial_forms_rlc_coeffs,
+            evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
         .sum();
 
-        debug_assert_eq!(dot(&vector, &covector), the_sum);
+        drop(evaluations);
+
+        debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Add OODS constraints
         UnivariateEvaluation::accumulate_many(&oods_evals, &mut covector, oods_rlc_coeffs);
-        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(vectors.len()))
+        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
             .sum::<F>();
 
-        // These invariants are maintained throughout the proof.
-        debug_assert_eq!(dot(&vector, &covector), the_sum);
+        drop(oods_evals);
+        drop(oods_matrix);
+
+        debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Run initial sumcheck on batched vectors with combined statement
         let mut folding_randomness = if constraint_rlc_coeffs.is_empty() {
@@ -179,6 +230,7 @@ impl<F: FftField> Config<F> {
             self.initial_sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
         };
+
         let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
         randomness_vec.extend(folding_randomness.0.iter().copied());
         debug_assert_eq!(dot(&vector, &covector), the_sum);
@@ -186,32 +238,34 @@ impl<F: FftField> Config<F> {
         // Execute standard WHIR rounds on the batched vectors
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
             // Commit to the vector, this generates out-of-domain evaluations.
-            let witness = round_config.irs_committer.commit(prover_state, &[&vector]);
+            let new_witness = round_config.irs_committer.commit(prover_state, &[&vector]);
 
             // Proof of work before in-domain challenges
             round_config.pow.prove(prover_state);
 
-            // Open the previous round's commitment, producing in-domain evaluations.
-            let in_domain = match &prev_witness {
-                RoundWitness::Initial(witnesses) => self
-                    .initial_committer
-                    .open(prover_state, witnesses)
-                    .lift(self.embedding()),
-                RoundWitness::Round(witness) => {
+            // Open the previous round's witness.
+            let in_domain = match prev_witness {
+                RoundWitness::Initial(init_witnesses) => {
+                    let witness_refs: Vec<&_> = init_witnesses.iter().map(|c| &**c).collect();
+                    self.initial_committer
+                        .open(prover_state, &witness_refs)
+                        .lift(self.embedding())
+                }
+                RoundWitness::Round(old_witness) => {
                     let prev_round_config = &self.round_configs[round_index - 1];
                     prev_round_config
                         .irs_committer
-                        .open(prover_state, &[witness])
+                        .open(prover_state, &[&old_witness])
                 }
             };
 
             // Collect constraints for this round and RLC them in
-            let stir_challenges = witness
+            let stir_challenges = new_witness
                 .out_of_domain()
                 .evaluators(round_config.initial_size())
                 .chain(in_domain.evaluators(round_config.initial_size()))
                 .collect::<Vec<_>>();
-            let stir_evaluations = witness
+            let stir_evaluations = new_witness
                 .out_of_domain()
                 .values(&[F::ONE])
                 .chain(in_domain.values(&tensor_product(
@@ -233,10 +287,11 @@ impl<F: FftField> Config<F> {
                 round_config
                     .sumcheck
                     .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
+
             randomness_vec.extend(folding_randomness.0.iter().copied());
             debug_assert_eq!(dot(&vector, &covector), the_sum);
 
-            prev_witness = RoundWitness::Round(witness);
+            prev_witness = RoundWitness::Round(new_witness);
             vector_rlc_coeffs = vec![F::ONE];
         }
 
@@ -249,15 +304,17 @@ impl<F: FftField> Config<F> {
         // PoW
         self.final_pow.prove(prover_state);
 
-        // Open previous witness, but ignore the in-domain samples.
-        // The verifier will directly test these on the final vector without our help.
-        match &prev_witness {
-            RoundWitness::Initial(witnesses) => {
-                let _in_domain = self.initial_committer.open(prover_state, witnesses);
+        // Open and consume the final previous witness.
+        match prev_witness {
+            RoundWitness::Initial(init_witnesses) => {
+                let witness_refs: Vec<&_> = init_witnesses.iter().map(|c| &**c).collect();
+                let _in_domain = self.initial_committer.open(prover_state, &witness_refs);
             }
-            RoundWitness::Round(witness) => {
+            RoundWitness::Round(old_witness) => {
                 let prev_config = self.round_configs.last().unwrap();
-                let _in_domain = prev_config.irs_committer.open(prover_state, &[witness]);
+                let _in_domain = prev_config
+                    .irs_committer
+                    .open(prover_state, &[&old_witness]);
             }
         }
 
@@ -270,7 +327,7 @@ impl<F: FftField> Config<F> {
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec);
         let deferred = linear_forms
-            .iter()
+            .into_iter()
             .filter(|w| w.deferred())
             .map(|w| w.mle_evaluate(&constraint_eval.0))
             .collect();

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::OpenOptions,
     io::Write,
     time::{Duration, Instant},
@@ -168,19 +169,12 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
-        let evaluations: Vec<F> = Vec::new();
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
-
         params.prove(
             &mut prover_state,
-            &[&vector],
-            &[&witness],
-            &weight_refs,
-            &evaluations,
+            vec![Cow::Borrowed(vector.as_slice())],
+            vec![Cow::Owned(witness)],
+            vec![],
+            Cow::Owned(vec![]),
         );
 
         let whir_ldt_prover_time = whir_ldt_prover_time.elapsed();
@@ -190,10 +184,8 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
+        let weight_refs: Vec<&dyn LinearForm<F>> = vec![];
+        let evaluations: Vec<F> = Vec::new();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
@@ -259,22 +251,28 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
+        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in &points {
+            prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
+        }
+
         params.prove(
             &mut prover_state,
-            &[&vector],
-            &[&witness],
-            &weight_refs,
-            &evaluations,
+            vec![Cow::Borrowed(vector.as_slice())],
+            vec![Cow::Owned(witness)],
+            prove_linear_forms,
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         let whir_prover_time = whir_prover_time.elapsed();
         let proof = prover_state.proof();
         let whir_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_prover_hashes = HASH_COUNTER.get();
+
+        let weight_refs = weights
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .collect::<Vec<_>>();
 
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();

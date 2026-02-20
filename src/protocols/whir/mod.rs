@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{
+    algebra::embedding::{Basefield, Embedding},
     hash::Hash,
     protocols::{irs_commit, proof_of_work, sumcheck},
     transcript::{
@@ -21,12 +22,14 @@ use crate::{
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField")]
-pub struct Config<F>
+#[serde(bound = "F: FftField, M: Embedding<Target = F>, M::Source: FftField")]
+pub struct Config<F, M = Basefield<F>>
 where
     F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
 {
-    pub initial_committer: irs_commit::BasefieldConfig<F>,
+    pub initial_committer: irs_commit::Config<M::Source, F, M>,
     pub initial_sumcheck: sumcheck::Config<F>,
     pub initial_skip_pow: proof_of_work::Config,
     pub round_configs: Vec<RoundConfig<F>>,
@@ -45,17 +48,22 @@ where
     pub pow: proof_of_work::Config,
 }
 
-pub type Witness<F: FftField> = irs_commit::Witness<F::BasePrimeField, F>;
+pub type Witness<F: FftField, M: Embedding<Target = F>> = irs_commit::Witness<M::Source, F>;
 pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
-impl<F: FftField> Config<F> {
+impl<F, M> Config<F, M>
+where
+    F: FftField,
+    M: Embedding<Target = F>,
+    M::Source: FftField,
+{
     /// Commit to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = vectors.first().unwrap().len())))]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[&[F::BasePrimeField]],
-    ) -> Witness<F>
+        vectors: &[&[M::Source]],
+    ) -> Witness<F, M>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -94,7 +102,7 @@ impl<F: FftField> Config<F> {
 
 #[cfg(test)]
 mod tests {
-    use std::u64;
+    use std::{borrow::Cow, u64};
 
     use ark_ff::{Field, UniformRand};
 
@@ -117,6 +125,27 @@ mod tests {
 
     /// Extension field type used in the tests.
     type EF = Field64_3;
+
+    /// Build owned linear forms for `prove()` (which consumes them).
+    fn build_prove_forms<F: Field>(
+        points: &[MultilinearPoint<F>],
+        num_variables: usize,
+        include_covector: bool,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        let mut forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+        for point in points {
+            forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        if include_covector {
+            forms.push(Box::new(Covector {
+                deferred: false,
+                vector: (0..1 << num_variables).map(F::from).collect(),
+            }));
+        }
+        forms
+    }
 
     /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
     ///
@@ -168,11 +197,9 @@ mod tests {
             .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
             .collect();
 
-        // Initialize a statement with no constraints yet
         let mut linear_forms: Vec<Box<dyn LinearForm<EF>>> = Vec::new();
         let mut evaluations = Vec::new();
 
-        // For each random point, evaluate the mle of the vector and create a constraint
         for point in &points {
             let linear_form = MultilinearExtension {
                 point: point.0.clone(),
@@ -181,16 +208,11 @@ mod tests {
             linear_forms.push(Box::new(linear_form));
         }
 
-        // Construct a covector for linear sumcheck constraint
         let covector = Covector {
             deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         };
-
-        // Compute the weighted sum of the vector
         let sum = covector.evaluate(params.embedding(), &vector);
-
-        // Add linear constraint to the statement
         linear_forms.push(Box::new(covector));
         evaluations.push(sum);
 
@@ -202,30 +224,30 @@ mod tests {
         // Initialize the Merlin transcript from the domain separator
         let mut prover_state = ProverState::new_std(&ds);
 
-        // Create a commitment to the polynomial and generate auxiliary witness data
+        // Commit to the polynomial and generate auxiliary witness data
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        // Generate a STARK proof for the given statement and witness
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
+
+        // Generate a proof for the given statement and witness
+        params.prove(
+            &mut prover_state,
+            vec![Cow::from(vector)],
+            vec![Cow::Owned(witness)],
+            prove_linear_forms,
+            Cow::Borrowed(evaluations.as_slice()),
+        );
+
+        // Reconstruct verifier's view of the transcript
+        let proof = prover_state.proof();
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+
+        // Verify the proof
         let linear_form_refs = linear_forms
             .iter()
             .map(|l| l.as_ref() as &dyn LinearForm<EF>)
             .collect::<Vec<_>>();
-        params.prove(
-            &mut prover_state,
-            &[&vector],
-            &[&witness],
-            &linear_form_refs,
-            &evaluations,
-        );
-
-        // Reconstruct verifier's view of the transcript using the DomainSeparator and prover's data
-        let proof = prover_state.proof();
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-
-        // Parse the commitment
-        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-
-        // Verify that the generated proof satisfies the statement
         params
             .verify(
                 &mut verifier_state,
@@ -349,21 +371,21 @@ mod tests {
             .collect();
         let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
 
-        // Create weights to constraint the polynomials with.
-        // Add random point constraints
+        let points: Vec<_> = (0..num_points_per_poly)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
-        for _ in 0..num_points_per_poly {
+        for point in &points {
             linear_forms.push(Box::new(MultilinearExtension {
-                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+                point: point.0.clone(),
             }));
         }
-        // Add linear constraint
         linear_forms.push(Box::new(Covector {
             deferred: false,
             vector: ((0..1 << num_variables).map(EF::from).collect()),
         }));
 
-        // Evaluate all polys on all weights to get constraints
         let evaluations = linear_forms
             .iter()
             .flat_map(|linear_form| {
@@ -374,7 +396,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Set up domain separator for batch proving
-        // Each polynomial needs its own commitment phase
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
@@ -386,26 +407,25 @@ mod tests {
             let witness = params.commit(&mut prover_state, &[vec]);
             witnesses.push(witness);
         }
-        let witness_refs = witnesses.iter().collect::<Vec<_>>();
+
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all polynomials together
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            &vec_refs,
-            &witness_refs,
-            &linear_form_refs,
-            &evaluations,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            witnesses.into_iter().map(Cow::Owned).collect(),
+            prove_linear_forms,
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         // Reconstruct verifier's transcript view
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
-        // Parse all N commitments from the transcript
         let mut commitments = Vec::new();
         for _ in 0..num_vectors {
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
@@ -414,6 +434,10 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
+        let linear_form_refs = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect::<Vec<_>>();
         params
             .verify(
                 &mut verifier_state,
@@ -516,22 +540,23 @@ mod tests {
         let vec2 = vec![F::from(2u64); num_coeffs];
         let vec_wrong = vec![F::from(999u64); num_coeffs];
 
-        // Create test weights
+        let constraint_points: Vec<_> = (0..2)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+
         let linear_forms: [Box<dyn Evaluate<Basefield<EF>>>; 2] = [
             Box::new(MultilinearExtension {
-                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+                point: constraint_points[0].0.clone(),
             }),
             Box::new(MultilinearExtension {
-                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+                point: constraint_points[1].0.clone(),
             }),
         ];
-        // Create valid evaluations for (poly1, polywrong)
         let evaluations = linear_forms
             .iter()
             .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate(&embedding, v)))
             .collect::<Vec<_>>();
 
-        // Commit to the correct polynomials
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&Empty);
@@ -540,18 +565,15 @@ mod tests {
         let witness1 = params.commit(&mut prover_state, &[&vec1]);
         let witness2 = params.commit(&mut prover_state, &[&vec2]);
 
+        let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
+
         // Generate proof with mismatched polynomials
-        // The prover will compute cross-terms using poly_wrong, not poly2
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
-            &[&vec1, &vec_wrong],
-            &[&witness1, &witness2],
-            &linear_form_refs,
-            &evaluations,
+            vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
+            vec![Cow::Owned(witness1), Cow::Owned(witness2)],
+            prove_linear_forms,
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         // Verification should fail because the cross-terms don't match the commitment
@@ -564,6 +586,10 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
+        let linear_form_refs = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,
             &[&commitments[0], &commitments[1]],
@@ -621,19 +647,21 @@ mod tests {
             .collect::<Vec<_>>();
         let vec_refs = all_vectors.iter().map(|p| p.as_slice()).collect::<Vec<_>>();
 
+        let points: Vec<_> = (0..num_points_per_poly)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = Vec::new();
-        for _ in 0..num_points_per_poly {
+        for point in &points {
             linear_forms.push(Box::new(MultilinearExtension {
-                point: MultilinearPoint::rand(&mut rng, num_variables).0,
+                point: point.0.clone(),
             }));
         }
-        // Add a linear constraint
         linear_forms.push(Box::new(Covector {
             deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         }));
 
-        // Create evaluations for each constraint and polynomial
         let evaluations = linear_forms
             .iter()
             .flat_map(|linear_form| {
@@ -655,19 +683,19 @@ mod tests {
             let witness = params.commit(&mut prover_state, witness_polys);
             witnesses.push(witness);
         }
-        let witness_refs = witnesses.iter().collect::<Vec<_>>();
+
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all witnesses together
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
         let (_point, _evals) = params.prove(
             &mut prover_state,
-            &vec_refs,
-            &witness_refs,
-            &linear_form_refs,
-            &evaluations,
+            all_vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            witnesses.into_iter().map(Cow::Owned).collect(),
+            prove_linear_forms,
+            Cow::Borrowed(evaluations.as_slice()),
         );
 
         // Verify
@@ -681,6 +709,10 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
+        let linear_form_refs = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect::<Vec<_>>();
         let verify_result = params.verify(
             &mut verifier_state,
             &commitment_refs,
@@ -790,7 +822,7 @@ mod tests {
 
         // Create a weights matrix and evaluations for each polynomial
         let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
-        for point in points {
+        for point in &points {
             linear_forms.push(Box::new(MultilinearExtension {
                 point: point.0.clone(),
             }));
@@ -808,6 +840,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
+
         // Generate a proof for the given statement and witness
         let weights_dyn_refs = linear_forms
             .iter()
@@ -815,10 +849,13 @@ mod tests {
             .collect::<Vec<_>>();
         params.prove(
             &mut prover_state,
-            &vec_refs,
-            &[&batched_witness],
-            &weights_dyn_refs,
-            &values,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            vec![Cow::Owned(batched_witness)],
+            prove_linear_forms,
+            Cow::Borrowed(values.as_slice()),
         );
 
         // Reconstruct verifier's view of the transcript using the IOPattern and prover's data

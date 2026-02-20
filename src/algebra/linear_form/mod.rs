@@ -4,6 +4,8 @@ mod covector;
 mod multilinear_extension;
 mod univariate_evaluation;
 
+use std::any::Any;
+
 use ark_ff::Field;
 use static_assertions::assert_obj_safe;
 
@@ -20,7 +22,10 @@ use crate::algebra::{
 ///
 /// Note that the trait does not contain a method to actually evaluate the linear form, for that
 /// see the [`Evaluate`] trait.
-pub trait LinearForm<F: Field> {
+///
+/// The `Any` supertrait enables downcasting concrete types (e.g. [`Covector`]) from
+/// `dyn LinearForm<F>`, which the prover uses to recycle covector buffers.
+pub trait LinearForm<F: Field>: Any {
     /// The dimension of the domain of this linear form.
     fn size(&self) -> usize;
 
