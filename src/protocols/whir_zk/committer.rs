@@ -1,5 +1,7 @@
 use ark_ff::FftField;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::{utils::BlindingPolynomials, Config};
 use crate::{
@@ -10,14 +12,18 @@ use crate::{
     },
 };
 
-/// zkWHIR commitment object.
+/// zkWHIR commitment: one Merkle root per masked polynomial plus one for blinding.
+#[derive(Debug)]
 pub struct Commitment<F: FftField> {
     pub f_hat: Vec<whir::Commitment<F>>,
     pub blinding: whir::Commitment<F>,
 }
 
-/// zkWHIR witness object.
-#[derive(Clone)]
+/// zkWHIR witness produced by [`Config::commit`].
+///
+/// Contains the masked polynomial witnesses, their coefficient vectors,
+/// the blinding polynomial family, and the single blinding commitment witness.
+#[derive(Clone, Debug)]
 pub struct Witness<F: FftField> {
     pub f_hat_witnesses: Vec<irs_commit::Witness<F::BasePrimeField, F>>,
     pub f_hat_vectors: Vec<Vec<F::BasePrimeField>>,
@@ -27,6 +33,13 @@ pub struct Witness<F: FftField> {
 }
 
 impl<F: FftField> Config<F> {
+    /// Commit to one or more polynomials with zero-knowledge blinding.
+    ///
+    /// For each polynomial, samples fresh blinding coefficients (using system
+    /// entropy, independent of the transcript RNG for ZK), constructs the
+    /// masked polynomial `f_hat = f + m_poly`, and commits both the masked
+    /// polynomials and the blinding vectors to the transcript.
+    #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -46,7 +59,8 @@ impl<F: FftField> Config<F> {
         let mut f_hat_witnesses = Vec::with_capacity(polynomials.len());
         let mut f_hat_vectors = Vec::with_capacity(polynomials.len());
         let mut blinding_polynomials = Vec::with_capacity(polynomials.len());
-        // Sample fresh blinding coefficients without adding transcript interactions.
+        // Use system entropy (not transcript RNG) so blinding is independent of
+        // the public transcript — required for zero-knowledge.
         let mut blinding_rng = StdRng::from_entropy();
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables = self.num_witness_variables();
@@ -68,6 +82,7 @@ impl<F: FftField> Config<F> {
                 0,
                 "witness size must be multiple of blinding mask size"
             );
+            // Safe to .cycle() because witness_size % mask.len() == 0 (asserted above).
             let f_hat_vec = poly
                 .iter()
                 .zip(mask.iter().cycle())
@@ -90,7 +105,11 @@ impl<F: FftField> Config<F> {
         let mut blinding_vectors = Vec::with_capacity(blinding_num_vectors);
         for poly in &blinding_polynomials {
             let layout = poly.layout_vectors();
-            debug_assert_eq!(layout.len(), num_witness_variables + 1);
+            debug_assert_eq!(
+                layout.len(),
+                num_witness_variables + 1,
+                "layout_vectors must produce mu+1 vectors"
+            );
             blinding_vectors.extend(layout);
         }
         let blinding_vector_refs = blinding_vectors
@@ -110,6 +129,8 @@ impl<F: FftField> Config<F> {
         }
     }
 
+    /// Receive `num_polynomials` masked-polynomial commitments and one blinding
+    /// commitment from the verifier transcript.
     pub fn receive_commitments<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,

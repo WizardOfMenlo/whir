@@ -83,6 +83,11 @@ impl<F: FftField> Config<F> {
         )
     }
 
+    /// Build a zkWHIR config with an explicit blinding size policy.
+    ///
+    /// * `blinding_folding_factor` — folding factor for the blinding-side WHIR.
+    /// * `num_polynomials` — number of polynomials that will be committed.
+    /// * `size_policy` — controls the blinding polynomial size `ell`.
     pub fn new_with_blinding_size_policy(
         main_mv_params: MultivariateParameters<F>,
         main_whir_params: &ProtocolParameters,
@@ -149,26 +154,36 @@ impl<F: FftField> Config<F> {
             .saturating_add(sumcheck_coeff_leakage);
 
         let num_blinding_variables = (usize::BITS - query_upper_bound.leading_zeros()) as usize;
-        assert!(num_blinding_variables < num_witness_variables);
-        debug_assert!((1usize << num_blinding_variables) > query_upper_bound);
+        assert!(
+            num_blinding_variables < num_witness_variables,
+            "blinding variables ({num_blinding_variables}) must be fewer than \
+             witness variables ({num_witness_variables})"
+        );
+        debug_assert!(
+            (1usize << num_blinding_variables) > query_upper_bound,
+            "2^ell ({}) must exceed query upper bound ({query_upper_bound})",
+            1usize << num_blinding_variables
+        );
         num_blinding_variables
     }
 
+    /// Number of variables in the witness polynomial (`μ`).
     pub fn num_witness_variables(&self) -> usize {
         self.blinded_commitment.initial_num_variables()
     }
 
+    /// Number of blinding variables (`ℓ`).
     pub fn num_blinding_variables(&self) -> usize {
         self.blinding_commitment.initial_num_variables() - 1
     }
 
     /// Interleaving depth of the initial IRS commitment (= 2^folding_factor).
-    pub(super) const fn interleaving_depth(&self) -> usize {
+    pub(crate) const fn interleaving_depth(&self) -> usize {
         self.blinded_commitment.initial_committer.interleaving_depth
     }
 
     /// Generator ω of the full NTT domain (size = num_rows × interleaving_depth).
-    pub(super) fn omega_full(&self) -> F::BasePrimeField {
+    pub(crate) fn omega_full(&self) -> F::BasePrimeField {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         let full_domain_size = num_rows * self.interleaving_depth();
         crate::algebra::ntt::generator(full_domain_size)
@@ -181,19 +196,19 @@ impl<F: FftField> Config<F> {
     }
 
     /// ζ = ω^num_rows — the interleaving_depth-th root of unity.
-    pub(super) fn zeta(&self) -> F::BasePrimeField {
+    pub(crate) fn zeta(&self) -> F::BasePrimeField {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         self.omega_full().pow([num_rows as u64])
     }
 
     /// Precomputed sub-domain powers [1, ω_sub, ω_sub², ..., ω_sub^(num_rows-1)].
-    pub(super) fn omega_powers(&self) -> Vec<F::BasePrimeField> {
+    pub(crate) fn omega_powers(&self) -> Vec<F::BasePrimeField> {
         let num_rows = self.blinded_commitment.initial_committer.num_rows();
         crate::algebra::geometric_sequence(self.omega_sub(), num_rows)
     }
 
     /// Find the index of `alpha_base` in the sub-domain powers.
-    pub(super) fn query_index(
+    pub(crate) fn query_index(
         alpha_base: F::BasePrimeField,
         omega_powers: &[F::BasePrimeField],
     ) -> usize {
@@ -204,7 +219,7 @@ impl<F: FftField> Config<F> {
     }
 
     /// Compute all gamma points for a set of query points (flat list).
-    pub(super) fn all_gammas(&self, query_points: &[F::BasePrimeField]) -> Vec<F> {
+    pub(crate) fn all_gammas(&self, query_points: &[F::BasePrimeField]) -> Vec<F> {
         let omega_powers = self.omega_powers();
         let interleaving_depth = self.interleaving_depth();
         let omega_full = self.omega_full();
@@ -242,7 +257,7 @@ mod tests {
     type F = Field64;
     type EF = Field64_2;
 
-    fn test_blinding_size_policy() -> BlindingSizePolicy {
+    fn make_test_blinding_size_policy() -> BlindingSizePolicy {
         BlindingSizePolicy {
             q_delta_1: 4,
             q_delta_2: 4,
@@ -272,7 +287,7 @@ mod tests {
             &whir_params,
             FoldingFactor::Constant(2),
             num_polynomials,
-            test_blinding_size_policy(),
+            make_test_blinding_size_policy(),
         )
     }
 
@@ -389,6 +404,8 @@ mod tests {
     }
 
     #[test]
+    /// Verification must reject when the public evaluations are tampered with.
+    /// Both `Err` and a panic (from debug transcript checks) count as rejection.
     fn test_whir_zk_stage1_rejects_wrong_evaluations() {
         let mut rng = ark_std::test_rng();
         let params = make_test_config(2);

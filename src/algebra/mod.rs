@@ -134,7 +134,13 @@ pub fn mixed_dot_seq<F: Field, G: Field>(
     a: &[G],
     b: &[F],
 ) -> G {
-    assert_eq!(a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "mixed_dot_seq: length mismatch ({} vs {})",
+        a.len(),
+        b.len()
+    );
     a.iter()
         .zip(b)
         .map(|(a, b)| embedding.mixed_mul(*a, *b))

@@ -1,4 +1,3 @@
-use core::panic;
 use std::{
     f64::consts::LOG2_10,
     fmt::{Debug, Display},
@@ -487,11 +486,6 @@ where
 {
     pub fn embedding(&self) -> &M {
         self.initial_committer.embedding()
-    }
-
-    #[deprecated]
-    pub const fn allows_statement(&self) -> bool {
-        true
     }
 
     pub const fn initial_size(&self) -> usize {

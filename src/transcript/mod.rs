@@ -31,7 +31,11 @@ const MAX_FIELD_BYTES: usize = 768;
 fn encode_field_into<F: Field>(elem: &F, buf: &mut [u8]) -> usize {
     let base_size = F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8) as usize;
     let total_size = base_size * F::extension_degree() as usize;
-    debug_assert!(buf.len() >= total_size);
+    assert!(
+        buf.len() >= total_size,
+        "encode_field_into: buffer too small ({} < {total_size})",
+        buf.len()
+    );
     let mut pos = 0;
     for base_elem in elem.to_base_prime_field_elements() {
         let bigint = base_elem.into_bigint();
@@ -406,7 +410,7 @@ where
 }
 
 impl<'a> VerifierState<'a, StdHash> {
-    /// Construct a new prover state with the standard duplex hash function.
+    /// Construct a new verifier state with the standard duplex hash function.
     pub fn new_std<'b, I>(ds: &DomainSeparator<'b, I>, proof: &'a Proof) -> Self
     where
         I: Encoding<[u8]>,
