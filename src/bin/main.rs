@@ -13,7 +13,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash, WhirType},
     hash::HASH_COUNTER,
-    parameters::{default_max_pow, FoldingFactor, ProtocolParameters},
+    parameters::{default_max_pow, ProtocolParameters},
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -124,10 +124,8 @@ where
         initial_statement: false,
         security_level,
         pow_bits,
-        folding_factor: FoldingFactor::ConstantFromSecondRound(
-            first_round_folding_factor,
-            folding_factor,
-        ),
+        initial_folding_factor: first_round_folding_factor,
+        folding_factor,
         unique_decoding,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
@@ -215,10 +213,8 @@ where
         initial_statement: true,
         security_level,
         pow_bits,
-        folding_factor: FoldingFactor::ConstantFromSecondRound(
-            first_round_folding_factor,
-            folding_factor,
-        ),
+        initial_folding_factor: first_round_folding_factor,
+        folding_factor,
         unique_decoding,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,

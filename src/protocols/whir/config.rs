@@ -27,11 +27,8 @@ where
         );
         let num_variables = size.trailing_zeros() as usize;
         let initial_num_variables = num_variables;
-
-        whir_parameters
-            .folding_factor
-            .check_validity(num_variables)
-            .unwrap();
+        let initial_folding_factor = whir_parameters.initial_folding_factor;
+        let folding_factor = whir_parameters.folding_factor;
 
         // Proof of work constructor with the requested hash function.
         let pow = |difficulty| proof_of_work::Config {
@@ -48,9 +45,8 @@ where
 
         let mut domain_size = 1 << (initial_num_variables + log_inv_rate);
 
-        let (num_rounds, final_sumcheck_rounds) = whir_parameters
-            .folding_factor
-            .compute_number_of_rounds(initial_num_variables);
+        let (num_rounds, final_sumcheck_rounds) =
+            whir_parameters.compute_number_of_rounds(initial_num_variables);
 
         let log_eta_start = if whir_parameters.unique_decoding {
             0.0
@@ -58,47 +54,49 @@ where
             Self::log_eta(log_inv_rate as f64)
         };
 
-        let commitment_ood_samples =
-            if whir_parameters.initial_statement && !whir_parameters.unique_decoding {
-                Self::ood_samples(
-                    whir_parameters.security_level,
-                    num_variables,
-                    log_inv_rate as f64,
-                    log_eta_start,
-                    field_size_bits,
-                )
-            } else {
-                0
-            };
-
-        let starting_folding_pow_bits = if whir_parameters.initial_statement {
-            Self::folding_pow_bits(
+        let commitment_ood_samples = if !whir_parameters.unique_decoding {
+            Self::ood_samples(
                 whir_parameters.security_level,
+                num_variables,
+                log_inv_rate as f64,
+                log_eta_start,
+                field_size_bits,
+            )
+        } else {
+            0
+        };
+
+        // Initial sumcheck round pow bits.
+        let starting_folding_pow_bits = Self::folding_pow_bits(
+            whir_parameters.security_level,
+            whir_parameters.unique_decoding,
+            field_size_bits,
+            num_variables,
+            log_inv_rate as f64,
+            log_eta_start,
+        );
+        // If we skip the initial sumcheck, we do this pow instead:
+        let initial_skip_pow_bits = {
+            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
                 whir_parameters.unique_decoding,
                 field_size_bits,
                 num_variables,
                 log_inv_rate as f64,
                 log_eta_start,
-            )
-        } else {
-            {
-                let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                    whir_parameters.unique_decoding,
-                    field_size_bits,
-                    num_variables,
-                    log_inv_rate as f64,
-                    log_eta_start,
-                ) + (whir_parameters.folding_factor.at_round(0) as f64)
-                    .log2();
-                (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
-            }
+            ) + (initial_folding_factor as f64).log2();
+            (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
         };
 
         let mut round_parameters = Vec::with_capacity(num_rounds);
-        num_variables -= whir_parameters.folding_factor.at_round(0);
+        num_variables -= initial_folding_factor;
         for round in 0..num_rounds {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
-            let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
+            let round_folding_factor = if round == 0 {
+                initial_folding_factor
+            } else {
+                folding_factor
+            };
+            let next_rate = log_inv_rate + (round_folding_factor - 1);
 
             let log_next_eta = if whir_parameters.unique_decoding {
                 0.0
@@ -151,7 +149,7 @@ where
                 log_next_eta,
             );
 
-            let next_folding_factor = whir_parameters.folding_factor.at_round(round + 1);
+            let next_folding_factor = folding_factor;
             let matrix_committer = matrix_commit::Config::<F>::with_hash(
                 whir_parameters.hash_id,
                 (domain_size / 2) >> next_folding_factor,
@@ -212,12 +210,12 @@ where
                 num_vectors: whir_parameters.batch_size,
                 vector_size: 1 << initial_num_variables,
                 expansion: 1 << whir_parameters.starting_log_inv_rate,
-                interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
+                interleaving_depth: 1 << initial_folding_factor,
                 matrix_commit: matrix_commit::Config::with_hash(
                     whir_parameters.hash_id,
                     1 << (initial_num_variables + whir_parameters.starting_log_inv_rate
-                        - whir_parameters.folding_factor.at_round(0)),
-                    whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
+                        - initial_folding_factor),
+                    whir_parameters.batch_size << initial_folding_factor,
                 ),
                 in_domain_samples: Self::queries(
                     whir_parameters.unique_decoding,
@@ -231,8 +229,9 @@ where
                 field: Type::<F>::new(),
                 initial_size: 1 << initial_num_variables,
                 round_pow: pow(starting_folding_pow_bits),
-                num_rounds: whir_parameters.folding_factor.at_round(0),
+                num_rounds: initial_folding_factor,
             },
+            initial_skip_pow: pow(initial_skip_pow_bits),
             round_configs: round_parameters,
             final_sumcheck: sumcheck::Config {
                 field: Type::<F>::new(),
@@ -296,6 +295,9 @@ where
 
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
         if self.initial_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        if self.initial_skip_pow.difficulty() > max_bits {
             return false;
         }
         for round_config in &self.round_configs {
@@ -894,17 +896,16 @@ mod tests {
         algebra::fields::{Field64, Field64_3},
         bits::Bits,
         hash,
-        parameters::FoldingFactor,
         utils::test_serde,
     };
 
     /// Generates default WHIR parameters
     fn default_whir_params() -> ProtocolParameters {
         ProtocolParameters {
-            initial_statement: true,
             security_level: 80, // We can't hope for much with a 128bit field.
             pow_bits: 20,
-            folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
+            initial_folding_factor: 4,
+            folding_factor: 4,
             unique_decoding: false,
             starting_log_inv_rate: 1,
             batch_size: 1,

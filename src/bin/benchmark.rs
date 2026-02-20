@@ -18,7 +18,7 @@ use whir::{
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
-    parameters::{default_max_pow, FoldingFactor, ProtocolParameters},
+    parameters::{default_max_pow, ProtocolParameters},
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -66,6 +66,7 @@ struct BenchmarkOutput {
     starting_rate: usize,
     num_variables: usize,
     repetitions: usize,
+    initial_folding_factor: usize,
     folding_factor: usize,
     unique_decoding: bool,
     field: AvailableFields,
@@ -128,10 +129,8 @@ where
         initial_statement: true,
         security_level,
         pow_bits,
-        folding_factor: FoldingFactor::ConstantFromSecondRound(
-            first_round_folding_factor,
-            folding_factor,
-        ),
+        initial_folding_factor: first_round_folding_factor,
+        folding_factor,
         unique_decoding,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
@@ -315,6 +314,7 @@ where
         starting_rate,
         num_variables,
         repetitions: reps,
+        initial_folding_factor: first_round_folding_factor,
         folding_factor,
         unique_decoding,
         field: args.field,

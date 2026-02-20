@@ -119,7 +119,7 @@ impl<F: FftField> Config<F> {
             assert_eq!(the_sum, F::ZERO);
             let folding_randomness =
                 verifier_state.verifier_message_vec(self.initial_sumcheck.num_rounds);
-            self.initial_sumcheck.round_pow.verify(verifier_state)?;
+            self.initial_skip_pow.verify(verifier_state)?;
             MultilinearPoint(folding_randomness)
         } else {
             self.initial_sumcheck.verify(verifier_state, &mut the_sum)?

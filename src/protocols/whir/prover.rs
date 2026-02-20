@@ -167,7 +167,7 @@ impl<F: FftField> Config<F> {
             let folding_randomness = (0..self.initial_sumcheck.num_rounds)
                 .map(|_| prover_state.verifier_message())
                 .collect();
-            self.initial_sumcheck.round_pow.prove(prover_state);
+            self.initial_skip_pow.prove(prover_state);
             // Fold vector
             for &f in &folding_randomness {
                 fold(&mut vector, f);

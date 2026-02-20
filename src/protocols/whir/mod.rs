@@ -28,6 +28,7 @@ where
 {
     pub initial_committer: irs_commit::BasefieldConfig<F>,
     pub initial_sumcheck: sumcheck::Config<F>,
+    pub initial_skip_pow: proof_of_work::Config,
     pub round_configs: Vec<RoundConfig<F>>,
     pub final_sumcheck: sumcheck::Config<F>,
     pub final_pow: proof_of_work::Config,
@@ -106,7 +107,7 @@ mod tests {
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, ProtocolParameters},
+        parameters::ProtocolParameters,
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
     };
@@ -127,7 +128,8 @@ mod tests {
     /// - verifies the proof using the WHIR verifier.
     fn make_whir_things(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points: usize,
         unique_decoding: bool,
         pow_bits: usize,
@@ -140,9 +142,9 @@ mod tests {
 
         // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
             unique_decoding,
             starting_log_inv_rate: 1,
@@ -253,7 +255,8 @@ mod tests {
 
                             make_whir_things(
                                 num_variable,
-                                FoldingFactor::Constant(folding_factor),
+                                folding_factor,
+                                folding_factor,
                                 num_points,
                                 unique_decoding,
                                 pow_bits,
@@ -267,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_fail() {
-        make_whir_things(3, FoldingFactor::Constant(2), 0, false, 0);
+        make_whir_things(3, 2, 2, 0, false, 0);
     }
 
     #[test]
@@ -294,10 +297,8 @@ mod tests {
 
                         make_whir_things(
                             num_variable,
-                            FoldingFactor::ConstantFromSecondRound(
-                                initial_folding_factor,
-                                folding_factor,
-                            ),
+                            initial_folding_factor,
+                            folding_factor,
                             num_points,
                             false,
                             5,
@@ -314,7 +315,8 @@ mod tests {
     /// them together. This verifies the full lifecycle: commitment, batch proving, and verification.
     fn make_whir_batch_things(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points_per_poly: usize,
         num_vectors: usize,
         unique_decoding: bool,
@@ -324,9 +326,9 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
             unique_decoding,
             starting_log_inv_rate: 1,
@@ -446,14 +448,8 @@ mod tests {
                             );
                             make_whir_batch_things(
                                 num_variables,
-                                if initial_folding_factor == folding_factor {
-                                    FoldingFactor::Constant(folding_factor)
-                                } else {
-                                    FoldingFactor::ConstantFromSecondRound(
-                                        initial_folding_factor,
-                                        folding_factor,
-                                    )
-                                },
+                                initial_folding_factor,
+                                folding_factor,
                                 num_points_per_poly,
                                 num_polys,
                                 false,
@@ -471,11 +467,11 @@ mod tests {
         // Edge case: batch proving with just one polynomial should also work
         make_whir_batch_things(
             6, // num_variables
-            FoldingFactor::Constant(2),
+            2, // initial_folding_factor
+            2, // folding_factor
             2, // num_points_per_poly
             1, // num_polynomials (single!)
-            false,
-            0,
+            false, 0,
         );
     }
 
@@ -493,15 +489,16 @@ mod tests {
     fn test_whir_batch_rejects_invalid_constraint() {
         // Setup parameters
         let num_variables = 4;
-        let folding_factor = FoldingFactor::Constant(2);
+        let initial_folding_factor = 2;
+        let folding_factor = 2;
         let num_polynomials = 2;
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits: 0,
+            initial_folding_factor,
             folding_factor,
             unique_decoding: false,
             starting_log_inv_rate: 1,
@@ -589,7 +586,8 @@ mod tests {
     /// leaf answers was incorrect when batch_size > 1.
     fn make_whir_batch_with_batch_size(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points_per_poly: usize,
         num_witnesses: usize,
         batch_size: usize,
@@ -600,9 +598,9 @@ mod tests {
         let mut rng = ark_std::test_rng();
 
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
             unique_decoding,
             starting_log_inv_rate: 1,
@@ -709,7 +707,8 @@ mod tests {
                 for folding_factor in folding_factors {
                     make_whir_batch_with_batch_size(
                         folding_factor * 2, // num_variables
-                        FoldingFactor::Constant(folding_factor),
+                        folding_factor,
+                        folding_factor,
                         1, // num_points_per_poly
                         num_witness,
                         batch_size,
@@ -732,7 +731,8 @@ mod tests {
     fn make_batched_whir_things(
         batch_size: usize,
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points: usize,
         unique_decoding: bool,
         pow_bits: usize,
@@ -741,7 +741,8 @@ mod tests {
         eprintln!("Test parameters: ");
         eprintln!("  num_vectors     : {batch_size}");
         eprintln!("  num_variables   : {num_variables}");
-        eprintln!("  folding_factor  : {:?}", &folding_factor);
+        eprintln!("  initial_folding : {initial_folding_factor}");
+        eprintln!("  folding_factor  : {folding_factor}");
         eprintln!("  num_points      : {num_points:?}");
         eprintln!("  unique_decoding : {unique_decoding:?}");
         eprintln!("  pow_bits        : {pow_bits}");
@@ -754,9 +755,9 @@ mod tests {
 
         // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
             unique_decoding,
             starting_log_inv_rate: 1,
@@ -854,7 +855,8 @@ mod tests {
                                 make_batched_whir_things(
                                     batch_size,
                                     num_variable,
-                                    FoldingFactor::Constant(folding_factor),
+                                    folding_factor,
+                                    folding_factor,
                                     num_points,
                                     unique_decoding,
                                     pow_bits,
