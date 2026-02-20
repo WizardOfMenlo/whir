@@ -5,7 +5,9 @@ use super::{utils::BlindingPolynomials, Config};
 use crate::{
     hash::Hash,
     protocols::{irs_commit, whir},
-    transcript::ProverMessage,
+    transcript::{
+        Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
+    },
 };
 
 /// zkWHIR commitment object.
@@ -27,13 +29,13 @@ pub struct Witness<F: FftField> {
 impl<F: FftField> Config<F> {
     pub fn commit<H, R>(
         &self,
-        prover_state: &mut crate::transcript::ProverState<H, R>,
+        prover_state: &mut ProverState<H, R>,
         polynomials: &[&[F::BasePrimeField]],
     ) -> Witness<F>
     where
-        H: crate::transcript::DuplexSpongeInterface,
+        H: DuplexSpongeInterface,
         R: ark_std::rand::RngCore + ark_std::rand::CryptoRng,
-        F: crate::transcript::Codec<[H::U]>,
+        F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(
@@ -46,11 +48,14 @@ impl<F: FftField> Config<F> {
         let mut blinding_polynomials = Vec::with_capacity(polynomials.len());
         // Sample fresh blinding coefficients without adding transcript interactions.
         let mut blinding_rng = StdRng::from_entropy();
-        let num_blinding_vars = self.num_blinding_variables();
-        let num_witness_vars = self.num_witness_variables();
+        let num_blinding_variables = self.num_blinding_variables();
+        let num_witness_variables = self.num_witness_variables();
         for &poly in polynomials {
-            let blinding =
-                BlindingPolynomials::sample(&mut blinding_rng, num_blinding_vars, num_witness_vars);
+            let blinding = BlindingPolynomials::sample(
+                &mut blinding_rng,
+                num_blinding_variables,
+                num_witness_variables,
+            );
             let mask = &blinding.m_poly;
             let witness_size = self.blinded_commitment.initial_size();
             assert!(!mask.is_empty(), "blinding mask vector must be non-empty");
@@ -65,8 +70,8 @@ impl<F: FftField> Config<F> {
             );
             let f_hat_vec = poly
                 .iter()
-                .enumerate()
-                .map(|(i, &coeff)| coeff + mask[i % mask.len()])
+                .zip(mask.iter().cycle())
+                .map(|(&coeff, &m)| coeff + m)
                 .collect::<Vec<_>>();
             let witness = self
                 .blinded_commitment
@@ -79,13 +84,13 @@ impl<F: FftField> Config<F> {
         let blinding_num_vectors = self.blinding_commitment.initial_committer.num_vectors;
         assert_eq!(
             blinding_num_vectors,
-            polynomials.len() * (num_witness_vars + 1),
+            polynomials.len() * (num_witness_variables + 1),
             "blinding commitment layout mismatch: expected n*(mu+1) vectors"
         );
         let mut blinding_vectors = Vec::with_capacity(blinding_num_vectors);
-        for poly in blinding_polynomials.iter().take(polynomials.len()) {
+        for poly in &blinding_polynomials {
             let layout = poly.layout_vectors();
-            debug_assert_eq!(layout.len(), num_witness_vars + 1);
+            debug_assert_eq!(layout.len(), num_witness_variables + 1);
             blinding_vectors.extend(layout);
         }
         let blinding_vector_refs = blinding_vectors
@@ -107,12 +112,12 @@ impl<F: FftField> Config<F> {
 
     pub fn receive_commitments<H>(
         &self,
-        verifier_state: &mut crate::transcript::VerifierState<'_, H>,
+        verifier_state: &mut VerifierState<'_, H>,
         num_polynomials: usize,
-    ) -> crate::transcript::VerificationResult<Commitment<F>>
+    ) -> VerificationResult<Commitment<F>>
     where
-        H: crate::transcript::DuplexSpongeInterface,
-        F: crate::transcript::Codec<[H::U]>,
+        H: DuplexSpongeInterface,
+        F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         let f_hat = (0..num_polynomials)

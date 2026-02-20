@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use self::committer::{Commitment, Witness};
 use crate::{
+    algebra::embedding::Embedding,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::whir,
 };
@@ -212,20 +213,18 @@ impl<F: FftField> Config<F> {
 
     /// Compute all gamma points for a set of query points (flat list).
     pub(super) fn all_gammas(&self, query_points: &[F::BasePrimeField]) -> Vec<F> {
-        use crate::algebra::embedding::Embedding;
         let omega_powers = self.omega_powers();
         let interleaving_depth = self.interleaving_depth();
         let omega_full = self.omega_full();
-        let zeta = self.zeta();
+        let zeta_powers = crate::algebra::geometric_sequence(self.zeta(), interleaving_depth);
         let embedding = self.blinded_commitment.embedding();
 
         let mut gammas = Vec::with_capacity(query_points.len() * interleaving_depth);
         for &alpha in query_points {
             let idx = Self::query_index(alpha, &omega_powers);
             let coset_offset = omega_full.pow([idx as u64]);
-            for k in 0..interleaving_depth {
-                let gamma_base = coset_offset * zeta.pow([k as u64]);
-                gammas.push(embedding.map(gamma_base));
+            for &zp in &zeta_powers {
+                gammas.push(embedding.map(coset_offset * zp));
             }
         }
         gammas

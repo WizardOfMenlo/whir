@@ -5,7 +5,8 @@ use ark_std::{
 };
 
 use crate::algebra::{
-    linear_form::{Covector, Evaluate},
+    embedding::Basefield,
+    linear_form::{Covector, Evaluate, LinearForm},
     scalar_mul_add, univariate_evaluate,
 };
 
@@ -55,7 +56,6 @@ impl<F: FftField> BlindingPolynomials<F> {
         num_witness_variables: usize,
     ) -> Self {
         let half_size = 1usize << num_blinding_variables;
-        let full_size = half_size * 2;
 
         let msk = (0..half_size)
             .map(|_| F::BasePrimeField::rand(rng))
@@ -63,11 +63,11 @@ impl<F: FftField> BlindingPolynomials<F> {
         let g0_hat = (0..half_size)
             .map(|_| F::BasePrimeField::rand(rng))
             .collect::<Vec<_>>();
-        let mut m_poly = vec![F::BasePrimeField::ZERO; full_size];
-        for i in 0..half_size {
-            m_poly[2 * i] = g0_hat[i];
-            m_poly[2 * i + 1] = msk[i];
-        }
+        let m_poly: Vec<_> = g0_hat
+            .iter()
+            .zip(&msk)
+            .flat_map(|(&g, &m)| [g, m])
+            .collect();
         let g_hats = (0..num_witness_variables)
             .map(|_| {
                 (0..half_size)
@@ -83,10 +83,9 @@ impl<F: FftField> BlindingPolynomials<F> {
     ///
     /// This matches the blinding WHIR commitment layout used by prover and verifier.
     pub fn layout_vectors(&self) -> Vec<Vec<F::BasePrimeField>> {
-        let mut vectors = Vec::with_capacity(1 + self.g_hats.len());
-        vectors.push(self.m_poly.clone());
-        vectors.extend(self.embedded_g_hats());
-        vectors
+        std::iter::once(self.m_poly.clone())
+            .chain(self.embedded_g_hats())
+            .collect()
     }
 
     /// Precompute `ell+1` embeddings of all `g_hat` vectors.
@@ -128,7 +127,6 @@ impl<F: FftField> BlindingPolynomials<F> {
         embedded_g_hats: &[Vec<F::BasePrimeField>],
         gamma: F,
     ) -> BlindingEvaluations<F> {
-        use crate::algebra::embedding::Basefield;
         debug_assert_eq!(embedded_g_hats.len(), self.g_hats.len());
         let embedding = Basefield::<F>::new();
         let m_eval = beq_covector.evaluate(&embedding, &self.m_poly);
@@ -145,17 +143,17 @@ impl<F: FftField> BlindingPolynomials<F> {
 }
 
 fn embed_to_ell_plus_one<F: FftField>(coeffs: &[F::BasePrimeField]) -> Vec<F::BasePrimeField> {
-    let mut out = vec![F::BasePrimeField::ZERO; coeffs.len() * 2];
-    for (i, &c) in coeffs.iter().enumerate() {
-        out[2 * i] = c;
-    }
-    out
+    coeffs
+        .iter()
+        .flat_map(|&c| [c, F::BasePrimeField::ZERO])
+        .collect()
 }
 
 /// Recombine a single combined claim from already tau2-batched
 /// per-vector claims `(m_claim, g_hat_claims)` using tau1-batching.
 pub fn combine_claim_from_components<F: FftField>(m_claim: F, g_hat_claims: &[F], tau1: F) -> F {
-    m_claim + F::from(2u64) * tau1 * univariate_evaluate(g_hat_claims, tau1)
+    const G_HAT_RECOMBINATION_SCALE: u64 = 2;
+    m_claim + F::from(G_HAT_RECOMBINATION_SCALE) * tau1 * univariate_evaluate(g_hat_claims, tau1)
 }
 
 /// Build the combined claims and batched blinding subproof claims from
@@ -170,9 +168,9 @@ pub fn build_combined_and_subproof_claims<F: FftField>(
 ) -> (Vec<F>, Vec<F>) {
     let num_polynomials = m_claims.len();
     debug_assert_eq!(g_hat_claims_per_poly.len(), num_polynomials);
-    let num_witness_vars = g_hat_claims_per_poly.first().map_or(0, |s| s.len());
+    let num_witness_variables = g_hat_claims_per_poly.first().map_or(0, |s| s.len());
     let mut combined_claims = Vec::with_capacity(num_polynomials);
-    let mut subproof_claims = Vec::with_capacity(num_polynomials * (1 + num_witness_vars));
+    let mut subproof_claims = Vec::with_capacity(num_polynomials * (1 + num_witness_variables));
     for (poly_idx, &m_claim) in m_claims.iter().enumerate() {
         let g_hat_slice = g_hat_claims_per_poly[poly_idx];
         subproof_claims.push(m_claim);
@@ -180,6 +178,20 @@ pub fn build_combined_and_subproof_claims<F: FftField>(
         combined_claims.push(combine_claim_from_components(m_claim, g_hat_slice, tau1));
     }
     (combined_claims, subproof_claims)
+}
+
+/// Build blinding-side linear forms as `[beq_weights, w_folded_weights...]`.
+pub fn build_blinding_forms<'a, F: FftField>(
+    beq_weights: &'a Covector<F>,
+    w_folded_weights: &'a [Covector<F>],
+) -> Vec<&'a dyn LinearForm<F>> {
+    let mut blinding_forms: Vec<&'a dyn LinearForm<F>> =
+        Vec::with_capacity(1 + w_folded_weights.len());
+    blinding_forms.push(beq_weights);
+    for wf in w_folded_weights {
+        blinding_forms.push(wf);
+    }
+    blinding_forms
 }
 
 /// Fold a full-size weight to the masking period `2^(ℓ+1)`.
