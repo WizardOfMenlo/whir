@@ -102,7 +102,7 @@ impl<F: FftField> Config<F> {
         let mut w_folded_blinding_evals: Vec<F> =
             Vec::with_capacity(weights.len() * num_polynomials * num_witness_vars_plus_1);
 
-        for &weight in weights.iter() {
+        for &weight in weights {
             let w_folded =
                 fold_weight_to_mask_size(weight, num_witness_vars, num_blinding_variables);
             for poly_idx in 0..num_polynomials {

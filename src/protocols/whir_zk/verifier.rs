@@ -16,6 +16,7 @@ use crate::{
 };
 
 impl<F: FftField> Config<F> {
+    #[allow(clippy::too_many_lines)]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
@@ -134,7 +135,7 @@ impl<F: FftField> Config<F> {
             num_blinding_variables,
         );
         let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
-        for &weight in weights.iter() {
+        for &weight in weights {
             w_folded_weights.push(fold_weight_to_mask_size(
                 weight,
                 num_witness_vars,

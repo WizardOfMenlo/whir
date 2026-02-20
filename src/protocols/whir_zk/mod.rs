@@ -99,8 +99,7 @@ impl<F: FftField> Config<F> {
     ) -> Self {
         let blinded_commitment = whir::Config::new(main_mv_params, main_whir_params);
         let num_witness_variables = blinded_commitment.initial_num_variables();
-        let blinding_first_round_interleaving_depth =
-            1usize << blinding_folding_factor.at_round(0);
+        let blinding_first_round_interleaving_depth = 1usize << blinding_folding_factor.at_round(0);
         let num_blinding_variables = Self::compute_num_blinding_variables(
             &blinded_commitment,
             blinding_first_round_interleaving_depth,
@@ -498,12 +497,11 @@ mod tests {
                 &commitment,
             )
         }));
-        match verify_outcome {
-            Ok(result) => assert!(
+        if let Ok(result) = verify_outcome {
+            assert!(
                 result.is_err(),
                 "verification should reject wrong public evaluations"
-            ),
-            Err(_) => {} // panic is valid rejection
+            );
         }
     }
 
@@ -635,9 +633,7 @@ mod tests {
 
         let vector = vec![F::ONE; num_coeffs];
         let point = MultilinearPoint::rand(&mut rng, num_variables);
-        let linear_form = MultilinearExtension {
-            point: point.0.clone(),
-        };
+        let linear_form = MultilinearExtension { point: point.0 };
         let correct_evaluation =
             linear_form.evaluate(params.blinded_commitment.embedding(), &vector);
         let wrong_evaluation = correct_evaluation + EF::from(42u64);
@@ -676,13 +672,12 @@ mod tests {
             )
         }));
 
-        match outcome {
-            Ok(result) => assert!(
+        if let Ok(result) = outcome {
+            assert!(
                 result.is_err(),
                 "SOUNDNESS BUG: verifier accepted wrong evaluation from malicious prover \
-                 (correct={correct_evaluation:?}, claimed={wrong_evaluation:?})"
-            ),
-            Err(_) => {} // prover panicked on false claim — valid rejection in debug mode
+             (correct={correct_evaluation:?}, claimed={wrong_evaluation:?})"
+            );
         }
     }
 }
