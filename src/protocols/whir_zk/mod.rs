@@ -393,7 +393,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Test panics as expected"]
     fn test_whir_zk_stage1_rejects_wrong_evaluations() {
         let num_variables = 8usize;
         let num_coeffs = 1 << num_variables;
@@ -462,23 +461,28 @@ mod tests {
         );
 
         let proof = prover_state.proof();
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let commitment = params
-            .receive_commitments(&mut verifier_state, 2)
-            .expect("receive commitments");
-
         let mut wrong_evaluations = evaluations.clone();
         wrong_evaluations[0] += EF::ONE;
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &linear_form_refs,
-            &wrong_evaluations,
-            &commitment,
-        );
-        assert!(
-            verify_result.is_err(),
-            "verification should reject wrong public evaluations"
-        );
+
+        let verify_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut verifier_state = VerifierState::new_std(&ds, &proof);
+            let commitment = params
+                .receive_commitments(&mut verifier_state, 2)
+                .expect("receive commitments");
+            params.verify(
+                &mut verifier_state,
+                &linear_form_refs,
+                &wrong_evaluations,
+                &commitment,
+            )
+        }));
+        match verify_outcome {
+            Ok(result) => assert!(
+                result.is_err(),
+                "verification should reject wrong public evaluations"
+            ),
+            Err(_) => {} // panic is valid rejection
+        }
     }
 
     #[test]
@@ -576,6 +580,87 @@ mod tests {
         } else {
             // In debug transcript mode, tampering may trigger an interaction-pattern panic
             // before returning `Err`, which is still a valid rejection.
+        }
+    }
+
+    /// Soundness exploit: malicious prover generates proof for WRONG evaluation.
+    /// A sound PCS must reject; if verify() returns Ok, g_eval freedom lets
+    /// the prover forge arbitrary evaluation claims.
+    #[test]
+    fn test_whir_zk_malicious_prover_wrong_evaluation() {
+        let num_variables = 8usize;
+        let num_coeffs = 1 << num_variables;
+        let mut rng = ark_std::test_rng();
+
+        let mv_params = MultivariateParameters::new(num_variables);
+        let whir_params = ProtocolParameters {
+            initial_statement: true,
+            security_level: 16,
+            pow_bits: 0,
+            folding_factor: FoldingFactor::Constant(2),
+            soundness_type: SoundnessType::ConjectureList,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+        let params = Config::<EF>::new_with_blinding_size_policy(
+            mv_params,
+            &whir_params,
+            FoldingFactor::Constant(2),
+            1,
+            test_blinding_size_policy(),
+        );
+
+        let vector = vec![F::ONE; num_coeffs];
+        let point = MultilinearPoint::rand(&mut rng, num_variables);
+        let linear_form = MultilinearExtension {
+            point: point.0.clone(),
+        };
+        let correct_evaluation =
+            linear_form.evaluate(params.blinded_commitment.embedding(), &vector);
+        let wrong_evaluation = correct_evaluation + EF::from(42u64);
+
+        let linear_forms: Vec<Box<dyn LinearForm<EF>>> = vec![Box::new(linear_form)];
+        let linear_form_refs = linear_forms
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<EF>)
+            .collect::<Vec<_>>();
+
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("zk-malicious {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut prover_state = ProverState::new_std(&ds);
+            let witness = params.commit(&mut prover_state, &[&vector]);
+            params.prove(
+                &mut prover_state,
+                &[&vector],
+                witness,
+                &linear_form_refs,
+                &[wrong_evaluation],
+            );
+
+            let proof = prover_state.proof();
+            let mut verifier_state = VerifierState::new_std(&ds, &proof);
+            let commitment = params
+                .receive_commitments(&mut verifier_state, 1)
+                .expect("receive commitments");
+            params.verify(
+                &mut verifier_state,
+                &linear_form_refs,
+                &[wrong_evaluation],
+                &commitment,
+            )
+        }));
+
+        match outcome {
+            Ok(result) => assert!(
+                result.is_err(),
+                "SOUNDNESS BUG: verifier accepted wrong evaluation from malicious prover \
+                 (correct={correct_evaluation:?}, claimed={wrong_evaluation:?})"
+            ),
+            Err(_) => {} // prover panicked on false claim — valid rejection in debug mode
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::{any::Any, borrow::Cow};
+use std::borrow::Cow;
 
 use ark_ff::FftField;
 #[cfg(feature = "parallel")]
@@ -10,11 +10,13 @@ use super::{Config, Witness};
 use crate::{
     algebra::{
         embedding::Basefield,
-        linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+        linear_form::{Covector, Evaluate, LinearForm},
         mixed_dot_seq,
     },
     hash::Hash,
-    protocols::whir_zk::utils::{fill_eq_weights_at_gamma, recombine_doc_claim_from_components},
+    protocols::whir_zk::utils::{
+        fill_eq_weights_at_gamma, fold_weight_to_mask_size, recombine_doc_claim_from_components,
+    },
     transcript::{ProverMessage, VerifierMessage},
 };
 
@@ -73,14 +75,51 @@ impl<F: FftField> Config<F> {
             blinding_witness,
         } = witness;
 
-        // Transcript order for the zkWHIR round-0 stitching checks:
+        // Transcript order for zkWHIR evaluation binding:
         // 1) sample beta,
-        // 2) sample non-zero rho,
-        // 3) send g-evaluations used in rho*f + g,
-        // 4) sample tau1 and tau2,
-        // 5) send raw openings [m(gamma,-rho), g_1(gamma), ..., g_mu(gamma)] for gamma in Gamma,
-        // 6) send tau1/tau2-combined claims and tau2-batched h(gamma) claims.
+        // 2) send w_folded evaluations (binding M_eval before rho),
+        // 3) sample non-zero rho,
+        // 4) compute modified_eval = F + M_eval,
+        // 5) Opening#1 of f_hat,
+        // 6) sample tau1, tau2,
+        // 7) send raw blinding openings + combined/batched claims,
+        // 8) inner blinded WHIR,
+        // 9) blinding WHIR with additional w_folded weights.
         let blinding_challenge: F = prover_state.verifier_message();
+
+        let embedding = self.blinding_commitment.embedding();
+        let num_polynomials = polynomials.len();
+        let num_witness_vars = self.num_witness_variables();
+        let num_blinding_variables = self.num_blinding_variables();
+        let num_witness_vars_plus_1 = num_witness_vars + 1;
+
+        // Compute w_folded evaluations of all blinding vectors BEFORE rho for binding.
+        // For each (weight, polynomial, blinding_vector), w_folded_blinding_evals stores
+        // <w_folded, blinding_vector>.  The v=0 entry per polynomial is
+        // M_eval = <w_folded, m_poly>, the masking contribution to f_hat_eval.
+        let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
+        let mut m_evals: Vec<F> = Vec::with_capacity(evaluations.len());
+        let mut w_folded_blinding_evals: Vec<F> =
+            Vec::with_capacity(weights.len() * num_polynomials * num_witness_vars_plus_1);
+
+        for &weight in weights.iter() {
+            let w_folded =
+                fold_weight_to_mask_size(weight, num_witness_vars, num_blinding_variables);
+            for poly_idx in 0..num_polynomials {
+                let base = poly_idx * num_witness_vars_plus_1;
+                for v in 0..num_witness_vars_plus_1 {
+                    let eval: F = w_folded.evaluate(embedding, &blinding_vectors[base + v]);
+                    w_folded_blinding_evals.push(eval);
+                    if v == 0 {
+                        m_evals.push(eval);
+                    }
+                }
+            }
+            w_folded_weights.push(w_folded);
+        }
+        prover_state.prover_message_fields(&w_folded_blinding_evals);
+
+        // Sample non-zero rho AFTER masking evaluations are committed to the transcript.
         let masking_challenge: F = prover_state.verifier_message();
         assert_ne!(
             masking_challenge,
@@ -88,35 +127,10 @@ impl<F: FftField> Config<F> {
             "zkWHIR requires non-zero masking challenge rho"
         );
 
-        // Compute f_hat evaluations per weight per polynomial.
-        let embedding = self.blinded_commitment.embedding();
+        // modified_eval = F + M_eval; for an honest prover this equals <weight, f_hat>.
         let mut modified_evaluations = Vec::with_capacity(evaluations.len());
-        for (weight_idx, &weight) in weights.iter().enumerate() {
-            let maybe_mle = (weight as &dyn Any).downcast_ref::<MultilinearExtension<F>>();
-            // Temporary fallback Covector materialised only when the weight is not an MLE.
-            let fallback_cov: Option<Covector<F>> = if maybe_mle.is_none() {
-                Some(Covector::from(weight))
-            } else {
-                None
-            };
-            for (poly_idx, f_hat_vector) in f_hat_vectors.iter().enumerate() {
-                let idx = weight_idx * polynomials.len() + poly_idx;
-                let f_hat_eval = maybe_mle.map_or_else(
-                    || {
-                        fallback_cov
-                            .as_ref()
-                            .unwrap()
-                            .evaluate(embedding, f_hat_vector.as_slice())
-                    },
-                    |mle| mle.evaluate(embedding, f_hat_vector.as_slice()),
-                );
-                // Enforce L = rho * f + g with L instantiated by the committed masked witness.
-                let g_eval = f_hat_eval - masking_challenge * evaluations[idx];
-                prover_state.prover_message_field(&g_eval);
-                debug_assert_eq!(masking_challenge * evaluations[idx] + g_eval, f_hat_eval);
-                modified_evaluations.push(f_hat_eval);
-            }
-            // fallback_cov is dropped here (if it was Some), keeping the live set small.
+        for (idx, &eval) in evaluations.iter().enumerate() {
+            modified_evaluations.push(eval + m_evals[idx]);
         }
 
         let initial_in_domain = {
@@ -135,11 +149,6 @@ impl<F: FftField> Config<F> {
         // Sample batching challenges before revealing any raw opening payload.
         let tau1: F = prover_state.verifier_message();
         let tau2: F = prover_state.verifier_message();
-
-        let num_polynomials = polynomials.len();
-        let num_witness_vars = self.num_witness_variables();
-        let num_blinding_variables = self.num_blinding_variables();
-        let num_witness_vars_plus_1 = num_witness_vars + 1;
 
         let mut m_claims = vec![F::ZERO; num_polynomials];
         // Flat layout: g_hat_claims[poly_idx * num_witness_vars + j]
@@ -332,13 +341,23 @@ impl<F: FftField> Config<F> {
         {
             #[cfg(feature = "tracing")]
             let _span = tracing::info_span!("inner_blinding_prove").entered();
-            let beq_weight_ref: &dyn LinearForm<F> = &beq_weights;
+            let mut blinding_forms: Vec<&dyn LinearForm<F>> =
+                Vec::with_capacity(1 + w_folded_weights.len());
+            blinding_forms.push(&beq_weights);
+            for wf in &w_folded_weights {
+                blinding_forms.push(wf);
+            }
+            let mut all_blinding_claims = Vec::with_capacity(
+                blinding_forms.len() * num_polynomials * num_witness_vars_plus_1,
+            );
+            all_blinding_claims.extend_from_slice(&batched_blinding_subproof_claims);
+            all_blinding_claims.extend_from_slice(&w_folded_blinding_evals);
             let _ = self.blinding_commitment.prove(
                 prover_state,
                 blinding_vectors.into_iter().map(Cow::Owned).collect(),
                 vec![Cow::Owned(blinding_witness)],
-                &[beq_weight_ref],
-                Cow::Borrowed(batched_blinding_subproof_claims.as_slice()),
+                &blinding_forms,
+                Cow::Owned(all_blinding_claims),
             );
         }
 

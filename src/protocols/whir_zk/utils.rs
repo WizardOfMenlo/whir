@@ -165,6 +165,28 @@ pub fn recombine_doc_claim_from_components<F: FftField>(
     m_claim + (F::from(2u64) * inner_g_claim)
 }
 
+/// Fold a full-size weight to the masking period `2^(ℓ+1)`.
+///
+/// For a weight `w` on `μ` variables and period `P = 2^(ℓ+1)`:
+///   `w_folded[j] = Σ_{i ≡ j (mod P)} w[i]`
+///
+/// The inner product `⟨w_folded, m_poly⟩` equals `⟨w, periodic_extension(m_poly)⟩`,
+/// i.e. the masking contribution `M_eval` used for evaluation binding.
+pub fn fold_weight_to_mask_size<F: FftField>(
+    weight: &dyn crate::algebra::linear_form::LinearForm<F>,
+    num_witness_variables: usize,
+    num_blinding_variables: usize,
+) -> Covector<F> {
+    let mask_size = 1usize << (num_blinding_variables + 1);
+    let cov = Covector::from(weight);
+    debug_assert_eq!(cov.vector.len(), 1usize << num_witness_variables);
+    let mut folded = vec![F::ZERO; mask_size];
+    for (i, &v) in cov.vector.iter().enumerate() {
+        folded[i % mask_size] += v;
+    }
+    Covector::new(folded)
+}
+
 /// Build the single batched beq linear form used by the blinding subproof:
 /// `Sum_i tau2^i * beq((pow(gamma_i), -rho), .)`.
 pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
