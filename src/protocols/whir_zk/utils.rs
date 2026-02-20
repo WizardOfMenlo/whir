@@ -235,12 +235,11 @@ pub fn fold_weight_to_mask_size<F: FftField>(
     // Fast path: borrow the vector directly if the weight is already a Covector.
     let borrowed = (weight as &dyn Any).downcast_ref::<Covector<F>>();
     let owned;
-    let vector = match borrowed {
-        Some(cov) => &cov.vector,
-        None => {
-            owned = Covector::from(weight);
-            &owned.vector
-        }
+    let vector = if let Some(cov) = borrowed {
+        &cov.vector
+    } else {
+        owned = Covector::from(weight);
+        &owned.vector
     };
     debug_assert_eq!(vector.len(), 1usize << num_witness_variables);
 
