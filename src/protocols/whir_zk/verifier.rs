@@ -1,4 +1,6 @@
 use ark_ff::FftField;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::Config;
 use crate::{
@@ -34,6 +36,7 @@ impl<F: FftField> Config<F> {
     /// Replays the transcript, recomputes the expected blinding claims, and
     /// delegates to the inner witness-side and blinding-side WHIR verifiers.
     #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, name = "whir_zk::verify"))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,

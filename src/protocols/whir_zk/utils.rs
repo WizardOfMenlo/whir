@@ -4,10 +4,12 @@ use ark_std::{
     UniformRand,
 };
 
+#[cfg(not(feature = "parallel"))]
+use crate::algebra::scalar_mul_add;
 use crate::algebra::{
     embedding::Basefield,
     linear_form::{Covector, Evaluate, LinearForm},
-    scalar_mul_add, univariate_evaluate,
+    univariate_evaluate,
 };
 
 /// Blinding evaluations at one round-0 point `gamma in Gamma`.
@@ -217,19 +219,39 @@ pub fn build_blinding_forms<'a, F: FftField>(
 ///
 /// The inner product `⟨w_folded, m_poly⟩` equals `⟨w, periodic_extension(m_poly)⟩`,
 /// i.e. the masking contribution `M_eval` used for evaluation binding.
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(skip_all, name = "fold_weight_to_mask_size")
+)]
 pub fn fold_weight_to_mask_size<F: FftField>(
     weight: &dyn crate::algebra::linear_form::LinearForm<F>,
     num_witness_variables: usize,
     num_blinding_variables: usize,
 ) -> Covector<F> {
-    let mask_size = 1usize << (num_blinding_variables + 1);
-    let cov = Covector::from(weight);
-    debug_assert_eq!(cov.vector.len(), 1usize << num_witness_variables);
+    use std::any::Any;
 
+    let mask_size = 1usize << (num_blinding_variables + 1);
+
+    // Fast path: borrow the vector directly if the weight is already a Covector.
+    let borrowed = (weight as &dyn Any).downcast_ref::<Covector<F>>();
+    let owned;
+    let vector = match borrowed {
+        Some(cov) => &cov.vector,
+        None => {
+            owned = Covector::from(weight);
+            &owned.vector
+        }
+    };
+    debug_assert_eq!(vector.len(), 1usize << num_witness_variables);
+
+    fold_vector_to_mask_size(vector, mask_size)
+}
+
+fn fold_vector_to_mask_size<F: FftField>(vector: &[F], mask_size: usize) -> Covector<F> {
     #[cfg(feature = "parallel")]
     let folded = {
         use rayon::prelude::*;
-        cov.vector
+        vector
             .par_chunks(mask_size)
             .fold(
                 || vec![F::ZERO; mask_size],
@@ -254,7 +276,7 @@ pub fn fold_weight_to_mask_size<F: FftField>(
     #[cfg(not(feature = "parallel"))]
     let folded = {
         let mut f = vec![F::ZERO; mask_size];
-        for (i, &v) in cov.vector.iter().enumerate() {
+        for (i, &v) in vector.iter().enumerate() {
             f[i % mask_size] += v;
         }
         f
@@ -265,6 +287,10 @@ pub fn fold_weight_to_mask_size<F: FftField>(
 
 /// Build the single batched beq linear form used by the blinding subproof:
 /// `Sum_i tau2^i * beq((pow(gamma_i), -rho), .)`.
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(skip_all, name = "construct_batched_eq_weights")
+)]
 pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
     gammas: &[F],
     masking_challenge: F,
@@ -272,14 +298,68 @@ pub fn construct_batched_eq_weights_from_gammas<F: FftField>(
     num_blinding_variables: usize,
 ) -> Covector<F> {
     let weight_size = 1 << (num_blinding_variables + 1);
-    let mut weight_evals = vec![F::ZERO; weight_size];
-    let mut batching_power = F::ONE;
-    for &gamma in gammas {
-        let per_gamma = eq_weights_at_gamma(gamma, masking_challenge, num_blinding_variables);
-        scalar_mul_add(&mut weight_evals, batching_power, &per_gamma);
-        batching_power *= tau2;
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+
+        // Pre-compute tau2 powers: tau2^0, tau2^1, ..., tau2^(n-1)
+        let tau2_powers: Vec<F> = {
+            let mut powers = Vec::with_capacity(gammas.len());
+            let mut p = F::ONE;
+            for _ in 0..gammas.len() {
+                powers.push(p);
+                p *= tau2;
+            }
+            powers
+        };
+
+        // Each gamma's eq_weights computation is independent — parallelise across gammas
+        // and reduce by element-wise summation.
+        let weight_evals = gammas
+            .par_iter()
+            .zip(tau2_powers.par_iter())
+            .fold(
+                || vec![F::ZERO; weight_size],
+                |mut acc, (&gamma, &power)| {
+                    let mut buf = vec![F::ZERO; weight_size];
+                    fill_eq_weights_at_gamma(
+                        &mut buf,
+                        gamma,
+                        masking_challenge,
+                        num_blinding_variables,
+                    );
+                    for (a, &b) in acc.iter_mut().zip(buf.iter()) {
+                        *a += power * b;
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || vec![F::ZERO; weight_size],
+                |mut a, b| {
+                    for (ai, &bi) in a.iter_mut().zip(b.iter()) {
+                        *ai += bi;
+                    }
+                    a
+                },
+            );
+
+        Covector::new(weight_evals)
     }
-    Covector::new(weight_evals)
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut weight_evals = vec![F::ZERO; weight_size];
+        let mut buf = vec![F::ZERO; weight_size];
+        let mut batching_power = F::ONE;
+        for &gamma in gammas {
+            fill_eq_weights_at_gamma(&mut buf, gamma, masking_challenge, num_blinding_variables);
+            scalar_mul_add(&mut weight_evals, batching_power, &buf);
+            batching_power *= tau2;
+        }
+        Covector::new(weight_evals)
+    }
 }
 
 /// Build `beq((pow(gamma), -rho), .)` as a covector over `ell+1` variables.
@@ -296,6 +376,7 @@ pub fn beq_covector_at_gamma<F: FftField>(
     ))
 }
 
+#[cfg(test)]
 fn eq_weights_at_gamma<F: FftField>(
     gamma: F,
     masking_challenge: F,
