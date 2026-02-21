@@ -185,6 +185,11 @@ where
     H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
 {
+    /// Access the prover's private transcript-bound RNG.
+    pub fn rng(&mut self) -> &mut (impl RngCore + CryptoRng) {
+        self.inner.rng()
+    }
+
     #[cfg_attr(test, track_caller)]
     pub fn prover_message<T>(&mut self, message: &T)
     where
@@ -336,7 +341,7 @@ where
 }
 
 impl<'a> VerifierState<'a, StdHash> {
-    /// Construct a new prover state with the standard duplex hash function.
+    /// Construct a new verifier state with the standard duplex hash function.
     pub fn new_std<'b, I>(ds: &DomainSeparator<'b, I>, proof: &'a Proof) -> Self
     where
         I: Encoding<[u8]>,

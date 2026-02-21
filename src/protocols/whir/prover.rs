@@ -60,7 +60,7 @@ where
         prover_state: &mut ProverState<H, R>,
         vectors: Vec<Cow<'a, [M::Source]>>,
         witnesses: Vec<Cow<'a, Witness<F, M>>>,
-        linear_forms: Vec<Box<dyn LinearForm<F>>>,
+        linear_forms: &[Box<dyn LinearForm<F>>],
         evaluations: Cow<'a, [F]>,
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
@@ -83,15 +83,15 @@ where
         for vector in &vectors {
             assert_eq!(vector.len(), self.initial_size());
         }
-        for linear_form in &linear_forms {
+        for linear_form in linear_forms {
             assert_eq!(linear_form.size(), self.initial_size());
         }
         #[cfg(debug_assertions)]
         for (linear_form, evaluations) in
-            zip_strict(&linear_forms, evaluations.chunks_exact(num_vectors))
+            zip_strict(linear_forms.iter(), evaluations.chunks_exact(num_vectors))
         {
             use crate::algebra::linear_form::Covector;
-            let covector = Covector::from(linear_form.as_ref());
+            let covector = Covector::from(&**linear_form);
             for (vector, evaluation) in zip_strict(&vectors, evaluations) {
                 debug_assert_eq!(covector.evaluate(self.embedding(), vector), *evaluation);
             }
@@ -164,7 +164,8 @@ where
                 .zip(linear_forms.iter())
                 .enumerate()
                 .find_map(|(i, (&coeff, form))| {
-                    (form.as_ref() as &dyn Any)
+                    let form: &dyn LinearForm<F> = form.as_ref();
+                    (form as &dyn Any)
                         .downcast_ref::<Covector<F>>()
                         .map(|cov| (i, coeff, &cov.vector))
                 });
@@ -179,7 +180,7 @@ where
             (Vec::new(), None)
         };
         for (i, (rlc_coeff, linear_form)) in
-            zip_strict(initial_forms_rlc_coeffs, &linear_forms).enumerate()
+            zip_strict(initial_forms_rlc_coeffs, linear_forms.iter()).enumerate()
         {
             if Some(i) == recycled_index {
                 continue;
@@ -327,7 +328,7 @@ where
         // Hints for deferred constraints
         let constraint_eval = MultilinearPoint(randomness_vec);
         let deferred = linear_forms
-            .into_iter()
+            .iter()
             .filter(|w| w.deferred())
             .map(|w| w.mle_evaluate(&constraint_eval.0))
             .collect();

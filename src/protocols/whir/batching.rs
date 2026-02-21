@@ -162,7 +162,7 @@ mod batching_tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             vec![Cow::Owned(batched_witness)],
-            prove_linear_forms,
+            &prove_linear_forms,
             Cow::Borrowed(values.as_slice()),
         );
 

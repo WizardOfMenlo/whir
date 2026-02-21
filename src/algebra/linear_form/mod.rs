@@ -25,7 +25,7 @@ use crate::algebra::{
 ///
 /// The `Any` supertrait enables downcasting concrete types (e.g. [`Covector`]) from
 /// `dyn LinearForm<F>`, which the prover uses to recycle covector buffers.
-pub trait LinearForm<F: Field>: Any {
+pub trait LinearForm<F: Field>: Any + Send + Sync {
     /// The dimension of the domain of this linear form.
     fn size(&self) -> usize;
 

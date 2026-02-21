@@ -144,7 +144,7 @@ mod tests {
             &mut prover_state,
             vec![Cow::from(vector)],
             vec![Cow::Owned(witness)],
-            prove_linear_forms,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fail() {
+    fn test_whir_small_config_no_constraints() {
         make_whir_things(
             3,
             FoldingFactor::Constant(2),
@@ -343,7 +343,7 @@ mod tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            prove_linear_forms,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -502,7 +502,7 @@ mod tests {
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
             vec![Cow::Owned(witness1), Cow::Owned(witness2)],
-            prove_linear_forms,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -623,7 +623,7 @@ mod tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            prove_linear_forms,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 

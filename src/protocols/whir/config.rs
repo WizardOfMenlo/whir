@@ -1,4 +1,3 @@
-use core::panic;
 use std::{
     f64::consts::LOG2_10,
     fmt::{Debug, Display},
@@ -267,27 +266,6 @@ where
         }
     }
 
-    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
-        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
-        }
-        for round_config in &self.round_configs {
-            if round_config.pow.difficulty() > max_bits {
-                return false;
-            }
-            if round_config.sumcheck.round_pow.difficulty() > max_bits {
-                return false;
-            }
-        }
-        if self.final_pow.difficulty() > max_bits {
-            return false;
-        }
-        if self.final_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
-        }
-        true
-    }
-
     pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: f64) -> f64 {
         // Ask me how I did this? At the time, only God and I knew. Now only God knows
         match soundness_type {
@@ -485,13 +463,29 @@ where
     M: Embedding<Target = F>,
     M::Source: FftField,
 {
-    pub fn embedding(&self) -> &M {
-        self.initial_committer.embedding()
+    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
+        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        for round_config in &self.round_configs {
+            if round_config.pow.difficulty() > max_bits {
+                return false;
+            }
+            if round_config.sumcheck.round_pow.difficulty() > max_bits {
+                return false;
+            }
+        }
+        if self.final_pow.difficulty() > max_bits {
+            return false;
+        }
+        if self.final_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        true
     }
 
-    #[deprecated]
-    pub const fn allows_statement(&self) -> bool {
-        true
+    pub fn embedding(&self) -> &M {
+        self.initial_committer.embedding()
     }
 
     pub const fn initial_size(&self) -> usize {
