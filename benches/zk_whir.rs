@@ -264,12 +264,14 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
             (prover_state, witness)
         })
         .bench_values(|(mut prover_state, witness)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
+            let prove_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(
+                MultilinearExtension::new(weights[0].point.clone()),
+            )];
             black_box(prove_config.prove(
                 &mut prover_state,
                 p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
                 vec![Cow::Borrowed(&witness)],
-                &weight_refs,
+                &prove_forms,
                 Cow::Borrowed(evaluations.as_slice()),
             ));
         });
@@ -294,12 +296,14 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let proof = {
         let mut prover_state = ProverState::new_std(&ds);
         let witness = prove_config.commit(&mut prover_state, &p_refs);
-        let weight_refs = [&weights[0] as &dyn LinearForm<F>];
+        let prove_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(MultilinearExtension::new(
+            weights[0].point.clone(),
+        ))];
         prove_config.prove(
             &mut prover_state,
             p_refs.iter().map(|v| Cow::Borrowed(*v)).collect(),
             vec![Cow::Borrowed(&witness)],
-            &weight_refs,
+            &prove_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
         prover_state.proof()
@@ -373,14 +377,21 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
         })
         .bench_values(|(mut prover_state, zk_witness)| {
             let poly_refs: Vec<&[F]> = polynomials.iter().map(Vec::as_slice).collect();
-            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
-            black_box(zk_config.prove(
-                &mut prover_state,
-                &poly_refs,
-                zk_witness,
-                &weight_refs,
-                &evaluations,
-            ));
+            let prove_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(
+                MultilinearExtension::new(weights[0].point.clone()),
+            )];
+            black_box(
+                zk_config.prove(
+                    &mut prover_state,
+                    &poly_refs
+                        .iter()
+                        .map(|v| Cow::Borrowed(*v))
+                        .collect::<Vec<_>>(),
+                    zk_witness,
+                    &prove_forms,
+                    &Cow::Borrowed(evaluations.as_slice()),
+                ),
+            );
         });
 }
 
@@ -404,13 +415,18 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         let mut prover_state = ProverState::new_std(&ds);
         let poly_refs: Vec<&[F]> = polynomials.iter().map(Vec::as_slice).collect();
         let zk_witness = zk_config.commit(&mut prover_state, &poly_refs);
-        let weight_refs = [&weights[0] as &dyn LinearForm<F>];
+        let prove_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(MultilinearExtension::new(
+            weights[0].point.clone(),
+        ))];
         zk_config.prove(
             &mut prover_state,
-            &poly_refs,
+            &poly_refs
+                .iter()
+                .map(|v| Cow::Borrowed(*v))
+                .collect::<Vec<_>>(),
             zk_witness,
-            &weight_refs,
-            &evaluations,
+            &prove_forms,
+            &Cow::Borrowed(evaluations.as_slice()),
         );
         prover_state.proof()
     };

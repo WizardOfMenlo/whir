@@ -73,27 +73,47 @@ fn main() {
         args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
     }
 
+    if let Err(err) = validate_args(&args) {
+        eprintln!("Error: {err}");
+        std::process::exit(2);
+    }
+
     runner(&args, field);
 }
 
-fn runner(args: &Args, field: AvailableFields) {
-    if args.zk {
-        // zkWHIR is currently pinned to identity embedding over a single field.
-        match field {
-            AvailableFields::Goldilocks1 => run_whir_pcs_zk::<fields::Field64>(args),
-            AvailableFields::Field128 => run_whir_pcs_zk::<fields::Field128>(args),
-            AvailableFields::Field192 => run_whir_pcs_zk::<fields::Field192>(args),
-            AvailableFields::Field256 => run_whir_pcs_zk::<fields::Field256>(args),
-            AvailableFields::Goldilocks2 | AvailableFields::Goldilocks3 => {
-                println!(
-                    "Error: --zk currently supports only single-field configurations (Identity embedding)."
-                );
-            }
-        }
-        return;
+fn validate_args(args: &Args) -> Result<(), String> {
+    if args.zk && !matches!(args.protocol_type, WhirType::PCS) {
+        return Err("--zk is only supported with --type PCS".into());
     }
+    Ok(())
+}
 
-    // Type reflection on field
+fn runner(args: &Args, field: AvailableFields) {
+    match (args.protocol_type, args.zk, field) {
+        // zkWHIR is currently pinned to identity embedding over a single field.
+        (WhirType::PCS, true, AvailableFields::Goldilocks1) => {
+            run_whir_pcs_zk::<fields::Field64>(args);
+        }
+        (WhirType::PCS, true, AvailableFields::Field128) => {
+            run_whir_pcs_zk::<fields::Field128>(args);
+        }
+        (WhirType::PCS, true, AvailableFields::Field192) => {
+            run_whir_pcs_zk::<fields::Field192>(args);
+        }
+        (WhirType::PCS, true, AvailableFields::Field256) => {
+            run_whir_pcs_zk::<fields::Field256>(args);
+        }
+        (WhirType::PCS, true, _) => {
+            eprintln!(
+                "Error: --zk supports only single-field configurations (Identity embedding)."
+            );
+        }
+        (WhirType::PCS | WhirType::LDT, false, f) => run_whir_for_field(args, f),
+        (WhirType::LDT, true, _) => unreachable!("validated earlier"),
+    }
+}
+
+fn run_whir_for_field(args: &Args, field: AvailableFields) {
     match field {
         AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(args),
         AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(args),
@@ -113,11 +133,6 @@ where
             run_whir_pcs::<F>(args);
         }
         WhirType::LDT => {
-            if args.zk {
-                println!(
-                    "Warning: --zk is currently only supported for PCS mode; running plain LDT."
-                );
-            }
             run_whir_as_ldt::<F>(args);
         }
     }
@@ -173,7 +188,7 @@ where
     println!("=========================================");
     println!("Whir (LDT) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params:?}");
+    println!("{params}");
     if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
@@ -187,12 +202,11 @@ where
     let whir_commit_time = whir_commit_time.elapsed();
 
     let whir_prove_time = Instant::now();
-    let no_linear_forms: [&dyn LinearForm<F>; 0] = [];
     params.prove(
         &mut prover_state,
         vec![Cow::from(vector)],
         vec![Cow::Owned(witness)],
-        &no_linear_forms,
+        &[],
         Cow::Owned(vec![]),
     );
     let whir_prove_time = whir_prove_time.elapsed();
@@ -273,7 +287,7 @@ where
     println!("=========================================");
     println!("Whir (PCS) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params:?}");
+    println!("{params}");
     if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
         println!("WARN: more PoW bits required than what specified.");
     }
@@ -287,6 +301,7 @@ where
     let whir_commit_time = whir_commit_time.elapsed();
 
     let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
     let mut evaluations = Vec::new();
 
     // Evaluation constraint
@@ -295,32 +310,34 @@ where
         .collect();
 
     for point in &points {
-        let linear_form = MultilinearExtension::new(point.0.clone());
-        evaluations.push(linear_form.evaluate(params.embedding(), &vector));
-        linear_forms.push(Box::new(linear_form));
+        let lf_eval = MultilinearExtension::new(point.0.clone());
+        let lf_prove = MultilinearExtension::new(point.0.clone());
+        evaluations.push(lf_eval.evaluate(params.embedding(), &vector));
+        linear_forms.push(Box::new(lf_eval));
+        prove_linear_forms.push(Box::new(lf_prove));
     }
 
     // Linear constraint
     for _ in 0..num_linear_constraints {
-        let covector = Covector {
+        let cv_eval = Covector {
             deferred: false,
             vector: (0..num_coeffs).map(F::from).collect(),
         };
-        evaluations.push(covector.evaluate(params.embedding(), &vector));
-        linear_forms.push(Box::new(covector));
+        let cv_prove = Covector {
+            deferred: false,
+            vector: (0..num_coeffs).map(F::from).collect(),
+        };
+        evaluations.push(cv_eval.evaluate(params.embedding(), &vector));
+        linear_forms.push(Box::new(cv_eval));
+        prove_linear_forms.push(Box::new(cv_prove));
     }
-
-    let prove_form_refs: Vec<&dyn LinearForm<F>> = linear_forms
-        .iter()
-        .map(|w| w.as_ref() as &dyn LinearForm<F>)
-        .collect();
 
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
         vec![Cow::Borrowed(vector.as_slice())],
         vec![Cow::Owned(witness)],
-        &prove_form_refs,
+        &prove_linear_forms,
         Cow::Borrowed(evaluations.as_slice()),
     );
     let whir_prove_time = whir_prove_time.elapsed();
@@ -416,7 +433,7 @@ where
     println!("=========================================");
     println!("Whir (PCS + ZK) 🌪️");
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params:?}");
+    println!("{params}");
     if !params
         .blinded_commitment
         .check_max_pow_bits(Bits::new(whir_params.pow_bits as f64))
@@ -427,6 +444,7 @@ where
     let vector = (0..num_coeffs).map(F::from).collect::<Vec<_>>();
 
     let mut linear_forms: Vec<Box<dyn Evaluate<Identity<F>>>> = Vec::new();
+    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
     let mut evaluations = Vec::new();
 
     // Evaluation constraint
@@ -435,25 +453,28 @@ where
         .collect();
 
     for point in &points {
-        let linear_form = MultilinearExtension::new(point.0.clone());
-        evaluations.push(linear_form.evaluate(params.blinded_commitment.embedding(), &vector));
-        linear_forms.push(Box::new(linear_form));
+        let lf_eval = MultilinearExtension::new(point.0.clone());
+        let lf_prove = MultilinearExtension::new(point.0.clone());
+        evaluations.push(lf_eval.evaluate(params.blinded_commitment.embedding(), &vector));
+        linear_forms.push(Box::new(lf_eval));
+        prove_linear_forms.push(Box::new(lf_prove));
     }
 
     // Linear constraint
     for _ in 0..num_linear_constraints {
-        let covector = Covector {
+        let cv_eval = Covector {
             deferred: false,
             vector: (0..num_coeffs).map(F::from).collect(),
         };
-        evaluations.push(covector.evaluate(params.blinded_commitment.embedding(), &vector));
-        linear_forms.push(Box::new(covector));
+        let cv_prove = Covector {
+            deferred: false,
+            vector: (0..num_coeffs).map(F::from).collect(),
+        };
+        evaluations.push(cv_eval.evaluate(params.blinded_commitment.embedding(), &vector));
+        linear_forms.push(Box::new(cv_eval));
+        prove_linear_forms.push(Box::new(cv_prove));
     }
 
-    let prove_form_refs: Vec<&dyn LinearForm<F>> = linear_forms
-        .iter()
-        .map(|w| w.as_ref() as &dyn LinearForm<F>)
-        .collect();
     let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[vector.as_slice()]);
     let whir_commit_time = whir_commit_time.elapsed();
@@ -461,9 +482,9 @@ where
     let whir_prove_time = Instant::now();
     params.prove(
         &mut prover_state,
-        &[vector.as_slice()],
+        &[Cow::Borrowed(&vector)],
         witness,
-        &prove_form_refs,
+        &prove_linear_forms,
         &evaluations,
     );
     let whir_prove_time = whir_prove_time.elapsed();

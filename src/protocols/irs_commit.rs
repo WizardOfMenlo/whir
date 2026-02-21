@@ -132,23 +132,6 @@ where
     G: Field,
     M: Embedding<Source = F, Target = G>,
 {
-    pub fn with_embedding<N: Embedding<Source = F, Target = G>>(
-        self,
-        new_embedding: N,
-    ) -> Config<F, G, N> {
-        Config {
-            embedding: Typed::new(new_embedding),
-            num_vectors: self.num_vectors,
-            vector_size: self.vector_size,
-            expansion: self.expansion,
-            interleaving_depth: self.interleaving_depth,
-            matrix_commit: self.matrix_commit,
-            in_domain_samples: self.in_domain_samples,
-            out_domain_samples: self.out_domain_samples,
-            deduplicate_in_domain: self.deduplicate_in_domain,
-        }
-    }
-
     pub const fn num_rows(&self) -> usize {
         self.matrix_commit.num_rows()
     }

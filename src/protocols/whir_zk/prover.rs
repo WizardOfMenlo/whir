@@ -15,7 +15,7 @@ use crate::{
     },
     hash::Hash,
     protocols::whir_zk::utils::{
-        build_blinding_forms, build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
+        build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
         fold_weight_to_mask_size, BlindingPolynomials,
     },
     transcript::{
@@ -193,10 +193,10 @@ fn evaluate_gamma_block<F: FftField + PrimeField>(
 impl<F: FftField + PrimeField> Config<F> {
     /// Run the zkWHIR prover: prove evaluation claims on blinded polynomials.
     ///
-    /// * `polynomials` — original (unmasked) coefficient vectors.
+    /// * `vectors` — original (unmasked) coefficient vectors.
     /// * `witness` — commitment witness produced by [`Config::commit`].
-    /// * `weights` — linear forms (one per evaluation query).
-    /// * `evaluations` — row-major `weights × polynomials` evaluation matrix.
+    /// * `linear_forms` — linear forms (one per evaluation query).
+    /// * `evaluations` — row-major `linear_forms × vectors` evaluation matrix.
     ///
     /// Returns the final evaluation point and per-vector evaluations from the
     /// inner witness-side WHIR prover.
@@ -205,9 +205,9 @@ impl<F: FftField + PrimeField> Config<F> {
     pub fn prove<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        polynomials: &[&[F]],
+        vectors: &[Cow<'_, [F]>],
         witness: Witness<F>,
-        weights: &[&dyn LinearForm<F>],
+        linear_forms: &[Box<dyn LinearForm<F>>],
         evaluations: &[F],
     ) -> (MultilinearPoint<F>, Vec<F>)
     where
@@ -224,12 +224,12 @@ impl<F: FftField + PrimeField> Config<F> {
             "zkWHIR currently expects one vector per commitment"
         );
         assert_eq!(
-            polynomials.len(),
+            vectors.len(),
             witness.f_hat_vectors.len(),
             "masked vector/polynomial length mismatch"
         );
         assert_eq!(
-            polynomials.len(),
+            vectors.len(),
             witness.f_hat_witnesses.len(),
             "witness/polynomial length mismatch"
         );
@@ -240,8 +240,8 @@ impl<F: FftField + PrimeField> Config<F> {
         );
         assert_eq!(
             evaluations.len(),
-            weights.len() * polynomials.len(),
-            "evaluation matrix must be row-major weights x polynomials"
+            linear_forms.len() * vectors.len(),
+            "evaluation matrix must be row-major linear_forms x vectors"
         );
 
         // Destructure early; blinding_polynomials is dropped after the gamma block.
@@ -256,7 +256,7 @@ impl<F: FftField + PrimeField> Config<F> {
         let blinding_challenge: F = prover_state.verifier_message();
 
         let embedding = self.blinding_commitment.embedding();
-        let num_polynomials = polynomials.len();
+        let num_polynomials = vectors.len();
         let num_witness_variables = self.num_witness_variables();
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables_plus_1 = num_witness_variables + 1;
@@ -265,14 +265,18 @@ impl<F: FftField + PrimeField> Config<F> {
         let (w_folded_weights, m_evals, w_folded_blinding_evals) = {
             #[cfg(feature = "tracing")]
             let _span = tracing::info_span!("zk_w_folded_compute").entered();
-            let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(weights.len());
+            let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(linear_forms.len());
             let mut m_evals: Vec<F> = Vec::with_capacity(evaluations.len());
-            let mut w_folded_blinding_evals: Vec<F> =
-                Vec::with_capacity(weights.len() * num_polynomials * num_witness_variables_plus_1);
+            let mut w_folded_blinding_evals: Vec<F> = Vec::with_capacity(
+                linear_forms.len() * num_polynomials * num_witness_variables_plus_1,
+            );
 
-            for &weight in weights {
-                let w_folded =
-                    fold_weight_to_mask_size(weight, num_witness_variables, num_blinding_variables);
+            for weight in linear_forms {
+                let w_folded = fold_weight_to_mask_size(
+                    weight.as_ref(),
+                    num_witness_variables,
+                    num_blinding_variables,
+                );
                 for poly_idx in 0..num_polynomials {
                     let base = poly_idx * num_witness_variables_plus_1;
                     for v in 0..num_witness_variables_plus_1 {
@@ -390,7 +394,7 @@ impl<F: FftField + PrimeField> Config<F> {
                 prover_state,
                 f_hat_vectors.into_iter().map(Cow::Owned).collect(),
                 f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
-                weights,
+                linear_forms,
                 Cow::Borrowed(modified_evaluations.as_slice()),
             )
         };
@@ -398,7 +402,14 @@ impl<F: FftField + PrimeField> Config<F> {
         {
             #[cfg(feature = "tracing")]
             let _span = tracing::info_span!("inner_blinding_prove").entered();
-            let blinding_forms = build_blinding_forms(&beq_weights, &w_folded_weights);
+            let blinding_forms: Vec<Box<dyn LinearForm<F>>> =
+                std::iter::once(Box::new(beq_weights) as Box<dyn LinearForm<F>>)
+                    .chain(
+                        w_folded_weights
+                            .into_iter()
+                            .map(|wf| Box::new(wf) as Box<dyn LinearForm<F>>),
+                    )
+                    .collect();
             let all_blinding_claims = [
                 &batched_blinding_subproof_claims[..],
                 &w_folded_blinding_evals[..],

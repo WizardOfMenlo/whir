@@ -3,6 +3,8 @@ mod prover;
 mod utils;
 mod verifier;
 
+use std::fmt::Display;
+
 use ark_ff::{FftField, PrimeField};
 use serde::{Deserialize, Serialize};
 
@@ -239,15 +241,28 @@ impl<F: FftField + PrimeField> Config<F> {
     }
 }
 
+impl<F: FftField + PrimeField> Display for Config<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "zkWHIR config: witness and blinding commitments")?;
+        writeln!(f, "Witness-side:")?;
+        write!(f, "{}", self.blinded_commitment)?;
+        writeln!(f, "------------------------------------")?;
+        writeln!(f, "Blinding-side:")?;
+        write!(f, "{}", self.blinding_commitment)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use ark_ff::Field;
+    use std::borrow::Cow;
+
+    use ark_ff::{AdditiveGroup, Field};
 
     use super::*;
     use crate::{
         algebra::{
             fields::Field64,
-            linear_form::{Evaluate, LinearForm, MultilinearExtension},
+            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
         hash,
@@ -298,6 +313,23 @@ mod tests {
             .collect()
     }
 
+    fn to_prove_forms(
+        forms: &[Box<dyn LinearForm<F>>],
+        size: usize,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        forms
+            .iter()
+            .map(|f| {
+                let mut cv = vec![F::ZERO; size];
+                f.accumulate(&mut cv, F::ONE);
+                Box::new(Covector {
+                    deferred: f.deferred(),
+                    vector: cv,
+                }) as Box<dyn LinearForm<F>>
+            })
+            .collect()
+    }
+
     fn make_two_poly_vectors(mul: u64, add: u64) -> (Vec<F>, Vec<F>) {
         let v0 = vec![F::ONE; TEST_NUM_COEFFS];
         let v1 = (0..TEST_NUM_COEFFS)
@@ -324,10 +356,12 @@ mod tests {
     fn prove_and_verify(
         params: &Config<F>,
         vectors: &[&[F]],
-        linear_form_refs: &[&dyn LinearForm<F>],
+        forms: &[Box<dyn LinearForm<F>>],
         evaluations: &[F],
         session_tag: &str,
     ) {
+        let verify_refs = linear_form_refs(forms);
+        let prove_forms = to_prove_forms(forms, params.blinded_commitment.initial_size());
         let tag = session_tag.to_owned();
         let ds = DomainSeparator::protocol(params)
             .session(&tag)
@@ -336,9 +370,12 @@ mod tests {
         let witness = params.commit(&mut prover_state, vectors);
         params.prove(
             &mut prover_state,
-            vectors,
+            &vectors
+                .iter()
+                .map(|&v| Cow::Borrowed(v))
+                .collect::<Vec<_>>(),
             witness,
-            linear_form_refs,
+            &prove_forms,
             evaluations,
         );
         let proof = prover_state.proof();
@@ -347,12 +384,7 @@ mod tests {
             .receive_commitments(&mut verifier_state, vectors.len())
             .expect("receive commitments");
         params
-            .verify(
-                &mut verifier_state,
-                linear_form_refs,
-                evaluations,
-                &commitment,
-            )
+            .verify(&mut verifier_state, &verify_refs, evaluations, &commitment)
             .expect("verify zk wrapper");
     }
 
@@ -363,16 +395,13 @@ mod tests {
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let form = MultilinearExtension {
-            point: point.0,
-        };
+        let form = MultilinearExtension { point: point.0 };
         let evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
-        let refs = linear_form_refs(&forms);
         prove_and_verify(
             &params,
             &[&vector],
-            &refs,
+            &forms,
             &[evaluation],
             &format!("zk-stage1 {}:{}", file!(), line!()),
         );
@@ -388,20 +417,15 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension {
-            point: p0.0,
-        };
-        let f1 = MultilinearExtension {
-            point: p1.0,
-        };
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
-        let refs = linear_form_refs(&forms);
         prove_and_verify(
             &params,
             &vectors,
-            &refs,
+            &forms,
             &evaluations,
             &format!("zk-stage1-multi {}:{}", file!(), line!()),
         );
@@ -419,22 +443,28 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension {
-            point: p0.0,
-        };
-        let f1 = MultilinearExtension {
-            point: p1.0,
-        };
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
+        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-negative {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
         let witness = params.commit(&mut prover_state, &vectors);
-        params.prove(&mut prover_state, &vectors, witness, &refs, &evaluations);
+        params.prove(
+            &mut prover_state,
+            &vectors
+                .iter()
+                .map(|&v| Cow::Borrowed(v))
+                .collect::<Vec<_>>(),
+            witness,
+            &prove_forms,
+            &Cow::Borrowed(&evaluations),
+        );
 
         let proof = prover_state.proof();
         let mut wrong_evaluations = evaluations.clone();
@@ -465,22 +495,28 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension {
-            point: p0.0,
-        };
-        let f1 = MultilinearExtension {
-            point: p1.0,
-        };
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
+        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-tamper {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
         let witness = params.commit(&mut prover_state, &vectors);
-        params.prove(&mut prover_state, &vectors, witness, &refs, &evaluations);
+        params.prove(
+            &mut prover_state,
+            &vectors
+                .iter()
+                .map(|&v| Cow::Borrowed(v))
+                .collect::<Vec<_>>(),
+            witness,
+            &prove_forms,
+            &evaluations,
+        );
 
         let mut proof = prover_state.proof();
         if let Some(last) = proof.narg_string.last_mut() {
@@ -517,14 +553,13 @@ mod tests {
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let form = MultilinearExtension {
-            point: point.0,
-        };
+        let form = MultilinearExtension { point: point.0 };
         let correct_evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
         let wrong_evaluation = correct_evaluation + F::from(42u64);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
         let refs = linear_form_refs(&forms);
+        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-malicious {}:{}", file!(), line!()))
             .instance(&Empty);
@@ -534,9 +569,9 @@ mod tests {
             let witness = params.commit(&mut prover_state, &[&vector]);
             params.prove(
                 &mut prover_state,
-                &[&vector],
+                &[Cow::Borrowed(&vector)],
                 witness,
-                &refs,
+                &prove_forms,
                 &[wrong_evaluation],
             );
 

@@ -177,13 +177,12 @@ where
         HASH_COUNTER.reset();
 
         let witness = params.commit(&mut prover_state, &[&vector]);
-        let no_linear_forms: [&dyn LinearForm<F>; 0] = [];
 
         params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
-            &no_linear_forms,
+            &[],
             Cow::Owned(vec![]),
         );
 
@@ -261,18 +260,16 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-        }
-        let prove_form_refs: Vec<&dyn LinearForm<F>> =
-            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
+        let prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = points
+            .iter()
+            .map(|p| Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<F>>)
+            .collect();
 
         params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
-            &prove_form_refs,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 

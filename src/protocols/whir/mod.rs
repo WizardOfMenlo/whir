@@ -138,15 +138,13 @@ mod tests {
         let witness = params.commit(&mut prover_state, &[&vector]);
 
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
-        let prove_form_refs: Vec<&dyn LinearForm<EF>> =
-            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
         // Generate a proof for the given statement and witness
         params.prove(
             &mut prover_state,
             vec![Cow::from(vector)],
             vec![Cow::Owned(witness)],
-            &prove_form_refs,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -336,8 +334,6 @@ mod tests {
         }
 
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
-        let prove_form_refs: Vec<&dyn LinearForm<EF>> =
-            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
         // Batch prove all polynomials together
         let (_point, _evals) = params.prove(
@@ -347,7 +343,7 @@ mod tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            &prove_form_refs,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -500,15 +496,13 @@ mod tests {
         let witness2 = params.commit(&mut prover_state, &[&vec2]);
 
         let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
-        let prove_form_refs: Vec<&dyn LinearForm<EF>> =
-            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
         // Generate proof with mismatched polynomials
         let (_evalpoint, _values) = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
             vec![Cow::Owned(witness1), Cow::Owned(witness2)],
-            &prove_form_refs,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -620,8 +614,6 @@ mod tests {
         }
 
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
-        let prove_form_refs: Vec<&dyn LinearForm<EF>> =
-            prove_linear_forms.iter().map(|b| b.as_ref()).collect();
 
         // Batch prove all witnesses together
         let (_point, _evals) = params.prove(
@@ -631,7 +623,7 @@ mod tests {
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            &prove_form_refs,
+            &prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
