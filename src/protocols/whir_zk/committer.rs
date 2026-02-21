@@ -1,5 +1,4 @@
 use ark_ff::{FftField, PrimeField};
-use ark_std::rand::{rngs::StdRng, SeedableRng};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -25,8 +24,8 @@ pub struct Commitment<F: FftField + PrimeField> {
 /// the blinding polynomial family, and the single blinding commitment witness.
 #[derive(Clone, Debug)]
 pub struct Witness<F: FftField + PrimeField> {
-    pub f_hat_witnesses: Vec<irs_commit::Witness<F, F>>,
     pub f_hat_vectors: Vec<Vec<F>>,
+    pub f_hat_witnesses: Vec<irs_commit::Witness<F, F>>,
     pub blinding_polynomials: Vec<BlindingPolynomials<F>>,
     pub blinding_vectors: Vec<Vec<F>>,
     pub blinding_witness: irs_commit::Witness<F, F>,
@@ -35,8 +34,8 @@ pub struct Witness<F: FftField + PrimeField> {
 impl<F: FftField + PrimeField> Config<F> {
     /// Commit to one or more polynomials with zero-knowledge blinding.
     ///
-    /// For each polynomial, samples fresh blinding coefficients (using system
-    /// entropy, independent of the transcript RNG for ZK), constructs the
+    /// For each polynomial, samples fresh blinding coefficients from the
+    /// prover's private transcript-bound RNG, constructs the
     /// masked polynomial `f_hat = f + m_poly`, and commits both the masked
     /// polynomials and the blinding vectors to the transcript.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -56,17 +55,14 @@ impl<F: FftField + PrimeField> Config<F> {
             "zkWHIR currently expects one vector per commitment"
         );
 
-        let mut f_hat_witnesses = Vec::with_capacity(polynomials.len());
         let mut f_hat_vectors = Vec::with_capacity(polynomials.len());
+        let mut f_hat_witnesses = Vec::with_capacity(polynomials.len());
         let mut blinding_polynomials = Vec::with_capacity(polynomials.len());
-        // Use system entropy (not transcript RNG) so blinding is independent of
-        // the public transcript — required for zero-knowledge.
-        let mut blinding_rng = StdRng::from_entropy();
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables = self.num_witness_variables();
         for &poly in polynomials {
             let blinding = BlindingPolynomials::sample(
-                &mut blinding_rng,
+                prover_state.rng(),
                 num_blinding_variables,
                 num_witness_variables,
             );
@@ -91,8 +87,8 @@ impl<F: FftField + PrimeField> Config<F> {
             let witness = self
                 .blinded_commitment
                 .commit(prover_state, &[f_hat_vec.as_slice()]);
-            f_hat_witnesses.push(witness);
             f_hat_vectors.push(f_hat_vec);
+            f_hat_witnesses.push(witness);
             blinding_polynomials.push(blinding);
         }
 
@@ -121,8 +117,8 @@ impl<F: FftField + PrimeField> Config<F> {
             .commit(prover_state, &blinding_vector_refs);
 
         Witness {
-            f_hat_witnesses,
             f_hat_vectors,
+            f_hat_witnesses,
             blinding_polynomials,
             blinding_vectors,
             blinding_witness,

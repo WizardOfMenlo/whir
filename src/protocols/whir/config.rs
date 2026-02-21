@@ -4,12 +4,12 @@ use std::{
     ops::Neg,
 };
 
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     algebra::{
-        embedding::{self, Basefield, Embedding, Identity},
+        embedding::{self, Basefield, Embedding},
         fields::FieldWithSize,
     },
     bits::Bits,
@@ -263,22 +263,6 @@ where
                 num_rounds: final_sumcheck_rounds,
             },
             final_pow: pow(final_pow_bits),
-        }
-    }
-
-    /// Convert a basefield-embedded WHIR config into a single-field Identity embedding.
-    pub fn into_identity(self) -> Config<F, Identity<F>>
-    where
-        F: PrimeField,
-    {
-        Config {
-            initial_committer: self.initial_committer.with_embedding(Identity::new()),
-            initial_sumcheck: self.initial_sumcheck,
-            round_configs: self.round_configs,
-            final_sumcheck: self.final_sumcheck,
-            final_pow: self.final_pow,
-            soundness_type: self.soundness_type,
-            security_level: self.security_level,
         }
     }
 

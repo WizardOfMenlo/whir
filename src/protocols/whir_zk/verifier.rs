@@ -2,7 +2,7 @@ use ark_ff::{FftField, PrimeField};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::Config;
+use super::{Commitment, Config};
 use crate::{
     algebra::linear_form::{Covector, LinearForm},
     hash::Hash,
@@ -42,7 +42,7 @@ impl<F: FftField + PrimeField> Config<F> {
         verifier_state: &mut VerifierState<'_, H>,
         weights: &[&dyn LinearForm<F>],
         evaluations: &[F],
-        commitment: &super::Commitment<F>,
+        commitment: &Commitment<F>,
     ) -> VerificationResult<()>
     where
         H: DuplexSpongeInterface,

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use self::committer::{Commitment, Witness};
 use crate::{
-    algebra::embedding::{Embedding, Identity},
+    algebra::embedding::Embedding,
     parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
     protocols::whir,
 };
@@ -31,16 +31,10 @@ pub struct BlindingSizePolicy {
     pub sumcheck_round_degree: usize,
 }
 
-/// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "")]
-pub struct Config<F: FftField + PrimeField> {
-    pub blinded_commitment: whir::Config<F, Identity<F>>,
-    pub blinding_commitment: whir::Config<F, Identity<F>>,
-}
-
-impl<F: FftField + PrimeField> Config<F> {
-    fn default_blinding_size_policy(main_whir_params: &ProtocolParameters) -> BlindingSizePolicy {
+impl BlindingSizePolicy {
+    pub fn from_whir_params<F: FftField + PrimeField>(
+        main_whir_params: &ProtocolParameters,
+    ) -> Self {
         let protocol_security_level_main = main_whir_params
             .security_level
             .saturating_sub(main_whir_params.pow_bits);
@@ -56,7 +50,7 @@ impl<F: FftField + PrimeField> Config<F> {
         );
 
         // Default send-in-clear thresholds match query complexities.
-        BlindingSizePolicy {
+        Self {
             q_delta_1,
             q_delta_2,
             t1: q_delta_1,
@@ -65,7 +59,17 @@ impl<F: FftField + PrimeField> Config<F> {
             sumcheck_round_degree: 3,
         }
     }
+}
 
+/// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "")]
+pub struct Config<F: FftField + PrimeField> {
+    pub blinded_commitment: whir::Config<F>,
+    pub blinding_commitment: whir::Config<F>,
+}
+
+impl<F: FftField + PrimeField> Config<F> {
     /// Build a zkWHIR config from the given WHIR parameters.
     pub fn new(
         main_mv_params: MultivariateParameters<F>,
@@ -73,7 +77,7 @@ impl<F: FftField + PrimeField> Config<F> {
         blinding_folding_factor: FoldingFactor,
         num_polynomials: usize,
     ) -> Self {
-        let size_policy = Self::default_blinding_size_policy(main_whir_params);
+        let size_policy = BlindingSizePolicy::from_whir_params::<F>(main_whir_params);
         Self::new_with_blinding_size_policy(
             main_mv_params,
             main_whir_params,
@@ -95,8 +99,7 @@ impl<F: FftField + PrimeField> Config<F> {
         num_polynomials: usize,
         size_policy: BlindingSizePolicy,
     ) -> Self {
-        let blinded_commitment =
-            whir::Config::new(main_mv_params, main_whir_params).into_identity();
+        let blinded_commitment = whir::Config::new(main_mv_params, main_whir_params);
         let num_witness_variables = blinded_commitment.initial_num_variables();
         let blinding_first_round_interleaving_depth = 1usize << blinding_folding_factor.at_round(0);
         let num_blinding_variables = Self::compute_num_blinding_variables(
@@ -116,8 +119,7 @@ impl<F: FftField + PrimeField> Config<F> {
             batch_size: num_polynomials * (num_witness_variables + 1),
             hash_id: main_whir_params.hash_id,
         };
-        let blinding_commitment =
-            whir::Config::new(blinding_mv_params, &blinding_whir_params).into_identity();
+        let blinding_commitment = whir::Config::new(blinding_mv_params, &blinding_whir_params);
 
         Self {
             blinded_commitment,
@@ -126,7 +128,7 @@ impl<F: FftField + PrimeField> Config<F> {
     }
 
     fn compute_num_blinding_variables(
-        blinded: &whir::Config<F, Identity<F>>,
+        blinded: &whir::Config<F>,
         blinding_first_round_interleaving_depth: usize,
         size_policy: BlindingSizePolicy,
     ) -> usize {
@@ -361,11 +363,12 @@ mod tests {
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let form = MultilinearExtension { point: point.0 };
+        let form = MultilinearExtension {
+            point: point.0,
+        };
         let evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
         let refs = linear_form_refs(&forms);
-
         prove_and_verify(
             &params,
             &[&vector],
@@ -385,13 +388,16 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension { point: p0.0 };
-        let f1 = MultilinearExtension { point: p1.0 };
+        let f0 = MultilinearExtension {
+            point: p0.0,
+        };
+        let f1 = MultilinearExtension {
+            point: p1.0,
+        };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
-
         prove_and_verify(
             &params,
             &vectors,
@@ -413,13 +419,16 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension { point: p0.0 };
-        let f1 = MultilinearExtension { point: p1.0 };
+        let f0 = MultilinearExtension {
+            point: p0.0,
+        };
+        let f1 = MultilinearExtension {
+            point: p1.0,
+        };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
-
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-negative {}:{}", file!(), line!()))
             .instance(&Empty);
@@ -456,13 +465,16 @@ mod tests {
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let f0 = MultilinearExtension { point: p0.0 };
-        let f1 = MultilinearExtension { point: p1.0 };
+        let f0 = MultilinearExtension {
+            point: p0.0,
+        };
+        let f1 = MultilinearExtension {
+            point: p1.0,
+        };
         let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
         let refs = linear_form_refs(&forms);
-
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-stage1-tamper {}:{}", file!(), line!()))
             .instance(&Empty);
@@ -505,13 +517,14 @@ mod tests {
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let form = MultilinearExtension { point: point.0 };
+        let form = MultilinearExtension {
+            point: point.0,
+        };
         let correct_evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
         let wrong_evaluation = correct_evaluation + F::from(42u64);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
         let refs = linear_form_refs(&forms);
-
         let ds = DomainSeparator::protocol(&params)
             .session(&format!("zk-malicious {}:{}", file!(), line!()))
             .instance(&Empty);

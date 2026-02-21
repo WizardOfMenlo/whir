@@ -310,19 +310,10 @@ where
         linear_forms.push(Box::new(covector));
     }
 
-    // Build owned linear forms for prove (consumed), keep originals for verify
-    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-    for point in &points {
-        prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-    }
-    for _ in 0..num_linear_constraints {
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..num_coeffs).map(F::from).collect(),
-        }));
-    }
-    let prove_form_refs: Vec<&dyn LinearForm<F>> =
-        prove_linear_forms.iter().map(|b| b.as_ref()).collect();
+    let prove_form_refs: Vec<&dyn LinearForm<F>> = linear_forms
+        .iter()
+        .map(|w| w.as_ref() as &dyn LinearForm<F>)
+        .collect();
 
     let whir_prove_time = Instant::now();
     params.prove(
@@ -459,20 +450,10 @@ where
         linear_forms.push(Box::new(covector));
     }
 
-    // Build owned linear forms for prove (consumed), keep originals for verify
-    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-    for point in &points {
-        prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-    }
-    for _ in 0..num_linear_constraints {
-        prove_linear_forms.push(Box::new(Covector {
-            deferred: false,
-            vector: (0..num_coeffs).map(F::from).collect(),
-        }));
-    }
-    let prove_form_refs: Vec<&dyn LinearForm<F>> =
-        prove_linear_forms.iter().map(|b| b.as_ref()).collect();
-
+    let prove_form_refs: Vec<&dyn LinearForm<F>> = linear_forms
+        .iter()
+        .map(|w| w.as_ref() as &dyn LinearForm<F>)
+        .collect();
     let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[vector.as_slice()]);
     let whir_commit_time = whir_commit_time.elapsed();

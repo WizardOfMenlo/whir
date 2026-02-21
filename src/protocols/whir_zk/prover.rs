@@ -11,7 +11,7 @@ use crate::{
     algebra::{
         embedding::Identity,
         linear_form::{Covector, Evaluate, LinearForm},
-        mixed_dot_seq, scalar_mul_add, MultilinearPoint,
+        mixed_dot, scalar_mul_add, MultilinearPoint,
     },
     hash::Hash,
     protocols::whir_zk::utils::{
@@ -115,7 +115,7 @@ fn evaluate_gamma_block<F: FftField + PrimeField>(
                                 .sum();
                             for (j, g_hat) in bp.g_hats.iter().enumerate() {
                                 slot[off + 1 + j] =
-                                    one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                                    one_plus_rho * mixed_dot(&embedding, &eq_buf, g_hat);
                             }
                             let mut h = slot[off];
                             let mut bp_pow = blinding_challenge;
@@ -161,7 +161,7 @@ fn evaluate_gamma_block<F: FftField + PrimeField>(
                     .sum();
                 for (j, g_hat) in bp.g_hats.iter().enumerate() {
                     eval_results[off + 1 + j] =
-                        one_plus_rho * mixed_dot_seq(&embedding, &eq_buf, g_hat);
+                        one_plus_rho * mixed_dot(&embedding, &eq_buf, g_hat);
                 }
                 let mut h = eval_results[off];
                 let mut bp_pow = blinding_challenge;
@@ -225,13 +225,13 @@ impl<F: FftField + PrimeField> Config<F> {
         );
         assert_eq!(
             polynomials.len(),
-            witness.f_hat_witnesses.len(),
-            "witness/polynomial length mismatch"
+            witness.f_hat_vectors.len(),
+            "masked vector/polynomial length mismatch"
         );
         assert_eq!(
             polynomials.len(),
-            witness.f_hat_vectors.len(),
-            "masked vector/polynomial length mismatch"
+            witness.f_hat_witnesses.len(),
+            "witness/polynomial length mismatch"
         );
         assert_eq!(
             witness.blinding_vectors.len(),
@@ -246,8 +246,8 @@ impl<F: FftField + PrimeField> Config<F> {
 
         // Destructure early; blinding_polynomials is dropped after the gamma block.
         let Witness {
-            f_hat_witnesses,
             f_hat_vectors,
+            f_hat_witnesses,
             blinding_polynomials,
             blinding_vectors,
             blinding_witness,
@@ -287,7 +287,9 @@ impl<F: FftField + PrimeField> Config<F> {
             }
             (w_folded_weights, m_evals, w_folded_blinding_evals)
         };
-        prover_state.prover_message_fields(&w_folded_blinding_evals);
+        for eval in &w_folded_blinding_evals {
+            prover_state.prover_message(eval);
+        }
 
         // Sample non-zero rho after masking evaluations are committed.
         let masking_challenge: F = prover_state.verifier_message();
@@ -350,8 +352,10 @@ impl<F: FftField + PrimeField> Config<F> {
                     let g_hat_evals = &eval_results[off + 1..off + 1 + num_witness_variables];
                     let h_val = eval_results[off + 1 + num_witness_variables];
 
-                    prover_state.prover_message_field(&m_eval);
-                    prover_state.prover_message_fields(g_hat_evals);
+                    prover_state.prover_message(&m_eval);
+                    for g_hat_eval in g_hat_evals {
+                        prover_state.prover_message(g_hat_eval);
+                    }
 
                     m_claims[poly_idx] += tau2_pow * m_eval;
                     for (j, &g) in g_hat_evals.iter().enumerate() {
@@ -372,8 +376,12 @@ impl<F: FftField + PrimeField> Config<F> {
         let (combined_claims, batched_blinding_subproof_claims) =
             build_combined_and_subproof_claims(&m_claims, &g_hat_slices, tau1);
         let beq_weights = Covector::new(beq_weight_accum);
-        prover_state.prover_message_fields(&combined_claims);
-        prover_state.prover_message_fields(&batched_h_claims);
+        for claim in &combined_claims {
+            prover_state.prover_message(claim);
+        }
+        for claim in &batched_h_claims {
+            prover_state.prover_message(claim);
+        }
 
         let result = {
             #[cfg(feature = "tracing")]

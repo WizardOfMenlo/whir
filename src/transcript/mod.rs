@@ -10,7 +10,6 @@ mod mock_sponge;
 use std::any::type_name;
 use std::fmt::Debug;
 
-use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::{rngs::StdRng, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -20,51 +19,6 @@ pub use spongefish::{
     Codec, Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, NargSerialize,
     VerificationError, VerificationResult,
 };
-
-/// Max bytes for stack-encoding a field element (supports up to Fp12 over 64-byte base fields).
-const MAX_FIELD_BYTES: usize = 768;
-
-/// Encode a field element into `buf` without heap allocation.
-/// Matches spongefish's `Encoding<[u8]>` for arkworks field elements.
-/// Returns the number of bytes written.
-#[inline]
-fn encode_field_into<F: Field>(elem: &F, buf: &mut [u8]) -> usize {
-    let base_size = F::BasePrimeField::MODULUS_BIT_SIZE.div_ceil(8) as usize;
-    let total_size = base_size * F::extension_degree() as usize;
-    assert!(
-        buf.len() >= total_size,
-        "encode_field_into: buffer too small ({} < {total_size})",
-        buf.len()
-    );
-    let mut pos = 0;
-    for base_elem in elem.to_base_prime_field_elements() {
-        let bigint = base_elem.into_bigint();
-        let limbs: &[u64] = bigint.as_ref();
-        let target = pos + base_size;
-        for &limb in limbs {
-            let le = limb.to_le_bytes();
-            let remaining = target - pos;
-            let copy_len = remaining.min(8);
-            buf[pos..pos + copy_len].copy_from_slice(&le[..copy_len]);
-            pos += copy_len;
-            if pos >= target {
-                break;
-            }
-        }
-    }
-    total_size
-}
-
-/// Byte slice wrapper implementing `Encoding<[u8]>` to bypass spongefish's
-/// allocating `Encoding` impl for arkworks field elements.
-struct EncodedBytes<'a>(&'a [u8]);
-
-impl Encoding<[u8]> for EncodedBytes<'_> {
-    #[inline]
-    fn encode(&self) -> impl AsRef<[u8]> {
-        self.0
-    }
-}
 
 #[cfg(test)]
 pub use self::mock_sponge::MockSponge;
@@ -231,6 +185,11 @@ where
     H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
 {
+    /// Access the prover's private transcript-bound RNG.
+    pub fn rng(&mut self) -> &mut (impl RngCore + CryptoRng) {
+        self.inner.rng()
+    }
+
     #[cfg_attr(test, track_caller)]
     pub fn prover_message<T>(&mut self, message: &T)
     where
@@ -239,34 +198,6 @@ where
         #[cfg(debug_assertions)]
         self.push(Interaction::ProverMessage(type_name::<T>().to_owned()));
         self.inner.prover_message(message);
-    }
-
-    /// Allocation-free `prover_message` for a single field element.
-    #[cfg_attr(test, track_caller)]
-    pub fn prover_message_field<F: Field>(&mut self, elem: &F)
-    where
-        H: DuplexSpongeInterface<U = u8>,
-    {
-        #[cfg(debug_assertions)]
-        self.push(Interaction::ProverMessage(type_name::<F>().to_owned()));
-        let mut buf = [0u8; MAX_FIELD_BYTES];
-        let n = encode_field_into(elem, &mut buf);
-        self.inner.prover_message(&EncodedBytes(&buf[..n]));
-    }
-
-    /// Allocation-free `prover_message` for a slice of field elements.
-    #[cfg_attr(test, track_caller)]
-    pub fn prover_message_fields<F: Field>(&mut self, elems: &[F])
-    where
-        H: DuplexSpongeInterface<U = u8>,
-    {
-        let mut buf = [0u8; MAX_FIELD_BYTES];
-        for elem in elems {
-            #[cfg(debug_assertions)]
-            self.push(Interaction::ProverMessage(type_name::<F>().to_owned()));
-            let n = encode_field_into(elem, &mut buf);
-            self.inner.prover_message(&EncodedBytes(&buf[..n]));
-        }
     }
 
     #[cfg_attr(test, track_caller)]
