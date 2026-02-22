@@ -10,7 +10,7 @@ use whir::{
         MultilinearPoint,
     },
     bits::Bits,
-    cmdline_utils::{AvailableFields, AvailableHash, WhirType},
+    cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
     parameters::ProtocolParameters,
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
@@ -19,14 +19,11 @@ use whir::{
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(short = 't', long = "type", default_value = "PCS")]
-    protocol_type: WhirType,
-
     #[arg(short = 'l', long, default_value = "128")]
     security_level: usize,
 
     /// Maximum proof of work difficulty in bits.
-    #[arg(short = 'p', long, default_value = "30")]
+    #[arg(short = 'p', long, default_value = "20")]
     pow_bits: usize,
 
     #[arg(short = 'd', long, default_value = "20")]

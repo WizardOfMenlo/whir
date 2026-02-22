@@ -5,24 +5,6 @@ use serde::Serialize;
 use crate::{engines::EngineId, hash};
 
 #[derive(Debug, Clone, Copy, Serialize)]
-pub enum WhirType {
-    LDT,
-    PCS,
-}
-
-impl FromStr for WhirType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "LDT" => Ok(Self::LDT),
-            "PCS" => Ok(Self::PCS),
-            _ => Err(format!("Invalid field: {s}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
 pub enum AvailableFields {
     Goldilocks1, // Just Goldilocks
     Goldilocks2, // Quadratic extension of Goldilocks
