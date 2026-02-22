@@ -367,13 +367,13 @@ mod tests {
         let witness = params.commit(&mut prover_state, vectors);
         let _ = params.prove(
             &mut prover_state,
-            &vectors
+            vectors
                 .iter()
                 .map(|&v| Cow::Borrowed(v))
                 .collect::<Vec<_>>(),
             witness,
             prove_forms,
-            evaluations,
+            Cow::Borrowed(evaluations),
         );
         let proof = prover_state.proof();
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
@@ -454,13 +454,13 @@ mod tests {
         let witness = params.commit(&mut prover_state, &vectors);
         let _ = params.prove(
             &mut prover_state,
-            &vectors
+            vectors
                 .iter()
                 .map(|&v| Cow::Borrowed(v))
                 .collect::<Vec<_>>(),
             witness,
             prove_forms,
-            &Cow::Borrowed(&evaluations),
+            Cow::Borrowed(&evaluations),
         );
 
         let proof = prover_state.proof();
@@ -506,13 +506,13 @@ mod tests {
         let witness = params.commit(&mut prover_state, &vectors);
         let _ = params.prove(
             &mut prover_state,
-            &vectors
+            vectors
                 .iter()
                 .map(|&v| Cow::Borrowed(v))
                 .collect::<Vec<_>>(),
             witness,
             prove_forms,
-            &evaluations,
+            Cow::Borrowed(&evaluations),
         );
 
         let mut proof = prover_state.proof();
@@ -566,10 +566,10 @@ mod tests {
             let witness = params.commit(&mut prover_state, &[&vector]);
             let _ = params.prove(
                 &mut prover_state,
-                &[Cow::Borrowed(&vector)],
+                vec![Cow::Borrowed(&vector)],
                 witness,
                 prove_forms,
-                &[wrong_evaluation],
+                Cow::Owned(vec![wrong_evaluation]),
             );
 
             let proof = prover_state.proof();

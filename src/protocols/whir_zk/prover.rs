@@ -205,13 +205,13 @@ impl<F: FftField + PrimeField> Config<F> {
     /// inner witness-side WHIR prover.
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove<H, R>(
+    pub fn prove<'a, H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[Cow<'_, [F]>],
+        vectors: Vec<Cow<'a, [F]>>,
         witness: Witness<F>,
         linear_forms: Vec<Box<dyn LinearForm<F>>>,
-        evaluations: &[F],
+        evaluations: Cow<'a, [F]>,
     ) -> FinalClaim<F>
     where
         H: DuplexSpongeInterface<U = u8>,

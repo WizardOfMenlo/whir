@@ -470,10 +470,10 @@ where
     let whir_prove_time = Instant::now();
     let _ = params.prove(
         &mut prover_state,
-        &[Cow::Borrowed(&vector)],
+        vec![Cow::Borrowed(&vector)],
         witness,
         prove_linear_forms,
-        &evaluations,
+        Cow::Borrowed(&evaluations),
     );
     let whir_prove_time = whir_prove_time.elapsed();
 

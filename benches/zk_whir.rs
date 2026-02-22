@@ -380,13 +380,13 @@ fn zk_v2_prove(bencher: Bencher, num_variables: usize) {
             let _ = black_box(
                 zk_config.prove(
                     &mut prover_state,
-                    &poly_refs
+                    poly_refs
                         .iter()
                         .map(|v| Cow::Borrowed(*v))
                         .collect::<Vec<_>>(),
                     zk_witness,
                     prove_forms,
-                    &Cow::Borrowed(evaluations.as_slice()),
+                    Cow::Borrowed(evaluations.as_slice()),
                 ),
             );
         });
@@ -417,13 +417,13 @@ fn zk_v2_verify(bencher: Bencher, num_variables: usize) {
         ))];
         let _ = zk_config.prove(
             &mut prover_state,
-            &poly_refs
+            poly_refs
                 .iter()
                 .map(|v| Cow::Borrowed(*v))
                 .collect::<Vec<_>>(),
             zk_witness,
             prove_forms,
-            &Cow::Borrowed(evaluations.as_slice()),
+            Cow::Borrowed(evaluations.as_slice()),
         );
         prover_state.proof()
     };
