@@ -24,7 +24,7 @@
 
 use std::fmt;
 
-use ark_ff::{FftField, Field};
+use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -33,7 +33,7 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        embedding::{Basefield, Embedding, Identity},
+        embedding::Embedding,
         lift,
         linear_form::UnivariateEvaluation,
         mixed_univariate_evaluate,
@@ -45,27 +45,17 @@ use crate::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
-    type_info::{TypeInfo, Typed},
+    type_info::Typed,
     utils::zip_strict,
     verify,
 };
 
-/// Specialization of [`Config`] for commiting with identity embedding.
-#[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
-pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
-
-/// Specialization of [`Config`] for commiting over base fields
-#[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
-pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
-
 /// Commit to vectors over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(bound = "F: FftField, G: Field, M: Embedding<Source = F, Target = G>")]
-pub struct Config<F, G = F, M = Identity<F>>
+#[serde(bound = "M: Embedding, M::Source: FftField")]
+pub struct Config<M: Embedding>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G>,
+    M::Source: FftField,
 {
     /// Embedding into a (larger) field used for weights and drawing challenges.
     pub embedding: Typed<M>,
@@ -83,7 +73,7 @@ where
     pub interleaving_depth: usize,
 
     /// The matrix commitment configuration.
-    pub matrix_commit: matrix_commit::Config<F>,
+    pub matrix_commit: matrix_commit::Config<M::Source>,
 
     /// The number of in-domain samples.
     pub in_domain_samples: usize,
@@ -126,11 +116,9 @@ pub struct Evaluations<F> {
     pub matrix: Vec<F>,
 }
 
-impl<F, G, M> Config<F, G, M>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G>,
+    M::Source: FftField,
 {
     pub const fn num_rows(&self) -> usize {
         self.matrix_commit.num_rows()
@@ -148,7 +136,7 @@ where
         &self.embedding
     }
 
-    pub fn generator(&self) -> F {
+    pub fn generator(&self) -> M::Source {
         ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
     }
 
@@ -165,12 +153,12 @@ where
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[&[F]],
-    ) -> Witness<F, G>
+        vectors: &[&[M::Source]],
+    ) -> Witness<M::Source, M::Target>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
-        G: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         // Validate config
@@ -195,7 +183,8 @@ where
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
 
         // Handle out-of-domain points and values
-        let oods_points: Vec<G> = prover_state.verifier_message_vec(self.out_domain_samples);
+        let oods_points: Vec<M::Target> =
+            prover_state.verifier_message_vec(self.out_domain_samples);
         let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_vectors);
         for &point in &oods_points {
             for &vector in vectors {
@@ -220,14 +209,15 @@ where
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-    ) -> VerificationResult<Commitment<G>>
+    ) -> VerificationResult<Commitment<M::Target>>
     where
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
-        G: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
     {
         let matrix_commitment = self.matrix_commit.receive_commitment(verifier_state)?;
-        let oods_points: Vec<G> = verifier_state.verifier_message_vec(self.out_domain_samples);
+        let oods_points: Vec<M::Target> =
+            verifier_state.verifier_message_vec(self.out_domain_samples);
         let oods_matrix =
             verifier_state.prover_messages_vec(self.out_domain_samples * self.num_vectors)?;
         Ok(Commitment {
@@ -250,8 +240,8 @@ where
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        witnesses: &[&Witness<F, G>],
-    ) -> Evaluations<F>
+        witnesses: &[&Witness<M::Source, M::Target>],
+    ) -> Evaluations<M::Source>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -273,7 +263,7 @@ where
         // For each commitment, send the selected rows to the verifier
         // and collect them in the evaluation matrix.
         let stride = witnesses.len() * self.num_cols();
-        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
         let mut submatrix = Vec::with_capacity(indices.len() * self.num_cols());
         let mut matrix_col_offset = 0;
         for witness in witnesses {
@@ -303,8 +293,8 @@ where
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitments: &[&Commitment<G>],
-    ) -> VerificationResult<Evaluations<F>>
+        commitments: &[&Commitment<M::Target>],
+    ) -> VerificationResult<Evaluations<M::Source>>
     where
         H: DuplexSpongeInterface,
         u8: Decoding<[H::U]>,
@@ -323,10 +313,10 @@ where
         // Receive (as a hint) a matrix of all the columns of all the commitments
         // corresponding to the in-domain opening rows.
         let stride = commitments.len() * self.num_cols();
-        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
         let mut matrix_col_offset = 0;
         for commitment in commitments {
-            let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
+            let submatrix: Vec<M::Source> = verifier_state.prover_hint_ark()?;
             self.matrix_commit.verify(
                 verifier_state,
                 &commitment.matrix_commitment,
@@ -348,7 +338,7 @@ where
         Ok(Evaluations { points, matrix })
     }
 
-    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<F>)
+    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<M::Source>)
     where
         T: VerifierMessage,
         u8: Decoding<[T::U]>,
@@ -432,11 +422,9 @@ impl<F: Field> Evaluations<F> {
     }
 }
 
-impl<F, G, M> fmt::Display for Config<F, G, M>
+impl<M: Embedding> fmt::Display for Config<M>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G> + TypeInfo + Serialize + for<'a> Deserialize<'a>,
+    M::Source: FftField,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -467,7 +455,7 @@ mod tests {
     use super::*;
     use crate::{
         algebra::{
-            embedding::{Compose, Frobenius},
+            embedding::{Basefield, Compose, Frobenius, Identity},
             fields, univariate_evaluate,
         },
         transcript::{codecs::U64, DomainSeparator},
@@ -479,7 +467,7 @@ mod tests {
         num_vectors: usize,
         vector_size: usize,
         interleaving_depth: usize,
-    ) -> impl Strategy<Value = Config<M::Source, M::Target, M>>
+    ) -> impl Strategy<Value = Config<M>>
     where
         M::Source: FftField,
     {
@@ -524,7 +512,7 @@ mod tests {
         )
     }
 
-    fn test<M: Embedding>(seed: u64, config: &Config<M::Source, M::Target, M>)
+    fn test<M: Embedding>(seed: u64, config: &Config<M>)
     where
         M::Source: FftField + ProverMessage,
         M::Target: Codec,

@@ -14,7 +14,7 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
-        embedding::{Basefield, Embedding},
+        embedding::{Basefield, Embedding, Identity},
         linear_form::LinearForm,
     },
     hash::Hash,
@@ -59,7 +59,7 @@ where
     M: Embedding<Target = F>,
     M::Source: FftField,
 {
-    pub initial_committer: irs_commit::Config<M::Source, F, M>,
+    pub initial_committer: irs_commit::Config<M>,
     pub initial_sumcheck: sumcheck::Config<F>,
     pub initial_skip_pow: proof_of_work::Config,
     pub round_configs: Vec<RoundConfig<F>>,
@@ -73,7 +73,7 @@ pub struct RoundConfig<F>
 where
     F: FftField,
 {
-    pub irs_committer: irs_commit::Config<F>,
+    pub irs_committer: irs_commit::Config<Identity<F>>,
     pub sumcheck: sumcheck::Config<F>,
     pub pow: proof_of_work::Config,
 }
