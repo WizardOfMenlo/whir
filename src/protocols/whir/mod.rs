@@ -14,7 +14,7 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
-        embedding::{Basefield, Embedding, Identity},
+        embedding::{Embedding, Identity},
         linear_form::LinearForm,
     },
     hash::Hash,
@@ -25,6 +25,35 @@ use crate::{
     utils::zip_strict,
     verify,
 };
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "M: Embedding, M::Source: FftField, M::Target: FftField")]
+pub struct Config<M: Embedding>
+where
+    M::Source: FftField,
+    M::Target: FftField,
+{
+    pub initial_committer: irs_commit::Config<M>,
+    pub initial_sumcheck: sumcheck::Config<M::Target>,
+    pub initial_skip_pow: proof_of_work::Config,
+    pub round_configs: Vec<RoundConfig<M::Target>>,
+    pub final_sumcheck: sumcheck::Config<M::Target>,
+    pub final_pow: proof_of_work::Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: FftField")]
+pub struct RoundConfig<F>
+where
+    F: FftField,
+{
+    pub irs_committer: irs_commit::Config<Identity<F>>,
+    pub sumcheck: sumcheck::Config<F>,
+    pub pow: proof_of_work::Config,
+}
+
+pub type Witness<F: FftField, M: Embedding<Target = F>> = irs_commit::Witness<M::Source, F>;
+pub type Commitment<F: Field> = irs_commit::Commitment<F>;
 
 #[must_use = "The final claim must be checked if there where any linear forms."]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,41 +80,11 @@ impl<F: Field> FinalClaim<F> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField, M: Embedding<Target = F>, M::Source: FftField")]
-pub struct Config<F, M = Basefield<F>>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    M: Embedding<Target = F>,
+    M: Embedding,
     M::Source: FftField,
-{
-    pub initial_committer: irs_commit::Config<M>,
-    pub initial_sumcheck: sumcheck::Config<F>,
-    pub initial_skip_pow: proof_of_work::Config,
-    pub round_configs: Vec<RoundConfig<F>>,
-    pub final_sumcheck: sumcheck::Config<F>,
-    pub final_pow: proof_of_work::Config,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: FftField")]
-pub struct RoundConfig<F>
-where
-    F: FftField,
-{
-    pub irs_committer: irs_commit::Config<Identity<F>>,
-    pub sumcheck: sumcheck::Config<F>,
-    pub pow: proof_of_work::Config,
-}
-
-pub type Witness<F: FftField, M: Embedding<Target = F>> = irs_commit::Witness<M::Source, F>;
-pub type Commitment<F: Field> = irs_commit::Commitment<F>;
-
-impl<F, M> Config<F, M>
-where
-    F: FftField,
-    M: Embedding<Target = F>,
-    M::Source: FftField,
+    M::Target: FftField,
 {
     /// Commit to one or more vectors.
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = vectors.first().unwrap().len())))]
@@ -93,11 +92,11 @@ where
         &self,
         prover_state: &mut ProverState<H, R>,
         vectors: &[&[M::Source]],
-    ) -> Witness<F, M>
+    ) -> Witness<M::Target, M>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         self.initial_committer.commit(prover_state, vectors)
@@ -107,10 +106,10 @@ where
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-    ) -> VerificationResult<Commitment<F>>
+    ) -> VerificationResult<Commitment<M::Target>>
     where
         H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         self.initial_committer.receive_commitment(verifier_state)
@@ -211,7 +210,7 @@ mod tests {
         };
 
         // Build global configuration from protocol parameters
-        let mut params = Config::new(1 << num_variables, &whir_params);
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
         eprintln!("{params}");
 
@@ -553,10 +552,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let mut params = Config::<EF>::new(1 << num_variables, &whir_params);
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
-
-        let embedding = Basefield::<EF>::new();
 
         // Create test vectors
         let vec1 = vec![F::ONE; num_coeffs];
@@ -577,7 +574,9 @@ mod tests {
         ];
         let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate(&embedding, v)))
+            .flat_map(|weights| {
+                [&vec1, &vec_wrong].map(|v| weights.evaluate(params.embedding(), v))
+            })
             .collect::<Vec<_>>();
 
         let ds = DomainSeparator::protocol(&params)
@@ -659,11 +658,8 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
-        let mut params = Config::<EF>::new(1 << num_variables, &whir_params);
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
-
-        // Create weights for constraints
-        let embedding = Basefield::new();
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together
@@ -691,7 +687,7 @@ mod tests {
             .flat_map(|linear_form| {
                 vec_refs
                     .iter()
-                    .map(|vec| linear_form.evaluate(&embedding, vec))
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 

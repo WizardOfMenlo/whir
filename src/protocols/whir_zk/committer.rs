@@ -1,4 +1,4 @@
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -13,7 +13,7 @@ use crate::{
 
 /// zkWHIR commitment: one Merkle root per masked polynomial plus one for blinding.
 #[derive(Debug)]
-pub struct Commitment<F: FftField + PrimeField> {
+pub struct Commitment<F: FftField> {
     pub f_hat: Vec<whir::Commitment<F>>,
     pub blinding: whir::Commitment<F>,
 }
@@ -23,7 +23,7 @@ pub struct Commitment<F: FftField + PrimeField> {
 /// Contains the masked polynomial witnesses, their coefficient vectors,
 /// the blinding polynomial family, and the single blinding commitment witness.
 #[derive(Clone, Debug)]
-pub struct Witness<F: FftField + PrimeField> {
+pub struct Witness<F: FftField> {
     pub f_hat_vectors: Vec<Vec<F>>,
     pub f_hat_witnesses: Vec<irs_commit::Witness<F, F>>,
     pub blinding_polynomials: Vec<BlindingPolynomials<F>>,
@@ -31,7 +31,7 @@ pub struct Witness<F: FftField + PrimeField> {
     pub blinding_witness: irs_commit::Witness<F, F>,
 }
 
-impl<F: FftField + PrimeField> Config<F> {
+impl<F: FftField> Config<F> {
     /// Commit to one or more polynomials with zero-knowledge blinding.
     ///
     /// For each polynomial, samples fresh blinding coefficients from the

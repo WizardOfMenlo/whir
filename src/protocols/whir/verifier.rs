@@ -1,4 +1,4 @@
-use ark_ff::FftField;
+use ark_ff::{AdditiveGroup, FftField, Field};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -30,11 +30,10 @@ enum RoundCommitment<'a, F: FftField> {
     },
 }
 
-impl<F, M> Config<F, M>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    M: Embedding<Target = F>,
     M::Source: FftField,
+    M::Target: FftField,
 {
     /// Verify a batched WHIR proof for multiple commitments.
     ///
@@ -49,12 +48,12 @@ where
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
-        commitments: &[&Commitment<F>],
-        evaluations: &[F],
-    ) -> VerificationResult<FinalClaim<F>>
+        commitments: &[&Commitment<M::Target>],
+        evaluations: &[M::Target],
+    ) -> VerificationResult<FinalClaim<M::Target>>
     where
         H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
@@ -101,7 +100,7 @@ where
         };
 
         // Random linear combination of the constraints.
-        let constraint_rlc_coeffs: Vec<F> =
+        let constraint_rlc_coeffs: Vec<M::Target> =
             geometric_challenge(verifier_state, oods_evals.len() + num_linear_forms);
         let (initial_form_rlc_coeffs, oods_rlc_coeffs) =
             constraint_rlc_coeffs.split_at(num_linear_forms);
@@ -112,10 +111,10 @@ where
             evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
-        .sum::<F>();
+        .sum::<M::Target>();
         the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
-            .sum::<F>();
+            .sum::<M::Target>();
         let mut round_constraints = vec![(oods_rlc_coeffs.to_vec(), oods_evals)];
 
         let mut round_folding_randomness = Vec::new();
@@ -124,7 +123,7 @@ where
         let folding_randomness = if constraint_rlc_coeffs.is_empty() {
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck polynomials would be constant zero)
-            assert_eq!(the_sum, F::ZERO);
+            assert_eq!(the_sum, M::Target::ZERO);
             let folding_randomness =
                 verifier_state.verifier_message_vec(self.initial_sumcheck.num_rounds);
             self.initial_skip_pow.verify(verifier_state)?;
@@ -159,7 +158,7 @@ where
                     let in_domain = prev_round_config
                         .irs_committer
                         .verify(verifier_state, &[&commitment])?;
-                    (in_domain, vec![F::ONE])
+                    (in_domain, vec![M::Target::ONE])
                 }
             };
 
@@ -171,7 +170,7 @@ where
                 .collect::<Vec<_>>();
             let constraint_values = commitment
                 .out_of_domain()
-                .values(&[F::ONE])
+                .values(&[M::Target::ONE])
                 .chain(in_domain.values(&tensor_product(
                     &poly_rlc,
                     &round_folding_randomness.last().unwrap().eq_weights(),
@@ -209,7 +208,7 @@ where
                 let in_domain = prev_round_config
                     .irs_committer
                     .verify(verifier_state, &[&commitment])?;
-                (in_domain, vec![F::ONE])
+                (in_domain, vec![M::Target::ONE])
             }
         };
 
@@ -221,7 +220,7 @@ where
                 &round_folding_randomness.last().unwrap().eq_weights(),
             )),
         ) {
-            verify!(weights.evaluate(&Identity::<F>::new(), &final_vector) == evals);
+            verify!(weights.evaluate(&Identity::<M::Target>::new(), &final_vector) == evals);
         }
 
         // Final sumcheck

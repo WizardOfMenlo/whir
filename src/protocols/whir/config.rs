@@ -6,7 +6,7 @@ use ark_ff::FftField;
 use super::{Config, RoundConfig};
 use crate::{
     algebra::{
-        embedding::{self, Basefield, Embedding},
+        embedding::{self, Embedding},
         fields::FieldWithSize,
     },
     bits::Bits,
@@ -15,12 +15,16 @@ use crate::{
     type_info::{Type, Typed},
 };
 
-impl<F> Config<F, Basefield<F>>
+impl<M: Embedding> Config<M>
 where
-    F: FftField + FieldWithSize,
+    M::Source: FftField,
+    M::Target: FftField,
 {
     #[allow(clippy::too_many_lines)]
-    pub fn new(size: usize, whir_parameters: &ProtocolParameters) -> Self {
+    pub fn new(size: usize, whir_parameters: &ProtocolParameters) -> Self
+    where
+        M: Default,
+    {
         assert!(
             size.is_power_of_two(),
             "Only powers of two size are supported at the moment."
@@ -39,7 +43,7 @@ where
         let protocol_security_level = whir_parameters
             .security_level
             .saturating_sub(whir_parameters.pow_bits);
-        let field_size_bits = F::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_in_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = initial_num_variables;
 
@@ -148,7 +152,7 @@ where
             );
 
             let next_folding_factor = folding_factor;
-            let matrix_committer = matrix_commit::Config::<F>::with_hash(
+            let matrix_committer = matrix_commit::Config::<M::Target>::with_hash(
                 whir_parameters.hash_id,
                 (domain_size / 2) >> next_folding_factor,
                 1 << next_folding_factor,
@@ -171,7 +175,7 @@ where
                     deduplicate_in_domain: true, // TODO: Configurable
                 },
                 sumcheck: sumcheck::Config {
-                    field: Type::<F>::new(),
+                    field: Type::new(),
                     initial_size: 1 << num_variables,
                     round_pow: pow(folding_pow_bits),
                     num_rounds: next_folding_factor,
@@ -225,7 +229,7 @@ where
                 deduplicate_in_domain: true,
             },
             initial_sumcheck: sumcheck::Config {
-                field: Type::<F>::new(),
+                field: Type::new(),
                 initial_size: 1 << initial_num_variables,
                 round_pow: pow(starting_folding_pow_bits),
                 num_rounds: initial_folding_factor,
@@ -233,7 +237,7 @@ where
             initial_skip_pow: pow(initial_skip_pow_bits),
             round_configs: round_parameters,
             final_sumcheck: sumcheck::Config {
-                field: Type::<F>::new(),
+                field: Type::new(),
                 initial_size: 1 << num_variables,
                 round_pow: pow(final_folding_pow_bits),
                 num_rounds: num_variables,
@@ -252,7 +256,7 @@ where
     }
 
     pub fn security_level(&self, num_vectors: usize, num_linear_forms: usize) -> f64 {
-        let field_size_bits = F::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_in_bits();
         let mut num_variables = self.initial_num_variables();
         let mut security_level = f64::INFINITY;
 
@@ -568,14 +572,7 @@ where
 
         field_size_bits as f64 - (log_combination + list_size + 1.)
     }
-}
 
-impl<F, M> Config<F, M>
-where
-    F: FftField,
-    M: Embedding<Target = F>,
-    M::Source: FftField,
-{
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
         if self.initial_sumcheck.round_pow.difficulty() > max_bits {
             return false;
@@ -634,7 +631,11 @@ where
     }
 }
 
-impl<F: FftField> Display for Config<F> {
+impl<M: Embedding> Display for Config<M>
+where
+    M::Source: FftField,
+    M::Target: FftField,
+{
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
@@ -663,7 +664,7 @@ impl<F: FftField> Display for Config<F> {
         writeln!(f, "Round by round soundness analysis:")?;
         writeln!(f, "------------------------------------")?;
 
-        let field_size_bits = F::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_in_bits();
         let mut num_variables = self.initial_num_variables();
 
         let vector_rlc_error = Self::rbr_soundness_initial_rlc_combination(
@@ -891,7 +892,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        algebra::fields::{Field64, Field64_3},
+        algebra::{
+            embedding::{Basefield, Identity},
+            fields::{Field64, Field64_3},
+        },
         bits::Bits,
         hash,
         utils::test_serde,
@@ -920,7 +924,7 @@ mod tests {
     fn test_whir_config_serde() {
         let params = default_whir_params();
 
-        let config = Config::<Field64_3>::new(1 << 10, &params);
+        let config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         test_serde(&config);
     }
@@ -928,7 +932,7 @@ mod tests {
     #[test]
     fn test_n_rounds() {
         let params = default_whir_params();
-        let config = Config::<Field64_3>::new(1 << 10, &params);
+        let config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
@@ -938,7 +942,7 @@ mod tests {
         let field_size_bits = 64;
         let unique_decoding = false;
 
-        let pow_bits = Config::<Field64>::folding_pow_bits(
+        let pow_bits = Config::<Basefield<Field64_3>>::folding_pow_bits(
             100, // Security level
             unique_decoding,
             field_size_bits,
@@ -956,7 +960,7 @@ mod tests {
         let security_level = 100;
         let log_inv_rate = 5;
 
-        let result = Config::<Field64>::queries(true, security_level, log_inv_rate);
+        let result = Config::<Basefield<Field64_3>>::queries(true, security_level, log_inv_rate);
 
         assert_eq!(result, 105);
     }
@@ -966,7 +970,7 @@ mod tests {
         let security_level = 128;
         let log_inv_rate = 8;
 
-        let result = Config::<Field64>::queries(false, security_level, log_inv_rate);
+        let result = Config::<Basefield<Field64_3>>::queries(false, security_level, log_inv_rate);
 
         assert_eq!(result, 32);
     }
@@ -976,7 +980,7 @@ mod tests {
         let security_level = 256;
         let log_inv_rate = 16;
 
-        let result = Config::<Field64>::queries(false, security_level, log_inv_rate);
+        let result = Config::<Basefield<Field64_3>>::queries(false, security_level, log_inv_rate);
 
         assert_eq!(result, 32);
     }
@@ -986,7 +990,7 @@ mod tests {
         let log_inv_rate = 5.0; // log_inv_rate = 5
         let num_queries = 10; // Number of queries
 
-        let result = Config::<Field64>::rbr_queries(true, log_inv_rate, num_queries);
+        let result = Config::<Basefield<Field64_3>>::rbr_queries(true, log_inv_rate, num_queries);
 
         assert!((result - 9.556_058_806_415_466).abs() < 1e-6);
     }
@@ -996,7 +1000,7 @@ mod tests {
         let log_inv_rate = 8.0; // log_inv_rate = 8
         let num_queries = 16; // Number of queries
 
-        let result = Config::<Field64>::rbr_queries(false, log_inv_rate, num_queries);
+        let result = Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, num_queries);
 
         assert!((result - 64.0) < 1e-6);
     }
@@ -1006,7 +1010,7 @@ mod tests {
         let log_inv_rate = 4.0; // log_inv_rate = 4
         let num_queries = 20; // Number of queries
 
-        let result = Config::<Field64>::rbr_queries(false, log_inv_rate, num_queries);
+        let result = Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, num_queries);
 
         assert!((result - 40.) < 1e-6);
     }
@@ -1014,7 +1018,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
-        let mut config = Config::<Field64_3>::new(1 << 10, &params);
+        let mut config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         // Set all values within limits
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -1074,7 +1078,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
-        let mut config = Config::<Field64_3>::new(1 << 10, &params);
+        let mut config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
@@ -1098,7 +1102,7 @@ mod tests {
         ];
 
         for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::log_list_size(log_inv_rate, log_eta);
+            let result = Config::<Basefield<Field64_3>>::log_list_size(log_inv_rate, log_eta);
             assert!(
                 (result - expected).abs() < 1e-6,
                 "Failed for {:?}",
@@ -1148,7 +1152,7 @@ mod tests {
 
         for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
         {
-            let result = Config::<Field64>::rbr_ood_sample(
+            let result = Config::<Basefield<Field64_3>>::rbr_ood_sample(
                 num_variables,
                 log_inv_rate,
                 log_eta,
@@ -1173,7 +1177,7 @@ mod tests {
     fn test_ood_samples_valid_case() {
         // Testing a valid case where the function finds an appropriate `ood_samples`
         assert_eq!(
-            Config::<Field64>::ood_samples(
+            Config::<Basefield<Field64_3>>::ood_samples(
                 50,  // security level
                 15,  // num_variables
                 4.0, // log_inv_rate
@@ -1188,7 +1192,7 @@ mod tests {
     fn test_ood_samples_low_security_level() {
         // Lower security level should require fewer OOD samples
         assert_eq!(
-            Config::<Field64>::ood_samples(
+            Config::<Identity<Field64>>::ood_samples(
                 30,  // Lower security level
                 20,  // num_variables
                 5.0, // log_inv_rate
@@ -1203,7 +1207,7 @@ mod tests {
     fn test_ood_samples_high_security_level() {
         // Higher security level should require more OOD samples
         assert_eq!(
-            Config::<Field64>::ood_samples(
+            Config::<Identity<Field64>>::ood_samples(
                 100,  // High security level
                 25,   // num_variables
                 6.0,  // log_inv_rate
@@ -1217,7 +1221,7 @@ mod tests {
     #[test]
     fn test_ood_extremely_high_security_level() {
         assert_eq!(
-            Config::<Field64>::ood_samples(
+            Config::<Identity<Field64>>::ood_samples(
                 1000, // Extremely high security level
                 10,   // num_variables
                 5.0,  // log_inv_rate

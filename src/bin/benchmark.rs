@@ -5,14 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ark_ff::{FftField, Field};
-use ark_serialize::CanonicalSerialize;
+use ark_ff::FftField;
 use clap::Parser;
 use serde::Serialize;
 use whir::{
     algebra::{
-        embedding::Basefield,
-        fields,
+        embedding::{Basefield, Embedding, Identity},
+        fields::{Field128, Field192, Field256, Field64, Field64_2, Field64_3},
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
@@ -29,8 +28,8 @@ struct Args {
     #[arg(short = 'l', long, default_value = "128")]
     security_level: usize,
 
-    #[arg(short = 'p', long)]
-    pow_bits: Option<usize>,
+    #[arg(short = 'p', long, default_value = "20")]
+    pow_bits: usize,
 
     #[arg(short = 'd', long, default_value = "20")]
     num_variables: usize,
@@ -94,23 +93,26 @@ fn main() {
     let field = args.field;
 
     // Type reflection on field
+    use AvailableFields as AF;
     match field {
-        AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(&args),
-        AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(&args),
-        AvailableFields::Goldilocks3 => run_whir::<fields::Field64_3>(&args),
-        AvailableFields::Field128 => run_whir::<fields::Field128>(&args),
-        AvailableFields::Field192 => run_whir::<fields::Field192>(&args),
-        AvailableFields::Field256 => run_whir::<fields::Field256>(&args),
+        AF::Goldilocks1 => run_whir::<Identity<Field64>>(&args),
+        AF::Goldilocks2 => run_whir::<Basefield<Field64_2>>(&args),
+        AF::Goldilocks3 => run_whir::<Basefield<Field64_3>>(&args),
+        AF::Field128 => run_whir::<Identity<Field128>>(&args),
+        AF::Field192 => run_whir::<Identity<Field192>>(&args),
+        AF::Field256 => run_whir::<Identity<Field256>>(&args),
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir<F>(args: &Args)
+fn run_whir<M: Embedding>(args: &Args)
 where
-    F: FftField + CanonicalSerialize + Codec,
+    M: Default,
+    M::Source: FftField,
+    M::Target: FftField + Codec,
 {
     let security_level = args.security_level;
-    let pow_bits = args.pow_bits.unwrap();
+    let pow_bits = args.pow_bits;
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
@@ -133,9 +135,7 @@ where
         hash_id: args.hash.hash_id(),
     };
 
-    let vector = (0..num_coeffs)
-        .map(<F as Field>::BasePrimeField::from)
-        .collect::<Vec<_>>();
+    let vector = (0..num_coeffs).map(M::Source::from).collect::<Vec<_>>();
 
     let (
         whir_ldt_prover_time,
@@ -148,7 +148,7 @@ where
         use whir::protocols::whir::Config;
 
         let whir_params = ProtocolParameters { ..whir_params };
-        let params = Config::<F>::new(1 << num_variables, &whir_params);
+        let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -180,7 +180,7 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
-        let evaluations: Vec<F> = Vec::new();
+        let evaluations: Vec<M::Target> = Vec::new();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
@@ -213,7 +213,7 @@ where
         // Run PCS
         use whir::protocols::whir::Config;
 
-        let params = Config::<F>::new(1 << num_variables, &whir_params);
+        let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
         }
@@ -225,10 +225,10 @@ where
         let mut prover_state = ProverState::new_std(&ds);
 
         let points: Vec<_> = (0..args.num_evaluations)
-            .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
+            .map(|i| MultilinearPoint(vec![M::Target::from(i as u64); num_variables]))
             .collect();
 
-        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        let mut weights: Vec<Box<dyn Evaluate<M>>> = Vec::new();
         let mut evaluations = Vec::new();
 
         for point in &points {
@@ -242,9 +242,11 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = points
+        let prove_linear_forms: Vec<Box<dyn LinearForm<M::Target>>> = points
             .iter()
-            .map(|p| Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<F>>)
+            .map(|p| {
+                Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<M::Target>>
+            })
             .collect();
 
         let _ = params.prove(
@@ -270,7 +272,11 @@ where
                 .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
             final_claim
-                .verify(weights.iter().map(|w| w.as_ref() as &dyn LinearForm<F>))
+                .verify(
+                    weights
+                        .iter()
+                        .map(|w| w.as_ref() as &dyn LinearForm<M::Target>),
+                )
                 .unwrap();
         }
 

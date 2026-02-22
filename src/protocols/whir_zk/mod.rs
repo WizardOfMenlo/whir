@@ -5,11 +5,15 @@ mod verifier;
 
 use std::fmt::Display;
 
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 use serde::{Deserialize, Serialize};
 
 pub use self::committer::{Commitment, Witness};
-use crate::{algebra::embedding::Embedding, parameters::ProtocolParameters, protocols::whir};
+use crate::{
+    algebra::embedding::{Embedding, Identity},
+    parameters::ProtocolParameters,
+    protocols::whir,
+};
 
 /// Policy inputs for `ell` computation.
 ///
@@ -30,18 +34,16 @@ pub struct BlindingSizePolicy {
 }
 
 impl BlindingSizePolicy {
-    pub fn from_whir_params<F: FftField + PrimeField>(
-        main_whir_params: &ProtocolParameters,
-    ) -> Self {
+    pub fn from_whir_params<F: FftField>(main_whir_params: &ProtocolParameters) -> Self {
         let protocol_security_level_main = main_whir_params
             .security_level
             .saturating_sub(main_whir_params.pow_bits);
-        let q_delta_1 = whir::Config::<F>::queries(
+        let q_delta_1 = whir::Config::<Identity<F>>::queries(
             main_whir_params.unique_decoding,
             protocol_security_level_main,
             main_whir_params.starting_log_inv_rate,
         );
-        let q_delta_2 = whir::Config::<F>::queries(
+        let q_delta_2 = whir::Config::<Identity<F>>::queries(
             main_whir_params.unique_decoding,
             main_whir_params.security_level,
             main_whir_params.starting_log_inv_rate,
@@ -62,12 +64,12 @@ impl BlindingSizePolicy {
 /// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "")]
-pub struct Config<F: FftField + PrimeField> {
-    pub blinded_commitment: whir::Config<F>,
-    pub blinding_commitment: whir::Config<F>,
+pub struct Config<F: FftField> {
+    pub blinded_commitment: whir::Config<Identity<F>>,
+    pub blinding_commitment: whir::Config<Identity<F>>,
 }
 
-impl<F: FftField + PrimeField> Config<F> {
+impl<F: FftField> Config<F> {
     /// Build a zkWHIR config from the given WHIR parameters.
     pub fn new(size: usize, main_whir_params: &ProtocolParameters, num_polynomials: usize) -> Self {
         let size_policy = BlindingSizePolicy::from_whir_params::<F>(main_whir_params);
@@ -109,7 +111,7 @@ impl<F: FftField + PrimeField> Config<F> {
     }
 
     fn compute_num_blinding_variables(
-        blinded: &whir::Config<F>,
+        blinded: &whir::Config<Identity<F>>,
         blinding_first_round_interleaving_depth: usize,
         size_policy: BlindingSizePolicy,
     ) -> usize {
@@ -220,7 +222,7 @@ impl<F: FftField + PrimeField> Config<F> {
     }
 }
 
-impl<F: FftField + PrimeField> Display for Config<F> {
+impl<F: FftField> Display for Config<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "zkWHIR config: witness and blinding commitments")?;
         writeln!(f, "Witness-side:")?;

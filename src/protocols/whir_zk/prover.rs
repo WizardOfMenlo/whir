@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "tracing")]
@@ -41,7 +41,7 @@ use crate::{
     feature = "tracing",
     instrument(skip_all, name = "evaluate_gamma_block")
 )]
-fn evaluate_gamma_block<F: FftField + PrimeField>(
+fn evaluate_gamma_block<F: FftField>(
     blinding_polynomials: &[BlindingPolynomials<F>],
     h_gammas: &[F],
     masking_challenge: F,
@@ -193,7 +193,7 @@ fn evaluate_gamma_block<F: FftField + PrimeField>(
     (eval_results, beq_weight_accum)
 }
 
-impl<F: FftField + PrimeField> Config<F> {
+impl<F: FftField> Config<F> {
     /// Run the zkWHIR prover: prove evaluation claims on blinded polynomials.
     ///
     /// * `vectors` — original (unmasked) coefficient vectors.

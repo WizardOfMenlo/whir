@@ -9,11 +9,12 @@
 
 use std::borrow::Cow;
 
-use ark_std::rand::{rngs::StdRng, SeedableRng};
+use ark_ff::FftField;
+use ark_std::rand::{distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng};
 use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     algebra::{
-        embedding::Embedding,
+        embedding::{Embedding, Identity},
         fields::Field64,
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
@@ -28,6 +29,7 @@ use whir::{
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 type F = Field64;
+type M = Identity<F>;
 
 /// Polynomial sizes to benchmark (log₂ of number of coefficients).
 const SIZES: &[usize] = &[20];
@@ -53,13 +55,18 @@ fn make_polynomials(num_variables: usize, num_polynomials: usize) -> Vec<Vec<F>>
 
 /// Build weights + evaluations for multiple polynomials.
 /// Layout: row-major [w₀_p₀, w₀_p₁, …] (one eval per polynomial per weight).
-fn make_weights_and_evaluations_multi<M: Embedding<Source = F, Target = F>>(
-    polynomials: &[Vec<F>],
-    config: &Config<F, M>,
+fn make_weights_and_evaluations_multi<M: Embedding>(
+    polynomials: &[Vec<M::Source>],
+    config: &Config<M>,
     num_variables: usize,
-) -> (Vec<MultilinearExtension<F>>, Vec<F>) {
+) -> (Vec<MultilinearExtension<M::Target>>, Vec<M::Target>)
+where
+    M::Source: FftField,
+    M::Target: FftField,
+    Standard: Distribution<M::Target>,
+{
     let mut rng = StdRng::seed_from_u64(0xBEEF);
-    let point = MultilinearPoint::rand(&mut rng, num_variables);
+    let point = MultilinearPoint::<M::Target>::rand(&mut rng, num_variables);
     let linear_form = MultilinearExtension::new(point.0);
     let mut evaluations = Vec::with_capacity(polynomials.len());
     for poly in polynomials {
@@ -75,7 +82,7 @@ fn make_weights_and_evaluations_multi<M: Embedding<Source = F, Target = F>>(
 
 /// ZK v1: WHIR config for committing, μ+1 variables.
 /// `batch_size` = number of polynomials × 2 (each poly contributes f̂ and g).
-fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<F> {
+fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<M> {
     let extended = num_variables + 1;
     let params = ProtocolParameters {
         unique_decoding: false,
@@ -92,7 +99,7 @@ fn zk_v1_commit_config(num_variables: usize, num_polynomials: usize) -> Config<F
 
 /// ZK v1: WHIR config for proving P₁..Pₙ, μ+1 variables.
 /// `batch_size` = number of P polynomials to prove.
-fn zk_v1_prove_config(num_variables: usize, num_polynomials: usize) -> Config<F> {
+fn zk_v1_prove_config(num_variables: usize, num_polynomials: usize) -> Config<M> {
     let extended = num_variables + 1;
     let params = ProtocolParameters {
         unique_decoding: false,
@@ -167,7 +174,7 @@ fn make_zk_v1_polys(num_variables: usize, num_polynomials: usize) -> Vec<ZkV1Pol
 /// Evaluations layout: row-major [w₀_P₀, w₀_P₁, …].
 fn make_zk_v1_weights_and_evaluations(
     p_polys: &[Vec<F>],
-    config: &Config<F>,
+    config: &Config<M>,
     num_variables: usize,
 ) -> (Vec<MultilinearExtension<F>>, Vec<F>) {
     let mut rng = StdRng::seed_from_u64(0xBEEF);

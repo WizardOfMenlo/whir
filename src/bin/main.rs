@@ -1,12 +1,11 @@
 use std::{borrow::Cow, time::Instant};
 
-use ark_ff::{FftField, Field, PrimeField};
-use ark_serialize::CanonicalSerialize;
+use ark_ff::FftField;
 use clap::Parser;
 use whir::{
     algebra::{
-        embedding::{Basefield, Identity},
-        fields,
+        embedding::{Basefield, Embedding, Identity},
+        fields::{Field128, Field192, Field256, Field64, Field64_2, Field64_3},
         linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
@@ -69,153 +68,35 @@ fn main() {
     let args = Args::parse();
     let field = args.field;
 
-    runner(&args, field);
-}
-
-fn runner(args: &Args, field: AvailableFields) {
-    match (args.protocol_type, args.zk, field) {
-        // zkWHIR is currently pinned to identity embedding over a single field.
-        (WhirType::PCS, true, AvailableFields::Goldilocks1) => {
-            run_whir_pcs_zk::<fields::Field64>(args);
+    // Dispatch on embedding
+    use AvailableFields as AF;
+    if args.zk {
+        match field {
+            AF::Goldilocks1 => run_whir_zk::<Field64>(&args),
+            AF::Goldilocks2 => run_whir_zk::<Field64_2>(&args),
+            AF::Goldilocks3 => run_whir_zk::<Field64_3>(&args),
+            AF::Field128 => run_whir_zk::<Field128>(&args),
+            AF::Field192 => run_whir_zk::<Field192>(&args),
+            AF::Field256 => run_whir_zk::<Field256>(&args),
         }
-        (WhirType::PCS, true, AvailableFields::Field128) => {
-            run_whir_pcs_zk::<fields::Field128>(args);
-        }
-        (WhirType::PCS, true, AvailableFields::Field192) => {
-            run_whir_pcs_zk::<fields::Field192>(args);
-        }
-        (WhirType::PCS, true, AvailableFields::Field256) => {
-            run_whir_pcs_zk::<fields::Field256>(args);
-        }
-        (WhirType::PCS, true, _) => {
-            eprintln!(
-                "Error: --zk supports only single-field configurations (Identity embedding)."
-            );
-        }
-        (WhirType::PCS | WhirType::LDT, false, f) => run_whir_for_field(args, f),
-        (WhirType::LDT, true, _) => unreachable!("validated earlier"),
-    }
-}
-
-fn run_whir_for_field(args: &Args, field: AvailableFields) {
-    match field {
-        AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(args),
-        AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(args),
-        AvailableFields::Goldilocks3 => run_whir::<fields::Field64_3>(args),
-        AvailableFields::Field128 => run_whir::<fields::Field128>(args),
-        AvailableFields::Field192 => run_whir::<fields::Field192>(args),
-        AvailableFields::Field256 => run_whir::<fields::Field256>(args),
-    }
-}
-
-fn run_whir<F>(args: &Args)
-where
-    F: FftField + CanonicalSerialize + Codec,
-{
-    match args.protocol_type {
-        WhirType::PCS => {
-            run_whir_pcs::<F>(args);
-        }
-        WhirType::LDT => {
-            run_whir_as_ldt::<F>(args);
+    } else {
+        match field {
+            AF::Goldilocks1 => run_whir::<Identity<Field64>>(&args),
+            AF::Goldilocks2 => run_whir::<Basefield<Field64_2>>(&args),
+            AF::Goldilocks3 => run_whir::<Basefield<Field64_3>>(&args),
+            AF::Field128 => run_whir::<Identity<Field128>>(&args),
+            AF::Field192 => run_whir::<Identity<Field192>>(&args),
+            AF::Field256 => run_whir::<Identity<Field256>>(&args),
         }
     }
-}
-
-fn run_whir_as_ldt<F>(args: &Args)
-where
-    F: FftField + CanonicalSerialize + Codec,
-{
-    use whir::protocols::whir::Config;
-
-    // Runs as a LDT
-    let security_level = args.security_level;
-    let pow_bits = args.pow_bits;
-    let num_variables = args.num_variables;
-    let starting_rate = args.rate;
-    let reps = args.verifier_repetitions;
-    let first_round_folding_factor = args.first_round_folding_factor;
-    let folding_factor = args.folding_factor;
-    let hash_id = args.hash.hash_id();
-
-    if args.num_evaluations > 1 {
-        println!("Warning: running as LDT but a number of evaluations to be proven was specified.");
-    }
-
-    let num_coeffs = 1 << num_variables;
-
-    let whir_params = ProtocolParameters {
-        security_level,
-        pow_bits,
-        initial_folding_factor: first_round_folding_factor,
-        folding_factor,
-        unique_decoding: true,
-        starting_log_inv_rate: starting_rate,
-        batch_size: 1,
-        hash_id,
-    };
-
-    let params = Config::<F>::new(1 << num_variables, &whir_params);
-
-    let ds = DomainSeparator::protocol(&params)
-        .session(&format!("Example at {}:{}", file!(), line!()))
-        .instance(&Empty);
-
-    let mut prover_state = ProverState::new_std(&ds);
-
-    println!("=========================================");
-    println!("Whir (LDT) 🌪️");
-    println!("Field: {:?} and hash: {:?}", args.field, args.hash);
-    println!("{params}");
-    if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-        println!("WARN: more PoW bits required than what specified.");
-    }
-
-    let vector = (0..num_coeffs)
-        .map(<F as Field>::BasePrimeField::from)
-        .collect::<Vec<_>>();
-
-    let whir_commit_time = Instant::now();
-    let witness = params.commit(&mut prover_state, &[&vector]);
-    let whir_commit_time = whir_commit_time.elapsed();
-
-    let whir_prove_time = Instant::now();
-    let _ = params.prove(
-        &mut prover_state,
-        vec![Cow::from(vector)],
-        vec![Cow::Owned(witness)],
-        vec![],
-        Cow::Owned(vec![]),
-    );
-    let whir_prove_time = whir_prove_time.elapsed();
-
-    // Serialize proof
-    let proof = prover_state.proof();
-    let proof_size = proof.narg_string.len() + proof.hints.len();
-    println!(
-        "Prover time: {whir_commit_time:.1?} + {whir_prove_time:.1?} = {:.1?}",
-        whir_commit_time + whir_prove_time,
-    );
-    println!("Proof size: {:.1} KiB", proof_size as f64 / 1024.0);
-
-    HASH_COUNTER.reset();
-    let whir_verifier_time = Instant::now();
-    for _ in 0..reps {
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-
-        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-        let _ = params
-            .verify(&mut verifier_state, &[&commitment], &[])
-            .unwrap();
-    }
-    dbg!(whir_verifier_time.elapsed() / reps as u32);
-    dbg!(HASH_COUNTER.get() as f64 / reps as f64);
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir_pcs<F>(args: &Args)
+fn run_whir<M: Embedding>(args: &Args)
 where
-    F: FftField + CanonicalSerialize + Codec,
+    M: Default,
+    M::Source: FftField,
+    M::Target: FftField + Codec,
 {
     use whir::protocols::whir::Config;
 
@@ -232,8 +113,8 @@ where
     let num_linear_constraints = args.num_linear_constraints;
     let hash_id = args.hash.hash_id();
 
-    if num_evaluations == 0 {
-        println!("Warning: running as PCS but no evaluations specified.");
+    if num_evaluations + num_linear_constraints == 0 {
+        println!("No constraints specified, running as low-degree-test.");
     }
 
     let num_coeffs = 1 << num_variables;
@@ -249,7 +130,7 @@ where
         hash_id,
     };
 
-    let params = Config::<F>::new(1 << num_variables, &whir_params);
+    let params = Config::<M>::new(1 << num_variables, &whir_params);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))
@@ -265,24 +146,22 @@ where
         println!("WARN: more PoW bits required than what specified.");
     }
 
-    let vector = (0..num_coeffs)
-        .map(<F as Field>::BasePrimeField::from)
-        .collect::<Vec<_>>();
+    let vector = (0..num_coeffs).map(M::Source::from).collect::<Vec<_>>();
 
     let whir_commit_time = Instant::now();
     let witness = params.commit(&mut prover_state, &[&vector]);
     let whir_commit_time = whir_commit_time.elapsed();
 
     // Allocate constraints
-    let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
-    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
+    let mut linear_forms: Vec<Box<dyn Evaluate<M>>> = Vec::new();
+    let mut prove_linear_forms: Vec<Box<dyn LinearForm<M::Target>>> = Vec::new();
     let mut evaluations = Vec::new();
 
     // Linear constraint
     // We do these first to benefit from buffer recycling.
     for _ in 0..num_linear_constraints {
         let linear_form = Box::new(Covector {
-            vector: (0..num_coeffs).map(F::from).collect(),
+            vector: (0..num_coeffs).map(M::Target::from).collect(),
         });
         evaluations.push(linear_form.evaluate(params.embedding(), &vector));
         linear_forms.push(linear_form.clone());
@@ -291,7 +170,7 @@ where
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
-        .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
+        .map(|x| MultilinearPoint(vec![M::Target::from(x as u64); num_variables]))
         .collect();
     for point in &points {
         let linear_form = Box::new(MultilinearExtension::new(point.0.clone()));
@@ -333,7 +212,7 @@ where
             .verify(
                 linear_forms
                     .iter()
-                    .map(|w| w.as_ref() as &dyn LinearForm<F>),
+                    .map(|w| w.as_ref() as &dyn LinearForm<M::Target>),
             )
             .unwrap();
     }
@@ -348,9 +227,9 @@ where
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir_pcs_zk<F>(args: &Args)
+fn run_whir_zk<F>(args: &Args)
 where
-    F: FftField + PrimeField + CanonicalSerialize + Codec,
+    F: FftField + Codec,
 {
     use whir::protocols::whir_zk::Config;
 
@@ -365,8 +244,8 @@ where
     let num_linear_constraints = args.num_linear_constraints;
     let hash_id = args.hash.hash_id();
 
-    if num_evaluations == 0 {
-        println!("Warning: running as PCS but no evaluations specified.");
+    if num_evaluations + num_linear_constraints == 0 {
+        println!("No constraints specified, running as low-degree-test.");
     }
 
     let num_coeffs = 1 << num_variables;
