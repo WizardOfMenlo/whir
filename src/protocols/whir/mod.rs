@@ -13,13 +13,43 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{
-    algebra::embedding::{Basefield, Embedding},
+    algebra::{
+        embedding::{Basefield, Embedding},
+        linear_form::LinearForm,
+    },
     hash::Hash,
     protocols::{irs_commit, proof_of_work, sumcheck},
     transcript::{
         Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
     },
+    utils::zip_strict,
+    verify,
 };
+
+#[must_use = "The final claim must be checked if there where any linear forms."]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FinalClaim<F: Field> {
+    /// Multinlinear extension evaluation point.
+    pub evaluation_point: Vec<F>,
+    /// The random linear combination coefficients.
+    pub rlc_coefficients: Vec<F>,
+    /// Claimed value of the rlc of the mle of the linears forms in the point.
+    /// Note: not computed on the prover side, set to zero instead.
+    pub linear_form_rlc: F,
+}
+
+impl<F: Field> FinalClaim<F> {
+    pub fn verify<'a>(
+        &'a self,
+        linear_forms: impl IntoIterator<Item = &'a dyn LinearForm<F>>,
+    ) -> VerificationResult<()> {
+        let rlc = zip_strict(&self.rlc_coefficients, linear_forms)
+            .map(|(&c, l)| c * l.mle_evaluate(&self.evaluation_point))
+            .sum::<F>();
+        verify!(rlc == self.linear_form_rlc);
+        Ok(())
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "F: FftField, M: Embedding<Target = F>, M::Source: FftField")]
@@ -140,7 +170,6 @@ mod tests {
         }
         if include_covector {
             forms.push(Box::new(Covector {
-                deferred: false,
                 vector: (0..1 << num_variables).map(F::from).collect(),
             }));
         }
@@ -209,7 +238,6 @@ mod tests {
         }
 
         let covector = Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         };
         let sum = covector.evaluate(params.embedding(), &vector);
@@ -230,7 +258,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Generate a proof for the given statement and witness
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::from(vector)],
             vec![Cow::Owned(witness)],
@@ -244,16 +272,14 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify the proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        params
+        let final_claim = params
+            .verify(&mut verifier_state, &[&commitment], &evaluations)
+            .unwrap();
+        final_claim
             .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &linear_form_refs,
-                &evaluations,
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
             )
             .unwrap();
     }
@@ -382,7 +408,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: ((0..1 << num_variables).map(EF::from).collect()),
         }));
 
@@ -411,7 +436,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all polynomials together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vectors
                 .iter()
@@ -434,16 +459,14 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        params
+        let final_claim = params
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .unwrap();
+        final_claim
             .verify(
-                &mut verifier_state,
-                &commitment_refs,
-                &linear_form_refs,
-                &evaluations,
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
             )
             .unwrap();
     }
@@ -568,7 +591,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
 
         // Generate proof with mismatched polynomials
-        let (_evalpoint, _values) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
             vec![Cow::Owned(witness1), Cow::Owned(witness2)],
@@ -586,18 +609,20 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &[&commitments[0], &commitments[1]],
-            &linear_form_refs,
-            &evaluations,
+        let final_claim = params
+            .verify(
+                &mut verifier_state,
+                &[&commitments[0], &commitments[1]],
+                &evaluations,
+            )
+            .unwrap();
+        let verifier_result = final_claim.verify(
+            linear_forms
+                .iter()
+                .map(|l| l.as_ref() as &dyn LinearForm<EF>),
         );
         assert!(
-            verify_result.is_err(),
+            verifier_result.is_err(),
             "Verifier should reject mismatched polynomial"
         );
     }
@@ -658,7 +683,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         }));
 
@@ -687,7 +711,7 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all witnesses together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             all_vectors
                 .iter()
@@ -709,22 +733,16 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &commitment_refs,
-            &linear_form_refs,
-            &evaluations,
-        );
-        assert!(
-            verify_result.is_ok(),
-            "Batch verification with batch_size={} failed: {:?}",
-            batch_size,
-            verify_result.err()
-        );
+        let final_claim = params
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+            )
+            .unwrap();
     }
 
     #[test]
@@ -828,7 +846,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(F::from).collect(),
         }));
         let values = linear_forms
@@ -847,7 +864,7 @@ mod tests {
             .iter()
             .map(|w| w.as_ref() as &dyn LinearForm<F>)
             .collect::<Vec<_>>();
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vectors
                 .iter()
@@ -865,14 +882,11 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify that the generated proof satisfies the statement
-        assert!(params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &weights_dyn_refs,
-                &values
-            )
-            .is_ok());
+        params
+            .verify(&mut verifier_state, &[&commitment], &values)
+            .unwrap()
+            .verify(weights_dyn_refs)
+            .unwrap();
     }
 
     #[test]

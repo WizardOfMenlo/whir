@@ -9,3 +9,8 @@ scripts/__pycache__/
 .DS_Store
 outputs/
 .idea
+.envrc
+.direnv
+.flake
+rustc-ice-*.txt
+profile.json.gz

@@ -90,7 +90,7 @@ struct BenchmarkOutput {
 }
 
 fn main() {
-    let mut args = Args::parse();
+    let args = Args::parse();
     let field = args.field;
 
     // Type reflection on field
@@ -123,7 +123,6 @@ where
     let num_coeffs = 1 << num_variables;
 
     let whir_params = ProtocolParameters {
-        initial_statement: true,
         security_level,
         pow_bits,
         initial_folding_factor: first_round_folding_factor,
@@ -148,10 +147,7 @@ where
         // Run LDT
         use whir::protocols::whir::Config;
 
-        let whir_params = ProtocolParameters {
-            initial_statement: false,
-            ..whir_params
-        };
+        let whir_params = ProtocolParameters { ..whir_params };
         let params = Config::<F>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than what specified.");
@@ -169,7 +165,7 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
@@ -184,20 +180,15 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
-        let weight_refs: Vec<&dyn LinearForm<F>> = vec![];
         let evaluations: Vec<F> = Vec::new();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
-                .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
-                )
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
+            final_claim.verify([]).unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -251,12 +242,12 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-        }
+        let prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = points
+            .iter()
+            .map(|p| Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<F>>)
+            .collect();
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
@@ -269,24 +260,17 @@ where
         let whir_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_prover_hashes = HASH_COUNTER.get();
 
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
-
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
-                .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
-                )
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .unwrap();
+            final_claim
+                .verify(weights.iter().map(|w| w.as_ref() as &dyn LinearForm<F>))
                 .unwrap();
         }
 

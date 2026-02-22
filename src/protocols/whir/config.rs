@@ -251,30 +251,6 @@ where
                 .all(|r| r.irs_committer.unique_decoding())
     }
 
-    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
-        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
-        }
-        if self.initial_skip_pow.difficulty() > max_bits {
-            return false;
-        }
-        for round_config in &self.round_configs {
-            if round_config.pow.difficulty() > max_bits {
-                return false;
-            }
-            if round_config.sumcheck.round_pow.difficulty() > max_bits {
-                return false;
-            }
-        }
-        if self.final_pow.difficulty() > max_bits {
-            return false;
-        }
-        if self.final_sumcheck.round_pow.difficulty() > max_bits {
-            return false;
-        }
-        true
-    }
-
     pub fn security_level(&self, num_vectors: usize, num_linear_forms: usize) -> f64 {
         let field_size_bits = F::field_size_in_bits();
         let mut num_variables = self.initial_num_variables();
@@ -600,13 +576,29 @@ where
     M: Embedding<Target = F>,
     M::Source: FftField,
 {
-    pub fn embedding(&self) -> &M {
-        self.initial_committer.embedding()
+    pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
+        if self.initial_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        for round_config in &self.round_configs {
+            if round_config.pow.difficulty() > max_bits {
+                return false;
+            }
+            if round_config.sumcheck.round_pow.difficulty() > max_bits {
+                return false;
+            }
+        }
+        if self.final_pow.difficulty() > max_bits {
+            return false;
+        }
+        if self.final_sumcheck.round_pow.difficulty() > max_bits {
+            return false;
+        }
+        true
     }
 
-    #[deprecated]
-    pub const fn allows_statement(&self) -> bool {
-        true
+    pub fn embedding(&self) -> &M {
+        self.initial_committer.embedding()
     }
 
     pub const fn initial_size(&self) -> usize {
