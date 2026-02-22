@@ -37,7 +37,7 @@ struct Args {
     #[arg(short = 'e', long = "evaluations", default_value = "1")]
     num_evaluations: usize,
 
-    #[arg(long = "linear_constraints", default_value = "0")]
+    #[arg(long = "linear-constraints", default_value = "0")]
     num_linear_constraints: usize,
 
     #[arg(short = 'r', long, default_value = "1")]
@@ -300,41 +300,28 @@ where
     let witness = params.commit(&mut prover_state, &[&vector]);
     let whir_commit_time = whir_commit_time.elapsed();
 
+    // Allocate constraints
     let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
     let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
     let mut evaluations = Vec::new();
+
+    // Linear constraint
+    // We do these first to benefit from buffer recycling.
+    for _ in 0..num_linear_constraints {
+        let linear_form = Box::new(Covector {
+            vector: (0..num_coeffs).map(F::from).collect(),
+        });
+        evaluations.push(linear_form.evaluate(params.embedding(), &vector));
+        linear_forms.push(linear_form.clone());
+        prove_linear_forms.push(linear_form);
+    }
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
         .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
         .collect();
-
     for point in &points {
-        let lf_eval = MultilinearExtension::new(point.0.clone());
-        let lf_prove = MultilinearExtension::new(point.0.clone());
-        evaluations.push(lf_eval.evaluate(params.embedding(), &vector));
-        linear_forms.push(Box::new(lf_eval));
-        prove_linear_forms.push(Box::new(lf_prove));
-    }
-
-    // Linear constraint
-    for _ in 0..num_linear_constraints {
-        let covector = Covector {
-            vector: (0..num_coeffs).map(F::from).collect(),
-        };
-        evaluations.push(covector.evaluate(params.embedding(), &vector));
-        linear_forms.push(Box::new(covector));
-    }
-
-    // Build owned linear forms for prove (consumed), keep originals for verify
-    let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-    for point in &points {
-        prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-    }
-    for _ in 0..num_linear_constraints {
-        let linear_form = Box::new(Covector {
-            vector: (0..num_coeffs).map(F::from).collect(),
-        });
+        let linear_form = Box::new(MultilinearExtension::new(point.0.clone()));
         evaluations.push(linear_form.evaluate(params.embedding(), &vector));
         linear_forms.push(linear_form.clone());
         prove_linear_forms.push(linear_form);
@@ -446,31 +433,32 @@ where
         println!("WARN: more PoW bits required than what specified.");
     }
 
+    let embedding = Identity::<F>::new();
     let vector = (0..num_coeffs).map(F::from).collect::<Vec<_>>();
 
-    let mut linear_forms: Vec<Box<dyn Evaluate<Identity<F>>>> = Vec::new();
+    // Allocate constraints
+    let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
     let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
     let mut evaluations = Vec::new();
+
+    // Linear constraint
+    // We do these first to benefit from buffer recycling.
+    for _ in 0..num_linear_constraints {
+        let linear_form = Box::new(Covector {
+            vector: (0..num_coeffs).map(F::from).collect(),
+        });
+        evaluations.push(linear_form.evaluate(&embedding, &vector));
+        linear_forms.push(linear_form.clone());
+        prove_linear_forms.push(linear_form);
+    }
 
     // Evaluation constraint
     let points: Vec<_> = (0..num_evaluations)
         .map(|x| MultilinearPoint(vec![F::from(x as u64); num_variables]))
         .collect();
-
     for point in &points {
-        let lf_eval = MultilinearExtension::new(point.0.clone());
-        let lf_prove = MultilinearExtension::new(point.0.clone());
-        evaluations.push(lf_eval.evaluate(params.blinded_commitment.embedding(), &vector));
-        linear_forms.push(Box::new(lf_eval));
-        prove_linear_forms.push(Box::new(lf_prove));
-    }
-
-    // Linear constraint
-    for _ in 0..num_linear_constraints {
-        let linear_form = Box::new(Covector {
-            vector: (0..num_coeffs).map(F::from).collect(),
-        });
-        evaluations.push(linear_form.evaluate(params.blinded_commitment.embedding(), &vector));
+        let linear_form = Box::new(MultilinearExtension::new(point.0.clone()));
+        evaluations.push(linear_form.evaluate(&embedding, &vector));
         linear_forms.push(linear_form.clone());
         prove_linear_forms.push(linear_form);
     }
