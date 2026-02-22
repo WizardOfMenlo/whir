@@ -255,10 +255,10 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let mut prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = Vec::new();
-        for point in &points {
-            prove_linear_forms.push(Box::new(MultilinearExtension::new(point.0.clone())));
-        }
+        let prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = points
+            .iter()
+            .map(|p| Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<F>>)
+            .collect();
 
         let _ = params.prove(
             &mut prover_state,

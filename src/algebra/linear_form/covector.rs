@@ -4,6 +4,7 @@ use super::{Evaluate, LinearForm};
 use crate::algebra::{mixed_dot, multilinear_extend, scalar_mul_add, Embedding};
 
 /// Linear form as an explicit covector over the field.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Covector<F: Field> {
     pub vector: Vec<F>,
 }

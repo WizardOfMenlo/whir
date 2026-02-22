@@ -8,6 +8,7 @@ use crate::algebra::{
 /// Linear form to represent univariate polynomial evaluation.
 ///
 /// Given a vector $v ∈ 𝔽^n$ it computes $sum_i v_i · x^i$ for some fixed $x$.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct UnivariateEvaluation<F: Field> {
     /// Univariate evaluation doesn't have an inherent size, so we need to store one.
     pub size: usize,

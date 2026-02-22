@@ -88,10 +88,10 @@ where
         }
         #[cfg(debug_assertions)]
         for (linear_form, evaluations) in
-            zip_strict(&linear_forms, evaluations.chunks_exact(num_vectors))
+            zip_strict(linear_forms.iter(), evaluations.chunks_exact(num_vectors))
         {
             use crate::algebra::linear_form::Covector;
-            let covector = Covector::from(linear_form.as_ref());
+            let covector = Covector::from(&**linear_form);
             for (vector, evaluation) in zip_strict(&vectors, evaluations) {
                 debug_assert_eq!(covector.evaluate(self.embedding(), vector), *evaluation);
             }

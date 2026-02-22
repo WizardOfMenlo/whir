@@ -1,4 +1,6 @@
 use ark_ff::FftField;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use super::{config::Config, Commitment};
 use crate::{
@@ -43,6 +45,7 @@ where
     ///
     /// Returns the constraint evaluation point and values of deferred constraints.
     #[allow(clippy::too_many_lines)]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, name = "whir::verify"))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,

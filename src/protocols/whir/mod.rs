@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fail() {
+    fn test_whir_small_config_no_constraints() {
         make_whir_things(
             3,
             FoldingFactor::Constant(2),
