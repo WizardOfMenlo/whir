@@ -263,6 +263,7 @@ impl<F: FftField + PrimeField> Config<F> {
         let num_witness_variables = self.num_witness_variables();
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables_plus_1 = num_witness_variables + 1;
+        drop(vectors); // TODO: These are never touched?
 
         // Compute w_folded evaluations of all blinding vectors before rho for binding.
         let (w_folded_weights, m_evals, w_folded_blinding_evals) = {
@@ -312,6 +313,7 @@ impl<F: FftField + PrimeField> Config<F> {
             .zip(m_evals.iter())
             .map(|(&eval, &m)| eval + m)
             .collect();
+        drop(evaluations);
 
         let initial_in_domain = {
             #[cfg(feature = "tracing")]
@@ -373,7 +375,6 @@ impl<F: FftField + PrimeField> Config<F> {
                 tau2_pow *= tau2;
             }
         }
-
         drop(eval_results);
         drop(blinding_polynomials);
 
@@ -398,7 +399,7 @@ impl<F: FftField + PrimeField> Config<F> {
                 f_hat_vectors.into_iter().map(Cow::Owned).collect(),
                 f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
                 linear_forms,
-                Cow::Borrowed(modified_evaluations.as_slice()),
+                Cow::Owned(modified_evaluations),
             )
         };
 

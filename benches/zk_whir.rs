@@ -318,14 +318,11 @@ fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
             (verifier_state, commitment)
         })
         .bench_values(|(mut verifier_state, commitment)| {
-            let weight_refs = [&weights[0] as &dyn LinearForm<F>];
-            black_box(
-                prove_config
-                    .verify(&mut verifier_state, &[&commitment], &evaluations)
-                    .unwrap()
-                    .verify(weight_refs)
-                    .unwrap(),
-            );
+            prove_config
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .unwrap()
+                .verify([&weights[0] as &dyn LinearForm<F>])
+                .unwrap();
         });
 }
 
