@@ -501,7 +501,7 @@ where
             assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0));
             7. * LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64
         };
-        field_size_bits as f64 - error
+        field_size_bits - error
     }
 
     pub const fn rbr_soundness_fold_sumcheck(
@@ -562,14 +562,16 @@ where
         protocol_security_level: usize,
         log_inv_rate: usize,
     ) -> usize {
-        let num_queries_f = if unique_decoding {
-            let rate = 1. / f64::from(1 << log_inv_rate);
-            let denom = (0.5 * (1. + rate)).log2();
-            -(protocol_security_level as f64) / denom
-        } else {
-            (2 * protocol_security_level) as f64 / log_inv_rate as f64
-        };
-        num_queries_f.ceil() as usize
+        // TODO: Change fn arguments.
+        let protocol_security_level = protocol_security_level as f64;
+        let log_inv_rate = log_inv_rate as f64;
+        let log_eta = Self::log_eta(log_inv_rate);
+
+        // We use our knownledge that rbr queries is of the form μ^q and get log_2 μ
+        // by setting q = 1.
+        let per_query = Self::rbr_queries(unique_decoding, log_inv_rate, log_eta, 1);
+        // Now we can compute the number of queries required.
+        (protocol_security_level / per_query).ceil() as usize
     }
 
     // This is the bits of security of the query step
@@ -1028,7 +1030,7 @@ mod tests {
 
         let result = Config::<Basefield<Field64_3>>::queries(true, security_level, log_inv_rate);
 
-        assert_eq!(result, 105);
+        assert_eq!(result, 96);
     }
 
     #[test]
@@ -1038,17 +1040,7 @@ mod tests {
 
         let result = Config::<Basefield<Field64_3>>::queries(false, security_level, log_inv_rate);
 
-        assert_eq!(result, 32);
-    }
-
-    #[test]
-    fn test_queries_conjecture_list() {
-        let security_level = 256;
-        let log_inv_rate = 16;
-
-        let result = Config::<Basefield<Field64_3>>::queries(false, security_level, log_inv_rate);
-
-        assert_eq!(result, 32);
+        assert_eq!(result, 33);
     }
 
     #[test]
