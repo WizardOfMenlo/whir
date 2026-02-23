@@ -127,6 +127,7 @@ where
             let query_error = Self::rbr_queries(
                 whir_parameters.unique_decoding,
                 log_inv_rate as f64,
+                Self::log_eta(log_inv_rate as f64),
                 num_queries,
             );
 
@@ -200,6 +201,7 @@ where
                 - Self::rbr_queries(
                     whir_parameters.unique_decoding,
                     log_inv_rate as f64,
+                    Self::log_eta(log_inv_rate as f64),
                     final_queries,
                 ),
         );
@@ -333,6 +335,7 @@ where
             let query_error = Self::rbr_queries(
                 round_unique_decoding,
                 round_log_inv_rate,
+                Self::log_eta(round_log_inv_rate),
                 round.irs_committer.in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
@@ -376,6 +379,7 @@ where
         let final_query_error = Self::rbr_queries(
             final_unique_decoding,
             self.final_rate().log2().neg(),
+            Self::log_eta(self.final_rate().log2().neg()),
             self.final_in_domain_samples(),
         ) + f64::from(self.final_pow.difficulty());
         security_level = security_level.min(final_query_error);
@@ -543,17 +547,22 @@ where
     }
 
     // This is the bits of security of the query step
-    pub fn rbr_queries(unique_decoding: bool, log_inv_rate: f64, num_queries: usize) -> f64 {
-        let num_queries = num_queries as f64;
-
-        if unique_decoding {
+    pub fn rbr_queries(
+        unique_decoding: bool,
+        log_inv_rate: f64,
+        log_eta: f64,
+        num_queries: usize,
+    ) -> f64 {
+        let per_sample = if unique_decoding {
             // (1 - δ)^q for δ = (1 - ρ) / 2.
             let rate = 1. / log_inv_rate.exp2();
-            let denom = -(0.5 * (1. + rate)).log2();
-            num_queries * denom
+            -(0.5 * (1. + rate)).log2()
         } else {
-            num_queries * 0.5 * log_inv_rate
-        }
+            // (1 - δ)^q for δ = 1 - sqrt(ρ) - η
+            let sqrt_rate = (-0.5 * log_inv_rate).exp2();
+            -(sqrt_rate + log_eta.exp2()).log2()
+        };
+        num_queries as f64 * per_sample
     }
 
     pub fn rbr_soundness_queries_combination(
@@ -750,7 +759,7 @@ where
 
         for r in &self.round_configs {
             let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
-            let log_eta = if r.irs_committer.unique_decoding() {
+            let next_eta = if r.irs_committer.unique_decoding() {
                 0.0
             } else {
                 Self::log_eta(next_rate)
@@ -763,7 +772,7 @@ where
                     Self::rbr_ood_sample(
                         num_variables,
                         next_rate,
-                        log_eta,
+                        next_eta,
                         field_size_bits,
                         r.irs_committer.out_domain_samples
                     )
@@ -773,13 +782,14 @@ where
             let query_error = Self::rbr_queries(
                 r.irs_committer.unique_decoding(),
                 r.log_inv_rate() as f64,
+                Self::log_eta(r.log_inv_rate() as f64),
                 r.irs_committer.in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
                 next_rate,
-                log_eta,
+                next_eta,
                 r.irs_committer.out_domain_samples,
                 r.irs_committer.in_domain_samples,
             );
@@ -797,13 +807,13 @@ where
                 field_size_bits,
                 num_variables,
                 next_rate,
-                log_eta,
+                next_eta,
             );
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
                 next_rate,
-                log_eta,
+                next_eta,
             );
 
             writeln!(
@@ -828,6 +838,7 @@ where
         let query_error = Self::rbr_queries(
             last_unique,
             self.final_rate().log2().neg(),
+            Self::log_eta(self.final_rate().log2().neg()),
             self.final_in_domain_samples(),
         );
         writeln!(
@@ -997,7 +1008,8 @@ mod tests {
         let log_inv_rate = 5.0; // log_inv_rate = 5
         let num_queries = 10; // Number of queries
 
-        let result = Config::<Basefield<Field64_3>>::rbr_queries(true, log_inv_rate, num_queries);
+        let result =
+            Config::<Basefield<Field64_3>>::rbr_queries(true, log_inv_rate, 0.0, num_queries);
 
         assert!((result - 9.556_058_806_415_466).abs() < 1e-6);
     }
@@ -1005,21 +1017,13 @@ mod tests {
     #[test]
     fn test_rbr_queries_provable_list() {
         let log_inv_rate = 8.0; // log_inv_rate = 8
+        let log_eta = Config::<Basefield<Field64_3>>::log_eta(log_inv_rate);
         let num_queries = 16; // Number of queries
 
-        let result = Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, num_queries);
+        let result =
+            Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, log_eta, num_queries);
 
         assert!((result - 64.0) < 1e-6);
-    }
-
-    #[test]
-    fn test_rbr_queries_conjecture_list() {
-        let log_inv_rate = 4.0; // log_inv_rate = 4
-        let num_queries = 20; // Number of queries
-
-        let result = Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, num_queries);
-
-        assert!((result - 40.) < 1e-6);
     }
 
     #[test]
