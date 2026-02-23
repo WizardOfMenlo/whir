@@ -163,7 +163,7 @@ where
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << num_variables,
-                    expansion: 1 << next_rate,
+                    codeword_length: 1 << (num_variables + next_rate - next_folding_factor),
                     interleaving_depth: 1 << next_folding_factor,
                     matrix_commit: matrix_committer.clone(),
                     in_domain_samples: Self::queries(
@@ -212,7 +212,9 @@ where
                 embedding: Default::default(),
                 num_vectors: whir_parameters.batch_size,
                 vector_size: 1 << initial_num_variables,
-                expansion: 1 << whir_parameters.starting_log_inv_rate,
+                codeword_length: 1
+                    << (whir_parameters.starting_log_inv_rate + initial_num_variables
+                        - initial_folding_factor),
                 interleaving_depth: 1 << initial_folding_factor,
                 matrix_commit: matrix_commit::Config::with_hash(
                     whir_parameters.hash_id,
@@ -478,13 +480,13 @@ where
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
-        let list_size = if unique_decoding {
+        let log_list_size = if unique_decoding {
             0.0
         } else {
             Self::log_list_size(log_inv_rate, log_eta)
         };
 
-        field_size_bits as f64 - (list_size + 1.)
+        field_size_bits as f64 - (log_list_size + 1.)
     }
 
     pub fn folding_pow_bits(
@@ -863,8 +865,13 @@ impl<F: FftField> RoundConfig<F> {
     }
 
     pub fn log_inv_rate(&self) -> usize {
-        assert!(self.irs_committer.expansion.is_power_of_two());
-        self.irs_committer.expansion.ilog2() as usize
+        assert!(self
+            .irs_committer
+            .codeword_length
+            .is_multiple_of(self.irs_committer.message_length()));
+        let expansion = self.irs_committer.codeword_length / self.irs_committer.message_length();
+        assert!(expansion.is_power_of_two());
+        expansion.ilog2() as usize
     }
 
     pub fn initial_num_variables(&self) -> usize {
@@ -1032,7 +1039,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 3,
+                    codeword_length: 1 << (10 + 3 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
                     in_domain_samples: 5,
@@ -1052,7 +1059,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 4,
+                    codeword_length: 1 << (10 + 4 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
                     in_domain_samples: 6,

@@ -66,8 +66,8 @@ where
     /// The number of coefficients in each vector.
     pub vector_size: usize,
 
-    /// The Reed-Solomon expansion factor.
-    pub expansion: usize,
+    /// The number of Reed-Solomon evaluation points.
+    pub codeword_length: usize,
 
     /// The number of independent codewords that are interleaved together.
     pub interleaving_depth: usize,
@@ -120,10 +120,6 @@ impl<M: Embedding> Config<M>
 where
     M::Source: FftField,
 {
-    pub const fn num_rows(&self) -> usize {
-        self.matrix_commit.num_rows()
-    }
-
     pub const fn num_cols(&self) -> usize {
         self.matrix_commit.num_cols
     }
@@ -137,11 +133,15 @@ where
     }
 
     pub fn generator(&self) -> M::Source {
-        ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
+        ntt::generator(self.codeword_length).expect("Subgroup of requested size not found")
+    }
+
+    pub fn message_length(&self) -> usize {
+        self.vector_size / self.interleaving_depth
     }
 
     pub fn rate(&self) -> f64 {
-        1.0 / self.expansion as f64
+        self.message_length() as f64 / self.codeword_length as f64
     }
 
     pub fn unique_decoding(&self) -> bool {
@@ -163,10 +163,7 @@ where
     {
         // Validate config
         assert!((self.vector_size).is_multiple_of(self.interleaving_depth));
-        assert_eq!(
-            self.matrix_commit.num_rows(),
-            (self.vector_size / self.interleaving_depth) * self.expansion
-        );
+        assert_eq!(self.matrix_commit.num_rows(), self.codeword_length);
         assert_eq!(
             self.matrix_commit.num_cols,
             self.num_vectors * self.interleaving_depth
@@ -177,7 +174,7 @@ where
         assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
         // Interleaved RS Encode the vectorss
-        let matrix = interleaved_rs_encode(vectors, self.expansion, self.interleaving_depth);
+        let matrix = interleaved_rs_encode(vectors, self.codeword_length, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
@@ -346,7 +343,7 @@ where
         // Get in-domain openings
         let indices = challenge_indices(
             transcript,
-            self.num_rows(),
+            self.codeword_length,
             self.in_domain_samples,
             self.deduplicate_in_domain,
         );
@@ -432,11 +429,7 @@ where
             "size {}×{}/{}",
             self.num_vectors, self.vector_size, self.interleaving_depth,
         )?;
-        if self.expansion.is_power_of_two() {
-            write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
-        } else {
-            write!(f, " rate 1/{}", self.expansion,)?;
-        }
+        write!(f, " rate 2⁻{:.2}", -self.rate().log2())?;
         write!(
             f,
             " samples {} in- {} out-domain",
@@ -473,28 +466,29 @@ mod tests {
     {
         assert!(interleaving_depth != 0);
         assert!(vector_size.is_multiple_of(interleaving_depth));
-        let base = vector_size / interleaving_depth;
+        let message_length = vector_size / interleaving_depth;
 
         // Compute supported NTT domains for F
-        let valid_expansions = (1..=30)
-            .filter(|&n| ntt::generator::<M::Source>(base * n).is_some())
+        let valid_codeword_lengths = (1..=30)
+            .map(|n| n * message_length)
+            .filter(|&n| ntt::generator::<M::Source>(n).is_some())
             .collect::<Vec<_>>();
-        let expansion = select(valid_expansions);
+        let codeword_length = select(valid_codeword_lengths);
 
         // Combine with a matrix commitment config
-        let expansion_matrix = expansion.prop_flat_map(move |expansion| {
+        let codeword_matrix = codeword_length.prop_flat_map(move |codeword_length| {
             (
-                Just(expansion),
+                Just(codeword_length),
                 matrix_commit::tests::config::<M::Source>(
-                    vector_size * expansion / interleaving_depth,
+                    codeword_length,
                     interleaving_depth * num_vectors,
                 ),
             )
         });
 
-        (expansion_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
+        (codeword_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
             move |(
-                (expansion, matrix_commit),
+                (codeword_length, matrix_commit),
                 in_domain_samples,
                 out_domain_samples,
                 deduplicate_in_domain,
@@ -502,7 +496,7 @@ mod tests {
                 embedding: Typed::new(embedding.clone()),
                 num_vectors,
                 vector_size,
-                expansion,
+                codeword_length,
                 interleaving_depth,
                 matrix_commit,
                 in_domain_samples,

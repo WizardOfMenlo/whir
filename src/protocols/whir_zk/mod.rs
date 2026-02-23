@@ -171,8 +171,8 @@ impl<F: FftField> Config<F> {
 
     /// Generator ω of the full NTT domain (size = num_rows × interleaving_depth).
     pub(crate) fn omega_full(&self) -> F {
-        let num_rows = self.blinded_commitment.initial_committer.num_rows();
-        let full_domain_size = num_rows * self.interleaving_depth();
+        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
+        let full_domain_size = codeword_length * self.interleaving_depth();
         crate::algebra::ntt::generator(full_domain_size)
             .expect("full IRS domain should have primitive root")
     }
@@ -184,14 +184,14 @@ impl<F: FftField> Config<F> {
 
     /// ζ = ω^num_rows — the interleaving_depth-th root of unity.
     pub(crate) fn zeta(&self) -> F {
-        let num_rows = self.blinded_commitment.initial_committer.num_rows();
-        self.omega_full().pow([num_rows as u64])
+        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
+        self.omega_full().pow([codeword_length as u64])
     }
 
     /// Precomputed sub-domain powers [1, ω_sub, ω_sub², ..., ω_sub^(num_rows-1)].
     pub(crate) fn omega_powers(&self) -> Vec<F> {
-        let num_rows = self.blinded_commitment.initial_committer.num_rows();
-        crate::algebra::geometric_sequence(self.omega_sub(), num_rows)
+        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
+        crate::algebra::geometric_sequence(self.omega_sub(), codeword_length)
     }
 
     /// Find the index of `alpha_base` in the sub-domain powers.
