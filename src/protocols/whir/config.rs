@@ -42,7 +42,7 @@ where
         let protocol_security_level = whir_parameters
             .security_level
             .saturating_sub(whir_parameters.pow_bits);
-        let field_size_bits = M::Target::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = initial_num_variables;
 
@@ -206,7 +206,7 @@ where
         );
 
         let final_folding_pow_bits =
-            0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
+            0_f64.max(whir_parameters.security_level as f64 - field_size_bits as f64 - 1.0);
 
         Self {
             initial_committer: irs_commit::Config {
@@ -259,7 +259,7 @@ where
     }
 
     pub fn security_level(&self, num_vectors: usize, num_linear_forms: usize) -> f64 {
-        let field_size_bits = M::Target::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_bits();
         let mut num_variables = self.initial_num_variables();
         let mut security_level = f64::INFINITY;
 
@@ -397,11 +397,11 @@ where
         }
     }
 
-    pub fn rbr_soundness_initial_rlc_combination(field_size_bits: usize, num_terms: usize) -> f64 {
+    pub fn rbr_soundness_initial_rlc_combination(field_size_bits: f64, num_terms: usize) -> f64 {
         if num_terms <= 1 {
             f64::INFINITY
         } else {
-            field_size_bits as f64 - ((num_terms - 1) as f64).log2()
+            field_size_bits - ((num_terms - 1) as f64).log2()
         }
     }
 
@@ -419,22 +419,26 @@ where
 
     /// Compute $log_2 L(δ)$, where $L(δ)$ is the Johnson Reed-Solomon list size bound.
     ///
-    /// This is the Johnson bound $1 / (2 * η ρ)$.
+    /// This is the Johnson bound $1 / (2 η √ρ)$.
     pub const fn log_list_size(log_inv_rate: f64, log_eta: f64) -> f64 {
-        0.5 * log_inv_rate - (1. + log_eta)
+        // log_2[ 1 / (2 η √ρ) ]
+        // - log_2[ 2 η √ρ ]
+        // - log_2[ 2 ] - log_2[ η ] - log_2[ √ρ ]
+        // - 1 - log_2[ η ] - 0.5 · log_2[ ρ ]
+        -1.0 - log_eta + 0.5 * log_inv_rate
     }
 
     pub const fn rbr_ood_sample(
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
-        field_size_bits: usize,
+        field_size_bits: f64,
         ood_samples: usize,
     ) -> f64 {
         let list_size_bits = Self::log_list_size(log_inv_rate, log_eta);
 
         let error = 2. * list_size_bits + (num_variables * ood_samples) as f64;
-        (ood_samples * field_size_bits) as f64 + 1. - error
+        ood_samples as f64 * field_size_bits + 1. - error
     }
 
     /// Compute the minimal number of out-of-domain samples to reach the security level.
@@ -443,7 +447,7 @@ where
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
-        field_size_bits: usize,
+        field_size_bits: f64,
     ) -> usize {
         (1..64)
             .find(|&ood_samples| {
@@ -461,7 +465,7 @@ where
     // Compute the proximity gaps term of the fold
     pub fn rbr_soundness_fold_prox_gaps(
         unique_decoding: bool,
-        field_size_bits: usize,
+        field_size_bits: f64,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
@@ -480,7 +484,7 @@ where
 
     pub const fn rbr_soundness_fold_sumcheck(
         unique_decoding: bool,
-        field_size_bits: usize,
+        field_size_bits: f64,
         log_inv_rate: f64,
         log_eta: f64,
     ) -> f64 {
@@ -496,7 +500,7 @@ where
     pub fn folding_pow_bits(
         security_level: usize,
         unique_decoding: bool,
-        field_size_bits: usize,
+        field_size_bits: f64,
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
@@ -567,7 +571,7 @@ where
 
     pub fn rbr_soundness_queries_combination(
         unique_decoding: bool,
-        field_size_bits: usize,
+        field_size_bits: f64,
         log_inv_rate: f64,
         log_eta: f64,
         ood_samples: usize,
@@ -651,13 +655,19 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Security level: {} bits using {} decoding",
+            "Security level: {:.2} bits using {} decoding",
             self.security_level(self.initial_committer.num_vectors, 1),
             if self.unique_decoding() {
                 "unique"
             } else {
                 "list"
             }
+        )?;
+        writeln!(
+            f,
+            "Source field: {:.2} bits, target field: {:.2} bits",
+            M::Source::field_size_bits(),
+            M::Target::field_size_bits()
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
         writeln!(f, "  sumcheck {}", self.initial_sumcheck)?;
@@ -675,7 +685,7 @@ where
         writeln!(f, "Round by round soundness analysis:")?;
         writeln!(f, "------------------------------------")?;
 
-        let field_size_bits = M::Target::field_size_in_bits();
+        let field_size_bits = M::Target::field_size_bits();
         let mut num_variables = self.initial_num_variables();
 
         let vector_rlc_error = Self::rbr_soundness_initial_rlc_combination(
@@ -959,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_folding_pow_bits() {
-        let field_size_bits = 64;
+        let field_size_bits = 64.;
         let unique_decoding = false;
 
         let pow_bits = Config::<Basefield<Field64_3>>::folding_pow_bits(
@@ -1133,7 +1143,7 @@ mod tests {
                 10,
                 8.0,
                 2.0,
-                256,
+                256.,
                 3,
                 (3.0 * 256.0) + 1.0 - (2.0 * 1.0 + (10.0 * 3.0)),
             ), // Basic case
@@ -1141,7 +1151,7 @@ mod tests {
                 10,
                 0.0,
                 2.0,
-                256,
+                256.,
                 3,
                 (3.0 * 256.0) + 1.0 - (2.0 * -3.0 + (10.0 * 3.0)),
             ), // log_inv_rate = 0
@@ -1149,7 +1159,7 @@ mod tests {
                 10,
                 8.0,
                 0.0,
-                256,
+                256.,
                 3,
                 (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (10.0 * 3.0)),
             ), // log_eta = 0
@@ -1157,7 +1167,7 @@ mod tests {
                 10,
                 8.0,
                 10.0,
-                256,
+                256.,
                 3,
                 (3.0 * 256.0) + 1.0 - (2.0 * -7.0 + (10.0 * 3.0)),
             ), // High log_eta
@@ -1191,11 +1201,11 @@ mod tests {
         // Testing a valid case where the function finds an appropriate `ood_samples`
         assert_eq!(
             Config::<Basefield<Field64_3>>::ood_samples(
-                50,  // security level
-                15,  // num_variables
-                4.0, // log_inv_rate
-                2.0, // log_eta
-                256, // field_size_bits
+                50,   // security level
+                15,   // num_variables
+                4.0,  // log_inv_rate
+                2.0,  // log_eta
+                256., // field_size_bits
             ),
             1
         );
@@ -1206,11 +1216,11 @@ mod tests {
         // Lower security level should require fewer OOD samples
         assert_eq!(
             Config::<Identity<Field64>>::ood_samples(
-                30,  // Lower security level
-                20,  // num_variables
-                5.0, // log_inv_rate
-                2.5, // log_eta
-                512, // field_size_bits
+                30,   // Lower security level
+                20,   // num_variables
+                5.0,  // log_inv_rate
+                2.5,  // log_eta
+                512., // field_size_bits
             ),
             1
         );
@@ -1221,11 +1231,11 @@ mod tests {
         // Higher security level should require more OOD samples
         assert_eq!(
             Config::<Identity<Field64>>::ood_samples(
-                100,  // High security level
-                25,   // num_variables
-                6.0,  // log_inv_rate
-                3.0,  // log_eta
-                1024  // field_size_bits
+                100,   // High security level
+                25,    // num_variables
+                6.0,   // log_inv_rate
+                3.0,   // log_eta
+                1024.  // field_size_bits
             ),
             1
         );
@@ -1239,7 +1249,7 @@ mod tests {
                 10,   // num_variables
                 5.0,  // log_inv_rate
                 2.0,  // log_eta
-                256,  // field_size_bits
+                256., // field_size_bits
             ),
             5
         );

@@ -8,15 +8,24 @@ use zerocopy::IntoBytes;
 use crate::type_info::TypeInfo;
 
 pub trait FieldWithSize {
-    fn field_size_in_bits() -> usize;
+    fn field_size_bits() -> f64;
 }
 
 impl<F> FieldWithSize for F
 where
     F: Field,
 {
-    fn field_size_in_bits() -> usize {
-        F::BasePrimeField::MODULUS_BIT_SIZE as usize * F::extension_degree() as usize
+    fn field_size_bits() -> f64 {
+        // Compute modulus as f64
+        const BASE264: f64 = 18446744073709551616_f64;
+        let modulus = F::BasePrimeField::MODULUS;
+        let limbs_le = modulus.as_ref();
+        let mut modulus = 0.0_f64;
+        for limb in limbs_le.iter().rev() {
+            modulus *= BASE264;
+            modulus += *limb as f64;
+        }
+        modulus.log2() * F::extension_degree() as f64
     }
 }
 

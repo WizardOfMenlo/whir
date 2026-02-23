@@ -150,7 +150,7 @@ where
         let whir_params = ProtocolParameters { ..whir_params };
         let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-            println!("WARN: more PoW bits required than what specified.");
+            println!("WARN: more PoW bits required than specified.");
         }
 
         let ds = DomainSeparator::protocol(&params)
@@ -215,7 +215,7 @@ where
 
         let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-            println!("WARN: more PoW bits required than what specified.");
+            println!("WARN: more PoW bits required than specified.");
         }
 
         let ds = DomainSeparator::protocol(&params)

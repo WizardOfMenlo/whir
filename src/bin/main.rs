@@ -140,7 +140,7 @@ where
     println!("Field: {:?} and hash: {:?}", args.field, args.hash);
     println!("{params}");
     if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-        println!("WARN: more PoW bits required than what specified.");
+        println!("WARN: more PoW bits required than specified.");
     }
 
     let vector = (0..num_coeffs).map(M::Source::from).collect::<Vec<_>>();
@@ -274,7 +274,7 @@ where
         .blinded_commitment
         .check_max_pow_bits(Bits::new(whir_params.pow_bits as f64))
     {
-        println!("WARN: more PoW bits required than what specified.");
+        println!("WARN: more PoW bits required than specified.");
     }
 
     let embedding = Identity::<F>::new();
