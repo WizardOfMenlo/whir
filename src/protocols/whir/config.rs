@@ -278,6 +278,8 @@ where
         } else {
             Self::log_eta(initial_log_inv_rate)
         };
+        let has_initial_constraints =
+            num_linear_forms > 0 || self.initial_committer.out_domain_samples > 0;
 
         if !initial_unique_decoding {
             let ood_error = Self::rbr_ood_sample(
@@ -290,6 +292,7 @@ where
             security_level = security_level.min(ood_error);
         }
 
+        // Initial sumcheck error (or the skipped version for LDT).
         let initial_prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
             initial_unique_decoding,
             field_size_bits,
@@ -297,75 +300,94 @@ where
             initial_log_inv_rate,
             initial_log_eta,
         );
-        let initial_sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            initial_unique_decoding,
-            field_size_bits,
-            initial_log_inv_rate,
-            initial_log_eta,
-        );
-        let initial_fold_error = initial_prox_gaps_error.min(initial_sumcheck_error)
-            + f64::from(self.initial_sumcheck.round_pow.difficulty());
-        security_level = security_level.min(initial_fold_error);
+        if has_initial_constraints {
+            let initial_sumcheck_error = Self::rbr_soundness_fold_sumcheck(
+                initial_unique_decoding,
+                field_size_bits,
+                initial_log_inv_rate,
+                initial_log_eta,
+            );
+            let initial_fold_error = initial_prox_gaps_error.min(initial_sumcheck_error)
+                + f64::from(self.initial_sumcheck.round_pow.difficulty());
+            security_level = security_level.min(initial_fold_error);
+        } else {
+            let skipped_initial_fold_error = initial_prox_gaps_error
+                + (self.initial_sumcheck.num_rounds as f64).log2()
+                + f64::from(self.initial_skip_pow.difficulty());
+            security_level = security_level.min(skipped_initial_fold_error);
+        }
 
         num_variables -= self.initial_sumcheck.num_rounds;
 
+        let mut old_unique_decoding = initial_unique_decoding;
+        let mut old_log_inv_rate = initial_log_inv_rate;
+        let mut old_in_domain_samples = self.initial_committer.in_domain_samples;
+        let mut old_log_eta = if old_unique_decoding {
+            0.0
+        } else {
+            Self::log_eta(old_log_inv_rate)
+        };
+
         for round in &self.round_configs {
-            let round_unique_decoding = round.irs_committer.unique_decoding();
             // Query soundness is computed at the old rate, while all fold and OOD terms use the new rate.
-            let round_log_inv_rate = round.log_inv_rate() as f64;
-            let next_log_inv_rate = (round.log_inv_rate() + (round.sumcheck.num_rounds - 1)) as f64;
-            let log_eta = if round_unique_decoding {
+            let new_unique_decoding = round.irs_committer.unique_decoding();
+            let new_log_inv_rate = round.log_inv_rate() as f64;
+            let new_log_eta = if new_unique_decoding {
                 0.0
             } else {
-                Self::log_eta(next_log_inv_rate)
+                Self::log_eta(new_log_inv_rate)
             };
 
-            if !round_unique_decoding {
+            if !new_unique_decoding {
                 let ood_error = Self::rbr_ood_sample(
                     num_variables,
-                    next_log_inv_rate,
-                    log_eta,
+                    new_log_inv_rate,
+                    new_log_eta,
                     field_size_bits,
                     round.irs_committer.out_domain_samples,
                 );
                 security_level = security_level.min(ood_error);
             }
 
-            let round_log_eta = Self::log_eta(round_log_inv_rate);
             let query_error = Self::rbr_queries(
-                round_unique_decoding,
-                round_log_inv_rate,
-                round_log_eta,
-                round.irs_committer.in_domain_samples,
+                old_unique_decoding,
+                old_log_inv_rate,
+                old_log_eta,
+                old_in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
-                round_unique_decoding,
+                new_unique_decoding,
                 field_size_bits,
-                next_log_inv_rate,
-                log_eta,
+                new_log_inv_rate,
+                new_log_eta,
                 round.irs_committer.out_domain_samples,
-                round.irs_committer.in_domain_samples,
+                old_in_domain_samples,
             );
             let round_query_error =
                 query_error.min(combination_error) + f64::from(round.pow.difficulty());
             security_level = security_level.min(round_query_error);
 
             let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                round_unique_decoding,
+                new_unique_decoding,
                 field_size_bits,
                 num_variables,
-                next_log_inv_rate,
-                log_eta,
+                new_log_inv_rate,
+                new_log_eta,
             );
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-                round_unique_decoding,
+                new_unique_decoding,
                 field_size_bits,
-                next_log_inv_rate,
-                log_eta,
+                new_log_inv_rate,
+                new_log_eta,
             );
             let round_fold_error = prox_gaps_error.min(sumcheck_error)
                 + f64::from(round.sumcheck.round_pow.difficulty());
             security_level = security_level.min(round_fold_error);
+
+            old_unique_decoding = new_unique_decoding;
+            old_log_inv_rate = new_log_inv_rate;
+            old_in_domain_samples = round.irs_committer.in_domain_samples;
+            old_log_eta = new_log_eta;
 
             num_variables -= round.sumcheck.num_rounds;
         }
@@ -767,12 +789,21 @@ where
 
         num_variables -= self.initial_sumcheck.num_rounds;
 
+        let mut old_unique_decoding = self.initial_committer.unique_decoding();
+        let mut old_log_inv_rate = self.initial_committer.rate().log2().neg();
+        let mut old_in_domain_samples = self.initial_committer.in_domain_samples;
+        let mut old_eta = if old_unique_decoding {
+            0.0
+        } else {
+            Self::log_eta(old_log_inv_rate)
+        };
+
         for r in &self.round_configs {
-            let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
-            let next_eta = if r.irs_committer.unique_decoding() {
+            let new_rate = r.log_inv_rate() as f64;
+            let new_eta = if r.irs_committer.unique_decoding() {
                 0.0
             } else {
-                Self::log_eta(next_rate)
+                Self::log_eta(new_rate)
             };
 
             if !r.irs_committer.unique_decoding() {
@@ -781,8 +812,8 @@ where
                     "{:.1} bits -- OOD sample",
                     Self::rbr_ood_sample(
                         num_variables,
-                        next_rate,
-                        next_eta,
+                        new_rate,
+                        new_eta,
                         field_size_bits,
                         r.irs_committer.out_domain_samples
                     )
@@ -790,18 +821,18 @@ where
             }
 
             let query_error = Self::rbr_queries(
-                r.irs_committer.unique_decoding(),
-                r.log_inv_rate() as f64,
-                Self::log_eta(r.log_inv_rate() as f64),
-                r.irs_committer.in_domain_samples,
+                old_unique_decoding,
+                old_log_inv_rate,
+                old_eta,
+                old_in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
-                next_rate,
-                next_eta,
+                new_rate,
+                new_eta,
                 r.irs_committer.out_domain_samples,
-                r.irs_committer.in_domain_samples,
+                old_in_domain_samples,
             );
             writeln!(
                 f,
@@ -816,14 +847,14 @@ where
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
                 num_variables,
-                next_rate,
-                next_eta,
+                new_rate,
+                new_eta,
             );
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 r.irs_committer.unique_decoding(),
                 field_size_bits,
-                next_rate,
-                next_eta,
+                new_rate,
+                new_eta,
             );
 
             writeln!(
@@ -835,6 +866,11 @@ where
                 sumcheck_error,
                 r.sumcheck.round_pow.difficulty(),
             )?;
+
+            old_unique_decoding = r.irs_committer.unique_decoding();
+            old_log_inv_rate = new_rate;
+            old_in_domain_samples = r.irs_committer.in_domain_samples;
+            old_eta = new_eta;
 
             num_variables -= r.sumcheck.num_rounds;
         }

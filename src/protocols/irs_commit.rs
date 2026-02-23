@@ -34,6 +34,7 @@ use crate::{
     algebra::{
         dot,
         embedding::Embedding,
+        fields::FieldWithSize,
         lift,
         linear_form::UnivariateEvaluation,
         mixed_univariate_evaluate,
