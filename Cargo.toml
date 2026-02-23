@@ -55,6 +55,7 @@ hex-literal = "0.4.1"
 const-oid = "0.9.6"
 arrayvec = "0.7.6"
 derive-where = { version = "1.6.0", features = ["safe"] }
+approx = "0.5.1"
 
 [dev-dependencies]
 proptest = "1.0"

@@ -1521,6 +1521,7 @@ dependencies = [
 name = "whir"
 version = "0.1.0"
 dependencies = [
+ "approx",
  "ark-ff",
  "ark-serialize",
  "ark-std",

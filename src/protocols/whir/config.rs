@@ -1,4 +1,3 @@
-use core::panic;
 use std::{f64::consts::LOG2_10, fmt::Display, ops::Neg};
 
 use ark_ff::FftField;
@@ -332,10 +331,11 @@ where
                 security_level = security_level.min(ood_error);
             }
 
+            let round_log_eta = Self::log_eta(round_log_inv_rate);
             let query_error = Self::rbr_queries(
                 round_unique_decoding,
                 round_log_inv_rate,
-                Self::log_eta(round_log_inv_rate),
+                round_log_eta,
                 round.irs_committer.in_domain_samples,
             );
             let combination_error = Self::rbr_soundness_queries_combination(
@@ -556,7 +556,7 @@ where
         let per_sample = if unique_decoding {
             // (1 - δ)^q for δ = (1 - ρ) / 2.
             let rate = 1. / log_inv_rate.exp2();
-            -(0.5 * (1. + rate)).log2()
+            -(0.5 * (1. - rate)).log2()
         } else {
             // (1 - δ)^q for δ = 1 - sqrt(ρ) - η
             let sqrt_rate = (-0.5 * log_inv_rate).exp2();
@@ -908,6 +908,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_abs_diff_eq;
+
     use super::*;
     use crate::{
         algebra::{
@@ -1011,7 +1013,7 @@ mod tests {
         let result =
             Config::<Basefield<Field64_3>>::rbr_queries(true, log_inv_rate, 0.0, num_queries);
 
-        assert!((result - 9.556_058_806_415_466).abs() < 1e-6);
+        assert_abs_diff_eq!(result, 10.458036896131249);
     }
 
     #[test]
