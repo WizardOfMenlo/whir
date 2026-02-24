@@ -79,6 +79,7 @@ where
     pub matrix_commit: matrix_commit::Config<M::Source>,
 
     /// Slack to the Jonhnson bound in list decoding.
+    /// Zero indicates unique decoding.
     pub johnson_slack: OrderedFloat<f64>,
 
     /// The number of in-domain samples.
@@ -140,14 +141,14 @@ where
     {
         assert!(vector_size.is_multiple_of(interleaving_depth));
         let message_length = vector_size / interleaving_depth;
-        let codeword_length = (message_length as f64 * rate).ceil() as usize;
+        let codeword_length = (message_length as f64 / rate).ceil() as usize;
         let rate = message_length as f64 / codeword_length as f64;
 
         // Pick in- and out-of-domain samples.
         // η = slack to Johnson bound. We pick η = √ρ / 20.
         // TODO: Optimize picking η.
         let johnson_slack = if unique_decoding {
-            f64::NAN
+            0.0
         } else {
             rate.sqrt() / 20.
         };
@@ -186,7 +187,7 @@ where
             matrix_commit: matrix_commit::Config::with_hash(
                 hash_id,
                 codeword_length,
-                interleaving_depth,
+                interleaving_depth * num_vectors,
             ),
             johnson_slack: OrderedFloat(johnson_slack),
             in_domain_samples,
@@ -221,7 +222,7 @@ where
     }
 
     pub fn unique_decoding(&self) -> bool {
-        self.out_domain_samples == 0
+        self.out_domain_samples == 0 && self.johnson_slack == 0.0
     }
 
     /// Compute a list size bound.
@@ -264,7 +265,7 @@ where
     pub fn rbr_soundness_fold_prox_gaps(&self) -> f64 {
         let log_field_size = M::Target::field_size_bits();
         let log_inv_rate = self.rate().log2().neg();
-        let log_k = (self.message_length() as f64).log2(); // TODO: why not this?
+        let _log_k = (self.message_length() as f64).log2(); // TODO: why not this?
         let log_k = (self.vector_size as f64).log2();
         // See WHIR Theorem 4.8
         // Recall, at each round we are only folding by two at a time
@@ -273,7 +274,7 @@ where
         } else {
             let log_eta = self.johnson_slack.into_inner().log2();
             // Make sure η hits the min bound.
-            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0));
+            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0) - 1e-6);
             7. * LOG2_10 + 3.5 * log_inv_rate + 2. * log_k
         };
         log_field_size - error

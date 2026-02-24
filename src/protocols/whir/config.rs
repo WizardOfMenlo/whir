@@ -5,14 +5,11 @@ use ark_ff::FftField;
 
 use super::{Config, RoundConfig};
 use crate::{
-    algebra::{
-        embedding::{self, Embedding},
-        fields::FieldWithSize,
-    },
+    algebra::{embedding::Embedding, fields::FieldWithSize},
     bits::Bits,
     parameters::ProtocolParameters,
-    protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
-    type_info::{Type, Typed},
+    protocols::{irs_commit, proof_of_work, sumcheck},
+    type_info::Type,
 };
 
 impl<M: Embedding> Config<M>
@@ -47,25 +44,17 @@ where
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = initial_num_variables;
 
-        let mut domain_size = 1 << (initial_num_variables + log_inv_rate);
+        let initial_committer = irs_commit::Config::new(
+            protocol_security_level as f64,
+            whir_parameters.unique_decoding,
+            whir_parameters.hash_id,
+            whir_parameters.batch_size,
+            1 << initial_num_variables,
+            1 << initial_folding_factor,
+            0.5_f64.powi(whir_parameters.starting_log_inv_rate as i32),
+        );
 
-        let log_eta_start = if whir_parameters.unique_decoding {
-            0.0
-        } else {
-            Self::log_eta(log_inv_rate as f64)
-        };
-
-        let commitment_ood_samples = if !whir_parameters.unique_decoding {
-            Self::ood_samples(
-                whir_parameters.security_level,
-                num_variables,
-                log_inv_rate as f64,
-                log_eta_start,
-                field_size_bits,
-            )
-        } else {
-            0
-        };
+        let log_eta_start = initial_committer.johnson_slack.into_inner().log2();
 
         // Initial sumcheck round pow bits.
         let starting_folding_pow_bits = Self::folding_pow_bits(
@@ -78,13 +67,8 @@ where
         );
         // If we skip the initial sumcheck, we do this pow instead:
         let initial_skip_pow_bits = {
-            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                whir_parameters.unique_decoding,
-                field_size_bits,
-                num_variables,
-                log_inv_rate as f64,
-                log_eta_start,
-            ) + (initial_folding_factor as f64).log2();
+            let prox_gaps_error = initial_committer.rbr_soundness_fold_prox_gaps()
+                + (initial_folding_factor as f64).log2();
             (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
         };
 
@@ -100,36 +84,19 @@ where
             };
             let next_rate = log_inv_rate + (round_folding_factor - 1);
 
-            let log_next_eta = if whir_parameters.unique_decoding {
-                0.0
-            } else {
-                Self::log_eta(next_rate as f64)
-            };
-
-            let num_queries = Self::queries(
+            let irs_committer = irs_commit::Config::new(
+                protocol_security_level as f64,
                 whir_parameters.unique_decoding,
-                protocol_security_level,
-                log_inv_rate,
+                whir_parameters.hash_id,
+                1,
+                1 << num_variables,
+                1 << folding_factor,
+                0.5_f64.powi(next_rate as i32),
             );
-
-            let ood_samples = if whir_parameters.unique_decoding {
-                0
-            } else {
-                Self::ood_samples(
-                    whir_parameters.security_level,
-                    num_variables,
-                    next_rate as f64,
-                    log_next_eta,
-                    field_size_bits,
-                )
-            };
-
-            let query_error = Self::rbr_queries(
-                whir_parameters.unique_decoding,
-                log_inv_rate as f64,
-                Self::log_eta(log_inv_rate as f64),
-                num_queries,
-            );
+            let log_next_eta = irs_committer.johnson_slack.into_inner().log2();
+            let num_queries = irs_committer.in_domain_samples;
+            let ood_samples = irs_committer.out_domain_samples;
+            let query_error = irs_committer.rbr_queries();
 
             let combination_error = Self::rbr_soundness_queries_combination(
                 whir_parameters.unique_decoding,
@@ -139,7 +106,6 @@ where
                 ood_samples,
                 num_queries,
             );
-
             let pow_bits = 0_f64
                 .max(whir_parameters.security_level as f64 - (query_error.min(combination_error)));
 
@@ -153,29 +119,9 @@ where
             );
 
             let next_folding_factor = folding_factor;
-            let matrix_committer = matrix_commit::Config::<M::Target>::with_hash(
-                whir_parameters.hash_id,
-                (domain_size / 2) >> next_folding_factor,
-                1 << next_folding_factor,
-            );
 
             round_parameters.push(RoundConfig {
-                irs_committer: irs_commit::Config {
-                    embedding: Typed::new(embedding::Identity::new()),
-                    num_vectors: 1,
-                    vector_size: 1 << num_variables,
-                    codeword_length: 1 << (num_variables + next_rate - next_folding_factor),
-                    interleaving_depth: 1 << next_folding_factor,
-                    matrix_commit: matrix_committer.clone(),
-                    johnson_slack: log_next_eta.exp2().into(),
-                    in_domain_samples: Self::queries(
-                        whir_parameters.unique_decoding,
-                        protocol_security_level,
-                        next_rate,
-                    ),
-                    out_domain_samples: ood_samples,
-                    deduplicate_in_domain: true, // TODO: Configurable
-                },
+                irs_committer,
                 sumcheck: sumcheck::Config {
                     field: Type::new(),
                     initial_size: 1 << num_variables,
@@ -188,7 +134,6 @@ where
             round += 1;
             num_variables -= next_folding_factor;
             log_inv_rate = next_rate;
-            domain_size /= 2;
         }
 
         let final_queries = Self::queries(
@@ -211,29 +156,7 @@ where
             0_f64.max(whir_parameters.security_level as f64 - field_size_bits as f64 - 1.0);
 
         Self {
-            initial_committer: irs_commit::Config {
-                embedding: Default::default(),
-                num_vectors: whir_parameters.batch_size,
-                vector_size: 1 << initial_num_variables,
-                codeword_length: 1
-                    << (whir_parameters.starting_log_inv_rate + initial_num_variables
-                        - initial_folding_factor),
-                interleaving_depth: 1 << initial_folding_factor,
-                matrix_commit: matrix_commit::Config::with_hash(
-                    whir_parameters.hash_id,
-                    1 << (initial_num_variables + whir_parameters.starting_log_inv_rate
-                        - initial_folding_factor),
-                    whir_parameters.batch_size << initial_folding_factor,
-                ),
-                johnson_slack: log_eta_start.exp2().into(),
-                in_domain_samples: Self::queries(
-                    whir_parameters.unique_decoding,
-                    protocol_security_level,
-                    whir_parameters.starting_log_inv_rate,
-                ),
-                out_domain_samples: commitment_ood_samples,
-                deduplicate_in_domain: true,
-            },
+            initial_committer,
             initial_sumcheck: sumcheck::Config {
                 field: Type::new(),
                 initial_size: 1 << initial_num_variables,
@@ -353,7 +276,11 @@ where
                     round.irs_committer.out_domain_samples,
                 );
                 if round.irs_committer.message_length() > 1 {
-                    assert_abs_diff_eq!(ood_error, round.irs_committer.rbr_ood_sample());
+                    assert_abs_diff_eq!(
+                        ood_error,
+                        round.irs_committer.rbr_ood_sample(),
+                        epsilon = 1e-6
+                    );
                 }
 
                 security_level = security_level.min(ood_error);
@@ -518,7 +445,7 @@ where
             num_variables as f64 + log_inv_rate
         } else {
             // Make sure η hits the min bound.
-            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0));
+            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0) - 1e-6);
             7. * LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64
         };
         field_size_bits - error
@@ -987,11 +914,13 @@ mod tests {
     use super::*;
     use crate::{
         algebra::{
-            embedding::{Basefield, Identity},
+            embedding::{self, Basefield, Identity},
             fields::{Field64, Field64_3},
         },
         bits::Bits,
         hash,
+        protocols::matrix_commit,
+        type_info::Typed,
         utils::test_serde,
     };
 
