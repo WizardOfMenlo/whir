@@ -22,7 +22,11 @@
 //! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
 //! - Support mixed `num_polys` openings.
 
-use std::{f64::consts::LOG2_10, fmt, ops::Neg};
+use std::{
+    f64::{self, consts::LOG2_10},
+    fmt,
+    ops::Neg,
+};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
@@ -164,7 +168,9 @@ where
             // We want to find s such that the error is less than security_target.
             let l_choose_2 = list_size * (list_size - 1.) / 2.;
             let log_per_sample = field_size_bits - ((message_length - 1) as f64).log2();
-            ((security_target + l_choose_2.log2()) / log_per_sample).ceil() as usize
+            ((security_target + l_choose_2.log2()) / log_per_sample)
+                .ceil()
+                .max(1.) as usize
         };
         let in_domain_samples = {
             // Query error is (1 - δ)^q, so we compute 1 - δ
