@@ -22,10 +22,11 @@
 //! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
 //! - Support mixed `num_polys` openings.
 
-use std::fmt;
+use std::{f64::consts::LOG2_10, fmt, ops::Neg};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -40,6 +41,7 @@ use crate::{
         mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
     },
+    engines::EngineId,
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
     transcript::{
@@ -75,6 +77,9 @@ where
 
     /// The matrix commitment configuration.
     pub matrix_commit: matrix_commit::Config<M::Source>,
+
+    /// Slack to the Jonhnson bound in list decoding.
+    pub johnson_slack: OrderedFloat<f64>,
 
     /// The number of in-domain samples.
     pub in_domain_samples: usize,
@@ -121,6 +126,75 @@ impl<M: Embedding> Config<M>
 where
     M::Source: FftField,
 {
+    pub fn new(
+        security_target: f64,
+        unique_decoding: bool,
+        hash_id: EngineId,
+        num_vectors: usize,
+        vector_size: usize,
+        interleaving_depth: usize,
+        rate: f64,
+    ) -> Self
+    where
+        M: Default,
+    {
+        assert!(vector_size.is_multiple_of(interleaving_depth));
+        let message_length = vector_size / interleaving_depth;
+        let codeword_length = (message_length as f64 * rate).ceil() as usize;
+        let rate = message_length as f64 / codeword_length as f64;
+
+        // Pick in- and out-of-domain samples.
+        // η = slack to Johnson bound. We pick η = √ρ / 20.
+        // TODO: Optimize picking η.
+        let johnson_slack = if unique_decoding {
+            f64::NAN
+        } else {
+            rate.sqrt() / 20.
+        };
+        let out_domain_samples = if unique_decoding {
+            0
+        } else {
+            let field_size_bits = M::Target::field_size_bits();
+            // Johnson list size bound 1 / (2 η ρ)
+            let list_size = 1. / (2. * johnson_slack * rate);
+
+            // The list size error is (L choose 2) * [(d - 1) / |𝔽|]^s
+            // See [STIR] lemma 4.5.
+            // We want to find s such that the error is less than security_target.
+            let l_choose_2 = list_size * (list_size - 1.) / 2.;
+            let log_per_sample = field_size_bits - ((message_length - 1) as f64).log2();
+            ((security_target + l_choose_2.log2()) / log_per_sample).ceil() as usize
+        };
+        let in_domain_samples = {
+            // Query error is (1 - δ)^q, so we compute 1 - δ
+            let per_sample = if unique_decoding {
+                // Unique decoding bound: δ = (1 - ρ) / 2
+                (1. + rate) / 2.
+            } else {
+                // Johnson bound: δ = 1 - √ρ - η
+                rate.sqrt() + johnson_slack
+            };
+            (security_target / (-per_sample.log2())).ceil() as usize
+        };
+
+        Config {
+            embedding: Typed::<M>::default(),
+            num_vectors,
+            vector_size,
+            codeword_length,
+            interleaving_depth,
+            matrix_commit: matrix_commit::Config::with_hash(
+                hash_id,
+                codeword_length,
+                interleaving_depth,
+            ),
+            johnson_slack: OrderedFloat(johnson_slack),
+            in_domain_samples,
+            out_domain_samples,
+            deduplicate_in_domain: false,
+        }
+    }
+
     pub const fn num_cols(&self) -> usize {
         self.matrix_commit.num_cols
     }
@@ -138,6 +212,7 @@ where
     }
 
     pub fn message_length(&self) -> usize {
+        assert!(self.vector_size.is_multiple_of(self.interleaving_depth));
         self.vector_size / self.interleaving_depth
     }
 
@@ -147,6 +222,61 @@ where
 
     pub fn unique_decoding(&self) -> bool {
         self.out_domain_samples == 0
+    }
+
+    /// Compute a list size bound.
+    pub fn list_size(&self) -> f64 {
+        if self.unique_decoding() {
+            1.
+        } else {
+            // This is the Johnson bound $1 / (2 η √ρ)$.
+            1. / (2. * self.johnson_slack.into_inner() * self.rate().sqrt())
+        }
+    }
+
+    /// Round-by-round soundness of the out-of-domain samples in bits.
+    pub fn rbr_ood_sample(&self) -> f64 {
+        let list_size = self.list_size();
+        let log_field_size = M::Target::field_size_bits();
+
+        // See [STIR] lemma 4.5.
+        // let l_choose_2 = list_size * (list_size - 1.) / 2.;
+        // let log_per_sample = ((self.vector_size - 1) as f64).log2() - log_field_size;
+        // Simplification from [WHIR]
+        let l_choose_2 = list_size * list_size / 2.;
+        let log_per_sample = (self.vector_size as f64).log2() - log_field_size;
+        -l_choose_2.log2() - self.out_domain_samples as f64 * log_per_sample
+    }
+
+    /// Round-by-round soundness of the in-domain queries in bits.
+    pub fn rbr_queries(&self) -> f64 {
+        let per_sample = if self.unique_decoding() {
+            // 1 - δ = 1 - (1 + ρ) / 2
+            (1. - self.rate()) / 2.
+        } else {
+            // 1 - δ = sqrt(ρ) + η
+            self.rate().sqrt() + self.johnson_slack.into_inner()
+        };
+        self.in_domain_samples as f64 * per_sample.log2().neg()
+    }
+
+    // Compute the proximity gaps term of the fold
+    pub fn rbr_soundness_fold_prox_gaps(&self) -> f64 {
+        let log_field_size = M::Target::field_size_bits();
+        let log_inv_rate = self.rate().log2().neg();
+        let log_k = (self.message_length() as f64).log2(); // TODO: why not this?
+        let log_k = (self.vector_size as f64).log2();
+        // See WHIR Theorem 4.8
+        // Recall, at each round we are only folding by two at a time
+        let error = if self.unique_decoding() {
+            log_k + log_inv_rate
+        } else {
+            let log_eta = self.johnson_slack.into_inner().log2();
+            // Make sure η hits the min bound.
+            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0));
+            7. * LOG2_10 + 3.5 * log_inv_rate + 2. * log_k
+        };
+        log_field_size - error
     }
 
     /// Commit to one or more vectors.
@@ -500,6 +630,7 @@ mod tests {
                 codeword_length,
                 interleaving_depth,
                 matrix_commit,
+                johnson_slack: OrderedFloat::default(),
                 in_domain_samples,
                 out_domain_samples,
                 deduplicate_in_domain,

@@ -1,5 +1,6 @@
 use std::{f64::consts::LOG2_10, fmt::Display, ops::Neg};
 
+use approx::assert_abs_diff_eq;
 use ark_ff::FftField;
 
 use super::{Config, RoundConfig};
@@ -166,6 +167,7 @@ where
                     codeword_length: 1 << (num_variables + next_rate - next_folding_factor),
                     interleaving_depth: 1 << next_folding_factor,
                     matrix_commit: matrix_committer.clone(),
+                    johnson_slack: log_next_eta.exp2().into(),
                     in_domain_samples: Self::queries(
                         whir_parameters.unique_decoding,
                         protocol_security_level,
@@ -223,6 +225,7 @@ where
                         - initial_folding_factor),
                     whir_parameters.batch_size << initial_folding_factor,
                 ),
+                johnson_slack: log_eta_start.exp2().into(),
                 in_domain_samples: Self::queries(
                     whir_parameters.unique_decoding,
                     protocol_security_level,
@@ -300,6 +303,8 @@ where
             initial_log_inv_rate,
             initial_log_eta,
         );
+        let initial_prox_gaps_error2 = self.initial_committer.rbr_soundness_fold_prox_gaps();
+        assert_abs_diff_eq!(initial_prox_gaps_error, initial_prox_gaps_error2);
         if has_initial_constraints {
             let initial_sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 initial_unique_decoding,
@@ -328,6 +333,7 @@ where
             Self::log_eta(old_log_inv_rate)
         };
 
+        let mut count = 0;
         for round in &self.round_configs {
             // Query soundness is computed at the old rate, while all fold and OOD terms use the new rate.
             let new_unique_decoding = round.irs_committer.unique_decoding();
@@ -346,6 +352,10 @@ where
                     field_size_bits,
                     round.irs_committer.out_domain_samples,
                 );
+                if round.irs_committer.message_length() > 1 {
+                    assert_abs_diff_eq!(ood_error, round.irs_committer.rbr_ood_sample());
+                }
+
                 security_level = security_level.min(ood_error);
             }
 
@@ -355,6 +365,13 @@ where
                 old_log_eta,
                 old_in_domain_samples,
             );
+            let query_error2 = if count == 0 {
+                self.initial_committer.rbr_queries()
+            } else {
+                self.round_configs[count - 1].irs_committer.rbr_queries()
+            };
+            assert_abs_diff_eq!(query_error, query_error2);
+
             let combination_error = Self::rbr_soundness_queries_combination(
                 new_unique_decoding,
                 field_size_bits,
@@ -374,6 +391,8 @@ where
                 new_log_inv_rate,
                 new_log_eta,
             );
+            let prox_gaps_error2 = round.irs_committer.rbr_soundness_fold_prox_gaps();
+            assert_abs_diff_eq!(prox_gaps_error, prox_gaps_error2);
             let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
                 new_unique_decoding,
                 field_size_bits,
@@ -390,6 +409,7 @@ where
             old_log_eta = new_log_eta;
 
             num_variables -= round.sumcheck.num_rounds;
+            count += 1;
         }
 
         let final_unique_decoding = self
@@ -450,7 +470,7 @@ where
         -1.0 - log_eta + 0.5 * log_inv_rate
     }
 
-    pub const fn rbr_ood_sample(
+    pub fn rbr_ood_sample(
         num_variables: usize,
         log_inv_rate: f64,
         log_eta: f64,
@@ -772,6 +792,11 @@ where
             self.initial_committer.rate().log2().neg(),
             log_eta,
         );
+        assert_abs_diff_eq!(
+            prox_gaps_error,
+            self.initial_committer.rbr_soundness_fold_prox_gaps()
+        );
+
         let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
             self.initial_committer.unique_decoding(),
             field_size_bits,
@@ -957,6 +982,7 @@ where
 #[cfg(test)]
 mod tests {
     use approx::assert_abs_diff_eq;
+    use ordered_float::OrderedFloat;
 
     use super::*;
     use crate::{
@@ -1086,6 +1112,7 @@ mod tests {
                     codeword_length: 1 << (10 + 3 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
+                    johnson_slack: OrderedFloat::default(),
                     in_domain_samples: 5,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,
@@ -1106,6 +1133,7 @@ mod tests {
                     codeword_length: 1 << (10 + 4 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
+                    johnson_slack: OrderedFloat::default(),
                     in_domain_samples: 6,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,

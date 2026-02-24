@@ -56,6 +56,7 @@ const-oid = "0.9.6"
 arrayvec = "0.7.6"
 derive-where = { version = "1.6.0", features = ["safe"] }
 approx = "0.5.1"
+ordered-float = { version = "5.1.0", features = ["serde"] }
 
 [dev-dependencies]
 proptest = "1.0"
