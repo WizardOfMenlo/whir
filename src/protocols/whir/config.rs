@@ -69,6 +69,7 @@ where
         let mut round_configs = Vec::new();
         let mut round = 0;
         let mut in_domain_samples = initial_committer.in_domain_samples;
+        let mut query_error = initial_committer.rbr_queries();
         num_variables -= whir_parameters.initial_folding_factor;
         while num_variables >= whir_parameters.folding_factor {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
@@ -95,8 +96,7 @@ where
                 let log_combination = (count as f64).log2();
                 field_size_bits - (log_combination + log_list_size + 1.)
             };
-            let pow_bits =
-                0_f64.max(security_level - (irs_committer.rbr_queries().min(combination_error)));
+            let pow_bits = 0_f64.max(security_level - (query_error.min(combination_error)));
             let folding_pow_bits = {
                 let prox_gaps_error = irs_committer.rbr_soundness_fold_prox_gaps();
                 let log_list_size = irs_committer.list_size().log2();
@@ -120,6 +120,7 @@ where
             num_variables -= whir_parameters.folding_factor;
             log_inv_rate = next_rate;
             in_domain_samples = config.irs_committer.in_domain_samples;
+            query_error = config.irs_committer.rbr_queries();
             round_configs.push(config);
         }
 
