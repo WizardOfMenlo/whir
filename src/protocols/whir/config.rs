@@ -68,6 +68,7 @@ where
 
         let mut round_configs = Vec::new();
         let mut round = 0;
+        let mut in_domain_samples = initial_committer.in_domain_samples;
         num_variables -= whir_parameters.initial_folding_factor;
         while num_variables >= whir_parameters.folding_factor {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
@@ -90,7 +91,7 @@ where
             );
             let combination_error = {
                 let log_list_size = irs_committer.list_size().log2();
-                let count = irs_committer.out_domain_samples + irs_committer.in_domain_samples;
+                let count = irs_committer.out_domain_samples + in_domain_samples;
                 let log_combination = (count as f64).log2();
                 field_size_bits - (log_combination + log_list_size + 1.)
             };
@@ -104,7 +105,7 @@ where
                 (security_level - error).max(0.)
             };
 
-            round_configs.push(RoundConfig {
+            let config = RoundConfig {
                 irs_committer,
                 sumcheck: sumcheck::Config {
                     field: Type::new(),
@@ -113,11 +114,13 @@ where
                     num_rounds: whir_parameters.folding_factor,
                 },
                 pow: pow(pow_bits),
-            });
+            };
 
             round += 1;
             num_variables -= whir_parameters.folding_factor;
             log_inv_rate = next_rate;
+            in_domain_samples = config.irs_committer.in_domain_samples;
+            round_configs.push(config);
         }
 
         let rbr_error = round_configs.last().map_or_else(
@@ -126,7 +129,7 @@ where
         );
         let final_pow_bits = 0_f64.max(security_level - rbr_error);
 
-        let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits - 1.0);
+        let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits + 1.0);
 
         Self {
             initial_committer,
@@ -356,7 +359,7 @@ where
         let sumcheck_error = field_size_bits - (log_list_size + 1.);
         writeln!(
             f,
-            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, (list size 2^{:.1})",
+            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, list size 2^{:.1}",
             prox_gaps_error.min(sumcheck_error)
                 + f64::from(self.initial_sumcheck.round_pow.difficulty()),
             self.initial_sumcheck.num_rounds,
@@ -396,7 +399,7 @@ where
             let sumcheck_error = field_size_bits - (log_list_size + 1.);
             writeln!(
                 f,
-                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1} (list size 2^{:.1})",
+                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, list size 2^{:.1}",
                 prox_gaps_error.min(sumcheck_error) + f64::from(r.sumcheck.round_pow.difficulty()),
                 r.sumcheck.num_rounds,
                 prox_gaps_error,

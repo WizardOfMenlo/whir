@@ -251,13 +251,9 @@ where
     pub fn rbr_ood_sample(&self) -> f64 {
         let list_size = self.list_size();
         let log_field_size = M::Target::field_size_bits();
-
         // See [STIR] lemma 4.5.
-        // let l_choose_2 = list_size * (list_size - 1.) / 2.;
-        // let log_per_sample = ((self.vector_size - 1) as f64).log2() - log_field_size;
-        // Simplification from [WHIR]
-        let l_choose_2 = list_size * list_size / 2.;
-        let log_per_sample = (self.vector_size as f64).log2() - log_field_size;
+        let l_choose_2 = list_size * (list_size - 1.) / 2.;
+        let log_per_sample = ((self.vector_size - 1) as f64).log2() - log_field_size;
         -l_choose_2.log2() - self.out_domain_samples as f64 * log_per_sample
     }
 
@@ -265,7 +261,7 @@ where
     pub fn rbr_queries(&self) -> f64 {
         let per_sample = if self.unique_decoding() {
             // 1 - δ = 1 - (1 + ρ) / 2
-            (1. - self.rate()) / 2.
+            f64::midpoint(1., self.rate())
         } else {
             // 1 - δ = sqrt(ρ) + η
             self.rate().sqrt() + self.johnson_slack.into_inner()
@@ -277,8 +273,7 @@ where
     pub fn rbr_soundness_fold_prox_gaps(&self) -> f64 {
         let log_field_size = M::Target::field_size_bits();
         let log_inv_rate = self.rate().log2().neg();
-        let _log_k = (self.message_length() as f64).log2(); // TODO: why not this?
-        let log_k = (self.vector_size as f64).log2();
+        let log_k = (self.message_length() as f64).log2();
         // See WHIR Theorem 4.8
         // Recall, at each round we are only folding by two at a time
         let error = if self.unique_decoding() {
