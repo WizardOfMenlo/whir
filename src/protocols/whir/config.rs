@@ -278,21 +278,6 @@ where
     pub const fn n_rounds(&self) -> usize {
         self.round_configs.len()
     }
-
-    pub fn final_rate(&self) -> f64 {
-        self.round_configs.last().map_or_else(
-            || self.initial_committer.rate(),
-            |round_config| round_config.irs_committer.rate(),
-        )
-    }
-
-    pub fn final_in_domain_samples(&self) -> usize {
-        self.round_configs
-            .last()
-            .map_or(self.initial_committer.in_domain_samples, |round_config| {
-                round_config.irs_committer.in_domain_samples
-            })
-    }
 }
 
 impl<M: Embedding> Display for Config<M>
@@ -456,16 +441,6 @@ impl<F: FftField> RoundConfig<F> {
 
     pub const fn final_size(&self) -> usize {
         self.sumcheck.final_size()
-    }
-
-    pub fn log_inv_rate(&self) -> usize {
-        assert!(self
-            .irs_committer
-            .codeword_length
-            .is_multiple_of(self.irs_committer.message_length()));
-        let expansion = self.irs_committer.codeword_length / self.irs_committer.message_length();
-        assert!(expansion.is_power_of_two());
-        expansion.ilog2() as usize
     }
 
     pub fn initial_num_variables(&self) -> usize {
