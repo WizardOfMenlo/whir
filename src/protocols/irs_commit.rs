@@ -60,8 +60,9 @@ use crate::{
 /// Commit to vectors over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(bound = "M: Embedding, M::Source: FftField")]
-pub struct Config<M: Embedding>
+pub struct Config<M>
 where
+    M: Embedding,
     M::Source: FftField,
 {
     /// Embedding into a (larger) field used for weights and drawing challenges.
@@ -144,7 +145,9 @@ where
         M: Default,
     {
         assert!(vector_size.is_multiple_of(interleaving_depth));
+        assert!(rate > 0. && rate <= 1.);
         let message_length = vector_size / interleaving_depth;
+        #[allow(clippy::cast_sign_loss)]
         let codeword_length = (message_length as f64 / rate).ceil() as usize;
         let rate = message_length as f64 / codeword_length as f64;
 
@@ -156,6 +159,7 @@ where
         } else {
             rate.sqrt() / 20.
         };
+        #[allow(clippy::cast_sign_loss)]
         let out_domain_samples = if unique_decoding {
             0
         } else {
@@ -168,15 +172,17 @@ where
             // We want to find s such that the error is less than security_target.
             let l_choose_2 = list_size * (list_size - 1.) / 2.;
             let log_per_sample = field_size_bits - ((message_length - 1) as f64).log2();
+            assert!(log_per_sample > 0.);
             ((security_target + l_choose_2.log2()) / log_per_sample)
                 .ceil()
                 .max(1.) as usize
         };
+        #[allow(clippy::cast_sign_loss)]
         let in_domain_samples = {
             // Query error is (1 - δ)^q, so we compute 1 - δ
             let per_sample = if unique_decoding {
                 // Unique decoding bound: δ = (1 - ρ) / 2
-                (1. + rate) / 2.
+                f64::midpoint(1., rate)
             } else {
                 // Johnson bound: δ = 1 - √ρ - η
                 rate.sqrt() + johnson_slack
@@ -184,7 +190,7 @@ where
             (security_target / (-per_sample.log2())).ceil() as usize
         };
 
-        Config {
+        Self {
             embedding: Typed::<M>::default(),
             num_vectors,
             vector_size,
@@ -576,6 +582,7 @@ where
     }
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn num_in_domain_queries(unique_decoding: bool, security_target: f64, rate: f64) -> usize {
     // Pick in- and out-of-domain samples.
     // η = slack to Johnson bound. We pick η = √ρ / 20.
@@ -588,7 +595,7 @@ pub fn num_in_domain_queries(unique_decoding: bool, security_target: f64, rate: 
     // Query error is (1 - δ)^q, so we compute 1 - δ
     let per_sample = if unique_decoding {
         // Unique decoding bound: δ = (1 - ρ) / 2
-        (1. + rate) / 2.
+        f64::midpoint(1., rate)
     } else {
         // Johnson bound: δ = 1 - √ρ - η
         rate.sqrt() + johnson_slack

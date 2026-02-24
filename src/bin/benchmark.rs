@@ -89,11 +89,11 @@ struct BenchmarkOutput {
 }
 
 fn main() {
+    use AvailableFields as AF;
     let args = Args::parse();
     let field = args.field;
 
     // Type reflection on field
-    use AvailableFields as AF;
     match field {
         AF::Goldilocks1 => run_whir::<Identity<Field64>>(&args),
         AF::Goldilocks2 => run_whir::<Basefield<Field64_2>>(&args),
@@ -105,9 +105,9 @@ fn main() {
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir<M: Embedding>(args: &Args)
+fn run_whir<M>(args: &Args)
 where
-    M: Default,
+    M: Embedding + Default,
     M::Source: FftField,
     M::Target: FftField + Codec,
 {
@@ -147,7 +147,6 @@ where
         // Run LDT
         use whir::protocols::whir::Config;
 
-        let whir_params = ProtocolParameters { ..whir_params };
         let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
             println!("WARN: more PoW bits required than specified.");

@@ -62,11 +62,11 @@ struct Args {
 }
 
 fn main() {
+    use AvailableFields as AF;
     let args = Args::parse();
     let field = args.field;
 
     // Dispatch on embedding
-    use AvailableFields as AF;
     if args.zk {
         match field {
             AF::Goldilocks1 => run_whir_zk::<Field64>(&args),
@@ -89,9 +89,9 @@ fn main() {
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir<M: Embedding>(args: &Args)
+fn run_whir<M>(args: &Args)
 where
-    M: Default,
+    M: Embedding + Default,
     M::Source: FftField,
     M::Target: FftField + Codec,
 {

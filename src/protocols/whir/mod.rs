@@ -28,8 +28,9 @@ use crate::{
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "M: Embedding, M::Source: FftField, M::Target: FftField")]
-pub struct Config<M: Embedding>
+pub struct Config<M>
 where
+    M: Embedding,
     M::Source: FftField,
     M::Target: FftField,
 {
@@ -80,7 +81,7 @@ impl<F: Field> FinalClaim<F> {
     }
 }
 
-impl<M: Embedding> Config<M>
+impl<M> Config<M>
 where
     M: Embedding,
     M::Source: FftField,
@@ -118,7 +119,6 @@ where
     /// Disable proof-of-work for test.
     #[cfg(test)]
     pub(crate) fn disable_pow(&mut self) {
-        use std::u64;
         self.initial_sumcheck.round_pow.threshold = u64::MAX;
         for round in &mut self.round_configs {
             round.sumcheck.round_pow.threshold = u64::MAX;
@@ -131,7 +131,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, u64};
+    use std::borrow::Cow;
 
     use ark_ff::{Field, UniformRand};
 
@@ -634,6 +634,7 @@ mod tests {
     ///
     /// This was a regression test for a bug where the RLC combination of stacked
     /// leaf answers was incorrect when batch_size > 1.
+    #[allow(clippy::too_many_arguments)]
     fn make_whir_batch_with_batch_size(
         num_variables: usize,
         initial_folding_factor: usize,

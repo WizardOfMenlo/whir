@@ -40,6 +40,7 @@ where
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
         let mut num_variables = size.trailing_zeros() as usize;
 
+        #[allow(clippy::cast_possible_wrap)]
         let initial_committer = irs_commit::Config::new(
             protocol_security_level,
             whir_parameters.unique_decoding,
@@ -77,6 +78,7 @@ where
             };
             let next_rate = log_inv_rate + (round_folding_factor - 1);
 
+            #[allow(clippy::cast_possible_wrap)]
             let irs_committer = irs_commit::Config::new(
                 protocol_security_level,
                 whir_parameters.unique_decoding,
@@ -90,7 +92,7 @@ where
                 let log_list_size = irs_committer.list_size().log2();
                 let count = irs_committer.out_domain_samples + irs_committer.in_domain_samples;
                 let log_combination = (count as f64).log2();
-                field_size_bits as f64 - (log_combination + log_list_size + 1.)
+                field_size_bits - (log_combination + log_list_size + 1.)
             };
             let pow_bits =
                 0_f64.max(security_level - (irs_committer.rbr_queries().min(combination_error)));
@@ -124,7 +126,7 @@ where
         );
         let final_pow_bits = 0_f64.max(security_level - rbr_error);
 
-        let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits as f64 - 1.0);
+        let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits - 1.0);
 
         Self {
             initial_committer,
@@ -161,11 +163,11 @@ where
         if num_vectors > 1 {
             security_level =
                 security_level.min(field_size_bits - ((num_vectors - 1) as f64).log2());
-        };
+        }
         if num_linear_forms > 1 {
             security_level =
                 security_level.min(field_size_bits - ((num_linear_forms - 1) as f64).log2());
-        };
+        }
         let has_initial_constraints =
             num_linear_forms > 0 || self.initial_committer.out_domain_samples > 0;
 
@@ -177,7 +179,7 @@ where
         let initial_prox_gaps_error = self.initial_committer.rbr_soundness_fold_prox_gaps();
         if has_initial_constraints {
             let log_list_size = self.initial_committer.list_size().log2();
-            let initial_sumcheck_error = field_size_bits as f64 - (log_list_size + 1.);
+            let initial_sumcheck_error = field_size_bits - (log_list_size + 1.);
             let initial_fold_error = initial_prox_gaps_error.min(initial_sumcheck_error)
                 + f64::from(self.initial_sumcheck.round_pow.difficulty());
             security_level = security_level.min(initial_fold_error);
@@ -203,14 +205,14 @@ where
             let combination_error = {
                 let count = round.irs_committer.out_domain_samples + old_in_domain_samples;
                 let log_combination = (count as f64).log2();
-                field_size_bits as f64 - (log_combination + log_list_size + 1.)
+                field_size_bits - (log_combination + log_list_size + 1.)
             };
             let round_query_error =
                 rbr_queries.min(combination_error) + f64::from(round.pow.difficulty());
             security_level = security_level.min(round_query_error);
 
             let prox_gaps_error = round.irs_committer.rbr_soundness_fold_prox_gaps();
-            let sumcheck_error = field_size_bits as f64 - (log_list_size + 1.);
+            let sumcheck_error = field_size_bits - (log_list_size + 1.);
             let round_fold_error = prox_gaps_error.min(sumcheck_error)
                 + f64::from(round.sumcheck.round_pow.difficulty());
             security_level = security_level.min(round_fold_error);
@@ -224,7 +226,7 @@ where
 
         if self.final_sumcheck.num_rounds > 0 {
             let final_combination_error =
-                field_size_bits as f64 - 1. + f64::from(self.final_sumcheck.round_pow.difficulty());
+                field_size_bits - 1. + f64::from(self.final_sumcheck.round_pow.difficulty());
             security_level = security_level.min(final_combination_error);
         }
 
@@ -339,24 +341,21 @@ where
             let rlc_error = field_size_bits - ((num_vectors - 1) as f64).log2();
             writeln!(
                 f,
-                "{:.1} bits -- initial vector RLC ({} vectors)",
-                rlc_error, num_vectors
+                "{rlc_error:.1} bits -- initial vector RLC ({num_vectors} vectors)"
             )?;
         } else {
-            writeln!(f, "no loss -- initial vector RLC ({} vector)", num_vectors)?;
+            writeln!(f, "no loss -- initial vector RLC ({num_vectors} vector)")?;
         }
         if num_linear_forms > 1 {
-            let rlc_error = field_size_bits - ((num_linear_forms - 1) as f64).log2();
+            let rlc_error = field_size_bits - f64::from(num_linear_forms - 1).log2();
             writeln!(
                 f,
-                "{:.1} bits -- initial linear-form RLC ({} linear form)",
-                rlc_error, num_linear_forms
+                "{rlc_error:.1} bits -- initial linear-form RLC ({num_linear_forms} linear form)"
             )?;
         } else {
             writeln!(
                 f,
-                "no loss -- initial linear-form RLC ({} linear form)",
-                num_linear_forms
+                "no loss -- initial linear-form RLC ({num_linear_forms} linear form)"
             )?;
         }
 
@@ -366,10 +365,10 @@ where
                 "{:.1} bits -- OOD commitment",
                 self.initial_committer.rbr_ood_sample()
             )?;
-        };
+        }
         let prox_gaps_error = self.initial_committer.rbr_soundness_fold_prox_gaps();
         let log_list_size = self.initial_committer.list_size().log2();
-        let sumcheck_error = field_size_bits as f64 - (log_list_size + 1.);
+        let sumcheck_error = field_size_bits - (log_list_size + 1.);
         writeln!(
             f,
             "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, (list size 2^{:.1})",
@@ -397,7 +396,7 @@ where
             let combination_error = {
                 let count = r.irs_committer.out_domain_samples + old_in_domain_samples;
                 let log_combination = (count as f64).log2();
-                field_size_bits as f64 - (log_combination + log_list_size + 1.)
+                field_size_bits - (log_combination + log_list_size + 1.)
             };
             writeln!(
                 f,
@@ -409,7 +408,7 @@ where
             )?;
 
             let prox_gaps_error = r.irs_committer.rbr_soundness_fold_prox_gaps();
-            let sumcheck_error = field_size_bits as f64 - (log_list_size + 1.);
+            let sumcheck_error = field_size_bits - (log_list_size + 1.);
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1} (list size 2^{:.1})",
@@ -434,7 +433,7 @@ where
         )?;
 
         if self.final_sumcheck.num_rounds > 0 {
-            let combination_error = field_size_bits as f64 - 1.;
+            let combination_error = field_size_bits - 1.;
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",

@@ -17,7 +17,7 @@ where
 {
     fn field_size_bits() -> f64 {
         // Compute modulus as f64
-        const BASE264: f64 = 18446744073709551616_f64;
+        const BASE264: f64 = 18_446_744_073_709_551_616_f64;
         let modulus = F::BasePrimeField::MODULUS;
         let limbs_le = modulus.as_ref();
         let mut modulus = 0.0_f64;

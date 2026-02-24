@@ -40,11 +40,13 @@ impl BlindingSizePolicy {
         let protocol_security_level_main = main_whir_params
             .security_level
             .saturating_sub(main_whir_params.pow_bits);
+        #[allow(clippy::cast_possible_wrap)]
         let q_delta_1 = irs_commit::num_in_domain_queries(
             main_whir_params.unique_decoding,
             protocol_security_level_main as f64,
             0.5_f64.powi(main_whir_params.starting_log_inv_rate as i32),
         );
+        #[allow(clippy::cast_possible_wrap)]
         let q_delta_2 = irs_commit::num_in_domain_queries(
             main_whir_params.unique_decoding,
             main_whir_params.security_level as f64,
