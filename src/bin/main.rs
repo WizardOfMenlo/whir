@@ -258,7 +258,7 @@ where
         hash_id,
     };
 
-    let params = Config::<F>::new(1 << num_variables, &whir_params, whir_params.folding_factor);
+    let params = Config::<F>::new(1 << num_variables, &whir_params, 1);
 
     let ds = DomainSeparator::protocol(&params)
         .session(&format!("Example at {}:{}", file!(), line!()))

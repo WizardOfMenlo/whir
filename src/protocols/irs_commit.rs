@@ -164,14 +164,14 @@ where
             0
         } else {
             let field_size_bits = M::Target::field_size_bits();
-            // Johnson list size bound 1 / (2 η ρ)
-            let list_size = 1. / (2. * johnson_slack * rate);
+            // Johnson list size bound 1 / (2 η √ρ)
+            let list_size = 1. / (2. * johnson_slack * rate.sqrt());
 
             // The list size error is (L choose 2) * [(d - 1) / |𝔽|]^s
             // See [STIR] lemma 4.5.
             // We want to find s such that the error is less than security_target.
             let l_choose_2 = list_size * (list_size - 1.) / 2.;
-            let log_per_sample = field_size_bits - ((message_length - 1) as f64).log2();
+            let log_per_sample = field_size_bits - ((vector_size - 1) as f64).log2();
             assert!(log_per_sample > 0.);
             ((security_target + l_choose_2.log2()) / log_per_sample)
                 .ceil()
