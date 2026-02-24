@@ -1,4 +1,4 @@
-use std::{f64::consts::LOG2_10, fmt::Display};
+use std::fmt::Display;
 
 use ark_ff::FftField;
 
@@ -233,56 +233,6 @@ where
         } else {
             0.0
         }
-    }
-
-    /// Construct a suitable $log_2 η$, where $η$ is the gap to the Johnson bound.
-    ///
-    /// It is related proiximity distance by
-    ///
-    /// $δ = 1 - sqrt(rate) - η$
-    pub(crate) const fn log_eta(log_inv_rate: f64) -> f64 {
-        // Ask me how I did this? At the time, only God and I knew. Now only God knows
-        // This computes $η = sqrt(ρ) / 20$, which amounts to a Johnson slack of $m = 10$.
-        // TODO: This seems like a high choice of m ?
-        -(0.5 * log_inv_rate + LOG2_10 + 1.)
-    }
-
-    // Used to select the number of queries
-    #[allow(clippy::cast_sign_loss)]
-    pub(crate) fn queries(
-        unique_decoding: bool,
-        protocol_security_level: usize,
-        log_inv_rate: usize,
-    ) -> usize {
-        // TODO: Change fn arguments.
-        let protocol_security_level = protocol_security_level as f64;
-        let log_inv_rate = log_inv_rate as f64;
-        let log_eta = Self::log_eta(log_inv_rate);
-
-        // We use our knownledge that rbr queries is of the form μ^q and get log_2 μ
-        // by setting q = 1.
-        let per_query = Self::rbr_queries(unique_decoding, log_inv_rate, log_eta, 1);
-        // Now we can compute the number of queries required.
-        (protocol_security_level / per_query).ceil() as usize
-    }
-
-    // This is the bits of security of the query step
-    pub(crate) fn rbr_queries(
-        unique_decoding: bool,
-        log_inv_rate: f64,
-        log_eta: f64,
-        num_queries: usize,
-    ) -> f64 {
-        let per_sample = if unique_decoding {
-            // (1 - δ)^q for δ = (1 - ρ) / 2.
-            let rate = 1. / log_inv_rate.exp2();
-            -(0.5 * (1. - rate)).log2()
-        } else {
-            // (1 - δ)^q for δ = 1 - sqrt(ρ) - η
-            let sqrt_rate = (-0.5 * log_inv_rate).exp2();
-            -(sqrt_rate + log_eta.exp2()).log2()
-        };
-        num_queries as f64 * per_sample
     }
 
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
@@ -542,7 +492,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use approx::assert_abs_diff_eq;
     use ordered_float::OrderedFloat;
 
     use super::*;
@@ -592,49 +541,6 @@ mod tests {
         let config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
-    }
-
-    #[test]
-    fn test_queries_unique_decoding() {
-        let security_level = 100;
-        let log_inv_rate = 5;
-
-        let result = Config::<Basefield<Field64_3>>::queries(true, security_level, log_inv_rate);
-
-        assert_eq!(result, 96);
-    }
-
-    #[test]
-    fn test_queries_provable_list() {
-        let security_level = 128;
-        let log_inv_rate = 8;
-
-        let result = Config::<Basefield<Field64_3>>::queries(false, security_level, log_inv_rate);
-
-        assert_eq!(result, 33);
-    }
-
-    #[test]
-    fn test_rbr_queries_unique_decoding() {
-        let log_inv_rate = 5.0; // log_inv_rate = 5
-        let num_queries = 10; // Number of queries
-
-        let result =
-            Config::<Basefield<Field64_3>>::rbr_queries(true, log_inv_rate, 0.0, num_queries);
-
-        assert_abs_diff_eq!(result, 10.458036896131249);
-    }
-
-    #[test]
-    fn test_rbr_queries_provable_list() {
-        let log_inv_rate = 8.0; // log_inv_rate = 8
-        let log_eta = Config::<Basefield<Field64_3>>::log_eta(log_inv_rate);
-        let num_queries = 16; // Number of queries
-
-        let result =
-            Config::<Basefield<Field64_3>>::rbr_queries(false, log_inv_rate, log_eta, num_queries);
-
-        assert!((result - 64.0) < 1e-6);
     }
 
     #[test]
@@ -712,88 +618,5 @@ mod tests {
             !config.check_max_pow_bits(Bits::new(20.0)),
             "Starting folding pow bits exceeds max_pow_bits, should return false."
         );
-    }
-
-    #[test]
-    fn test_list_size_bits_provable_list() {
-        // ProvableList: list_size_bits = (log_inv_rate / 2) - (1 + log_eta)
-
-        let cases = vec![
-            (10, 8.0, 2.0, 1.0),   // Basic case
-            (10, 0.0, 2.0, -3.0),  // Edge case: log_inv_rate = 0
-            (10, 8.0, 0.0, 3.0),   // Edge case: log_eta = 0
-            (10, 8.0, 10.0, -7.0), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Basefield<Field64_3>>::log_list_size(log_inv_rate, log_eta);
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_rbr_ood_sample_provable_list() {
-        // ProvableList: Uses a different list_size_bits formula
-
-        let cases = vec![
-            (
-                10,
-                8.0,
-                2.0,
-                256.,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 1.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                10,
-                0.0,
-                2.0,
-                256.,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -3.0 + (10.0 * 3.0)),
-            ), // log_inv_rate = 0
-            (
-                10,
-                8.0,
-                0.0,
-                256.,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (10.0 * 3.0)),
-            ), // log_eta = 0
-            (
-                10,
-                8.0,
-                10.0,
-                256.,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -7.0 + (10.0 * 3.0)),
-            ), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
-        {
-            let result = Config::<Basefield<Field64_3>>::rbr_ood_sample(
-                num_variables,
-                log_inv_rate,
-                log_eta,
-                field_size_bits,
-                ood_samples,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
-            );
-        }
     }
 }

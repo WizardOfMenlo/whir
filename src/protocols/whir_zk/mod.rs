@@ -12,7 +12,7 @@ pub use self::committer::{Commitment, Witness};
 use crate::{
     algebra::embedding::{Embedding, Identity},
     parameters::ProtocolParameters,
-    protocols::whir,
+    protocols::{irs_commit, whir},
 };
 
 /// Policy inputs for `ell` computation.
@@ -35,18 +35,20 @@ pub struct BlindingSizePolicy {
 
 impl BlindingSizePolicy {
     pub fn from_whir_params<F: FftField>(main_whir_params: &ProtocolParameters) -> Self {
+        // TODO: Compute these in a cleaner way?
+
         let protocol_security_level_main = main_whir_params
             .security_level
             .saturating_sub(main_whir_params.pow_bits);
-        let q_delta_1 = whir::Config::<Identity<F>>::queries(
+        let q_delta_1 = irs_commit::num_in_domain_queries(
             main_whir_params.unique_decoding,
-            protocol_security_level_main,
-            main_whir_params.starting_log_inv_rate,
+            protocol_security_level_main as f64,
+            0.5_f64.powi(main_whir_params.starting_log_inv_rate as i32),
         );
-        let q_delta_2 = whir::Config::<Identity<F>>::queries(
+        let q_delta_2 = irs_commit::num_in_domain_queries(
             main_whir_params.unique_decoding,
-            main_whir_params.security_level,
-            main_whir_params.starting_log_inv_rate,
+            main_whir_params.security_level as f64,
+            0.5_f64.powi(main_whir_params.starting_log_inv_rate as i32),
         );
 
         // Default send-in-clear thresholds match query complexities.

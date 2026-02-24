@@ -576,6 +576,26 @@ where
     }
 }
 
+pub fn num_in_domain_queries(unique_decoding: bool, security_target: f64, rate: f64) -> usize {
+    // Pick in- and out-of-domain samples.
+    // η = slack to Johnson bound. We pick η = √ρ / 20.
+    // TODO: Optimize picking η.
+    let johnson_slack = if unique_decoding {
+        0.0
+    } else {
+        rate.sqrt() / 20.
+    };
+    // Query error is (1 - δ)^q, so we compute 1 - δ
+    let per_sample = if unique_decoding {
+        // Unique decoding bound: δ = (1 - ρ) / 2
+        (1. + rate) / 2.
+    } else {
+        // Johnson bound: δ = 1 - √ρ - η
+        rate.sqrt() + johnson_slack
+    };
+    (security_target / (-per_sample.log2())).ceil() as usize
+}
+
 #[cfg(test)]
 mod tests {
     use ark_std::rand::{
