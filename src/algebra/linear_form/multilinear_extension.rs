@@ -13,6 +13,7 @@ use crate::{
 /// $bits: ℕ → {0,1}^k$ is the little-endian binary decomposition, then this linear form will
 /// evaluate to $f(x)$ for some fixed point $x ∈ 𝔽^k$.
 ///
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct MultilinearExtension<F: Field> {
     pub point: Vec<F>,
 }
@@ -26,10 +27,6 @@ impl<F: Field> MultilinearExtension<F> {
 impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
     fn size(&self) -> usize {
         1 << self.point.len()
-    }
-
-    fn deferred(&self) -> bool {
-        false
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {

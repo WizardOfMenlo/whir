@@ -17,15 +17,15 @@
 //! fewer than `in_domain_samples` distinct rows. This produces `in_domain_samples` evaluation
 //! points in `F` and `in_domain_samples` by `num_vectors * interleaving_depth`.
 //!
-//! *To do:*:
-//! - Consistently Reframe as vector commitment protocol (or, with batching, a matrix commitment protocol).
-//! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
-//! - Support mixed `num_polys` openings.
+use std::{
+    f64::{self, consts::LOG2_10},
+    fmt,
+    ops::Neg,
+};
 
-use std::fmt;
-
-use ark_ff::{FftField, Field};
+use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -33,39 +33,32 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        embedding::{Basefield, Embedding, Identity},
+        embedding::Embedding,
+        fields::FieldWithSize,
         lift,
         linear_form::UnivariateEvaluation,
         mixed_univariate_evaluate,
         ntt::{self, interleaved_rs_encode},
     },
+    engines::EngineId,
     hash::Hash,
     protocols::{challenge_indices::challenge_indices, matrix_commit},
     transcript::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
-    type_info::{TypeInfo, Typed},
+    type_info::Typed,
     utils::zip_strict,
     verify,
 };
 
-/// Specialization of [`Config`] for commiting with identity embedding.
-#[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
-pub type IdentityConfig<F: Field> = Config<F, F, Identity<F>>;
-
-/// Specialization of [`Config`] for commiting over base fields
-#[allow(type_alias_bounds)] // Bound is only to reference BasePrimeField.
-pub type BasefieldConfig<F: Field> = Config<F::BasePrimeField, F, Basefield<F>>;
-
 /// Commit to vectors over an fft-friendly field F
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(bound = "F: FftField, G: Field, M: Embedding<Source = F, Target = G>")]
-pub struct Config<F, G = F, M = Identity<F>>
+#[serde(bound = "M: Embedding, M::Source: FftField")]
+pub struct Config<M>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G>,
+    M: Embedding,
+    M::Source: FftField,
 {
     /// Embedding into a (larger) field used for weights and drawing challenges.
     pub embedding: Typed<M>,
@@ -76,14 +69,18 @@ where
     /// The number of coefficients in each vector.
     pub vector_size: usize,
 
-    /// The Reed-Solomon expansion factor.
-    pub expansion: usize,
+    /// The number of Reed-Solomon evaluation points.
+    pub codeword_length: usize,
 
     /// The number of independent codewords that are interleaved together.
     pub interleaving_depth: usize,
 
     /// The matrix commitment configuration.
-    pub matrix_commit: matrix_commit::Config<F>,
+    pub matrix_commit: matrix_commit::Config<M::Source>,
+
+    /// Slack to the Jonhnson bound in list decoding.
+    /// Zero indicates unique decoding.
+    pub johnson_slack: OrderedFloat<f64>,
 
     /// The number of in-domain samples.
     pub in_domain_samples: usize,
@@ -126,14 +123,88 @@ pub struct Evaluations<F> {
     pub matrix: Vec<F>,
 }
 
-impl<F, G, M> Config<F, G, M>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G>,
+    M::Source: FftField,
 {
-    pub const fn num_rows(&self) -> usize {
-        self.matrix_commit.num_rows()
+    pub fn new(
+        security_target: f64,
+        unique_decoding: bool,
+        hash_id: EngineId,
+        num_vectors: usize,
+        vector_size: usize,
+        interleaving_depth: usize,
+        rate: f64,
+    ) -> Self
+    where
+        M: Default,
+    {
+        assert!(vector_size.is_multiple_of(interleaving_depth));
+        assert!(rate > 0. && rate <= 1.);
+        let message_length = vector_size / interleaving_depth;
+        #[allow(clippy::cast_sign_loss)]
+        let codeword_length = (message_length as f64 / rate).ceil() as usize;
+        let rate = message_length as f64 / codeword_length as f64;
+
+        // Pick in- and out-of-domain samples.
+        // η = slack to Johnson bound. We pick η = √ρ / 20.
+        // TODO: Optimize picking η.
+        let johnson_slack = if unique_decoding {
+            0.0
+        } else {
+            rate.sqrt() / 20.
+        };
+        #[allow(clippy::cast_sign_loss)]
+        let out_domain_samples = if unique_decoding {
+            0
+        } else {
+            let field_size_bits = M::Target::field_size_bits();
+            // Johnson list size bound 1 / (2 η √ρ)
+            let list_size = 1. / (2. * johnson_slack * rate.sqrt());
+
+            // The list size error is (L choose 2) * [(d - 1) / |𝔽|]^s
+            // See [STIR] lemma 4.5.
+            // We want to find s such that the error is less than security_target.
+            let l_choose_2 = list_size * (list_size - 1.) / 2.;
+            let log_per_sample = field_size_bits - ((vector_size - 1) as f64).log2();
+            assert!(log_per_sample > 0.);
+            ((security_target + l_choose_2.log2()) / log_per_sample)
+                .ceil()
+                .max(1.) as usize
+        };
+        #[allow(clippy::cast_sign_loss)]
+        let in_domain_samples = {
+            // Query error is (1 - δ)^q, so we compute 1 - δ
+            let per_sample = if unique_decoding {
+                // Unique decoding bound: δ = (1 - ρ) / 2
+                f64::midpoint(1., rate)
+            } else {
+                // Johnson bound: δ = 1 - √ρ - η
+                rate.sqrt() + johnson_slack
+            };
+            (security_target / (-per_sample.log2())).ceil() as usize
+        };
+        debug_assert_eq!(
+            in_domain_samples,
+            num_in_domain_queries(unique_decoding, security_target, rate)
+        );
+
+        Self {
+            embedding: Typed::<M>::default(),
+            num_vectors,
+            vector_size,
+            codeword_length,
+            interleaving_depth,
+            matrix_commit: matrix_commit::Config::with_hash(
+                hash_id,
+                codeword_length,
+                interleaving_depth * num_vectors,
+            ),
+            johnson_slack: OrderedFloat(johnson_slack),
+            in_domain_samples,
+            out_domain_samples,
+            deduplicate_in_domain: false,
+        }
     }
 
     pub const fn num_cols(&self) -> usize {
@@ -148,12 +219,71 @@ where
         &self.embedding
     }
 
-    pub fn generator(&self) -> F {
-        ntt::generator(self.num_rows()).expect("Subgroup of requested size not found")
+    pub fn generator(&self) -> M::Source {
+        ntt::generator(self.codeword_length).expect("Subgroup of requested size not found")
+    }
+
+    pub fn message_length(&self) -> usize {
+        assert!(self.vector_size.is_multiple_of(self.interleaving_depth));
+        self.vector_size / self.interleaving_depth
     }
 
     pub fn rate(&self) -> f64 {
-        1.0 / self.expansion as f64
+        self.message_length() as f64 / self.codeword_length as f64
+    }
+
+    pub fn unique_decoding(&self) -> bool {
+        self.out_domain_samples == 0 && self.johnson_slack == 0.0
+    }
+
+    /// Compute a list size bound.
+    pub fn list_size(&self) -> f64 {
+        if self.unique_decoding() {
+            1.
+        } else {
+            // This is the Johnson bound $1 / (2 η √ρ)$.
+            1. / (2. * self.johnson_slack.into_inner() * self.rate().sqrt())
+        }
+    }
+
+    /// Round-by-round soundness of the out-of-domain samples in bits.
+    pub fn rbr_ood_sample(&self) -> f64 {
+        let list_size = self.list_size();
+        let log_field_size = M::Target::field_size_bits();
+        // See [STIR] lemma 4.5.
+        let l_choose_2 = list_size * (list_size - 1.) / 2.;
+        let log_per_sample = ((self.vector_size - 1) as f64).log2() - log_field_size;
+        -l_choose_2.log2() - self.out_domain_samples as f64 * log_per_sample
+    }
+
+    /// Round-by-round soundness of the in-domain queries in bits.
+    pub fn rbr_queries(&self) -> f64 {
+        let per_sample = if self.unique_decoding() {
+            // 1 - δ = 1 - (1 + ρ) / 2
+            f64::midpoint(1., self.rate())
+        } else {
+            // 1 - δ = sqrt(ρ) + η
+            self.rate().sqrt() + self.johnson_slack.into_inner()
+        };
+        self.in_domain_samples as f64 * per_sample.log2().neg()
+    }
+
+    // Compute the proximity gaps term of the fold
+    pub fn rbr_soundness_fold_prox_gaps(&self) -> f64 {
+        let log_field_size = M::Target::field_size_bits();
+        let log_inv_rate = self.rate().log2().neg();
+        let log_k = (self.message_length() as f64).log2();
+        // See WHIR Theorem 4.8
+        // Recall, at each round we are only folding by two at a time
+        let error = if self.unique_decoding() {
+            log_k + log_inv_rate
+        } else {
+            let log_eta = self.johnson_slack.into_inner().log2();
+            // Make sure η hits the min bound.
+            assert!(log_eta >= -(0.5 * log_inv_rate + LOG2_10 + 1.0) - 1e-6);
+            7. * LOG2_10 + 3.5 * log_inv_rate + 2. * log_k
+        };
+        log_field_size - error
     }
 
     /// Commit to one or more vectors.
@@ -161,20 +291,17 @@ where
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[&[F]],
-    ) -> Witness<F, G>
+        vectors: &[&[M::Source]],
+    ) -> Witness<M::Source, M::Target>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
-        G: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         // Validate config
         assert!((self.vector_size).is_multiple_of(self.interleaving_depth));
-        assert_eq!(
-            self.matrix_commit.num_rows(),
-            (self.vector_size / self.interleaving_depth) * self.expansion
-        );
+        assert_eq!(self.matrix_commit.num_rows(), self.codeword_length);
         assert_eq!(
             self.matrix_commit.num_cols,
             self.num_vectors * self.interleaving_depth
@@ -185,13 +312,14 @@ where
         assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
         // Interleaved RS Encode the vectorss
-        let matrix = interleaved_rs_encode(vectors, self.expansion, self.interleaving_depth);
+        let matrix = interleaved_rs_encode(vectors, self.codeword_length, self.interleaving_depth);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
 
         // Handle out-of-domain points and values
-        let oods_points: Vec<G> = prover_state.verifier_message_vec(self.out_domain_samples);
+        let oods_points: Vec<M::Target> =
+            prover_state.verifier_message_vec(self.out_domain_samples);
         let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_vectors);
         for &point in &oods_points {
             for &vector in vectors {
@@ -216,14 +344,15 @@ where
     pub fn receive_commitment<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-    ) -> VerificationResult<Commitment<G>>
+    ) -> VerificationResult<Commitment<M::Target>>
     where
         H: DuplexSpongeInterface,
         Hash: ProverMessage<[H::U]>,
-        G: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
     {
         let matrix_commitment = self.matrix_commit.receive_commitment(verifier_state)?;
-        let oods_points: Vec<G> = verifier_state.verifier_message_vec(self.out_domain_samples);
+        let oods_points: Vec<M::Target> =
+            verifier_state.verifier_message_vec(self.out_domain_samples);
         let oods_matrix =
             verifier_state.prover_messages_vec(self.out_domain_samples * self.num_vectors)?;
         Ok(Commitment {
@@ -246,8 +375,8 @@ where
     pub fn open<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        witnesses: &[&Witness<F, G>],
-    ) -> Evaluations<F>
+        witnesses: &[&Witness<M::Source, M::Target>],
+    ) -> Evaluations<M::Source>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -269,7 +398,7 @@ where
         // For each commitment, send the selected rows to the verifier
         // and collect them in the evaluation matrix.
         let stride = witnesses.len() * self.num_cols();
-        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
         let mut submatrix = Vec::with_capacity(indices.len() * self.num_cols());
         let mut matrix_col_offset = 0;
         for witness in witnesses {
@@ -299,8 +428,8 @@ where
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
-        commitments: &[&Commitment<G>],
-    ) -> VerificationResult<Evaluations<F>>
+        commitments: &[&Commitment<M::Target>],
+    ) -> VerificationResult<Evaluations<M::Source>>
     where
         H: DuplexSpongeInterface,
         u8: Decoding<[H::U]>,
@@ -319,10 +448,10 @@ where
         // Receive (as a hint) a matrix of all the columns of all the commitments
         // corresponding to the in-domain opening rows.
         let stride = commitments.len() * self.num_cols();
-        let mut matrix = vec![F::ZERO; indices.len() * stride];
+        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
         let mut matrix_col_offset = 0;
         for commitment in commitments {
-            let submatrix: Vec<F> = verifier_state.prover_hint_ark()?;
+            let submatrix: Vec<M::Source> = verifier_state.prover_hint_ark()?;
             self.matrix_commit.verify(
                 verifier_state,
                 &commitment.matrix_commitment,
@@ -344,7 +473,7 @@ where
         Ok(Evaluations { points, matrix })
     }
 
-    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<F>)
+    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<M::Source>)
     where
         T: VerifierMessage,
         u8: Decoding<[T::U]>,
@@ -352,7 +481,7 @@ where
         // Get in-domain openings
         let indices = challenge_indices(
             transcript,
-            self.num_rows(),
+            self.codeword_length,
             self.in_domain_samples,
             self.deduplicate_in_domain,
         );
@@ -428,11 +557,9 @@ impl<F: Field> Evaluations<F> {
     }
 }
 
-impl<F, G, M> fmt::Display for Config<F, G, M>
+impl<M: Embedding> fmt::Display for Config<M>
 where
-    F: FftField,
-    G: Field,
-    M: Embedding<Source = F, Target = G> + TypeInfo + Serialize + for<'a> Deserialize<'a>,
+    M::Source: FftField,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -440,17 +567,42 @@ where
             "size {}×{}/{}",
             self.num_vectors, self.vector_size, self.interleaving_depth,
         )?;
-        if self.expansion.is_power_of_two() {
-            write!(f, " rate 2⁻{}", self.expansion.ilog2() as usize,)?;
-        } else {
-            write!(f, " rate 1/{}", self.expansion,)?;
-        }
+        write!(f, " rate 2⁻{:.2}", -self.rate().log2())?;
         write!(
             f,
             " samples {} in- {} out-domain",
             self.in_domain_samples, self.out_domain_samples
         )
     }
+}
+
+/// Return the number of in-domain queries.
+///
+/// This is used by [`whir_zk`].
+// TODO: A method with cleaner abstraction.
+#[allow(clippy::cast_sign_loss)]
+pub(crate) fn num_in_domain_queries(
+    unique_decoding: bool,
+    security_target: f64,
+    rate: f64,
+) -> usize {
+    // Pick in- and out-of-domain samples.
+    // η = slack to Johnson bound. We pick η = √ρ / 20.
+    // TODO: Optimize picking η.
+    let johnson_slack = if unique_decoding {
+        0.0
+    } else {
+        rate.sqrt() / 20.
+    };
+    // Query error is (1 - δ)^q, so we compute 1 - δ
+    let per_sample = if unique_decoding {
+        // Unique decoding bound: δ = (1 - ρ) / 2
+        f64::midpoint(1., rate)
+    } else {
+        // Johnson bound: δ = 1 - √ρ - η
+        rate.sqrt() + johnson_slack
+    };
+    (security_target / (-per_sample.log2())).ceil() as usize
 }
 
 #[cfg(test)]
@@ -463,7 +615,7 @@ mod tests {
     use super::*;
     use crate::{
         algebra::{
-            embedding::{Compose, Frobenius},
+            embedding::{Basefield, Compose, Frobenius, Identity},
             fields, univariate_evaluate,
         },
         transcript::{codecs::U64, DomainSeparator},
@@ -475,34 +627,35 @@ mod tests {
         num_vectors: usize,
         vector_size: usize,
         interleaving_depth: usize,
-    ) -> impl Strategy<Value = Config<M::Source, M::Target, M>>
+    ) -> impl Strategy<Value = Config<M>>
     where
         M::Source: FftField,
     {
         assert!(interleaving_depth != 0);
         assert!(vector_size.is_multiple_of(interleaving_depth));
-        let base = vector_size / interleaving_depth;
+        let message_length = vector_size / interleaving_depth;
 
         // Compute supported NTT domains for F
-        let valid_expansions = (1..=30)
-            .filter(|&n| ntt::generator::<M::Source>(base * n).is_some())
+        let valid_codeword_lengths = (1..=30)
+            .map(|n| n * message_length)
+            .filter(|&n| ntt::generator::<M::Source>(n).is_some())
             .collect::<Vec<_>>();
-        let expansion = select(valid_expansions);
+        let codeword_length = select(valid_codeword_lengths);
 
         // Combine with a matrix commitment config
-        let expansion_matrix = expansion.prop_flat_map(move |expansion| {
+        let codeword_matrix = codeword_length.prop_flat_map(move |codeword_length| {
             (
-                Just(expansion),
+                Just(codeword_length),
                 matrix_commit::tests::config::<M::Source>(
-                    vector_size * expansion / interleaving_depth,
+                    codeword_length,
                     interleaving_depth * num_vectors,
                 ),
             )
         });
 
-        (expansion_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
+        (codeword_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
             move |(
-                (expansion, matrix_commit),
+                (codeword_length, matrix_commit),
                 in_domain_samples,
                 out_domain_samples,
                 deduplicate_in_domain,
@@ -510,9 +663,10 @@ mod tests {
                 embedding: Typed::new(embedding.clone()),
                 num_vectors,
                 vector_size,
-                expansion,
+                codeword_length,
                 interleaving_depth,
                 matrix_commit,
+                johnson_slack: OrderedFloat::default(),
                 in_domain_samples,
                 out_domain_samples,
                 deduplicate_in_domain,
@@ -520,7 +674,7 @@ mod tests {
         )
     }
 
-    fn test<M: Embedding>(seed: u64, config: &Config<M::Source, M::Target, M>)
+    fn test<M: Embedding>(seed: u64, config: &Config<M>)
     where
         M::Source: FftField + ProverMessage,
         M::Target: Codec,

@@ -1,11 +1,11 @@
-use std::{any::Any, borrow::Cow};
+use std::{any::Any, borrow::Cow, mem};
 
-use ark_ff::FftField;
+use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{committer::Witness, config::Config};
+use super::{Config, Witness};
 use crate::{
     algebra::{
         dot,
@@ -17,7 +17,7 @@ use crate::{
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
@@ -33,11 +33,10 @@ where
     Round(irs_commit::Witness<F, F>),
 }
 
-impl<F, M> Config<F, M>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    M: Embedding<Target = F>,
     M::Source: FftField,
+    M::Target: FftField,
 {
     /// Prove a WHIR opening.
     ///
@@ -59,14 +58,14 @@ where
         &self,
         prover_state: &mut ProverState<H, R>,
         vectors: Vec<Cow<'a, [M::Source]>>,
-        witnesses: Vec<Cow<'a, Witness<F, M>>>,
-        linear_forms: &[Box<dyn LinearForm<F>>],
-        evaluations: Cow<'a, [F]>,
-    ) -> (MultilinearPoint<F>, Vec<F>)
+        witnesses: Vec<Cow<'a, Witness<M::Target, M>>>,
+        linear_forms: Vec<Box<dyn LinearForm<M::Target>>>,
+        evaluations: Cow<'a, [M::Target]>,
+    ) -> FinalClaim<M::Target>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
-        F: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
         u8: Decoding<[H::U]>,
@@ -83,7 +82,7 @@ where
         for vector in &vectors {
             assert_eq!(vector.len(), self.initial_size());
         }
-        for linear_form in linear_forms {
+        for linear_form in &linear_forms {
             assert_eq!(linear_form.size(), self.initial_size());
         }
         #[cfg(debug_assertions)]
@@ -98,7 +97,7 @@ where
         }
         if vectors.is_empty() {
             // TODO: Should we draw a random evaluation point of the right size?
-            return (MultilinearPoint::default(), Vec::new());
+            return FinalClaim::default();
         }
 
         // Complete evaluations of EVERY vector at EVERY linear form.
@@ -135,8 +134,8 @@ where
         };
 
         // Random linear combination of the vectors.
-        let mut vector_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, num_vectors);
-        assert_eq!(vector_rlc_coeffs[0], F::ONE);
+        let mut vector_rlc_coeffs: Vec<M::Target> = geometric_challenge(prover_state, num_vectors);
+        assert_eq!(vector_rlc_coeffs[0], M::Target::ONE);
         // Recycle the first input as the accumulator (its coefficient is always ONE).
         let mut vectors = vectors.into_iter();
         let first = vectors.next().expect("non-empty");
@@ -148,54 +147,43 @@ where
             mixed_scalar_mul_add(self.embedding(), &mut vector, *rlc_coeff, &input_vector);
         }
 
-        let mut prev_witness: RoundWitness<'a, F, M> = RoundWitness::Initial(witnesses);
+        let mut prev_witness: RoundWitness<'a, M::Target, M> = RoundWitness::Initial(witnesses);
 
         // Random linear combination of the constraints.
-        let constraint_rlc_coeffs: Vec<F> =
+        let constraint_rlc_coeffs: Vec<M::Target> =
             geometric_challenge(prover_state, linear_forms.len() + oods_evals.len());
         let has_constraints = !constraint_rlc_coeffs.is_empty();
-        // TODO: Flip order.
-        let (oods_rlc_coeffs, initial_forms_rlc_coeffs) =
-            constraint_rlc_coeffs.split_at(oods_evals.len());
-        // Recycle a Covector buffer as the initial accumulator.
-        let (mut covector, recycled_index) = if has_constraints {
-            let found = initial_forms_rlc_coeffs
-                .iter()
-                .zip(linear_forms.iter())
-                .enumerate()
-                .find_map(|(i, (&coeff, form))| {
-                    let form: &dyn LinearForm<F> = form.as_ref();
-                    (form as &dyn Any)
-                        .downcast_ref::<Covector<F>>()
-                        .map(|cov| (i, coeff, &cov.vector))
-                });
-            match found {
-                Some((idx, coeff, data)) => {
-                    let buf: Vec<F> = data.iter().map(|&x| x * coeff).collect();
-                    (buf, Some(idx))
-                }
-                None => (vec![F::ZERO; self.initial_size()], None),
+        let (initial_forms_rlc_coeffs, oods_rlc_coeffs) =
+            constraint_rlc_coeffs.split_at(linear_forms.len());
+        // Try to recycle the first linear form as Covector.
+        let mut covector = vec![];
+        let mut linear_forms = linear_forms;
+        if let Some((first, linear_forms)) = linear_forms.split_first_mut() {
+            debug_assert_eq!(initial_forms_rlc_coeffs[0], M::Target::ONE);
+            if let Some(covector_form) =
+                (first.as_mut() as &mut dyn Any).downcast_mut::<Covector<M::Target>>()
+            {
+                mem::swap(&mut covector, &mut covector_form.vector);
+            } else {
+                covector.resize(self.initial_size(), M::Target::ZERO);
+                first.accumulate(&mut covector, M::Target::ONE);
             }
-        } else {
-            (Vec::new(), None)
-        };
-        for (i, (rlc_coeff, linear_form)) in
-            zip_strict(initial_forms_rlc_coeffs, linear_forms.iter()).enumerate()
-        {
-            if Some(i) == recycled_index {
-                continue;
+            for (rlc_coeff, linear_form) in zip_strict(&initial_forms_rlc_coeffs[1..], linear_forms)
+            {
+                linear_form.accumulate(&mut covector, *rlc_coeff);
             }
-            linear_form.accumulate(&mut covector, *rlc_coeff);
+        } else if has_constraints {
+            covector.resize(self.initial_size(), M::Target::ZERO);
         }
+        drop(linear_forms);
 
         // Compute "The Sum"
-        let mut the_sum: F = zip_strict(
+        let mut the_sum: M::Target = zip_strict(
             initial_forms_rlc_coeffs,
             evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
         .sum();
-
         drop(evaluations);
 
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
@@ -204,36 +192,34 @@ where
         UnivariateEvaluation::accumulate_many(&oods_evals, &mut covector, oods_rlc_coeffs);
         the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
-            .sum::<F>();
-
+            .sum::<M::Target>();
         drop(oods_evals);
         drop(oods_matrix);
 
         debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
 
         // Run initial sumcheck on batched vectors with combined statement
-        let mut folding_randomness = if constraint_rlc_coeffs.is_empty() {
+        let mut folding_randomness = if has_constraints {
+            self.initial_sumcheck
+                .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
+        } else {
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck vectors would be constant zero)
             // TODO: Don't compute evaluations and constraints in the first place.
             let folding_randomness = (0..self.initial_sumcheck.num_rounds)
                 .map(|_| prover_state.verifier_message())
                 .collect();
-            self.initial_sumcheck.round_pow.prove(prover_state);
+            self.initial_skip_pow.prove(prover_state);
             // Fold vector
             for &f in &folding_randomness {
                 fold(&mut vector, f);
             }
             // Covector must be all zeros.
-            covector = vec![F::ZERO; self.initial_sumcheck.final_size()];
+            covector = vec![M::Target::ZERO; self.initial_sumcheck.final_size()];
             MultilinearPoint(folding_randomness)
-        } else {
-            self.initial_sumcheck
-                .prove(prover_state, &mut vector, &mut covector, &mut the_sum)
         };
+        let mut evaluation_point = folding_randomness.0.clone();
 
-        let mut randomness_vec = Vec::with_capacity(self.initial_num_variables());
-        randomness_vec.extend(folding_randomness.0.iter().copied());
         debug_assert_eq!(dot(&vector, &covector), the_sum);
 
         // Execute standard WHIR rounds on the batched vectors
@@ -268,7 +254,7 @@ where
                 .collect::<Vec<_>>();
             let stir_evaluations = new_witness
                 .out_of_domain()
-                .values(&[F::ONE])
+                .values(&[M::Target::ONE])
                 .chain(in_domain.values(&tensor_product(
                     &vector_rlc_coeffs,
                     &folding_randomness.eq_weights(),
@@ -289,11 +275,11 @@ where
                     .sumcheck
                     .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
 
-            randomness_vec.extend(folding_randomness.0.iter().copied());
+            evaluation_point.extend(folding_randomness.0.iter().copied());
             debug_assert_eq!(dot(&vector, &covector), the_sum);
 
             prev_witness = RoundWitness::Round(new_witness);
-            vector_rlc_coeffs = vec![F::ONE];
+            vector_rlc_coeffs = vec![M::Target::ONE];
         }
 
         // Directly send the vector to the verifier.
@@ -323,17 +309,12 @@ where
         let final_folding_randomness =
             self.final_sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
-        randomness_vec.extend(final_folding_randomness.0.iter().copied());
+        evaluation_point.extend(final_folding_randomness.0.iter().copied());
 
-        // Hints for deferred constraints
-        let constraint_eval = MultilinearPoint(randomness_vec);
-        let deferred = linear_forms
-            .iter()
-            .filter(|w| w.deferred())
-            .map(|w| w.mle_evaluate(&constraint_eval.0))
-            .collect();
-        prover_state.prover_hint_ark(&deferred);
-
-        (constraint_eval, deferred)
+        FinalClaim {
+            evaluation_point,
+            rlc_coefficients: initial_forms_rlc_coeffs.to_vec(),
+            linear_form_rlc: M::Target::ZERO,
+        }
     }
 }

@@ -5,23 +5,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ark_ff::{FftField, Field};
-use ark_serialize::CanonicalSerialize;
+use ark_ff::FftField;
 use clap::Parser;
 use serde::Serialize;
 use whir::{
     algebra::{
-        embedding::Basefield,
-        fields,
+        embedding::{Basefield, Embedding, Identity},
+        fields::{Field128, Field192, Field256, Field64, Field64_2, Field64_3},
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
     bits::Bits,
     cmdline_utils::{AvailableFields, AvailableHash},
     hash::HASH_COUNTER,
-    parameters::{
-        default_max_pow, FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType,
-    },
+    parameters::ProtocolParameters,
     transcript::{codecs::Empty, Codec, DomainSeparator, ProverState, VerifierState},
 };
 
@@ -31,8 +28,8 @@ struct Args {
     #[arg(short = 'l', long, default_value = "128")]
     security_level: usize,
 
-    #[arg(short = 'p', long)]
-    pow_bits: Option<usize>,
+    #[arg(short = 'p', long, default_value = "20")]
+    pow_bits: usize,
 
     #[arg(short = 'd', long, default_value = "20")]
     num_variables: usize,
@@ -52,8 +49,8 @@ struct Args {
     #[arg(short = 'k', long = "fold", default_value = "4")]
     folding_factor: usize,
 
-    #[arg(long = "sec", default_value = "ProvableList")]
-    soundness_type: SoundnessType,
+    #[arg(long = "unique-decoding", default_value_t = false)]
+    unique_decoding: bool,
 
     #[arg(short = 'f', long = "field", default_value = "Goldilocks3")]
     field: AvailableFields,
@@ -69,8 +66,9 @@ struct BenchmarkOutput {
     starting_rate: usize,
     num_variables: usize,
     repetitions: usize,
+    initial_folding_factor: usize,
     folding_factor: usize,
-    soundness_type: SoundnessType,
+    unique_decoding: bool,
     field: AvailableFields,
     hash: AvailableHash,
 
@@ -91,61 +89,53 @@ struct BenchmarkOutput {
 }
 
 fn main() {
-    let mut args = Args::parse();
+    use AvailableFields as AF;
+    let args = Args::parse();
     let field = args.field;
-
-    if args.pow_bits.is_none() {
-        args.pow_bits = Some(default_max_pow(args.num_variables, args.rate));
-    }
 
     // Type reflection on field
     match field {
-        AvailableFields::Goldilocks1 => run_whir::<fields::Field64>(&args),
-        AvailableFields::Goldilocks2 => run_whir::<fields::Field64_2>(&args),
-        AvailableFields::Goldilocks3 => run_whir::<fields::Field64_3>(&args),
-        AvailableFields::Field128 => run_whir::<fields::Field128>(&args),
-        AvailableFields::Field192 => run_whir::<fields::Field192>(&args),
-        AvailableFields::Field256 => run_whir::<fields::Field256>(&args),
+        AF::Goldilocks1 => run_whir::<Identity<Field64>>(&args),
+        AF::Goldilocks2 => run_whir::<Basefield<Field64_2>>(&args),
+        AF::Goldilocks3 => run_whir::<Basefield<Field64_3>>(&args),
+        AF::Field128 => run_whir::<Identity<Field128>>(&args),
+        AF::Field192 => run_whir::<Identity<Field192>>(&args),
+        AF::Field256 => run_whir::<Identity<Field256>>(&args),
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_whir<F>(args: &Args)
+fn run_whir<M>(args: &Args)
 where
-    F: FftField + CanonicalSerialize + Codec,
+    M: Embedding + Default,
+    M::Source: FftField,
+    M::Target: FftField + Codec,
 {
     let security_level = args.security_level;
-    let pow_bits = args.pow_bits.unwrap();
+    let pow_bits = args.pow_bits;
     let num_variables = args.num_variables;
     let starting_rate = args.rate;
     let reps = args.verifier_repetitions;
     let folding_factor = args.folding_factor;
     let first_round_folding_factor = args.first_round_folding_factor;
-    let soundness_type = args.soundness_type;
+    let unique_decoding = args.unique_decoding;
 
     std::fs::create_dir_all("outputs").unwrap();
 
     let num_coeffs = 1 << num_variables;
 
-    let mv_params = MultivariateParameters::<F>::new(num_variables);
-
     let whir_params = ProtocolParameters {
-        initial_statement: true,
         security_level,
         pow_bits,
-        folding_factor: FoldingFactor::ConstantFromSecondRound(
-            first_round_folding_factor,
-            folding_factor,
-        ),
-        soundness_type,
+        initial_folding_factor: first_round_folding_factor,
+        folding_factor,
+        unique_decoding,
         starting_log_inv_rate: starting_rate,
         batch_size: 1,
         hash_id: args.hash.hash_id(),
     };
 
-    let vector = (0..num_coeffs)
-        .map(<F as Field>::BasePrimeField::from)
-        .collect::<Vec<_>>();
+    let vector = (0..num_coeffs).map(M::Source::from).collect::<Vec<_>>();
 
     let (
         whir_ldt_prover_time,
@@ -157,13 +147,9 @@ where
         // Run LDT
         use whir::protocols::whir::Config;
 
-        let whir_params = ProtocolParameters {
-            initial_statement: false,
-            ..whir_params
-        };
-        let params = Config::<F>::new(mv_params, &whir_params);
+        let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-            println!("WARN: more PoW bits required than what specified.");
+            println!("WARN: more PoW bits required than specified.");
         }
 
         let ds = DomainSeparator::protocol(&params)
@@ -178,11 +164,11 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
-            &[],
+            vec![],
             Cow::Owned(vec![]),
         );
 
@@ -193,20 +179,15 @@ where
 
         HASH_COUNTER.reset();
         let whir_ldt_verifier_time = Instant::now();
-        let weight_refs: Vec<&dyn LinearForm<F>> = vec![];
-        let evaluations: Vec<F> = Vec::new();
+        let evaluations: Vec<M::Target> = Vec::new();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
-                .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
-                )
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
+            final_claim.verify([]).unwrap();
         }
 
         let whir_ldt_verifier_time = whir_ldt_verifier_time.elapsed();
@@ -231,9 +212,9 @@ where
         // Run PCS
         use whir::protocols::whir::Config;
 
-        let params = Config::<F>::new(mv_params, &whir_params);
+        let params = Config::<M>::new(1 << num_variables, &whir_params);
         if !params.check_max_pow_bits(Bits::new(whir_params.pow_bits as f64)) {
-            println!("WARN: more PoW bits required than what specified.");
+            println!("WARN: more PoW bits required than specified.");
         }
 
         let ds = DomainSeparator::protocol(&params)
@@ -243,10 +224,10 @@ where
         let mut prover_state = ProverState::new_std(&ds);
 
         let points: Vec<_> = (0..args.num_evaluations)
-            .map(|i| MultilinearPoint(vec![F::from(i as u64); num_variables]))
+            .map(|i| MultilinearPoint(vec![M::Target::from(i as u64); num_variables]))
             .collect();
 
-        let mut weights: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        let mut weights: Vec<Box<dyn Evaluate<M>>> = Vec::new();
         let mut evaluations = Vec::new();
 
         for point in &points {
@@ -260,16 +241,18 @@ where
 
         let witness = params.commit(&mut prover_state, &[&vector]);
 
-        let prove_linear_forms: Vec<Box<dyn LinearForm<F>>> = points
+        let prove_linear_forms: Vec<Box<dyn LinearForm<M::Target>>> = points
             .iter()
-            .map(|p| Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<F>>)
+            .map(|p| {
+                Box::new(MultilinearExtension::new(p.0.clone())) as Box<dyn LinearForm<M::Target>>
+            })
             .collect();
 
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vector.as_slice())],
             vec![Cow::Owned(witness)],
-            &prove_linear_forms,
+            prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -278,23 +261,20 @@ where
         let whir_argument_size = proof.narg_string.len() + proof.hints.len();
         let whir_prover_hashes = HASH_COUNTER.get();
 
-        let weight_refs = weights
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect::<Vec<_>>();
-
         HASH_COUNTER.reset();
         let whir_verifier_time = Instant::now();
         for _ in 0..reps {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            params
+            let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .unwrap();
+            final_claim
                 .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &weight_refs,
-                    &evaluations,
+                    weights
+                        .iter()
+                        .map(|w| w.as_ref() as &dyn LinearForm<M::Target>),
                 )
                 .unwrap();
         }
@@ -317,8 +297,9 @@ where
         starting_rate,
         num_variables,
         repetitions: reps,
+        initial_folding_factor: first_round_folding_factor,
         folding_factor,
-        soundness_type,
+        unique_decoding,
         field: args.field,
         hash: args.hash,
 

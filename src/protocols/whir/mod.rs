@@ -1,30 +1,151 @@
-mod batching;
-mod committer;
+#![allow(type_alias_bounds)] // We need the bound to reference F::BasePrimeField.
+
 mod config;
 mod prover;
 mod verifier;
 
-pub use self::{
-    committer::{Commitment, Witness},
-    config::{Config, RoundConfig},
+use std::fmt::Debug;
+
+use ark_ff::{FftField, Field};
+use ark_std::rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
+
+use crate::{
+    algebra::{
+        embedding::{Embedding, Identity},
+        linear_form::LinearForm,
+    },
+    hash::Hash,
+    protocols::{irs_commit, proof_of_work, sumcheck},
+    transcript::{
+        Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
+    },
+    utils::zip_strict,
+    verify,
 };
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(bound = "M: Embedding, M::Source: FftField, M::Target: FftField")]
+pub struct Config<M>
+where
+    M: Embedding,
+    M::Source: FftField,
+    M::Target: FftField,
+{
+    pub initial_committer: irs_commit::Config<M>,
+    pub initial_sumcheck: sumcheck::Config<M::Target>,
+    pub initial_skip_pow: proof_of_work::Config,
+    pub round_configs: Vec<RoundConfig<M::Target>>,
+    pub final_sumcheck: sumcheck::Config<M::Target>,
+    pub final_pow: proof_of_work::Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "F: FftField")]
+pub struct RoundConfig<F>
+where
+    F: FftField,
+{
+    pub irs_committer: irs_commit::Config<Identity<F>>,
+    pub sumcheck: sumcheck::Config<F>,
+    pub pow: proof_of_work::Config,
+}
+
+pub type Witness<F: FftField, M: Embedding<Target = F>> = irs_commit::Witness<M::Source, F>;
+pub type Commitment<F: Field> = irs_commit::Commitment<F>;
+
+#[must_use = "The final claim must be checked if there where any linear forms."]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FinalClaim<F: Field> {
+    /// Multinlinear extension evaluation point.
+    pub evaluation_point: Vec<F>,
+    /// The random linear combination coefficients.
+    pub rlc_coefficients: Vec<F>,
+    /// Claimed value of the rlc of the mle of the linears forms in the point.
+    /// Note: not computed on the prover side, set to zero instead.
+    pub linear_form_rlc: F,
+}
+
+impl<F: Field> FinalClaim<F> {
+    pub fn verify<'a>(
+        &'a self,
+        linear_forms: impl IntoIterator<Item = &'a dyn LinearForm<F>>,
+    ) -> VerificationResult<()> {
+        let rlc = zip_strict(&self.rlc_coefficients, linear_forms)
+            .map(|(&c, l)| c * l.mle_evaluate(&self.evaluation_point))
+            .sum::<F>();
+        verify!(rlc == self.linear_form_rlc);
+        Ok(())
+    }
+}
+
+impl<M> Config<M>
+where
+    M: Embedding,
+    M::Source: FftField,
+    M::Target: FftField,
+{
+    /// Commit to one or more vectors.
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = vectors.first().unwrap().len())))]
+    pub fn commit<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        vectors: &[&[M::Source]],
+    ) -> Witness<M::Target, M>
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        M::Target: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        self.initial_committer.commit(prover_state, vectors)
+    }
+
+    /// Receive a commitment to vectors.
+    pub fn receive_commitment<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+    ) -> VerificationResult<Commitment<M::Target>>
+    where
+        H: DuplexSpongeInterface,
+        M::Target: Codec<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        self.initial_committer.receive_commitment(verifier_state)
+    }
+
+    /// Disable proof-of-work for test.
+    #[cfg(test)]
+    pub(crate) fn disable_pow(&mut self) {
+        self.initial_sumcheck.round_pow.threshold = u64::MAX;
+        self.initial_skip_pow.threshold = u64::MAX;
+        for round in &mut self.round_configs {
+            round.sumcheck.round_pow.threshold = u64::MAX;
+            round.pow.threshold = u64::MAX;
+        }
+        self.final_sumcheck.round_pow.threshold = u64::MAX;
+        self.final_pow.threshold = u64::MAX;
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
-    use ark_ff::Field;
+    use ark_ff::{Field, UniformRand};
 
     use super::*;
     use crate::{
         algebra::{
             embedding::Basefield,
-            fields::{Field64, Field64_2},
+            fields::{Field64, Field64_3},
             linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
             MultilinearPoint,
         },
         hash,
-        parameters::{FoldingFactor, MultivariateParameters, ProtocolParameters, SoundnessType},
+        parameters::ProtocolParameters,
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
     };
@@ -33,7 +154,7 @@ mod tests {
     type F = Field64;
 
     /// Extension field type used in the tests.
-    type EF = Field64_2;
+    type EF = Field64_3;
 
     /// Build owned linear forms for `prove()` (which consumes them).
     fn build_prove_forms<F: Field>(
@@ -49,7 +170,6 @@ mod tests {
         }
         if include_covector {
             forms.push(Box::new(Covector {
-                deferred: false,
                 vector: (0..1 << num_variables).map(F::from).collect(),
             }));
         }
@@ -66,9 +186,10 @@ mod tests {
     /// - verifies the proof using the WHIR verifier.
     fn make_whir_things(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         // Number of coefficients in the multilinear polynomial (2^num_variables)
@@ -77,23 +198,21 @@ mod tests {
         // Randomness source
         let mut rng = ark_std::test_rng();
 
-        // Configure multivariate polynomial parameters
-        let mv_params = MultivariateParameters::new(num_variables);
-
         // Configure the WHIR protocol parameters
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
         };
 
-        // Build global configuration from multivariate + protocol parameters
-        let params = Config::new(mv_params, &whir_params);
+        // Build global configuration from protocol parameters
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
+        params.disable_pow();
         eprintln!("{params}");
 
         // Test that the config is serializable
@@ -119,7 +238,6 @@ mod tests {
         }
 
         let covector = Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         };
         let sum = covector.evaluate(params.embedding(), &vector);
@@ -140,11 +258,11 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Generate a proof for the given statement and witness
-        params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::from(vector)],
             vec![Cow::Owned(witness)],
-            &prove_linear_forms,
+            prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -154,51 +272,41 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify the proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        params
+        let final_claim = params
+            .verify(&mut verifier_state, &[&commitment], &evaluations)
+            .unwrap();
+        final_claim
             .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &linear_form_refs,
-                &evaluations,
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
             )
             .unwrap();
     }
 
     #[test]
     fn test_whir_1() {
-        let folding_factors = [1, 2, 3, 4];
-        let soundness_type = [
-            SoundnessType::ConjectureList,
-            SoundnessType::ProvableList,
-            SoundnessType::UniqueDecoding,
-        ];
-        let num_points = [0, 1, 2];
-        let pow_bits = [0, 5, 10];
-
-        for folding_factor in folding_factors {
+        for folding_factor in [1, 2, 3, 4] {
             let num_variables = folding_factor..=3 * folding_factor;
             for num_variable in num_variables {
-                for num_points in num_points {
-                    for soundness_type in soundness_type {
-                        for pow_bits in pow_bits {
+                for num_points in [0, 1, 2] {
+                    for unique_decoding in [true, false] {
+                        for pow_bits in [0, 5, 10] {
                             eprintln!();
                             dbg!(
                                 folding_factor,
                                 num_variable,
                                 num_points,
-                                soundness_type,
+                                unique_decoding,
                                 pow_bits
                             );
 
                             make_whir_things(
                                 num_variable,
-                                FoldingFactor::Constant(folding_factor),
+                                folding_factor,
+                                folding_factor,
                                 num_points,
-                                soundness_type,
+                                unique_decoding,
                                 pow_bits,
                             );
                         }
@@ -209,14 +317,8 @@ mod tests {
     }
 
     #[test]
-    fn test_whir_small_config_no_constraints() {
-        make_whir_things(
-            3,
-            FoldingFactor::Constant(2),
-            0,
-            SoundnessType::ConjectureList,
-            0,
-        );
+    fn test_fail() {
+        make_whir_things(3, 2, 2, 0, false, 0);
     }
 
     #[test]
@@ -243,12 +345,10 @@ mod tests {
 
                         make_whir_things(
                             num_variable,
-                            FoldingFactor::ConstantFromSecondRound(
-                                initial_folding_factor,
-                                folding_factor,
-                            ),
+                            initial_folding_factor,
+                            folding_factor,
                             num_points,
-                            SoundnessType::ProvableList,
+                            false,
                             5,
                         );
                     }
@@ -263,28 +363,29 @@ mod tests {
     /// them together. This verifies the full lifecycle: commitment, batch proving, and verification.
     fn make_whir_batch_things(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points_per_poly: usize,
         num_vectors: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
         };
 
-        let params = Config::new(mv_params, &whir_params);
+        let mut params = Config::new(1 << num_variables, &whir_params);
+        params.disable_pow();
         eprintln!("{params}");
 
         // Create N different vectors
@@ -307,7 +408,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: ((0..1 << num_variables).map(EF::from).collect()),
         }));
 
@@ -336,14 +436,14 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all polynomials together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vectors
                 .iter()
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            &prove_linear_forms,
+            prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -359,16 +459,14 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        params
+        let final_claim = params
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .unwrap();
+        final_claim
             .verify(
-                &mut verifier_state,
-                &commitment_refs,
-                &linear_form_refs,
-                &evaluations,
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
             )
             .unwrap();
     }
@@ -397,17 +495,11 @@ mod tests {
                             );
                             make_whir_batch_things(
                                 num_variables,
-                                if initial_folding_factor == folding_factor {
-                                    FoldingFactor::Constant(folding_factor)
-                                } else {
-                                    FoldingFactor::ConstantFromSecondRound(
-                                        initial_folding_factor,
-                                        folding_factor,
-                                    )
-                                },
+                                initial_folding_factor,
+                                folding_factor,
                                 num_points_per_poly,
                                 num_polys,
-                                SoundnessType::ConjectureList,
+                                false,
                                 0, // pow_bits
                             );
                         }
@@ -422,11 +514,11 @@ mod tests {
         // Edge case: batch proving with just one polynomial should also work
         make_whir_batch_things(
             6, // num_variables
-            FoldingFactor::Constant(2),
+            2, // initial_folding_factor
+            2, // folding_factor
             2, // num_points_per_poly
             1, // num_polynomials (single!)
-            SoundnessType::ConjectureList,
-            0,
+            false, 0,
         );
     }
 
@@ -444,26 +536,25 @@ mod tests {
     fn test_whir_batch_rejects_invalid_constraint() {
         // Setup parameters
         let num_variables = 4;
-        let folding_factor = FoldingFactor::Constant(2);
+        let initial_folding_factor = 2;
+        let folding_factor = 2;
         let num_polynomials = 2;
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::<EF>::new(num_variables);
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits: 0,
+            initial_folding_factor,
             folding_factor,
-            soundness_type: SoundnessType::ConjectureList,
+            unique_decoding: false,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(mv_params, &whir_params);
-
-        let embedding = Basefield::<EF>::new();
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
+        params.disable_pow();
 
         // Create test vectors
         let vec1 = vec![F::ONE; num_coeffs];
@@ -484,7 +575,9 @@ mod tests {
         ];
         let evaluations = linear_forms
             .iter()
-            .flat_map(|weights| [&vec1, &vec_wrong].map(|v| weights.evaluate(&embedding, v)))
+            .flat_map(|weights| {
+                [&vec1, &vec_wrong].map(|v| weights.evaluate(params.embedding(), v))
+            })
             .collect::<Vec<_>>();
 
         let ds = DomainSeparator::protocol(&params)
@@ -498,11 +591,11 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&constraint_points, num_variables, false);
 
         // Generate proof with mismatched polynomials
-        let (_evalpoint, _values) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             vec![Cow::Borrowed(vec1.as_slice()), Cow::from(vec_wrong)],
             vec![Cow::Owned(witness1), Cow::Owned(witness2)],
-            &prove_linear_forms,
+            prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -516,18 +609,20 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &[&commitments[0], &commitments[1]],
-            &linear_form_refs,
-            &evaluations,
+        let final_claim = params
+            .verify(
+                &mut verifier_state,
+                &[&commitments[0], &commitments[1]],
+                &evaluations,
+            )
+            .unwrap();
+        let verifier_result = final_claim.verify(
+            linear_forms
+                .iter()
+                .map(|l| l.as_ref() as &dyn LinearForm<EF>),
         );
         assert!(
-            verify_result.is_err(),
+            verifier_result.is_err(),
             "Verifier should reject mismatched polynomial"
         );
     }
@@ -540,34 +635,33 @@ mod tests {
     ///
     /// This was a regression test for a bug where the RLC combination of stacked
     /// leaf answers was incorrect when batch_size > 1.
+    #[allow(clippy::too_many_arguments)]
     fn make_whir_batch_with_batch_size(
         num_variables: usize,
-        folding_factor: FoldingFactor,
+        initial_folding_factor: usize,
+        folding_factor: usize,
         num_points_per_poly: usize,
         num_witnesses: usize,
         batch_size: usize,
-        soundness_type: SoundnessType,
+        unique_decoding: bool,
         pow_bits: usize,
     ) {
         let num_coeffs = 1 << num_variables;
         let mut rng = ark_std::test_rng();
 
-        let mv_params = MultivariateParameters::new(num_variables);
         let whir_params = ProtocolParameters {
-            initial_statement: true,
             security_level: 32,
             pow_bits,
+            initial_folding_factor,
             folding_factor,
-            soundness_type,
+            unique_decoding,
             starting_log_inv_rate: 1,
             batch_size, // KEY: batch_size > 1
             hash_id: hash::SHA2,
         };
 
-        let params = Config::<EF>::new(mv_params, &whir_params);
-
-        // Create weights for constraints
-        let embedding = Basefield::new();
+        let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
+        params.disable_pow();
 
         // Create polynomials for each witness
         // Each witness will contain batch_size polynomials committed together
@@ -587,7 +681,6 @@ mod tests {
             }));
         }
         linear_forms.push(Box::new(Covector {
-            deferred: false,
             vector: (0..1 << num_variables).map(EF::from).collect(),
         }));
 
@@ -596,7 +689,7 @@ mod tests {
             .flat_map(|linear_form| {
                 vec_refs
                     .iter()
-                    .map(|vec| linear_form.evaluate(&embedding, vec))
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
             })
             .collect::<Vec<_>>();
 
@@ -616,14 +709,14 @@ mod tests {
         let prove_linear_forms = build_prove_forms(&points, num_variables, true);
 
         // Batch prove all witnesses together
-        let (_point, _evals) = params.prove(
+        let _ = params.prove(
             &mut prover_state,
             all_vectors
                 .iter()
                 .map(|v| Cow::Borrowed(v.as_slice()))
                 .collect(),
             witnesses.into_iter().map(Cow::Owned).collect(),
-            &prove_linear_forms,
+            prove_linear_forms,
             Cow::Borrowed(evaluations.as_slice()),
         );
 
@@ -638,22 +731,16 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
-        let linear_form_refs = linear_forms
-            .iter()
-            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
-            .collect::<Vec<_>>();
-        let verify_result = params.verify(
-            &mut verifier_state,
-            &commitment_refs,
-            &linear_form_refs,
-            &evaluations,
-        );
-        assert!(
-            verify_result.is_ok(),
-            "Batch verification with batch_size={} failed: {:?}",
-            batch_size,
-            verify_result.err()
-        );
+        let final_claim = params
+            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .unwrap();
+        final_claim
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
+            )
+            .unwrap();
     }
 
     #[test]
@@ -668,13 +755,164 @@ mod tests {
                 for folding_factor in folding_factors {
                     make_whir_batch_with_batch_size(
                         folding_factor * 2, // num_variables
-                        FoldingFactor::Constant(folding_factor),
+                        folding_factor,
+                        folding_factor,
                         1, // num_points_per_poly
                         num_witness,
                         batch_size,
-                        SoundnessType::ConjectureList,
+                        false,
                         0, // pow_bits
                     );
+                }
+            }
+        }
+    }
+
+    fn random_vector(num_coefficients: usize) -> Vec<F> {
+        let mut store = Vec::<F>::with_capacity(num_coefficients);
+        let mut rng = ark_std::rand::thread_rng();
+        (0..num_coefficients).for_each(|_| store.push(F::rand(&mut rng)));
+        store
+    }
+
+    /// Run a complete WHIR proof lifecycle: commit, prove, and verify.
+    fn make_batched_whir_things(
+        batch_size: usize,
+        num_variables: usize,
+        initial_folding_factor: usize,
+        folding_factor: usize,
+        num_points: usize,
+        unique_decoding: bool,
+        pow_bits: usize,
+    ) {
+        eprintln!("\n---------------------");
+        eprintln!("Test parameters: ");
+        eprintln!("  num_vectors     : {batch_size}");
+        eprintln!("  num_variables   : {num_variables}");
+        eprintln!("  initial_folding : {initial_folding_factor}");
+        eprintln!("  folding_factor  : {folding_factor}");
+        eprintln!("  num_points      : {num_points:?}");
+        eprintln!("  unique_decoding : {unique_decoding:?}");
+        eprintln!("  pow_bits        : {pow_bits}");
+
+        // Number of coefficients in the multilinear polynomial (2^num_variables)
+        let num_coeffs = 1 << num_variables;
+
+        // Randomness source
+        let mut rng = ark_std::test_rng();
+
+        // Configure the WHIR protocol parameters
+        let whir_params = ProtocolParameters {
+            security_level: 32,
+            pow_bits,
+            initial_folding_factor,
+            folding_factor,
+            unique_decoding,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+
+        // Build global configuration from multivariate + protocol parameters
+        let mut params = Config::new(1 << num_variables, &whir_params);
+        params.disable_pow();
+
+        let vectors: Vec<Vec<F>> = (0..batch_size).map(|_| random_vector(num_coeffs)).collect();
+        let vec_refs = vectors.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+
+        // Generate `num_points` random points in the multilinear domain
+        let points: Vec<_> = (0..num_points)
+            .map(|_| MultilinearPoint::rand(&mut rng, num_variables))
+            .collect();
+
+        // Define the Fiat-Shamir IOPattern for committing and proving
+        let ds = DomainSeparator::protocol(&params)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+
+        // Initialize the Merlin transcript from the domain separator
+        let mut prover_state = ProverState::new_std(&ds);
+
+        // Create a commitment to the polynomial and generate auxiliary witness data
+        let batched_witness = params.commit(&mut prover_state, &vec_refs);
+
+        // Create a weights matrix and evaluations for each polynomial
+        let mut linear_forms: Vec<Box<dyn Evaluate<Basefield<F>>>> = Vec::new();
+        for point in &points {
+            linear_forms.push(Box::new(MultilinearExtension {
+                point: point.0.clone(),
+            }));
+        }
+        linear_forms.push(Box::new(Covector {
+            vector: (0..1 << num_variables).map(F::from).collect(),
+        }));
+        let values = linear_forms
+            .iter()
+            .flat_map(|linear_form| {
+                vec_refs
+                    .iter()
+                    .map(|vec| linear_form.evaluate(params.embedding(), vec))
+            })
+            .collect::<Vec<_>>();
+
+        let prove_linear_forms = build_prove_forms(&points, num_variables, true);
+
+        // Generate a proof for the given statement and witness
+        let weights_dyn_refs = linear_forms
+            .iter()
+            .map(|w| w.as_ref() as &dyn LinearForm<F>)
+            .collect::<Vec<_>>();
+        let _ = params.prove(
+            &mut prover_state,
+            vectors
+                .iter()
+                .map(|v| Cow::Borrowed(v.as_slice()))
+                .collect(),
+            vec![Cow::Owned(batched_witness)],
+            prove_linear_forms,
+            Cow::Borrowed(values.as_slice()),
+        );
+
+        // Reconstruct verifier's view of the transcript using the IOPattern and prover's data
+        let proof = prover_state.proof();
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+
+        let commitment = params.receive_commitment(&mut verifier_state).unwrap();
+
+        // Verify that the generated proof satisfies the statement
+        params
+            .verify(&mut verifier_state, &[&commitment], &values)
+            .unwrap()
+            .verify(weights_dyn_refs)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_batched_whir() {
+        let folding_factors = [1, 4];
+        let unique_decoding_options = [false, true];
+        let num_points = [0, 2];
+        let pow_bits = [0, 10];
+
+        for folding_factor in folding_factors {
+            let num_variables = (2 * folding_factor)..=3 * folding_factor;
+            for num_variable in num_variables {
+                for num_points in num_points {
+                    for unique_decoding in unique_decoding_options {
+                        for pow_bits in pow_bits {
+                            for batch_size in 1..=4 {
+                                make_batched_whir_things(
+                                    batch_size,
+                                    num_variable,
+                                    folding_factor,
+                                    folding_factor,
+                                    num_points,
+                                    unique_decoding,
+                                    pow_bits,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

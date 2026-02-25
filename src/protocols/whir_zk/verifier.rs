@@ -1,4 +1,4 @@
-use ark_ff::{FftField, PrimeField};
+use ark_ff::{FftField, Field};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -20,7 +20,7 @@ use crate::{
 /// Extract the first element of each `(mu+1)`-sized block: these are the
 /// `M_eval = <w_folded, m_poly>` values needed for evaluation binding.
 #[inline]
-fn extract_m_evals<F: FftField + PrimeField>(
+fn extract_m_evals<F: FftField + Field>(
     w_folded_blinding_evals: &[F],
     num_witness_variables_plus_1: usize,
 ) -> Vec<F> {
@@ -30,7 +30,7 @@ fn extract_m_evals<F: FftField + PrimeField>(
         .collect()
 }
 
-impl<F: FftField + PrimeField> Config<F> {
+impl<F: FftField + Field> Config<F> {
     /// Verify a zkWHIR proof against the given evaluation claims.
     ///
     /// Replays the transcript, recomputes the expected blinding claims, and
@@ -114,8 +114,8 @@ impl<F: FftField + PrimeField> Config<F> {
             .collect();
 
         self.blinded_commitment
-            .verify(verifier_state, &commitments, weights, &modified_evaluations)
-            .map(|_| ())?;
+            .verify(verifier_state, &commitments, &modified_evaluations)?
+            .verify(weights.iter().copied())?;
 
         verify!(batched_h_claims == expected_batched_h_claims);
         let g_hat_slices: Vec<&[F]> = g_hat_claims_per_poly.iter().map(Vec::as_slice).collect();
@@ -173,12 +173,13 @@ impl<F: FftField + PrimeField> Config<F> {
         ]
         .concat();
         let blinding_commitments = vec![&commitment.blinding];
-        self.blinding_commitment.verify(
-            verifier_state,
-            &blinding_commitments,
-            &blinding_forms,
-            &all_expected_blinding_claims,
-        )?;
+        self.blinding_commitment
+            .verify(
+                verifier_state,
+                &blinding_commitments,
+                &all_expected_blinding_claims,
+            )?
+            .verify(blinding_forms)?;
 
         Ok(())
     }

@@ -1,8 +1,8 @@
-use ark_ff::FftField;
+use ark_ff::{AdditiveGroup, FftField, Field};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{config::Config, Commitment};
+use super::{Commitment, Config};
 use crate::{
     algebra::{
         dot,
@@ -11,7 +11,7 @@ use crate::{
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit},
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, VerificationResult,
         VerifierMessage, VerifierState,
@@ -30,11 +30,10 @@ enum RoundCommitment<'a, F: FftField> {
     },
 }
 
-impl<F, M> Config<F, M>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    M: Embedding<Target = F>,
     M::Source: FftField,
+    M::Target: FftField,
 {
     /// Verify a batched WHIR proof for multiple commitments.
     ///
@@ -49,22 +48,22 @@ where
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<'_, H>,
-        commitments: &[&Commitment<F>],
-        linear_forms: &[&dyn LinearForm<F>],
-        evaluations: &[F],
-    ) -> VerificationResult<(MultilinearPoint<F>, Vec<F>)>
+        commitments: &[&Commitment<M::Target>],
+        evaluations: &[M::Target],
+    ) -> VerificationResult<FinalClaim<M::Target>>
     where
         H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
+        M::Target: Codec<[H::U]>,
         u8: Decoding<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
         let num_vectors = commitments.len() * self.initial_committer.num_vectors;
-        verify!(linear_forms.len() * num_vectors == evaluations.len());
+        verify!(evaluations.len().is_multiple_of(num_vectors));
+        let num_linear_forms = evaluations.len() / num_vectors;
         if num_vectors == 0 {
-            return Ok((MultilinearPoint::default(), Vec::new()));
+            return Ok(FinalClaim::default());
         }
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
@@ -101,22 +100,22 @@ where
         };
 
         // Random linear combination of the constraints.
-        let constraint_rlc_coeffs: Vec<F> =
-            geometric_challenge(verifier_state, oods_evals.len() + linear_forms.len());
-        let initial_form_rlc_coeffs = constraint_rlc_coeffs[oods_evals.len()..].to_vec();
-        let oods_rlc_coeffs = constraint_rlc_coeffs[..oods_evals.len()].to_vec();
+        let constraint_rlc_coeffs: Vec<M::Target> =
+            geometric_challenge(verifier_state, oods_evals.len() + num_linear_forms);
+        let (initial_form_rlc_coeffs, oods_rlc_coeffs) =
+            constraint_rlc_coeffs.split_at(num_linear_forms);
 
         // Compute "The Sum"
         let mut the_sum = zip_strict(
-            &initial_form_rlc_coeffs,
+            initial_form_rlc_coeffs,
             evaluations.chunks_exact(num_vectors),
         )
         .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
-        .sum::<F>();
-        the_sum += zip_strict(&oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
+        .sum::<M::Target>();
+        the_sum += zip_strict(oods_rlc_coeffs, oods_matrix.chunks_exact(num_vectors))
             .map(|(poly_coeff, row)| *poly_coeff * dot(&vector_rlc_coeffs, row))
-            .sum::<F>();
-        let mut round_constraints = vec![(oods_rlc_coeffs, oods_evals)];
+            .sum::<M::Target>();
+        let mut round_constraints = vec![(oods_rlc_coeffs.to_vec(), oods_evals)];
 
         let mut round_folding_randomness = Vec::new();
 
@@ -124,10 +123,10 @@ where
         let folding_randomness = if constraint_rlc_coeffs.is_empty() {
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck polynomials would be constant zero)
-            assert_eq!(the_sum, F::ZERO);
+            assert_eq!(the_sum, M::Target::ZERO);
             let folding_randomness =
                 verifier_state.verifier_message_vec(self.initial_sumcheck.num_rounds);
-            self.initial_sumcheck.round_pow.verify(verifier_state)?;
+            self.initial_skip_pow.verify(verifier_state)?;
             MultilinearPoint(folding_randomness)
         } else {
             self.initial_sumcheck.verify(verifier_state, &mut the_sum)?
@@ -159,7 +158,7 @@ where
                     let in_domain = prev_round_config
                         .irs_committer
                         .verify(verifier_state, &[&commitment])?;
-                    (in_domain, vec![F::ONE])
+                    (in_domain, vec![M::Target::ONE])
                 }
             };
 
@@ -171,7 +170,7 @@ where
                 .collect::<Vec<_>>();
             let constraint_values = commitment
                 .out_of_domain()
-                .values(&[F::ONE])
+                .values(&[M::Target::ONE])
                 .chain(in_domain.values(&tensor_product(
                     &poly_rlc,
                     &round_folding_randomness.last().unwrap().eq_weights(),
@@ -209,7 +208,7 @@ where
                 let in_domain = prev_round_config
                     .irs_committer
                     .verify(verifier_state, &[&commitment])?;
-                (in_domain, vec![F::ONE])
+                (in_domain, vec![M::Target::ONE])
             }
         };
 
@@ -221,7 +220,7 @@ where
                 &round_folding_randomness.last().unwrap().eq_weights(),
             )),
         ) {
-            verify!(weights.evaluate(&Identity::<F>::new(), &final_vector) == evals);
+            verify!(weights.evaluate(&Identity::<M::Target>::new(), &final_vector) == evals);
         }
 
         // Final sumcheck
@@ -229,47 +228,33 @@ where
         round_folding_randomness.push(final_sumcheck_randomness.clone());
 
         // Compute folding randomness across all rounds
-        let folding_randomness = MultilinearPoint(
-            round_folding_randomness
-                .into_iter()
-                .flat_map(|poly| poly.0.into_iter())
-                .collect(),
-        );
+        let evaluation_point = round_folding_randomness
+            .into_iter()
+            .flat_map(|poly| poly.0.into_iter())
+            .collect::<Vec<_>>();
 
-        // Evaluate all round constraints weights
-        let mut weight_eval = F::ZERO;
+        // Compute the claimed rlc of the linear form mles from the sumcheck invariant.
+        let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
+            .evaluate(&Identity::new(), &final_vector);
+        let mut linear_form_rlc = the_sum / poly_eval;
+
+        // Subtract all internal linear forms.
         for (round, (weights_rlc_coeffs, weights)) in round_constraints.into_iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
                 || self.initial_num_variables(),
                 |p| self.round_configs[p].initial_num_variables(),
             );
-            let start = folding_randomness.0.len().saturating_sub(num_variables);
+            let start = evaluation_point.len().saturating_sub(num_variables);
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                weight_eval += rlc_coeff * weights.mle_evaluate(&folding_randomness.0[start..]);
+                linear_form_rlc -= rlc_coeff * weights.mle_evaluate(&evaluation_point[start..]);
             }
         }
 
-        // Compute evaluation of non-deferred initial weights in folding randomness point
-        let deferred: Vec<F> = verifier_state.prover_hint_ark()?;
-        let mut deferred_iter = deferred.iter().copied();
-        for (rlc_coeff, weights) in zip_strict(initial_form_rlc_coeffs, linear_forms) {
-            let eval = if weights.deferred() {
-                let deferred = deferred_iter.next();
-                verify!(deferred.is_some());
-                deferred.unwrap()
-            } else {
-                weights.mle_evaluate(&folding_randomness.0)
-            };
-            weight_eval += rlc_coeff * eval;
-        }
-        verify!(deferred_iter.next().is_none());
-
-        // Check the final sumcheck equation
-        let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
-            .evaluate(&Identity::new(), &final_vector);
-        verify!(poly_eval * weight_eval == the_sum);
-
         // Return the evaluation point and the claimed values of the deferred weights.
-        Ok((folding_randomness, deferred))
+        Ok(FinalClaim {
+            evaluation_point,
+            rlc_coefficients: initial_form_rlc_coeffs.to_vec(),
+            linear_form_rlc,
+        })
     }
 }

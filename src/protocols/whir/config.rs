@@ -1,67 +1,30 @@
-use std::{
-    f64::consts::LOG2_10,
-    fmt::{Debug, Display},
-    ops::Neg,
-};
+use std::fmt::Display;
 
 use ark_ff::FftField;
-use serde::{Deserialize, Serialize};
 
+use super::{Config, RoundConfig};
 use crate::{
-    algebra::{
-        embedding::{self, Basefield, Embedding},
-        fields::FieldWithSize,
-    },
+    algebra::{embedding::Embedding, fields::FieldWithSize},
     bits::Bits,
-    parameters::{MultivariateParameters, ProtocolParameters, SoundnessType},
-    protocols::{irs_commit, matrix_commit, proof_of_work, sumcheck},
-    type_info::{Type, Typed},
+    parameters::ProtocolParameters,
+    protocols::{irs_commit, proof_of_work, sumcheck},
+    type_info::Type,
 };
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(bound = "F: FftField, M: Embedding<Target = F>, M::Source: FftField")]
-pub struct Config<F, M = Basefield<F>>
+impl<M: Embedding> Config<M>
 where
-    F: FftField,
-    M: Embedding<Target = F>,
     M::Source: FftField,
-{
-    pub initial_committer: irs_commit::Config<M::Source, F, M>,
-    pub initial_sumcheck: sumcheck::Config<F>,
-    pub round_configs: Vec<RoundConfig<F>>,
-    pub final_sumcheck: sumcheck::Config<F>,
-    pub final_pow: proof_of_work::Config,
-
-    // TODO: These don't belong in the config. Instead there should be
-    // fn like `WhirConfig::soundness(&self, assumptions: SoundnessType) -> Bits`.
-    pub soundness_type: SoundnessType,
-    pub security_level: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "F: FftField")]
-pub struct RoundConfig<F>
-where
-    F: FftField,
-{
-    pub irs_committer: irs_commit::Config<F>,
-    pub sumcheck: sumcheck::Config<F>,
-    pub pow: proof_of_work::Config,
-}
-
-impl<F> Config<F, Basefield<F>>
-where
-    F: FftField + FieldWithSize,
+    M::Target: FftField,
 {
     #[allow(clippy::too_many_lines)]
-    pub fn new(
-        mv_parameters: MultivariateParameters<F>,
-        whir_parameters: &ProtocolParameters,
-    ) -> Self {
-        whir_parameters
-            .folding_factor
-            .check_validity(mv_parameters.num_variables)
-            .unwrap();
+    pub fn new(size: usize, whir_parameters: &ProtocolParameters) -> Self
+    where
+        M: Default,
+    {
+        assert!(
+            size.is_power_of_two(),
+            "Only powers of two size are supported at the moment."
+        );
 
         // Proof of work constructor with the requested hash function.
         let pow = |difficulty| proof_of_work::Config {
@@ -69,400 +32,215 @@ where
             threshold: proof_of_work::threshold(Bits::new(difficulty)),
         };
 
+        let security_level = whir_parameters.security_level as f64;
         let protocol_security_level = whir_parameters
             .security_level
-            .saturating_sub(whir_parameters.pow_bits);
-        let field_size_bits = F::field_size_in_bits();
+            .saturating_sub(whir_parameters.pow_bits) as f64;
+        let field_size_bits = M::Target::field_size_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
-        let mut num_variables = mv_parameters.num_variables;
+        let mut num_variables = size.trailing_zeros() as usize;
 
-        let mut domain_size = 1 << (mv_parameters.num_variables + log_inv_rate);
+        #[allow(clippy::cast_possible_wrap)]
+        let initial_committer = irs_commit::Config::new(
+            protocol_security_level,
+            whir_parameters.unique_decoding,
+            whir_parameters.hash_id,
+            whir_parameters.batch_size,
+            size,
+            1 << whir_parameters.initial_folding_factor,
+            0.5_f64.powi(whir_parameters.starting_log_inv_rate as i32),
+        );
 
-        let (num_rounds, final_sumcheck_rounds) = whir_parameters
-            .folding_factor
-            .compute_number_of_rounds(mv_parameters.num_variables);
-
-        let log_eta_start = Self::log_eta(whir_parameters.soundness_type, log_inv_rate as f64);
-
-        let commitment_ood_samples = if whir_parameters.initial_statement {
-            Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                num_variables,
-                log_inv_rate as f64,
-                log_eta_start,
-                field_size_bits,
-            )
-        } else {
-            0
+        // Initial sumcheck round pow bits.
+        let starting_folding_pow_bits = {
+            let prox_gaps_error = initial_committer.rbr_soundness_fold_prox_gaps();
+            let log_list_size = initial_committer.list_size().log2();
+            let sumcheck_error = field_size_bits - log_list_size - 1.;
+            let error = prox_gaps_error.min(sumcheck_error);
+            (security_level - error).max(0.)
+        };
+        // If we skip the initial sumcheck, we do this pow instead:
+        let initial_skip_pow_bits = {
+            let prox_gaps_error = initial_committer.rbr_soundness_fold_prox_gaps()
+                + (whir_parameters.initial_folding_factor as f64).log2();
+            (security_level - prox_gaps_error).max(0.0)
         };
 
-        let starting_folding_pow_bits = if whir_parameters.initial_statement {
-            Self::folding_pow_bits(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                field_size_bits,
-                num_variables,
-                log_inv_rate as f64,
-                log_eta_start,
-            )
-        } else {
-            {
-                let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                    whir_parameters.soundness_type,
-                    field_size_bits,
-                    num_variables,
-                    log_inv_rate as f64,
-                    log_eta_start,
-                ) + (whir_parameters.folding_factor.at_round(0) as f64)
-                    .log2();
-                (whir_parameters.security_level as f64 - prox_gaps_error).max(0.0)
-            }
-        };
-
-        let mut round_parameters = Vec::with_capacity(num_rounds);
-        num_variables -= whir_parameters.folding_factor.at_round(0);
-        for round in 0..num_rounds {
+        let mut round_configs = Vec::new();
+        let mut round = 0;
+        let mut in_domain_samples = initial_committer.in_domain_samples;
+        let mut query_error = initial_committer.rbr_queries();
+        num_variables -= whir_parameters.initial_folding_factor;
+        while num_variables >= whir_parameters.folding_factor {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
-            let next_rate = log_inv_rate + (whir_parameters.folding_factor.at_round(round) - 1);
+            let round_folding_factor = if round == 0 {
+                whir_parameters.initial_folding_factor
+            } else {
+                whir_parameters.folding_factor
+            };
+            let next_rate = log_inv_rate + (round_folding_factor - 1);
 
-            let log_next_eta = Self::log_eta(whir_parameters.soundness_type, next_rate as f64);
-
-            let num_queries = Self::queries(
-                whir_parameters.soundness_type,
+            #[allow(clippy::cast_possible_wrap)]
+            let irs_committer = irs_commit::Config::new(
                 protocol_security_level,
-                log_inv_rate,
-            );
-
-            let ood_samples = Self::ood_samples(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                num_variables,
-                next_rate as f64,
-                log_next_eta,
-                field_size_bits,
-            );
-
-            let query_error = Self::rbr_queries(
-                whir_parameters.soundness_type,
-                log_inv_rate as f64,
-                num_queries,
-            );
-
-            let combination_error = Self::rbr_soundness_queries_combination(
-                whir_parameters.soundness_type,
-                field_size_bits,
-                num_variables,
-                next_rate as f64,
-                log_next_eta,
-                ood_samples,
-                num_queries,
-            );
-
-            let pow_bits = 0_f64
-                .max(whir_parameters.security_level as f64 - (query_error.min(combination_error)));
-
-            let folding_pow_bits = Self::folding_pow_bits(
-                whir_parameters.security_level,
-                whir_parameters.soundness_type,
-                field_size_bits,
-                num_variables,
-                next_rate as f64,
-                log_next_eta,
-            );
-
-            let next_folding_factor = whir_parameters.folding_factor.at_round(round + 1);
-            let matrix_committer = matrix_commit::Config::<F>::with_hash(
+                whir_parameters.unique_decoding,
                 whir_parameters.hash_id,
-                (domain_size / 2) >> next_folding_factor,
-                1 << next_folding_factor,
+                1,
+                1 << num_variables,
+                1 << whir_parameters.folding_factor,
+                0.5_f64.powi(next_rate as i32),
             );
+            let combination_error = {
+                let log_list_size = irs_committer.list_size().log2();
+                let count = irs_committer.out_domain_samples + in_domain_samples;
+                let log_combination = (count as f64).log2();
+                field_size_bits - (log_combination + log_list_size + 1.)
+            };
+            let pow_bits = 0_f64.max(security_level - (query_error.min(combination_error)));
+            let folding_pow_bits = {
+                let prox_gaps_error = irs_committer.rbr_soundness_fold_prox_gaps();
+                let log_list_size = irs_committer.list_size().log2();
+                let sumcheck_error = field_size_bits - (log_list_size + 1.);
+                let error = prox_gaps_error.min(sumcheck_error);
+                (security_level - error).max(0.)
+            };
 
-            round_parameters.push(RoundConfig {
-                irs_committer: irs_commit::Config {
-                    embedding: Typed::new(embedding::Identity::new()),
-                    num_vectors: 1,
-                    vector_size: 1 << num_variables,
-                    expansion: 1 << next_rate,
-                    interleaving_depth: 1 << next_folding_factor,
-                    matrix_commit: matrix_committer.clone(),
-                    in_domain_samples: Self::queries(
-                        whir_parameters.soundness_type,
-                        protocol_security_level,
-                        next_rate,
-                    ),
-                    out_domain_samples: ood_samples,
-                    deduplicate_in_domain: true, // TODO: Configurable
-                },
+            let config = RoundConfig {
+                irs_committer,
                 sumcheck: sumcheck::Config {
-                    field: Type::<F>::new(),
+                    field: Type::new(),
                     initial_size: 1 << num_variables,
                     round_pow: pow(folding_pow_bits),
-                    num_rounds: next_folding_factor,
+                    num_rounds: whir_parameters.folding_factor,
                 },
                 pow: pow(pow_bits),
-            });
+            };
 
-            num_variables -= next_folding_factor;
+            round += 1;
+            num_variables -= whir_parameters.folding_factor;
             log_inv_rate = next_rate;
-            domain_size /= 2;
+            in_domain_samples = config.irs_committer.in_domain_samples;
+            query_error = config.irs_committer.rbr_queries();
+            round_configs.push(config);
         }
 
-        let final_queries = Self::queries(
-            whir_parameters.soundness_type,
-            protocol_security_level,
-            log_inv_rate,
+        let rbr_error = round_configs.last().map_or_else(
+            || initial_committer.rbr_queries(),
+            |r| r.irs_committer.rbr_queries(),
         );
+        let final_pow_bits = 0_f64.max(security_level - rbr_error);
 
-        let final_pow_bits = 0_f64.max(
-            whir_parameters.security_level as f64
-                - Self::rbr_queries(
-                    whir_parameters.soundness_type,
-                    log_inv_rate as f64,
-                    final_queries,
-                ),
-        );
-
-        let final_folding_pow_bits =
-            0_f64.max(whir_parameters.security_level as f64 - (field_size_bits - 1) as f64);
+        let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits + 1.0);
 
         Self {
-            security_level: whir_parameters.security_level,
-            soundness_type: whir_parameters.soundness_type,
-            initial_committer: irs_commit::Config {
-                embedding: Default::default(),
-                num_vectors: whir_parameters.batch_size,
-                vector_size: 1 << mv_parameters.num_variables,
-                expansion: 1 << whir_parameters.starting_log_inv_rate,
-                interleaving_depth: 1 << whir_parameters.folding_factor.at_round(0),
-                matrix_commit: matrix_commit::Config::with_hash(
-                    whir_parameters.hash_id,
-                    1 << (mv_parameters.num_variables + whir_parameters.starting_log_inv_rate
-                        - whir_parameters.folding_factor.at_round(0)),
-                    whir_parameters.batch_size << whir_parameters.folding_factor.at_round(0),
-                ),
-                in_domain_samples: Self::queries(
-                    whir_parameters.soundness_type,
-                    protocol_security_level,
-                    whir_parameters.starting_log_inv_rate,
-                ),
-                out_domain_samples: commitment_ood_samples,
-                deduplicate_in_domain: true,
-            },
+            initial_committer,
             initial_sumcheck: sumcheck::Config {
-                field: Type::<F>::new(),
-                initial_size: 1 << mv_parameters.num_variables,
+                field: Type::new(),
+                initial_size: size,
                 round_pow: pow(starting_folding_pow_bits),
-                num_rounds: whir_parameters.folding_factor.at_round(0),
+                num_rounds: whir_parameters.initial_folding_factor,
             },
-            round_configs: round_parameters,
+            initial_skip_pow: pow(initial_skip_pow_bits),
+            round_configs,
             final_sumcheck: sumcheck::Config {
-                field: Type::<F>::new(),
+                field: Type::new(),
                 initial_size: 1 << num_variables,
                 round_pow: pow(final_folding_pow_bits),
-                num_rounds: final_sumcheck_rounds,
+                num_rounds: num_variables,
             },
             final_pow: pow(final_pow_bits),
         }
     }
 
-    pub const fn log_eta(soundness_type: SoundnessType, log_inv_rate: f64) -> f64 {
-        // Ask me how I did this? At the time, only God and I knew. Now only God knows
-        match soundness_type {
-            SoundnessType::ProvableList => -(0.5 * log_inv_rate + LOG2_10 + 1.),
-            SoundnessType::UniqueDecoding => 0.,
-            SoundnessType::ConjectureList => -(log_inv_rate + 1.),
+    // True if we only use the unique decoding regime.
+    pub fn unique_decoding(&self) -> bool {
+        self.initial_committer.unique_decoding()
+            && self
+                .round_configs
+                .iter()
+                .all(|r| r.irs_committer.unique_decoding())
+    }
+
+    pub fn security_level(&self, num_vectors: usize, num_linear_forms: usize) -> f64 {
+        let field_size_bits = M::Target::field_size_bits();
+        let mut security_level = f64::INFINITY;
+        if num_vectors > 1 {
+            security_level =
+                security_level.min(field_size_bits - ((num_vectors - 1) as f64).log2());
         }
-    }
-
-    pub const fn list_size_bits(
-        soundness_type: SoundnessType,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-    ) -> f64 {
-        match soundness_type {
-            SoundnessType::ConjectureList => num_variables as f64 + log_inv_rate - log_eta,
-            SoundnessType::ProvableList => {
-                let log_inv_sqrt_rate: f64 = log_inv_rate / 2.;
-                log_inv_sqrt_rate - (1. + log_eta)
-            }
-            SoundnessType::UniqueDecoding => 0.0,
+        if num_linear_forms > 1 {
+            security_level =
+                security_level.min(field_size_bits - ((num_linear_forms - 1) as f64).log2());
         }
-    }
+        let has_initial_constraints =
+            num_linear_forms > 0 || self.initial_committer.out_domain_samples > 0;
 
-    pub const fn rbr_ood_sample(
-        soundness_type: SoundnessType,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-        field_size_bits: usize,
-        ood_samples: usize,
-    ) -> f64 {
-        let list_size_bits =
-            Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
-
-        let error = 2. * list_size_bits + (num_variables * ood_samples) as f64;
-        (ood_samples * field_size_bits) as f64 + 1. - error
-    }
-
-    pub fn ood_samples(
-        security_level: usize, // We don't do PoW for OOD
-        soundness_type: SoundnessType,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-        field_size_bits: usize,
-    ) -> usize {
-        match soundness_type {
-            SoundnessType::UniqueDecoding => 0,
-            _ => (1..64)
-                .find(|&ood_samples| {
-                    Self::rbr_ood_sample(
-                        soundness_type,
-                        num_variables,
-                        log_inv_rate,
-                        log_eta,
-                        field_size_bits,
-                        ood_samples,
-                    ) >= security_level as f64
-                })
-                .unwrap_or_else(|| panic!("Could not find an appropriate number of OOD samples")),
+        if !self.initial_committer.unique_decoding() {
+            security_level = security_level.min(self.initial_committer.rbr_ood_sample());
         }
-    }
 
-    // Compute the proximity gaps term of the fold
-    pub const fn rbr_soundness_fold_prox_gaps(
-        soundness_type: SoundnessType,
-        field_size_bits: usize,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-    ) -> f64 {
-        // Recall, at each round we are only folding by two at a time
-        let error = match soundness_type {
-            SoundnessType::ConjectureList => num_variables as f64 + log_inv_rate - log_eta,
-            SoundnessType::ProvableList => LOG2_10 + 3.5 * log_inv_rate + 2. * num_variables as f64,
-            SoundnessType::UniqueDecoding => num_variables as f64 + log_inv_rate,
-        };
-
-        field_size_bits as f64 - error
-    }
-
-    pub const fn rbr_soundness_fold_sumcheck(
-        soundness_type: SoundnessType,
-        field_size_bits: usize,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-    ) -> f64 {
-        let list_size = Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
-
-        field_size_bits as f64 - (list_size + 1.)
-    }
-
-    pub const fn folding_pow_bits(
-        security_level: usize,
-        soundness_type: SoundnessType,
-        field_size_bits: usize,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-    ) -> f64 {
-        let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            soundness_type,
-            field_size_bits,
-            num_variables,
-            log_inv_rate,
-            log_eta,
-        );
-        let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            soundness_type,
-            field_size_bits,
-            num_variables,
-            log_inv_rate,
-            log_eta,
-        );
-
-        let error = if prox_gaps_error < sumcheck_error {
-            prox_gaps_error
+        // Initial sumcheck error (or the skipped version for LDT).
+        let initial_prox_gaps_error = self.initial_committer.rbr_soundness_fold_prox_gaps();
+        if has_initial_constraints {
+            let log_list_size = self.initial_committer.list_size().log2();
+            let initial_sumcheck_error = field_size_bits - (log_list_size + 1.);
+            let initial_fold_error = initial_prox_gaps_error.min(initial_sumcheck_error)
+                + f64::from(self.initial_sumcheck.round_pow.difficulty());
+            security_level = security_level.min(initial_fold_error);
         } else {
-            sumcheck_error
-        };
+            let skipped_initial_fold_error = initial_prox_gaps_error
+                + (self.initial_sumcheck.num_rounds as f64).log2()
+                + f64::from(self.initial_skip_pow.difficulty());
+            security_level = security_level.min(skipped_initial_fold_error);
+        }
 
-        let candidate = security_level as f64 - error;
-        if candidate > 0_f64 {
-            candidate
+        let mut rbr_queries = self.initial_committer.rbr_queries();
+        let mut old_in_domain_samples = self.initial_committer.in_domain_samples;
+        for round in &self.round_configs {
+            // Query soundness is computed at the old rate, while all fold and OOD terms use the new rate.
+            let new_unique_decoding = round.irs_committer.unique_decoding();
+
+            if !new_unique_decoding {
+                let ood_error = round.irs_committer.rbr_ood_sample();
+                security_level = security_level.min(ood_error);
+            }
+
+            let log_list_size = round.irs_committer.list_size().log2();
+            let combination_error = {
+                let count = round.irs_committer.out_domain_samples + old_in_domain_samples;
+                let log_combination = (count as f64).log2();
+                field_size_bits - (log_combination + log_list_size + 1.)
+            };
+            let round_query_error =
+                rbr_queries.min(combination_error) + f64::from(round.pow.difficulty());
+            security_level = security_level.min(round_query_error);
+
+            let prox_gaps_error = round.irs_committer.rbr_soundness_fold_prox_gaps();
+            let sumcheck_error = field_size_bits - (log_list_size + 1.);
+            let round_fold_error = prox_gaps_error.min(sumcheck_error)
+                + f64::from(round.sumcheck.round_pow.difficulty());
+            security_level = security_level.min(round_fold_error);
+
+            old_in_domain_samples = round.irs_committer.in_domain_samples;
+            rbr_queries = round.irs_committer.rbr_queries();
+        }
+
+        let final_query_error = rbr_queries + f64::from(self.final_pow.difficulty());
+        security_level = security_level.min(final_query_error);
+
+        if self.final_sumcheck.num_rounds > 0 {
+            let final_combination_error =
+                field_size_bits - 1. + f64::from(self.final_sumcheck.round_pow.difficulty());
+            security_level = security_level.min(final_combination_error);
+        }
+
+        if security_level.is_finite() {
+            security_level
         } else {
-            0_f64
+            0.0
         }
     }
 
-    // Used to select the number of queries
-    #[allow(clippy::cast_sign_loss)]
-    pub fn queries(
-        soundness_type: SoundnessType,
-        protocol_security_level: usize,
-        log_inv_rate: usize,
-    ) -> usize {
-        let num_queries_f = match soundness_type {
-            SoundnessType::UniqueDecoding => {
-                let rate = 1. / f64::from(1 << log_inv_rate);
-                let denom = (0.5 * (1. + rate)).log2();
-
-                -(protocol_security_level as f64) / denom
-            }
-            SoundnessType::ProvableList => {
-                (2 * protocol_security_level) as f64 / log_inv_rate as f64
-            }
-            SoundnessType::ConjectureList => protocol_security_level as f64 / log_inv_rate as f64,
-        };
-        num_queries_f.ceil() as usize
-    }
-
-    // This is the bits of security of the query step
-    pub fn rbr_queries(
-        soundness_type: SoundnessType,
-        log_inv_rate: f64,
-        num_queries: usize,
-    ) -> f64 {
-        let num_queries = num_queries as f64;
-
-        match soundness_type {
-            SoundnessType::UniqueDecoding => {
-                let rate = 1. / log_inv_rate.exp2();
-                let denom = -(0.5 * (1. + rate)).log2();
-
-                num_queries * denom
-            }
-            SoundnessType::ProvableList => num_queries * 0.5 * log_inv_rate,
-            SoundnessType::ConjectureList => num_queries * log_inv_rate,
-        }
-    }
-
-    pub fn rbr_soundness_queries_combination(
-        soundness_type: SoundnessType,
-        field_size_bits: usize,
-        num_variables: usize,
-        log_inv_rate: f64,
-        log_eta: f64,
-        ood_samples: usize,
-        num_queries: usize,
-    ) -> f64 {
-        let list_size = Self::list_size_bits(soundness_type, num_variables, log_inv_rate, log_eta);
-
-        let log_combination = ((ood_samples + num_queries) as f64).log2();
-
-        field_size_bits as f64 - (log_combination + list_size + 1.)
-    }
-}
-
-impl<F, M> Config<F, M>
-where
-    F: FftField,
-    M: Embedding<Target = F>,
-    M::Source: FftField,
-{
     pub fn check_max_pow_bits(&self, max_bits: Bits) -> bool {
         if self.initial_sumcheck.round_pow.difficulty() > max_bits {
             return false;
@@ -504,30 +282,30 @@ where
     pub const fn n_rounds(&self) -> usize {
         self.round_configs.len()
     }
-
-    pub fn final_rate(&self) -> f64 {
-        self.round_configs.last().map_or_else(
-            || self.initial_committer.rate(),
-            |round_config| round_config.irs_committer.rate(),
-        )
-    }
-
-    pub fn final_in_domain_samples(&self) -> usize {
-        self.round_configs
-            .last()
-            .map_or(self.initial_committer.in_domain_samples, |round_config| {
-                round_config.irs_committer.in_domain_samples
-            })
-    }
 }
 
-impl<F: FftField> Display for Config<F> {
+impl<M: Embedding> Display for Config<M>
+where
+    M::Source: FftField,
+    M::Target: FftField,
+{
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Security level: {} bits using {} security",
-            self.security_level, self.soundness_type
+            "Security level: {:.2} bits using {} decoding",
+            self.security_level(self.initial_committer.num_vectors, 1),
+            if self.unique_decoding() {
+                "unique"
+            } else {
+                "list"
+            }
+        )?;
+        writeln!(
+            f,
+            "Source field: {:.2} bits, target field: {:.2} bits",
+            M::Source::field_size_bits(),
+            M::Target::field_size_bits()
         )?;
         writeln!(f, "Initial:\n  commit   {}", self.initial_committer)?;
         writeln!(f, "  sumcheck {}", self.initial_sumcheck)?;
@@ -545,88 +323,70 @@ impl<F: FftField> Display for Config<F> {
         writeln!(f, "Round by round soundness analysis:")?;
         writeln!(f, "------------------------------------")?;
 
-        let field_size_bits = F::field_size_in_bits();
-        let log_eta = Self::log_eta(
-            self.soundness_type,
-            self.initial_committer.rate().log2().neg(),
-        );
-        let mut num_variables = self.initial_num_variables();
-
-        if self.initial_committer.out_domain_samples > 0 {
+        let field_size_bits = M::Target::field_size_bits();
+        let num_vectors = self.initial_committer.num_vectors;
+        let num_linear_forms = 10; // TODO
+        if num_vectors > 1 {
+            let rlc_error = field_size_bits - ((num_vectors - 1) as f64).log2();
             writeln!(
                 f,
-                "{:.1} bits -- OOD commitment",
-                Self::rbr_ood_sample(
-                    self.soundness_type,
-                    num_variables,
-                    self.initial_committer.rate().log2().neg(),
-                    log_eta,
-                    field_size_bits,
-                    self.initial_committer.out_domain_samples
-                )
+                "{rlc_error:.1} bits -- initial vector RLC ({num_vectors} vectors)"
+            )?;
+        } else {
+            writeln!(f, "no loss -- initial vector RLC ({num_vectors} vector)")?;
+        }
+        if num_linear_forms > 1 {
+            let rlc_error = field_size_bits - f64::from(num_linear_forms - 1).log2();
+            writeln!(
+                f,
+                "{rlc_error:.1} bits -- initial linear-form RLC ({num_linear_forms} linear form)"
+            )?;
+        } else {
+            writeln!(
+                f,
+                "no loss -- initial linear-form RLC ({num_linear_forms} linear form)"
             )?;
         }
 
-        let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-            self.soundness_type,
-            field_size_bits,
-            num_variables,
-            self.initial_committer.rate().log2().neg(),
-            log_eta,
-        );
-        let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-            self.soundness_type,
-            field_size_bits,
-            num_variables,
-            self.initial_committer.rate().log2().neg(),
-            log_eta,
-        );
+        if !self.initial_committer.unique_decoding() {
+            writeln!(
+                f,
+                "{:.1} bits -- OOD commitment",
+                self.initial_committer.rbr_ood_sample()
+            )?;
+        }
+        let prox_gaps_error = self.initial_committer.rbr_soundness_fold_prox_gaps();
+        let log_list_size = self.initial_committer.list_size().log2();
+        let sumcheck_error = field_size_bits - (log_list_size + 1.);
         writeln!(
             f,
-            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+            "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, list size 2^{:.1}",
             prox_gaps_error.min(sumcheck_error)
                 + f64::from(self.initial_sumcheck.round_pow.difficulty()),
             self.initial_sumcheck.num_rounds,
             prox_gaps_error,
             sumcheck_error,
             self.initial_sumcheck.round_pow.difficulty(),
+            log_list_size,
         )?;
 
-        num_variables -= self.initial_sumcheck.num_rounds;
-
+        let mut query_error = self.initial_committer.rbr_queries();
+        let mut old_in_domain_samples = self.initial_committer.in_domain_samples;
         for r in &self.round_configs {
-            let next_rate = (r.log_inv_rate() + (r.sumcheck.num_rounds - 1)) as f64;
-            let log_eta = Self::log_eta(self.soundness_type, next_rate);
-
-            if r.irs_committer.out_domain_samples > 0 {
+            if !r.irs_committer.unique_decoding() {
                 writeln!(
                     f,
                     "{:.1} bits -- OOD sample",
-                    Self::rbr_ood_sample(
-                        self.soundness_type,
-                        num_variables,
-                        next_rate,
-                        log_eta,
-                        field_size_bits,
-                        r.irs_committer.out_domain_samples
-                    )
+                    r.irs_committer.rbr_ood_sample()
                 )?;
             }
 
-            let query_error = Self::rbr_queries(
-                self.soundness_type,
-                r.log_inv_rate() as f64,
-                r.irs_committer.in_domain_samples,
-            );
-            let combination_error = Self::rbr_soundness_queries_combination(
-                self.soundness_type,
-                field_size_bits,
-                num_variables,
-                next_rate,
-                log_eta,
-                r.irs_committer.out_domain_samples,
-                r.irs_committer.in_domain_samples,
-            );
+            let log_list_size = r.irs_committer.list_size().log2();
+            let combination_error = {
+                let count = r.irs_committer.out_domain_samples + old_in_domain_samples;
+                let log_combination = (count as f64).log2();
+                field_size_bits - (log_combination + log_list_size + 1.)
+            };
             writeln!(
                 f,
                 "{:.1} bits -- query error: {:.1}, combination: {:.1}, pow: {:.1}",
@@ -636,39 +396,23 @@ impl<F: FftField> Display for Config<F> {
                 r.pow.difficulty(),
             )?;
 
-            let prox_gaps_error = Self::rbr_soundness_fold_prox_gaps(
-                self.soundness_type,
-                field_size_bits,
-                num_variables,
-                next_rate,
-                log_eta,
-            );
-            let sumcheck_error = Self::rbr_soundness_fold_sumcheck(
-                self.soundness_type,
-                field_size_bits,
-                num_variables,
-                next_rate,
-                log_eta,
-            );
-
+            let prox_gaps_error = r.irs_committer.rbr_soundness_fold_prox_gaps();
+            let sumcheck_error = field_size_bits - (log_list_size + 1.);
             writeln!(
                 f,
-                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}",
+                "{:.1} bits -- (x{}) prox gaps: {:.1}, sumcheck: {:.1}, pow: {:.1}, list size 2^{:.1}",
                 prox_gaps_error.min(sumcheck_error) + f64::from(r.sumcheck.round_pow.difficulty()),
                 r.sumcheck.num_rounds,
                 prox_gaps_error,
                 sumcheck_error,
                 r.sumcheck.round_pow.difficulty(),
+                log_list_size
             )?;
 
-            num_variables -= r.sumcheck.num_rounds;
+            old_in_domain_samples = r.irs_committer.in_domain_samples;
+            query_error = r.irs_committer.rbr_queries();
         }
 
-        let query_error = Self::rbr_queries(
-            self.soundness_type,
-            self.final_rate().log2().neg(),
-            self.final_in_domain_samples(),
-        );
         writeln!(
             f,
             "{:.1} bits -- query error: {:.1}, pow: {:.1}",
@@ -678,11 +422,11 @@ impl<F: FftField> Display for Config<F> {
         )?;
 
         if self.final_sumcheck.num_rounds > 0 {
-            let combination_error = field_size_bits as f64 - 1.;
+            let combination_error = field_size_bits - 1.;
             writeln!(
                 f,
                 "{:.1} bits -- (x{}) combination: {:.1}, pow: {:.1}",
-                combination_error + f64::from(self.final_pow.difficulty()),
+                combination_error + f64::from(self.final_sumcheck.round_pow.difficulty()),
                 self.final_sumcheck.num_rounds,
                 combination_error,
                 self.final_sumcheck.round_pow.difficulty(),
@@ -701,11 +445,6 @@ impl<F: FftField> RoundConfig<F> {
 
     pub const fn final_size(&self) -> usize {
         self.sumcheck.final_size()
-    }
-
-    pub fn log_inv_rate(&self) -> usize {
-        assert!(self.irs_committer.expansion.is_power_of_two());
-        self.irs_committer.expansion.ilog2() as usize
     }
 
     pub fn initial_num_variables(&self) -> usize {
@@ -731,19 +470,29 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ordered_float::OrderedFloat;
+
     use super::*;
     use crate::{
-        algebra::fields::Field64, bits::Bits, hash, parameters::FoldingFactor, utils::test_serde,
+        algebra::{
+            embedding::{self, Basefield},
+            fields::Field64_3,
+        },
+        bits::Bits,
+        hash,
+        protocols::matrix_commit,
+        type_info::Typed,
+        utils::test_serde,
     };
 
     /// Generates default WHIR parameters
     fn default_whir_params() -> ProtocolParameters {
         ProtocolParameters {
-            initial_statement: true,
-            security_level: 100,
+            security_level: 80, // We can't hope for much with a 128bit field.
             pow_bits: 20,
-            folding_factor: FoldingFactor::ConstantFromSecondRound(4, 4),
-            soundness_type: SoundnessType::ConjectureList,
+            initial_folding_factor: 4,
+            folding_factor: 4,
+            unique_decoding: false,
             starting_log_inv_rate: 1,
             batch_size: 1,
             hash_id: hash::BLAKE3,
@@ -753,15 +502,13 @@ mod tests {
     #[test]
     fn test_whir_params_serde() {
         test_serde(&default_whir_params());
-        test_serde(&default_whir_params());
     }
 
     #[test]
     fn test_whir_config_serde() {
         let params = default_whir_params();
 
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = Config::<Field64>::new(mv_params, &params);
+        let config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         test_serde(&config);
     }
@@ -769,107 +516,15 @@ mod tests {
     #[test]
     fn test_n_rounds() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let config = Config::<Field64>::new(mv_params, &params);
+        let config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         assert_eq!(config.n_rounds(), config.round_configs.len());
     }
 
     #[test]
-    fn test_folding_pow_bits() {
-        let field_size_bits = 64;
-        let soundness = SoundnessType::ConjectureList;
-
-        let pow_bits = Config::<Field64>::folding_pow_bits(
-            100, // Security level
-            soundness,
-            field_size_bits,
-            10,   // Number of variables
-            5.0,  // Log inverse rate
-            -3.0, // Log eta
-        );
-
-        // PoW bits should never be negative
-        assert!(pow_bits >= 0.);
-    }
-
-    #[test]
-    fn test_queries_unique_decoding() {
-        let security_level = 100;
-        let log_inv_rate = 5;
-
-        let result =
-            Config::<Field64>::queries(SoundnessType::UniqueDecoding, security_level, log_inv_rate);
-
-        assert_eq!(result, 105);
-    }
-
-    #[test]
-    fn test_queries_provable_list() {
-        let security_level = 128;
-        let log_inv_rate = 8;
-
-        let result =
-            Config::<Field64>::queries(SoundnessType::ProvableList, security_level, log_inv_rate);
-
-        assert_eq!(result, 32);
-    }
-
-    #[test]
-    fn test_queries_conjecture_list() {
-        let security_level = 256;
-        let log_inv_rate = 16;
-
-        let result =
-            Config::<Field64>::queries(SoundnessType::ConjectureList, security_level, log_inv_rate);
-
-        assert_eq!(result, 16);
-    }
-
-    #[test]
-    fn test_rbr_queries_unique_decoding() {
-        let log_inv_rate = 5.0; // log_inv_rate = 5
-        let num_queries = 10; // Number of queries
-
-        let result = Config::<Field64>::rbr_queries(
-            SoundnessType::UniqueDecoding,
-            log_inv_rate,
-            num_queries,
-        );
-
-        assert!((result - 9.556_058_806_415_466).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_rbr_queries_provable_list() {
-        let log_inv_rate = 8.0; // log_inv_rate = 8
-        let num_queries = 16; // Number of queries
-
-        let result =
-            Config::<Field64>::rbr_queries(SoundnessType::ProvableList, log_inv_rate, num_queries);
-
-        assert!((result - 64.0) < 1e-6);
-    }
-
-    #[test]
-    fn test_rbr_queries_conjecture_list() {
-        let log_inv_rate = 4.0; // log_inv_rate = 4
-        let num_queries = 20; // Number of queries
-
-        let result = Config::<Field64>::rbr_queries(
-            SoundnessType::ConjectureList,
-            log_inv_rate,
-            num_queries,
-        );
-
-        assert!((result - 80.) < 1e-6);
-    }
-
-    #[test]
     fn test_check_pow_bits_within_limits() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = Config::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         // Set all values within limits
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(15.0));
@@ -883,15 +538,16 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 3,
+                    codeword_length: 1 << (10 + 3 - 2),
                     interleaving_depth: 1 << 2,
-                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
+                    johnson_slack: OrderedFloat::default(),
                     in_domain_samples: 5,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,
                 },
                 sumcheck: sumcheck::Config {
-                    field: Type::<Field64>::new(),
+                    field: Type::<Field64_3>::new(),
                     initial_size: 1 << 10,
                     round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.0)),
                     num_rounds: 2,
@@ -903,15 +559,16 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
-                    expansion: 1 << 4,
+                    codeword_length: 1 << (10 + 4 - 2),
                     interleaving_depth: 1 << 2,
-                    matrix_commit: matrix_commit::Config::<Field64>::new(0, 0),
+                    matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
+                    johnson_slack: OrderedFloat::default(),
                     in_domain_samples: 6,
                     out_domain_samples: 2,
                     deduplicate_in_domain: true,
                 },
                 sumcheck: sumcheck::Config {
-                    field: Type::<Field64>::new(),
+                    field: Type::<Field64_3>::new(),
                     initial_size: 1 << 10,
                     round_pow: proof_of_work::Config::from_difficulty(Bits::new(19.5)),
                     num_rounds: 2,
@@ -929,8 +586,7 @@ mod tests {
     #[test]
     fn test_check_pow_bits_starting_folding_exceeds() {
         let params = default_whir_params();
-        let mv_params = MultivariateParameters::<Field64>::new(10);
-        let mut config = Config::<Field64>::new(mv_params, &params);
+        let mut config = Config::<Basefield<Field64_3>>::new(1 << 10, &params);
 
         config.initial_sumcheck.round_pow = proof_of_work::Config::from_difficulty(Bits::new(21.0));
         config.final_pow = proof_of_work::Config::from_difficulty(Bits::new(18.0));
@@ -939,292 +595,6 @@ mod tests {
         assert!(
             !config.check_max_pow_bits(Bits::new(20.0)),
             "Starting folding pow bits exceeds max_pow_bits, should return false."
-        );
-    }
-
-    #[test]
-    fn test_list_size_bits_conjecture_list() {
-        // ConjectureList: list_size_bits = num_variables + log_inv_rate - log_eta
-
-        let cases = vec![
-            (10, 5.0, 2.0, 13.0), // Basic case
-            (0, 5.0, 2.0, 3.0),   // Edge case: num_variables = 0
-            (10, 0.0, 2.0, 8.0),  // Edge case: log_inv_rate = 0
-            (10, 5.0, 0.0, 15.0), // Edge case: log_eta = 0
-            (10, 5.0, 10.0, 5.0), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::ConjectureList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_list_size_bits_provable_list() {
-        // ProvableList: list_size_bits = (log_inv_rate / 2) - (1 + log_eta)
-
-        let cases = vec![
-            (10, 8.0, 2.0, 1.0),   // Basic case
-            (10, 0.0, 2.0, -3.0),  // Edge case: log_inv_rate = 0
-            (10, 8.0, 0.0, 3.0),   // Edge case: log_eta = 0
-            (10, 8.0, 10.0, -7.0), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, expected) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::ProvableList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_list_size_bits_unique_decoding() {
-        // UniqueDecoding: always returns 0.0
-
-        let cases = vec![
-            (10, 5.0, 2.0),
-            (0, 5.0, 2.0),
-            (10, 0.0, 2.0),
-            (10, 5.0, 0.0),
-            (10, 5.0, 10.0),
-        ];
-
-        for (num_variables, log_inv_rate, log_eta) in cases {
-            let result = Config::<Field64>::list_size_bits(
-                SoundnessType::UniqueDecoding,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-            );
-            assert!(
-                (result - 0.0) < 1e-6,
-                "Failed for {:?}",
-                (num_variables, log_inv_rate, log_eta)
-            );
-        }
-    }
-
-    #[test]
-    fn test_rbr_ood_sample_conjecture_list() {
-        // ConjectureList: rbr_ood_sample = (ood_samples * field_size_bits) + 1 - (2 * list_size_bits + num_variables * ood_samples)
-
-        let cases = vec![
-            (
-                10,
-                5.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 13.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                0,
-                5.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (0.0 * 3.0)),
-            ), // Edge case: num_variables = 0
-            (
-                10,
-                0.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 8.0 + (10.0 * 3.0)),
-            ), // Edge case: log_inv_rate = 0
-            (
-                10,
-                5.0,
-                0.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 15.0 + (10.0 * 3.0)),
-            ), // Edge case: log_eta = 0
-            (
-                10,
-                5.0,
-                10.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 5.0 + (10.0 * 3.0)),
-            ), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
-        {
-            let result = Config::<Field64>::rbr_ood_sample(
-                SoundnessType::ConjectureList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-                field_size_bits,
-                ood_samples,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn test_rbr_ood_sample_provable_list() {
-        // ProvableList: Uses a different list_size_bits formula
-
-        let cases = vec![
-            (
-                10,
-                8.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 1.0 + (10.0 * 3.0)),
-            ), // Basic case
-            (
-                10,
-                0.0,
-                2.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -3.0 + (10.0 * 3.0)),
-            ), // log_inv_rate = 0
-            (
-                10,
-                8.0,
-                0.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * 3.0 + (10.0 * 3.0)),
-            ), // log_eta = 0
-            (
-                10,
-                8.0,
-                10.0,
-                256,
-                3,
-                (3.0 * 256.0) + 1.0 - (2.0 * -7.0 + (10.0 * 3.0)),
-            ), // High log_eta
-        ];
-
-        for (num_variables, log_inv_rate, log_eta, field_size_bits, ood_samples, expected) in cases
-        {
-            let result = Config::<Field64>::rbr_ood_sample(
-                SoundnessType::ProvableList,
-                num_variables,
-                log_inv_rate,
-                log_eta,
-                field_size_bits,
-                ood_samples,
-            );
-            assert!(
-                (result - expected).abs() < 1e-6,
-                "Failed for {:?}",
-                (
-                    num_variables,
-                    log_inv_rate,
-                    log_eta,
-                    field_size_bits,
-                    ood_samples
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn test_ood_samples_unique_decoding() {
-        // UniqueDecoding should always return 0 regardless of parameters
-        assert_eq!(
-            Config::<Field64>::ood_samples(100, SoundnessType::UniqueDecoding, 10, 3.0, 1.5, 256),
-            0
-        );
-    }
-
-    #[test]
-    fn test_ood_samples_valid_case() {
-        // Testing a valid case where the function finds an appropriate `ood_samples`
-        assert_eq!(
-            Config::<Field64>::ood_samples(
-                50, // security level
-                SoundnessType::ProvableList,
-                15,  // num_variables
-                4.0, // log_inv_rate
-                2.0, // log_eta
-                256, // field_size_bits
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn test_ood_samples_low_security_level() {
-        // Lower security level should require fewer OOD samples
-        assert_eq!(
-            Config::<Field64>::ood_samples(
-                30, // Lower security level
-                SoundnessType::ConjectureList,
-                20,  // num_variables
-                5.0, // log_inv_rate
-                2.5, // log_eta
-                512, // field_size_bits
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn test_ood_samples_high_security_level() {
-        // Higher security level should require more OOD samples
-        assert_eq!(
-            Config::<Field64>::ood_samples(
-                100, // High security level
-                SoundnessType::ProvableList,
-                25,   // num_variables
-                6.0,  // log_inv_rate
-                3.0,  // log_eta
-                1024  // field_size_bits
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn test_ood_extremely_high_security_level() {
-        assert_eq!(
-            Config::<Field64>::ood_samples(
-                1000, // Extremely high security level
-                SoundnessType::ConjectureList,
-                10,  // num_variables
-                5.0, // log_inv_rate
-                2.0, // log_eta
-                256, // field_size_bits
-            ),
-            5
         );
     }
 }

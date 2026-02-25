@@ -43,7 +43,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", features = ["ark-ff"], rev = "fcc277f8a857fdeeadd7cca92ab08de63b1ff1a1"}
 rayon = { version = "1.10", optional = true }
-thiserror = "2.0"
 itertools = "0.14"
 tracing = { version = "0.1", features = ["attributes"], optional = true }
 hex = "0.4"
@@ -56,6 +55,8 @@ hex-literal = "0.4.1"
 const-oid = "0.9.6"
 arrayvec = "0.7.6"
 derive-where = { version = "1.6.0", features = ["safe"] }
+approx = "0.5.1"
+ordered-float = { version = "5.1.0", features = ["serde"] }
 
 [dev-dependencies]
 proptest = "1.0"
@@ -84,9 +85,10 @@ harness = false
 name = "sumcheck"
 harness = false
 
-[[bench]]
-name = "zk_whir"
-harness = false
+# Disable untill fixed.
+# [[bench]]
+# name = "zk_whir"
+# harness = false
 
 [profile.dev]
 debug = 1

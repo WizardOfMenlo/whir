@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ark_ff::{FftField, PrimeField};
+use ark_ff::FftField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "tracing")]
@@ -11,12 +11,15 @@ use crate::{
     algebra::{
         embedding::Identity,
         linear_form::{Covector, Evaluate, LinearForm},
-        mixed_dot, scalar_mul_add, MultilinearPoint,
+        mixed_dot, scalar_mul_add,
     },
     hash::Hash,
-    protocols::whir_zk::utils::{
-        build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
-        fold_weight_to_mask_size, BlindingPolynomials,
+    protocols::{
+        whir::FinalClaim,
+        whir_zk::utils::{
+            build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
+            fold_weight_to_mask_size, BlindingPolynomials,
+        },
     },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
@@ -38,7 +41,7 @@ use crate::{
     feature = "tracing",
     instrument(skip_all, name = "evaluate_gamma_block")
 )]
-fn evaluate_gamma_block<F: FftField + PrimeField>(
+fn evaluate_gamma_block<F: FftField>(
     blinding_polynomials: &[BlindingPolynomials<F>],
     h_gammas: &[F],
     masking_challenge: F,
@@ -190,7 +193,7 @@ fn evaluate_gamma_block<F: FftField + PrimeField>(
     (eval_results, beq_weight_accum)
 }
 
-impl<F: FftField + PrimeField> Config<F> {
+impl<F: FftField> Config<F> {
     /// Run the zkWHIR prover: prove evaluation claims on blinded polynomials.
     ///
     /// * `vectors` — original (unmasked) coefficient vectors.
@@ -202,14 +205,14 @@ impl<F: FftField + PrimeField> Config<F> {
     /// inner witness-side WHIR prover.
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
-    pub fn prove<H, R>(
+    pub fn prove<'a, H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
-        vectors: &[Cow<'_, [F]>],
+        vectors: Vec<Cow<'a, [F]>>,
         witness: Witness<F>,
-        linear_forms: &[Box<dyn LinearForm<F>>],
-        evaluations: &[F],
-    ) -> (MultilinearPoint<F>, Vec<F>)
+        linear_forms: Vec<Box<dyn LinearForm<F>>>,
+        evaluations: Cow<'a, [F]>,
+    ) -> FinalClaim<F>
     where
         H: DuplexSpongeInterface<U = u8>,
         R: ark_std::rand::RngCore + ark_std::rand::CryptoRng,
@@ -260,6 +263,7 @@ impl<F: FftField + PrimeField> Config<F> {
         let num_witness_variables = self.num_witness_variables();
         let num_blinding_variables = self.num_blinding_variables();
         let num_witness_variables_plus_1 = num_witness_variables + 1;
+        drop(vectors); // TODO: These are never touched?
 
         // Compute w_folded evaluations of all blinding vectors before rho for binding.
         let (w_folded_weights, m_evals, w_folded_blinding_evals) = {
@@ -271,7 +275,7 @@ impl<F: FftField + PrimeField> Config<F> {
                 linear_forms.len() * num_polynomials * num_witness_variables_plus_1,
             );
 
-            for weight in linear_forms {
+            for weight in &linear_forms {
                 let w_folded = fold_weight_to_mask_size(
                     weight.as_ref(),
                     num_witness_variables,
@@ -309,6 +313,7 @@ impl<F: FftField + PrimeField> Config<F> {
             .zip(m_evals.iter())
             .map(|(&eval, &m)| eval + m)
             .collect();
+        drop(evaluations);
 
         let initial_in_domain = {
             #[cfg(feature = "tracing")]
@@ -370,7 +375,6 @@ impl<F: FftField + PrimeField> Config<F> {
                 tau2_pow *= tau2;
             }
         }
-
         drop(eval_results);
         drop(blinding_polynomials);
 
@@ -395,7 +399,7 @@ impl<F: FftField + PrimeField> Config<F> {
                 f_hat_vectors.into_iter().map(Cow::Owned).collect(),
                 f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
                 linear_forms,
-                Cow::Borrowed(modified_evaluations.as_slice()),
+                Cow::Owned(modified_evaluations),
             )
         };
 
@@ -421,7 +425,7 @@ impl<F: FftField + PrimeField> Config<F> {
                 prover_state,
                 blinding_vectors.into_iter().map(Cow::Owned).collect(),
                 vec![Cow::Owned(blinding_witness)],
-                &blinding_forms,
+                blinding_forms,
                 Cow::Owned(all_blinding_claims),
             );
         }
