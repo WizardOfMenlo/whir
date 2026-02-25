@@ -15,7 +15,7 @@ use divan::{black_box, AllocProfiler, Bencher};
 use whir::{
     algebra::{
         embedding::{Embedding, Identity},
-        fields::Field64,
+        fields::Field256,
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
         MultilinearPoint,
     },
@@ -28,7 +28,7 @@ use whir::{
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
-type F = Field64;
+type F = Field256;
 type M = Identity<F>;
 
 /// Polynomial sizes to benchmark (log₂ of number of coefficients).
@@ -240,7 +240,6 @@ fn zk_v1_commit(bencher: Bencher, num_variables: usize) {
 
 /// Prove [P₁, P₂] with batch_size=2, μ+1 variables.
 #[divan::bench(args = SIZES)]
-#[ignore = "Very slow due to too small field."]
 fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
@@ -276,7 +275,6 @@ fn zk_v1_prove(bencher: Bencher, num_variables: usize) {
 
 /// Verify [P₁, P₂] via standard WHIR.
 #[divan::bench(args = SIZES)]
-#[ignore = "Very slow due to too small field."]
 fn zk_v1_verify(bencher: Bencher, num_variables: usize) {
     let bundles = make_zk_v1_polys(num_variables, NUM_POLYS);
     let prove_config = zk_v1_prove_config(num_variables, NUM_POLYS);
