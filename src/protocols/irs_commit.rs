@@ -17,11 +17,6 @@
 //! fewer than `in_domain_samples` distinct rows. This produces `in_domain_samples` evaluation
 //! points in `F` and `in_domain_samples` by `num_vectors * interleaving_depth`.
 //!
-//! *To do:*:
-//! - Consistently Reframe as vector commitment protocol (or, with batching, a matrix commitment protocol).
-//! - Instead of `expansion` have `codeword_size` to allow non-integer expansion ratios.
-//! - Support mixed `num_polys` openings.
-
 use std::{
     f64::{self, consts::LOG2_10},
     fmt,
@@ -189,6 +184,10 @@ where
             };
             (security_target / (-per_sample.log2())).ceil() as usize
         };
+        debug_assert_eq!(
+            in_domain_samples,
+            num_in_domain_queries(unique_decoding, security_target, rate)
+        );
 
         Self {
             embedding: Typed::<M>::default(),
@@ -577,8 +576,16 @@ where
     }
 }
 
+/// Return the number of in-domain queries.
+///
+/// This is used by [`whir_zk`].
+// TODO: A method with cleaner abstraction.
 #[allow(clippy::cast_sign_loss)]
-pub fn num_in_domain_queries(unique_decoding: bool, security_target: f64, rate: f64) -> usize {
+pub(crate) fn num_in_domain_queries(
+    unique_decoding: bool,
+    security_target: f64,
+    rate: f64,
+) -> usize {
     // Pick in- and out-of-domain samples.
     // η = slack to Johnson bound. We pick η = √ρ / 20.
     // TODO: Optimize picking η.
