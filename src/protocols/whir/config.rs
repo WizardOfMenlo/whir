@@ -462,7 +462,7 @@ where
     F: FftField,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "  commit   {}", self.irs_committer,)?;
+        writeln!(f, "  commit   {}", self.irs_committer)?;
         writeln!(f, "  pow      {:.2} bits", self.pow.difficulty())?;
         writeln!(f, "  sumcheck {}", self.sumcheck)
     }

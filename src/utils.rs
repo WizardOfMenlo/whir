@@ -22,15 +22,21 @@ pub const fn workload_size<T: Sized>() -> usize {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     const CACHE_SIZE: usize = 1 << 17; // 128KB for Apple Silicon
 
-    #[cfg(all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")))]
-    const CACHE_SIZE: usize = 1 << 16; // 64KB for mobile ARM
+    #[cfg(all(
+        target_arch = "aarch64",
+        any(target_os = "ios", target_os = "android", target_os = "linux")
+    ))]
+    const CACHE_SIZE: usize = 1 << 16; // 64KB for mobile/server ARM
 
     #[cfg(target_arch = "x86_64")]
     const CACHE_SIZE: usize = 1 << 15; // 32KB for x86-64
 
     #[cfg(not(any(
         all(target_arch = "aarch64", target_os = "macos"),
-        all(target_arch = "aarch64", any(target_os = "ios", target_os = "android")),
+        all(
+            target_arch = "aarch64",
+            any(target_os = "ios", target_os = "android", target_os = "linux")
+        ),
         target_arch = "x86_64"
     )))]
     const CACHE_SIZE: usize = 1 << 15; // 32KB default
