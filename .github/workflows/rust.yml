@@ -52,3 +52,15 @@ jobs:
           components: rustfmt
       - name: Rustfmt Check
         run: cargo fmt --all --check
+
+  unused_deps:
+    name: check for unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: machete
+        uses: bnjbvr/cargo-machete@main
