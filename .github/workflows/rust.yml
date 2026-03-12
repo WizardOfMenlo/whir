@@ -54,7 +54,7 @@ jobs:
         run: cargo fmt --all --check
 
   unused_deps:
-    name: check for unused dependencies
+    name: Check for unused dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
