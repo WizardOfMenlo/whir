@@ -351,8 +351,9 @@ fn hash_rows_serial<T: Encodable + Send + Sync>(
     if encoder.is_buffered() {
         // Buffered encoder, find some optimal size.
         let target = workload_size::<u8>() / 8;
-        let batch_size = (target / message_size).next_multiple_of(engine.preferred_batch_size());
-        assert!(batch_size >= 1);
+        let batch_size = (target / message_size)
+            .max(1)
+            .next_multiple_of(engine.preferred_batch_size());
         for (matrix, out) in
             zip_strict(matrix.chunks(batch_size * cols), out.chunks_mut(batch_size))
         {
@@ -409,7 +410,7 @@ pub(crate) mod tests {
         Standard: Distribution<T>,
     {
         crate::tests::init();
-        assert!(layers >= merkle_tree::layers_for_size(num_rows));
+        assert!(layers >= merkle_tree::layers_for_size(num_rows).len());
         assert!(indices.iter().all(|&index| index < num_rows));
 
         // Config
@@ -417,9 +418,27 @@ pub(crate) mod tests {
             element_type: Type::<T>::new(),
             num_cols,
             leaf_hash_id: leaf_hash,
-            merkle_tree: merkle_tree::Config {
-                num_leaves: num_rows,
-                layers: vec![merkle_tree::LayerConfig { hash_id: node_hash }; layers],
+            merkle_tree: {
+                // Build a mixed-arity layer config with extra binary layers on top.
+                let base_arities = merkle_tree::layers_for_size(num_rows);
+                let extra = layers.saturating_sub(base_arities.len());
+                let mut layer_configs = Vec::with_capacity(layers);
+                for _ in 0..extra {
+                    layer_configs.push(merkle_tree::LayerConfig {
+                        hash_id: node_hash,
+                        arity: 2,
+                    });
+                }
+                for &arity in &base_arities {
+                    layer_configs.push(merkle_tree::LayerConfig {
+                        hash_id: node_hash,
+                        arity,
+                    });
+                }
+                merkle_tree::Config {
+                    num_leaves: num_rows,
+                    layers: layer_configs,
+                }
             },
         };
         let ds = DomainSeparator::protocol(&config)
@@ -464,26 +483,33 @@ pub(crate) mod tests {
         T: Clone + TypeInfo + Encodable + Send + Sync,
         Standard: Distribution<T>,
     {
+        // Smooth-{2,3,13} values (2^a * 3^b * 13^c) up to ~120.
+        let smooth_rows: Vec<usize> = vec![
+            0, 1, 2, 3, 4, 6, 8, 9, 12, 13, 16, 18, 24, 26, 27, 32, 36, 39, 48, 52, 54, 64, 72, 78,
+            96, 104, 117,
+        ];
         let hashes = [hash::COPY, hash::SHA2, hash::SHA3, hash::BLAKE3];
         proptest!(|(
             seed: u64,
             leaf_hash in 0_usize..hashes.len(),
             node_hash in 1_usize..hashes.len(),
             layers in 0_usize..10,
-            num_rows in 0_usize..100,
+            row_idx in 0_usize..smooth_rows.len(),
             num_cols in 0_usize..100,
             num_indices in 0_usize..100,
         )| {
+            let num_rows = smooth_rows[row_idx];
+
             // There are no valid indices without rows.
             let num_indices = if num_rows == 0 { 0 } else { num_indices };
 
             // We need at least enough layers to cover the number of rows.
-            let layers = layers + merkle_tree::layers_for_size(num_rows);
+            let layers = layers + merkle_tree::layers_for_size(num_rows).len();
 
             let leaf_hash = hashes[leaf_hash];
             let node_hash = hashes[node_hash];
             prop_assume!(hash::ENGINES.retrieve(leaf_hash).unwrap().supports_size(T::encoded_size() * num_cols));
-            prop_assume!(hash::ENGINES.retrieve(node_hash).unwrap().supports_size(64));
+            prop_assume!(hash::ENGINES.retrieve(node_hash).unwrap().supports_size(merkle_tree::MAX_NODE_HASH_SIZE));
 
             let mut rng = StdRng::seed_from_u64(seed);
             let indices = (0..num_indices).map(|_| rng.gen_range(0..num_rows)).collect::<Vec<_>>();

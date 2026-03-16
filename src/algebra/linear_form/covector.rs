@@ -15,7 +15,10 @@ impl<F: Field> LinearForm<F> for Covector<F> {
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
-        multilinear_extend(&self.vector, point)
+        let k = self.vector.len().trailing_zeros() as usize;
+        let extra = point.len().saturating_sub(k);
+        let head_factor: F = point[..extra].iter().map(|p| F::ONE - *p).product::<F>();
+        head_factor * multilinear_extend(&self.vector, &point[extra..])
     }
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {

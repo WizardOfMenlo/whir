@@ -40,6 +40,12 @@ pub struct NttEngine<F: Field> {
     omega_16_3: F,
     omega_16_9: F,
 
+    // Winograd constants for the 13-point DFT:
+    // C_m = (ω₁₃^m + ω₁₃^{13-m}) / 2 for m = 1..6
+    // S_m = (ω₁₃^m - ω₁₃^{13-m}) / 2 for m = 1..6
+    omega_13_c: [F; 6],
+    omega_13_s: [F; 6],
+
     // Root lookup table (extended on demand)
     roots: RwLock<Vec<F>>,
 }
@@ -86,8 +92,29 @@ impl<F: FftField> NttEngine<F> {
 
     /// Construct a new engine from the field's `FftField` trait.
     pub(crate) fn new_from_fftfield() -> Self {
-        // TODO: Support SMALL_SUBGROUP
-        if F::TWO_ADICITY <= 63 {
+        if let Some(large_root) = F::LARGE_SUBGROUP_ROOT_OF_UNITY {
+            let q = F::SMALL_SUBGROUP_BASE.unwrap() as usize;
+            let q_adicity = F::SMALL_SUBGROUP_BASE_ADICITY.unwrap();
+            let two_adicity = F::TWO_ADICITY.min(63) as u32;
+
+            let mut order = 1usize << two_adicity;
+            for _ in 0..q_adicity {
+                order = order
+                    .checked_mul(q)
+                    .expect("Mixed-radix NTT order overflows usize");
+            }
+
+            let mut generator = large_root;
+            if F::TWO_ADICITY > 63 {
+                for _ in 0..(F::TWO_ADICITY - 63) {
+                    generator = generator.square();
+                }
+            }
+
+            let (order, generator) = try_extend_order_with_primes(order, generator, &[13]);
+
+            Self::new(order, generator)
+        } else if F::TWO_ADICITY <= 63 {
             Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
         } else {
             let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
@@ -99,11 +126,107 @@ impl<F: FftField> NttEngine<F> {
     }
 }
 
+/// Extend the NTT order by extra small primes dividing |F*| beyond `order`.
+fn try_extend_order_with_primes<F: FftField>(
+    mut order: usize,
+    mut root: F,
+    extra_primes: &[usize],
+) -> (usize, F) {
+    let char_limbs = F::characteristic();
+    let mut p_minus_1: Vec<u8> = char_limbs
+        .iter()
+        .flat_map(|limb| limb.to_le_bytes())
+        .collect();
+    let mut borrow = 1u16;
+    for byte in &mut p_minus_1 {
+        let diff = (*byte as u16).wrapping_sub(borrow);
+        *byte = diff as u8;
+        borrow = if diff > 255 { 1 } else { 0 };
+    }
+    while p_minus_1.last() == Some(&0) && p_minus_1.len() > 1 {
+        p_minus_1.pop();
+    }
+
+    for &p in extra_primes {
+        let extended_order = match order.checked_mul(p) {
+            Some(ext) => ext,
+            None => continue,
+        };
+
+        let mut cofactor = p_minus_1.clone();
+        let mut remaining = extended_order;
+        while remaining % 2 == 0 {
+            if cofactor[0] & 1 != 0 {
+                break;
+            }
+            let mut carry = 0u8;
+            for byte in cofactor.iter_mut().rev() {
+                let new_carry = *byte & 1;
+                *byte = (*byte >> 1) | (carry << 7);
+                carry = new_carry;
+            }
+            remaining /= 2;
+        }
+        if remaining != extended_order >> extended_order.trailing_zeros() {
+            continue;
+        }
+
+        let mut divisible = true;
+        if remaining > 1 {
+            let divisor = remaining as u128;
+            let mut carry: u128 = 0;
+            for byte in cofactor.iter_mut().rev() {
+                let cur = carry * 256 + *byte as u128;
+                *byte = (cur / divisor) as u8;
+                carry = cur % divisor;
+            }
+            if carry != 0 {
+                divisible = false;
+            }
+        }
+        if !divisible {
+            continue;
+        }
+
+        while cofactor.last() == Some(&0) && cofactor.len() > 1 {
+            cofactor.pop();
+        }
+
+        let cofactor_limbs: Vec<u64> = cofactor
+            .chunks(8)
+            .map(|chunk: &[u8]| {
+                let mut bytes = [0u8; 8];
+                bytes[..chunk.len()].copy_from_slice(chunk);
+                u64::from_le_bytes(bytes)
+            })
+            .collect();
+
+        for g in [2u64, 3, 5, 7, 11] {
+            let candidate = F::from(g).pow(&cofactor_limbs);
+            if candidate.pow([extended_order as u64]) != F::ONE {
+                continue;
+            }
+            if candidate.pow([(extended_order / 2) as u64]) == F::ONE {
+                continue;
+            }
+            if candidate.pow([(extended_order / p) as u64]) == F::ONE {
+                continue;
+            }
+            if extended_order % 3 == 0 && candidate.pow([(extended_order / 3) as u64]) == F::ONE {
+                continue;
+            }
+            order = extended_order;
+            root = candidate;
+            break;
+        }
+    }
+    (order, root)
+}
+
 /// Creates a new NttEngine. `omega_order` must be a primitive root of unity of even order `omega`.
 impl<F: Field> NttEngine<F> {
     pub fn new(order: usize, omega_order: F) -> Self {
         assert!(order.trailing_zeros() > 0, "Order must be a multiple of 2.");
-        // TODO: Assert that omega factors into 2s and 3s.
         assert_eq!(omega_order.pow([order as u64]), F::ONE);
         assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
         let mut res = Self {
@@ -117,6 +240,8 @@ impl<F: Field> NttEngine<F> {
             omega_16_1: F::ZERO,
             omega_16_3: F::ZERO,
             omega_16_9: F::ZERO,
+            omega_13_c: [F::ZERO; 6],
+            omega_13_s: [F::ZERO; 6],
             roots: RwLock::new(Vec::new()),
         };
         if order.is_multiple_of(3) {
@@ -137,6 +262,16 @@ impl<F: Field> NttEngine<F> {
             res.omega_16_1 = res.root(16);
             res.omega_16_3 = res.omega_16_1.pow([3]);
             res.omega_16_9 = res.omega_16_1.pow([9]);
+        }
+        if order.is_multiple_of(13) {
+            let w = res.root(13);
+            let two_inv = F::from(2u64).inverse().unwrap();
+            for m in 1..=6 {
+                let wm = w.pow([m as u64]);
+                let wn = w.pow([(13 - m) as u64]);
+                res.omega_13_c[m - 1] = (wm + wn) * two_inv;
+                res.omega_13_s[m - 1] = (wm - wn) * two_inv;
+            }
         }
         res
     }
@@ -353,6 +488,54 @@ impl<F: Field> NttEngine<F> {
                     (v[11], v[14]) = (v[14], v[11]);
                 }
             }
+            13 => {
+                // Winograd-style 13-point DFT exploiting ω^{13-m} = ω^{-m}.
+                // Pairs outputs X[k] and X[13-k] via symmetric/antisymmetric
+                // decomposition, reducing from 169 to 72 multiplications.
+                let [c1, c2, c3, c4, c5, c6] = self.omega_13_c;
+                let [t1, t2, t3, t4, t5, t6] = self.omega_13_s;
+                for v in values.chunks_exact_mut(13) {
+                    let v0 = v[0];
+                    let (s1, d1) = (v[1] + v[12], v[1] - v[12]);
+                    let (s2, d2) = (v[2] + v[11], v[2] - v[11]);
+                    let (s3, d3) = (v[3] + v[10], v[3] - v[10]);
+                    let (s4, d4) = (v[4] + v[9], v[4] - v[9]);
+                    let (s5, d5) = (v[5] + v[8], v[5] - v[8]);
+                    let (s6, d6) = (v[6] + v[7], v[6] - v[7]);
+
+                    v[0] = v0 + s1 + s2 + s3 + s4 + s5 + s6;
+
+                    // k=1: C-idx [1,2,3,4,5,6], S-signs [+,+,+,+,+,+]
+                    let sc = c1 * s1 + c2 * s2 + c3 * s3 + c4 * s4 + c5 * s5 + c6 * s6;
+                    let ss = t1 * d1 + t2 * d2 + t3 * d3 + t4 * d4 + t5 * d5 + t6 * d6;
+                    (v[1], v[12]) = (v0 + sc + ss, v0 + sc - ss);
+
+                    // k=2: C-idx [2,4,6,5,3,1], S-signs [+,+,+,-,-,-]
+                    let sc = c2 * s1 + c4 * s2 + c6 * s3 + c5 * s4 + c3 * s5 + c1 * s6;
+                    let ss = t2 * d1 + t4 * d2 + t6 * d3 - t5 * d4 - t3 * d5 - t1 * d6;
+                    (v[2], v[11]) = (v0 + sc + ss, v0 + sc - ss);
+
+                    // k=3: C-idx [3,6,4,1,2,5], S-signs [+,+,-,-,+,+]
+                    let sc = c3 * s1 + c6 * s2 + c4 * s3 + c1 * s4 + c2 * s5 + c5 * s6;
+                    let ss = t3 * d1 + t6 * d2 - t4 * d3 - t1 * d4 + t2 * d5 + t5 * d6;
+                    (v[3], v[10]) = (v0 + sc + ss, v0 + sc - ss);
+
+                    // k=4: C-idx [4,5,1,3,6,2], S-signs [+,-,-,+,-,-]
+                    let sc = c4 * s1 + c5 * s2 + c1 * s3 + c3 * s4 + c6 * s5 + c2 * s6;
+                    let ss = t4 * d1 - t5 * d2 - t1 * d3 + t3 * d4 - t6 * d5 - t2 * d6;
+                    (v[4], v[9]) = (v0 + sc + ss, v0 + sc - ss);
+
+                    // k=5: C-idx [5,3,2,6,1,4], S-signs [+,-,+,-,-,+]
+                    let sc = c5 * s1 + c3 * s2 + c2 * s3 + c6 * s4 + c1 * s5 + c4 * s6;
+                    let ss = t5 * d1 - t3 * d2 + t2 * d3 - t6 * d4 - t1 * d5 + t4 * d6;
+                    (v[5], v[8]) = (v0 + sc + ss, v0 + sc - ss);
+
+                    // k=6: C-idx [6,1,5,2,4,3], S-signs [+,-,+,-,+,-]
+                    let sc = c6 * s1 + c1 * s2 + c5 * s3 + c2 * s4 + c4 * s5 + c3 * s6;
+                    let ss = t6 * d1 - t1 * d2 + t5 * d3 - t2 * d4 + t4 * d5 - t3 * d6;
+                    (v[6], v[7]) = (v0 + sc + ss, v0 + sc - ss);
+                }
+            }
             size => self.ntt_recurse(values, roots, size),
         }
     }
@@ -458,7 +641,7 @@ mod tests {
     use ark_ff::{AdditiveGroup as _, BigInteger, PrimeField};
 
     use super::*;
-    use crate::algebra::fields::Field64;
+    use crate::algebra::fields::{Field256, Field64};
 
     #[test]
     fn test_new_from_fftfield_basic() {
@@ -962,5 +1145,222 @@ mod tests {
         engine.ntt_batch(&mut values_ntt, 32);
 
         assert_eq!(values_ntt, expected_values);
+    }
+
+    #[test]
+    fn test_field256_mixed_radix_engine() {
+        // Field256 (BN254 Fr) should have a mixed-radix engine with order 2^28 * 3^2 * 13.
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+        let expected_order = (1usize << 28) * 9 * 13;
+        assert_eq!(engine.order, expected_order);
+
+        // Verify the root of unity has the correct order.
+        assert_eq!(
+            engine.omega_order.pow([expected_order as u64]),
+            Field256::ONE
+        );
+        assert_ne!(
+            engine.omega_order.pow([(expected_order / 2) as u64]),
+            Field256::ONE
+        );
+        assert_ne!(
+            engine.omega_order.pow([(expected_order / 3) as u64]),
+            Field256::ONE
+        );
+        assert_ne!(
+            engine.omega_order.pow([(expected_order / 13) as u64]),
+            Field256::ONE
+        );
+    }
+
+    #[test]
+    fn test_field256_mixed_radix_roots() {
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        // Verify roots for mixed-radix sizes.
+        assert!(engine.checked_root(3).is_some());
+        assert!(engine.checked_root(9).is_some());
+        assert!(engine.checked_root(6).is_some()); // 2 * 3
+        assert!(engine.checked_root(12).is_some()); // 4 * 3
+        assert!(engine.checked_root(18).is_some()); // 2 * 9
+        assert!(engine.checked_root(36).is_some()); // 4 * 9
+
+        // Verify root properties.
+        let root_3 = engine.root(3);
+        assert_eq!(root_3.pow([3]), Field256::ONE);
+        assert_ne!(root_3, Field256::ONE);
+
+        let root_9 = engine.root(9);
+        assert_eq!(root_9.pow([9]), Field256::ONE);
+        assert_ne!(root_9.pow([3]), Field256::ONE);
+
+        let root_36 = engine.root(36);
+        assert_eq!(root_36.pow([36]), Field256::ONE);
+        assert_ne!(root_36.pow([18]), Field256::ONE);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_3() {
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        // NTT of size 3 over Field256 (BN254 Fr).
+        let values: Vec<_> = (1..=3).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(3);
+        let mut expected = vec![Field256::ZERO; 3];
+        for k in 0..3 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 3);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_9() {
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        // NTT of size 9 over Field256 (BN254 Fr).
+        let values: Vec<_> = (1..=9).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(9);
+        let mut expected = vec![Field256::ZERO; 9];
+        for k in 0..9 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 9);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_12() {
+        // 12 = 4 * 3, a mixed-radix size.
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        let values: Vec<_> = (1..=12).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(12);
+        let mut expected = vec![Field256::ZERO; 12];
+        for k in 0..12 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 12);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_13() {
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        // NTT of size 13 over Field256 (BN254 Fr).
+        let values: Vec<_> = (1..=13).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(13);
+        let mut expected = vec![Field256::ZERO; 13];
+        for k in 0..13 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 13);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_26() {
+        // 26 = 2 * 13, a mixed-radix size.
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        let values: Vec<_> = (1..=26).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(26);
+        let mut expected = vec![Field256::ZERO; 26];
+        for k in 0..26 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 26);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_size_39() {
+        // 39 = 3 * 13, a mixed-radix size.
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+
+        let values: Vec<_> = (1..=39).map(Field256::from).collect();
+        let mut values_ntt = values.clone();
+
+        let omega = engine.root(39);
+        let mut expected = vec![Field256::ZERO; 39];
+        for k in 0..39 {
+            let omega_k = omega.pow([k as u64]);
+            expected[k] = values
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| v * omega_k.pow([j as u64]))
+                .sum();
+        }
+
+        engine.ntt_batch(&mut values_ntt, 39);
+        assert_eq!(values_ntt, expected);
+    }
+
+    #[test]
+    fn test_field256_ntt_roundtrip_mixed() {
+        // Test NTT → INTT roundtrip for mixed-radix sizes.
+        use ark_std::UniformRand;
+
+        let engine = NttEngine::<Field256>::new_from_fftfield();
+        let mut rng = ark_std::test_rng();
+
+        for size in [
+            3, 6, 9, 12, 13, 18, 26, 36, 39, 52, 72, 78, 104, 117, 144, 156,
+        ] {
+            let original: Vec<_> = (0..size).map(|_| Field256::rand(&mut rng)).collect();
+            let mut values = original.clone();
+
+            engine.ntt_batch(&mut values, size);
+            engine.intt_batch(&mut values, size);
+
+            // INTT omits the 1/n scaling factor, so we need to multiply by 1/n.
+            let n_inv = Field256::from(size as u64).inverse().unwrap();
+            for v in &mut values {
+                *v *= n_inv;
+            }
+
+            assert_eq!(values, original, "Roundtrip failed for size {size}");
+        }
     }
 }

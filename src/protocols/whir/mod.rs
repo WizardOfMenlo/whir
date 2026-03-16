@@ -66,6 +66,13 @@ pub struct FinalClaim<F: Field> {
     /// Claimed value of the rlc of the mle of the linears forms in the point.
     /// Note: not computed on the prover side, set to zero instead.
     pub linear_form_rlc: F,
+    /// Number of binary (halving) folds before the final-sumcheck pad.
+    ///
+    /// For power-of-2 sizes this equals `evaluation_point.len()` (all folds
+    /// are binary).  For smooth-domain sizes `2^a * 3^b * 13^c` this equals
+    /// the number of sumcheck rounds that halve even-length vectors, before
+    /// the final sumcheck pads the odd residual to a power of two.
+    pub binary_folds: usize,
 }
 
 impl<F: Field> FinalClaim<F> {
@@ -74,11 +81,58 @@ impl<F: Field> FinalClaim<F> {
         linear_forms: impl IntoIterator<Item = &'a dyn LinearForm<F>>,
     ) -> VerificationResult<()> {
         let rlc = zip_strict(&self.rlc_coefficients, linear_forms)
-            .map(|(&c, l)| c * l.mle_evaluate(&self.evaluation_point))
+            .map(|(&c, l)| {
+                c * fold_based_mle_evaluate(l, &self.evaluation_point, self.binary_folds)
+            })
             .sum::<F>();
         verify!(rlc == self.linear_form_rlc);
         Ok(())
     }
+}
+
+/// Evaluate a linear form's MLE using the fold-based semantics that match
+/// the sumcheck prover's actual fold sequence.
+///
+/// For power-of-2 sizes this delegates to the fast `mle_evaluate`.  For
+/// smooth-domain sizes (where `N/2 ≠ 2^{n-1}`), the function materialises the
+/// weight vector, performs `binary_folds` halvings (matching the sumcheck's
+/// `fold` at `len/2`), pads the residual to a power of two, then finishes
+/// with a standard `multilinear_extend`.
+pub fn fold_based_mle_evaluate<F: Field>(
+    lf: &dyn LinearForm<F>,
+    point: &[F],
+    binary_folds: usize,
+) -> F {
+    use crate::algebra::multilinear_extend;
+
+    let size = lf.size();
+
+    // Fast path: power-of-2 sizes have fold ≡ standard MLE.
+    if size.is_power_of_two() {
+        return lf.mle_evaluate(point);
+    }
+
+    // Materialise the weight vector.
+    let mut w = vec![F::ZERO; size];
+    lf.accumulate(&mut w, F::ONE);
+
+    // Binary halvings (matching sumcheck's fold at len/2).
+    for j in 0..binary_folds {
+        let half = w.len() / 2;
+        let r = point[j];
+        for i in 0..half {
+            let delta = (w[i + half] - w[i]) * r;
+            w[i] += delta;
+        }
+        w.truncate(half);
+    }
+
+    // Pad residual to next power of two.
+    let padded = w.len().next_power_of_two();
+    w.resize(padded, F::ZERO);
+
+    // Standard MLE for remaining variables.
+    multilinear_extend(&w, &point[binary_folds..])
 }
 
 impl<M> Config<M>
