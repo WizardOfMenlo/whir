@@ -38,7 +38,7 @@ use crate::{
         lift,
         linear_form::UnivariateEvaluation,
         mixed_univariate_evaluate,
-        ntt::{self, interleaved_rs_encode},
+        ntt::{self, interleaved_rs_encode, EvaluationOrder},
     },
     engines::EngineId,
     hash::Hash,
@@ -376,6 +376,7 @@ where
         &self,
         prover_state: &mut ProverState<H, R>,
         witnesses: &[&Witness<M::Source, M::Target>],
+        eval_order: EvaluationOrder,
     ) -> Evaluations<M::Source>
     where
         H: DuplexSpongeInterface,
@@ -393,7 +394,7 @@ where
         }
 
         // Get in-domain openings
-        let (indices, points) = self.in_domain_challenges(prover_state);
+        let (indices, points) = self.in_domain_challenges(prover_state, eval_order);
 
         // For each commitment, send the selected rows to the verifier
         // and collect them in the evaluation matrix.
@@ -429,6 +430,7 @@ where
         &self,
         verifier_state: &mut VerifierState<H>,
         commitments: &[&Commitment<M::Target>],
+        eval_order: EvaluationOrder,
     ) -> VerificationResult<Evaluations<M::Source>>
     where
         H: DuplexSpongeInterface,
@@ -443,7 +445,7 @@ where
         }
 
         // Get in-domain openings
-        let (indices, points) = self.in_domain_challenges(verifier_state);
+        let (indices, points) = self.in_domain_challenges(verifier_state, eval_order);
 
         // Receive (as a hint) a matrix of all the columns of all the commitments
         // corresponding to the in-domain opening rows.
@@ -473,7 +475,11 @@ where
         Ok(Evaluations { points, matrix })
     }
 
-    fn in_domain_challenges<T>(&self, transcript: &mut T) -> (Vec<usize>, Vec<M::Source>)
+    fn in_domain_challenges<T>(
+        &self,
+        transcript: &mut T,
+        eval_order: EvaluationOrder,
+    ) -> (Vec<usize>, Vec<M::Source>)
     where
         T: VerifierMessage,
         u8: Decoding<[T::U]>,
@@ -490,7 +496,9 @@ where
         let generator = self.generator();
         let points = indices
             .iter()
-            .map(|index| generator.pow([*index as u64]))
+            .map(|index| {
+                generator.pow([eval_order.evaluation_index(*index, self.codeword_length) as u64])
+            })
             .collect::<Vec<_>>();
 
         (indices, points)

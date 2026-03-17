@@ -11,7 +11,9 @@ use crate::{
     algebra::{
         embedding::Identity,
         linear_form::{Covector, Evaluate, LinearForm},
-        mixed_dot, scalar_mul_add,
+        mixed_dot,
+        ntt::NTT,
+        scalar_mul_add,
     },
     hash::Hash,
     protocols::{
@@ -222,6 +224,11 @@ impl<F: FftField> Config<F> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for this field")
+            .evaluation_order();
+
         assert_eq!(
             self.blinded_commitment.initial_committer.num_vectors, 1,
             "zkWHIR currently expects one vector per commitment"
@@ -321,7 +328,7 @@ impl<F: FftField> Config<F> {
             let witness_refs: Vec<_> = f_hat_witnesses.iter().collect();
             self.blinded_commitment
                 .initial_committer
-                .open(prover_state, &witness_refs)
+                .open(prover_state, &witness_refs, eval_order)
         };
 
         // Expand base queries into coset points for the first folding round.

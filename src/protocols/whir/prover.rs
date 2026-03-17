@@ -13,6 +13,7 @@ use crate::{
         lift,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
+        ntt::NTT,
         sumcheck::fold,
         tensor_product, MultilinearPoint,
     },
@@ -222,6 +223,21 @@ where
 
         debug_assert_eq!(dot(&vector, &covector), the_sum);
 
+        let eval_order_source = NTT
+            .get::<M::Source>()
+            .expect("no NTT registered for Source field")
+            .evaluation_order();
+        let eval_order = NTT
+            .get::<M::Target>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
+        // Technically not a hard restriction but want to limit the number of parameters passed to verify
+        assert_eq!(
+            eval_order_source, eval_order,
+            "Order for Source and Target fields differ."
+        );
+
         // Execute standard WHIR rounds on the batched vectors
         for (round_index, round_config) in self.round_configs.iter().enumerate() {
             // Commit to the vector, this generates out-of-domain evaluations.
@@ -235,14 +251,14 @@ where
                 RoundWitness::Initial(init_witnesses) => {
                     let witness_refs: Vec<&_> = init_witnesses.iter().map(|c| &**c).collect();
                     self.initial_committer
-                        .open(prover_state, &witness_refs)
+                        .open(prover_state, &witness_refs, eval_order)
                         .lift(self.embedding())
                 }
                 RoundWitness::Round(old_witness) => {
                     let prev_round_config = &self.round_configs[round_index - 1];
                     prev_round_config
                         .irs_committer
-                        .open(prover_state, &[&old_witness])
+                        .open(prover_state, &[&old_witness], eval_order)
                 }
             };
 
@@ -295,13 +311,16 @@ where
         match prev_witness {
             RoundWitness::Initial(init_witnesses) => {
                 let witness_refs: Vec<&_> = init_witnesses.iter().map(|c| &**c).collect();
-                let _in_domain = self.initial_committer.open(prover_state, &witness_refs);
+                let _in_domain =
+                    self.initial_committer
+                        .open(prover_state, &witness_refs, eval_order);
             }
             RoundWitness::Round(old_witness) => {
                 let prev_config = self.round_configs.last().unwrap();
-                let _in_domain = prev_config
-                    .irs_committer
-                    .open(prover_state, &[&old_witness]);
+                let _in_domain =
+                    prev_config
+                        .irs_committer
+                        .open(prover_state, &[&old_witness], eval_order);
             }
         }
 

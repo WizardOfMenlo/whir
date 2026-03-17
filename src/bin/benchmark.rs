@@ -13,6 +13,7 @@ use whir::{
         embedding::{Basefield, Embedding, Identity},
         fields::{Field128, Field192, Field256, Field64, Field64_2, Field64_3},
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
+        ntt::NTT,
         MultilinearPoint,
     },
     bits::Bits,
@@ -120,6 +121,21 @@ where
     let first_round_folding_factor = args.first_round_folding_factor;
     let unique_decoding = args.unique_decoding;
 
+    let eval_order_source = NTT
+        .get::<M::Source>()
+        .expect("no NTT registered for Source field")
+        .evaluation_order();
+    let eval_order = NTT
+        .get::<M::Target>()
+        .expect("no NTT registered for Target field")
+        .evaluation_order();
+
+    // Technically not a hard restriction but want to limit the number of parameters passed to verify
+    assert_eq!(
+        eval_order_source, eval_order,
+        "Order for Source and Target fields differ."
+    );
+
     std::fs::create_dir_all("outputs").unwrap();
 
     let num_coeffs = 1 << num_variables;
@@ -185,7 +201,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             let final_claim = params
-                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &evaluations,
+                    eval_order,
+                )
                 .unwrap();
             final_claim.verify([]).unwrap();
         }
@@ -268,7 +289,12 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             let final_claim = params
-                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .verify(
+                    &mut verifier_state,
+                    &[&commitment],
+                    &evaluations,
+                    eval_order,
+                )
                 .unwrap();
             final_claim
                 .verify(

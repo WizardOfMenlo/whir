@@ -7,6 +7,7 @@ use whir::{
         embedding::{Basefield, Embedding, Identity},
         fields::{Field128, Field192, Field256, Field64, Field64_2, Field64_3},
         linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+        ntt::NTT,
         MultilinearPoint,
     },
     bits::Bits,
@@ -110,6 +111,21 @@ where
     let num_linear_constraints = args.num_linear_constraints;
     let hash_id = args.hash.hash_id();
 
+    let eval_order_source = NTT
+        .get::<M::Source>()
+        .expect("no NTT registered for Source field")
+        .evaluation_order();
+    let eval_order = NTT
+        .get::<M::Target>()
+        .expect("no NTT registered for Target field")
+        .evaluation_order();
+
+    // Technically not a hard restriction but want to limit the number of parameters passed to verify
+    assert_eq!(
+        eval_order_source, eval_order,
+        "Order for Source and Target fields differ."
+    );
+
     if num_evaluations + num_linear_constraints == 0 {
         println!("No constraints specified, running as low-degree-test.");
     }
@@ -203,7 +219,12 @@ where
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
         let final_claim = params
-            .verify(&mut verifier_state, &[&commitment], &evaluations)
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &evaluations,
+                eval_order,
+            )
             .unwrap();
         final_claim
             .verify(
@@ -240,6 +261,10 @@ where
     let num_evaluations = args.num_evaluations;
     let num_linear_constraints = args.num_linear_constraints;
     let hash_id = args.hash.hash_id();
+    let eval_order = NTT
+        .get::<F>()
+        .expect("no NTT registered for Target field")
+        .evaluation_order();
 
     if num_evaluations + num_linear_constraints == 0 {
         println!("No constraints specified, running as low-degree-test.");
@@ -347,6 +372,7 @@ where
                 &weight_dyn_refs,
                 &evaluations,
                 &commitment,
+                eval_order,
             )
             .unwrap();
     }

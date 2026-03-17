@@ -8,6 +8,7 @@ use crate::{
         dot,
         embedding::{Embedding, Identity},
         linear_form::{Evaluate, LinearForm, MultilinearExtension},
+        ntt::EvaluationOrder,
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
@@ -50,6 +51,7 @@ where
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<M::Target>],
         evaluations: &[M::Target],
+        eval_order: EvaluationOrder,
     ) -> VerificationResult<FinalClaim<M::Target>>
     where
         H: DuplexSpongeInterface,
@@ -148,16 +150,20 @@ where
                     commitments,
                     batching_weights,
                 } => {
-                    let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
+                    let in_domain =
+                        self.initial_committer
+                            .verify(verifier_state, commitments, eval_order)?;
                     // TODO: Skip lift and keep initial in-domain in subfield for evaluation.
                     // This should be every so slightly more performant.
                     (in_domain.lift(self.embedding()), batching_weights)
                 }
                 RoundCommitment::Round { commitment } => {
                     let prev_round_config = &self.round_configs[round_index - 1];
-                    let in_domain = prev_round_config
-                        .irs_committer
-                        .verify(verifier_state, &[&commitment])?;
+                    let in_domain = prev_round_config.irs_committer.verify(
+                        verifier_state,
+                        &[&commitment],
+                        eval_order,
+                    )?;
                     (in_domain, vec![M::Target::ONE])
                 }
             };
@@ -200,14 +206,18 @@ where
                 commitments,
                 batching_weights,
             } => {
-                let in_domain = self.initial_committer.verify(verifier_state, commitments)?;
+                let in_domain =
+                    self.initial_committer
+                        .verify(verifier_state, commitments, eval_order)?;
                 (in_domain.lift(self.embedding()), batching_weights)
             }
             RoundCommitment::Round { commitment } => {
                 let prev_round_config = &self.round_configs.last().unwrap();
-                let in_domain = prev_round_config
-                    .irs_committer
-                    .verify(verifier_state, &[&commitment])?;
+                let in_domain = prev_round_config.irs_committer.verify(
+                    verifier_state,
+                    &[&commitment],
+                    eval_order,
+                )?;
                 (in_domain, vec![M::Target::ONE])
             }
         };

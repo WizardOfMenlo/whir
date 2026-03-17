@@ -4,7 +4,10 @@ use tracing::instrument;
 
 use super::{Commitment, Config};
 use crate::{
-    algebra::linear_form::{Covector, LinearForm},
+    algebra::{
+        linear_form::{Covector, LinearForm},
+        ntt::EvaluationOrder,
+    },
     hash::Hash,
     protocols::whir_zk::utils::{
         build_blinding_forms, build_combined_and_subproof_claims,
@@ -43,6 +46,7 @@ impl<F: FftField + Field> Config<F> {
         weights: &[&dyn LinearForm<F>],
         evaluations: &[F],
         commitment: &Commitment<F>,
+        eval_order: EvaluationOrder,
     ) -> VerificationResult<()>
     where
         H: DuplexSpongeInterface,
@@ -73,10 +77,11 @@ impl<F: FftField + Field> Config<F> {
         let masking_challenge: F = verifier_state.verifier_message();
         verify!(masking_challenge != F::ZERO);
         let commitments = commitment.f_hat.iter().collect::<Vec<_>>();
-        let initial_in_domain = self
-            .blinded_commitment
-            .initial_committer
-            .verify(verifier_state, &commitments)?;
+        let initial_in_domain = self.blinded_commitment.initial_committer.verify(
+            verifier_state,
+            &commitments,
+            eval_order,
+        )?;
 
         // Expand base queries into coset points for the first folding round.
         let h_gammas = self.all_gammas(&initial_in_domain.points);
@@ -114,7 +119,12 @@ impl<F: FftField + Field> Config<F> {
             .collect();
 
         self.blinded_commitment
-            .verify(verifier_state, &commitments, &modified_evaluations)?
+            .verify(
+                verifier_state,
+                &commitments,
+                &modified_evaluations,
+                eval_order,
+            )?
             .verify(weights.iter().copied())?;
 
         verify!(batched_h_claims == expected_batched_h_claims);
@@ -178,6 +188,7 @@ impl<F: FftField + Field> Config<F> {
                 verifier_state,
                 &blinding_commitments,
                 &all_expected_blinding_claims,
+                eval_order,
             )?
             .verify(blinding_forms)?;
 
