@@ -248,6 +248,7 @@ mod tests {
         algebra::{
             fields::Field64,
             linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+            ntt::NTT,
             MultilinearPoint,
         },
         hash,
@@ -340,6 +341,10 @@ mod tests {
         evaluations: &[F],
         session_tag: &str,
     ) {
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
         let verify_refs = linear_form_refs(forms);
         let prove_forms = to_prove_forms(forms, params.blinded_commitment.initial_size());
         let tag = session_tag.to_owned();
@@ -364,7 +369,13 @@ mod tests {
             .receive_commitments(&mut verifier_state, vectors.len())
             .expect("receive commitments");
         params
-            .verify(&mut verifier_state, &verify_refs, evaluations, &commitment)
+            .verify(
+                &mut verifier_state,
+                &verify_refs,
+                evaluations,
+                &commitment,
+                eval_order,
+            )
             .expect("verify zk wrapper");
     }
 
@@ -417,6 +428,10 @@ mod tests {
     fn test_whir_zk_stage1_rejects_wrong_evaluations() {
         let mut rng = ark_std::test_rng();
         let params = make_test_config(2);
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
 
         let (v0, v1) = make_two_poly_vectors(29, 7);
         let vectors = [&v0[..], &v1[..]];
@@ -455,7 +470,13 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 2)
                 .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &wrong_evaluations, &commitment)
+            params.verify(
+                &mut verifier_state,
+                &refs,
+                &wrong_evaluations,
+                &commitment,
+                eval_order,
+            )
         }));
         if let Ok(result) = verify_outcome {
             assert!(
@@ -469,6 +490,11 @@ mod tests {
     fn test_whir_zk_stage1_rejects_tampered_proof() {
         let mut rng = ark_std::test_rng();
         let params = make_test_config(2);
+
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
 
         let (v0, v1) = make_two_poly_vectors(13, 11);
         let vectors = [&v0[..], &v1[..]];
@@ -510,7 +536,13 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 2)
                 .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &evaluations, &commitment)
+            params.verify(
+                &mut verifier_state,
+                &refs,
+                &evaluations,
+                &commitment,
+                eval_order,
+            )
         }));
         if let Ok(result) = verify_outcome {
             assert!(
@@ -530,6 +562,10 @@ mod tests {
     fn test_whir_zk_malicious_prover_wrong_evaluation() {
         let mut rng = ark_std::test_rng();
         let params = make_test_config(1);
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
@@ -560,7 +596,13 @@ mod tests {
             let commitment = params
                 .receive_commitments(&mut verifier_state, 1)
                 .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &[wrong_evaluation], &commitment)
+            params.verify(
+                &mut verifier_state,
+                &refs,
+                &[wrong_evaluation],
+                &commitment,
+                eval_order,
+            )
         }));
 
         if let Ok(result) = outcome {

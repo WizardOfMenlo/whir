@@ -624,7 +624,9 @@ mod tests {
     use crate::{
         algebra::{
             embedding::{Basefield, Compose, Frobenius, Identity},
-            fields, univariate_evaluate,
+            fields,
+            ntt::NTT,
+            univariate_evaluate,
         },
         transcript::{codecs::U64, DomainSeparator},
     };
@@ -690,6 +692,21 @@ mod tests {
     {
         crate::tests::init();
 
+        let eval_order_source = NTT
+            .get::<M::Source>()
+            .expect("no NTT registered for Source field")
+            .evaluation_order();
+        let eval_order = NTT
+            .get::<M::Target>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
+        // Technically not a hard restriction but want to limit the number of parameters passed to verify
+        assert_eq!(
+            eval_order_source, eval_order,
+            "Order for Source and Target fields differ."
+        );
+
         // Pseudo-random Instance
         let instance = U64(seed);
         let ds = DomainSeparator::protocol(config)
@@ -736,7 +753,8 @@ mod tests {
                 }
             }
         }
-        let in_domain_evals = config.open(&mut prover_state, &[&witness]);
+
+        let in_domain_evals = config.open(&mut prover_state, &[&witness], eval_order);
         if config.deduplicate_in_domain {
             // Sorting is over index order, not points
             assert!(in_domain_evals.points.len() <= config.in_domain_samples);
@@ -780,7 +798,9 @@ mod tests {
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         assert_eq!(commitment.out_of_domain(), witness.out_of_domain());
-        let verifier_in_domain_evals = config.verify(&mut verifier_state, &[&commitment]).unwrap();
+        let verifier_in_domain_evals = config
+            .verify(&mut verifier_state, &[&commitment], eval_order)
+            .unwrap();
         assert_eq!(&verifier_in_domain_evals, &in_domain_evals);
         verifier_state.check_eof().unwrap();
     }

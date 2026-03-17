@@ -142,6 +142,7 @@ mod tests {
             embedding::Basefield,
             fields::{Field64, Field64_3},
             linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
+            ntt::NTT,
             MultilinearPoint,
         },
         hash,
@@ -210,6 +211,11 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
         // Build global configuration from protocol parameters
         let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
@@ -273,7 +279,12 @@ mod tests {
 
         // Verify the proof
         let final_claim = params
-            .verify(&mut verifier_state, &[&commitment], &evaluations)
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &evaluations,
+                eval_order,
+            )
             .unwrap();
         final_claim
             .verify(
@@ -384,6 +395,11 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
         let mut params = Config::new(1 << num_variables, &whir_params);
         params.disable_pow();
         eprintln!("{params}");
@@ -460,7 +476,12 @@ mod tests {
 
         // Verify the batched proof
         let final_claim = params
-            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .verify(
+                &mut verifier_state,
+                &commitment_refs,
+                &evaluations,
+                eval_order,
+            )
             .unwrap();
         final_claim
             .verify(
@@ -553,6 +574,11 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
         let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
 
@@ -614,6 +640,7 @@ mod tests {
                 &mut verifier_state,
                 &[&commitments[0], &commitments[1]],
                 &evaluations,
+                eval_order,
             )
             .unwrap();
         let verifier_result = final_claim.verify(
@@ -659,6 +686,11 @@ mod tests {
             batch_size, // KEY: batch_size > 1
             hash_id: hash::SHA2,
         };
+
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
 
         let mut params = Config::<Basefield<EF>>::new(1 << num_variables, &whir_params);
         params.disable_pow();
@@ -732,7 +764,12 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         let final_claim = params
-            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .verify(
+                &mut verifier_state,
+                &commitment_refs,
+                &evaluations,
+                eval_order,
+            )
             .unwrap();
         final_claim
             .verify(
@@ -813,6 +850,11 @@ mod tests {
             hash_id: hash::SHA2,
         };
 
+        let eval_order = NTT
+            .get::<F>()
+            .expect("no NTT registered for Target field")
+            .evaluation_order();
+
         // Build global configuration from multivariate + protocol parameters
         let mut params = Config::new(1 << num_variables, &whir_params);
         params.disable_pow();
@@ -881,7 +923,7 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         params
-            .verify(&mut verifier_state, &[&commitment], &values)
+            .verify(&mut verifier_state, &[&commitment], &values, eval_order)
             .unwrap()
             .verify(weights_dyn_refs)
             .unwrap();
