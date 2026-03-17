@@ -17,6 +17,7 @@ use std::{
 };
 
 use ark_ff::{FftField, Field};
+use serde::{Deserialize, Serialize};
 use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -66,9 +67,33 @@ pub trait ReedSolomon<F>: Debug + Send + Sync {
         codeword_length: usize,
         interleaving_depth: usize,
     ) -> Vec<F>;
+
+    fn evaluation_order(&self) -> EvaluationOrder;
 }
 
 assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EvaluationOrder {
+    /// Currently only supported for evaluations that are a power of two
+    InPlace,
+    Natural,
+}
+
+impl EvaluationOrder {
+    pub const fn evaluation_index(&self, i: usize, max_size: usize) -> usize {
+        match self {
+            Self::InPlace => {
+                let bits = usize::BITS - (max_size - 1).leading_zeros();
+                if bits == 0 {
+                    return i;
+                }
+                i.reverse_bits() >> (usize::BITS - bits)
+            }
+            Self::Natural => i,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ArkNtt<F: FftField>(PhantomData<F>);
@@ -81,6 +106,10 @@ impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
         interleaving_depth: usize,
     ) -> Vec<F> {
         ark_ntt(interleaved_coeffs, codeword_length, interleaving_depth)
+    }
+
+    fn evaluation_order(&self) -> EvaluationOrder {
+        EvaluationOrder::Natural
     }
 }
 
