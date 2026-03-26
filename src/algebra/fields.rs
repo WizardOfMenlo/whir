@@ -208,8 +208,7 @@ mod tests {
         assert!(slice.is_empty(), "Not all bytes consumed");
         assert_eq!(
             val, decoded,
-            "Fp2 roundtrip failed: original={:?}, decoded={:?}",
-            val, decoded
+            "Fp2 roundtrip failed: original={val:?}, decoded={decoded:?}",
         );
     }
 }
