@@ -1,6 +1,6 @@
 use ark_ff::{
-    Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, Fp64, MontBackend, MontConfig,
-    MontFp, PrimeField,
+    Field, Fp128, Fp192, Fp2, Fp256, Fp2Config, Fp3, Fp3Config, MontBackend, MontConfig,
+    PrimeField, SmallFp, SmallFpConfig,
 };
 use serde::{Deserialize, Serialize};
 use zerocopy::IntoBytes;
@@ -80,24 +80,42 @@ pub type Field192 = Fp192<MontBackend<FConfig192, 3>>;
 pub struct FrConfig128;
 pub type Field128 = Fp128<MontBackend<FrConfig128, 2>>;
 
-#[derive(MontConfig)]
+/// Goldilocks prime: p = 2^64 - 2^32 + 1.
+///
+/// Uses [`SmallFp`] with native u64 Montgomery arithmetic instead of the
+/// generic [`MontBackend`], giving significant speedups for 64-bit fields.
+#[derive(SmallFpConfig)]
 #[modulus = "18446744069414584321"]
 #[generator = "7"]
 pub struct FConfig64;
-pub type Field64 = Fp64<MontBackend<FConfig64, 1>>;
+pub type Field64 = SmallFp<FConfig64>;
+
+/// Compute the Montgomery representation of a Goldilocks field element at
+/// compile time.
+///
+/// For SmallFp<u64> the Montgomery constant R = 2^k where k = ceil(log2(p)).
+/// Since p ≈ 2^64, we have k = 64 and R = 2^64.
+///
+/// Montgomery form of `v` is `v · R mod p`, computed in u128 to avoid overflow.
+const fn goldilocks_mont(v: u64) -> u64 {
+    const P: u128 = 18_446_744_069_414_584_321;
+    // R mod p = 2^64 mod p
+    const R_MOD_P: u128 = (1u128 << 64) - P; // = 2^32 - 1 = 4294967295
+    ((v as u128 * R_MOD_P) % P) as u64
+}
 
 pub type Field64_2 = Fp2<F2Config64>;
 pub struct F2Config64;
 impl Fp2Config for F2Config64 {
     type Fp = Field64;
 
-    const NONRESIDUE: Self::Fp = MontFp!("7");
+    const NONRESIDUE: Self::Fp = Field64::from_raw(goldilocks_mont(7));
 
     const FROBENIUS_COEFF_FP2_C1: &'static [Self::Fp] = &[
         // Fq(7)**(((q^0) - 1) / 2)
-        MontFp!("1"),
+        Field64::from_raw(goldilocks_mont(1)),
         // Fq(7)**(((q^1) - 1) / 2)
-        MontFp!("18446744069414584320"),
+        Field64::from_raw(goldilocks_mont(18_446_744_069_414_584_320)),
     ];
 }
 
@@ -107,36 +125,40 @@ pub struct F3Config64;
 impl Fp3Config for F3Config64 {
     type Fp = Field64;
 
-    const NONRESIDUE: Self::Fp = MontFp!("2");
+    const NONRESIDUE: Self::Fp = Field64::from_raw(goldilocks_mont(2));
 
     const FROBENIUS_COEFF_FP3_C1: &'static [Self::Fp] = &[
-        MontFp!("1"),
+        Field64::from_raw(goldilocks_mont(1)),
         // Fq(2)^(((q^1) - 1) / 3)
-        MontFp!("4294967295"),
+        Field64::from_raw(goldilocks_mont(4_294_967_295)),
         // Fq(2)^(((q^2) - 1) / 3)
-        MontFp!("18446744065119617025"),
+        Field64::from_raw(goldilocks_mont(18_446_744_065_119_617_025)),
     ];
 
     const FROBENIUS_COEFF_FP3_C2: &'static [Self::Fp] = &[
-        MontFp!("1"),
+        Field64::from_raw(goldilocks_mont(1)),
         // Fq(2)^(((2q^1) - 2) / 3)
-        MontFp!("18446744065119617025"),
+        Field64::from_raw(goldilocks_mont(18_446_744_065_119_617_025)),
         // Fq(2)^(((2q^2) - 2) / 3)
-        MontFp!("4294967295"),
+        Field64::from_raw(goldilocks_mont(4_294_967_295)),
     ];
 
     // (q^3 - 1) = 2^32 * T where T = 1461501636310055817916238417282618014431694553085
     const TWO_ADICITY: u32 = 32;
 
     // 11^T
-    const QUADRATIC_NONRESIDUE_TO_T: Fp3<Self> =
-        Fp3::new(MontFp!("5944137876247729999"), MontFp!("0"), MontFp!("0"));
+    const QUADRATIC_NONRESIDUE_TO_T: Fp3<Self> = Fp3::new(
+        Field64::from_raw(goldilocks_mont(5_944_137_876_247_729_999)),
+        Field64::from_raw(goldilocks_mont(0)),
+        Field64::from_raw(goldilocks_mont(0)),
+    );
 
     // T - 1 / 2
     #[allow(clippy::unreadable_literal)]
     const TRACE_MINUS_ONE_DIV_TWO: &'static [u64] =
         &[0x80000002fffffffe, 0x80000002fffffffc, 0x7ffffffe];
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -168,6 +190,26 @@ mod tests {
         assert_eq!(
             json,
             "{\"characteristic\":\"ffffffff00000001\",\"extension_degree\":3}"
+        );
+    }
+
+    #[test]
+    fn test_fp2_encoding_roundtrip() {
+        use spongefish::{Encoding, NargDeserialize};
+
+        // Check Fp2 encoding→NargDeserialize roundtrip
+        let val = Field64_2::new(Field64::from(42u64), Field64::from(7u64));
+        let encoded = val.encode();
+        let bytes = encoded.as_ref();
+
+        let mut slice: &[u8] = bytes;
+        let decoded = Field64_2::deserialize_from_narg(&mut slice)
+            .expect("NargDeserialize failed");
+        assert!(slice.is_empty(), "Not all bytes consumed");
+        assert_eq!(
+            val, decoded,
+            "Fp2 roundtrip failed: original={:?}, decoded={:?}",
+            val, decoded
         );
     }
 }
