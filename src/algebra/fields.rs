@@ -84,6 +84,7 @@ pub type Field128 = Fp128<MontBackend<FrConfig128, 2>>;
 ///
 /// Uses [`SmallFp`] with native u64 Montgomery arithmetic instead of the
 /// generic [`MontBackend`], giving significant speedups for 64-bit fields.
+#[allow(clippy::assign_op_pattern)]
 #[derive(SmallFpConfig)]
 #[modulus = "18446744069414584321"]
 #[generator = "7"]
@@ -159,7 +160,6 @@ impl Fp3Config for F3Config64 {
         &[0x80000002fffffffe, 0x80000002fffffffc, 0x7ffffffe];
 }
 
-
 #[cfg(test)]
 mod tests {
     use static_assertions::const_assert_eq;
@@ -203,8 +203,7 @@ mod tests {
         let bytes = encoded.as_ref();
 
         let mut slice: &[u8] = bytes;
-        let decoded = Field64_2::deserialize_from_narg(&mut slice)
-            .expect("NargDeserialize failed");
+        let decoded = Field64_2::deserialize_from_narg(&mut slice).expect("NargDeserialize failed");
         assert!(slice.is_empty(), "Not all bytes consumed");
         assert_eq!(
             val, decoded,
