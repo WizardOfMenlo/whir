@@ -8,6 +8,7 @@ use crate::{
     bits::Bits,
     parameters::ProtocolParameters,
     protocols::{irs_commit, proof_of_work, sumcheck},
+    smooth_domain::{extra_rounds, is_smooth},
     type_info::Type,
 };
 
@@ -22,8 +23,8 @@ where
         M: Default,
     {
         assert!(
-            size.is_power_of_two(),
-            "Only powers of two size are supported at the moment."
+            is_smooth(size),
+            "Size must be a smooth-{{2,3,13}} number (2^a * 3^b * 13^c), got {size}."
         );
 
         // Proof of work constructor with the requested hash function.
@@ -38,7 +39,10 @@ where
             .saturating_sub(whir_parameters.pow_bits) as f64;
         let field_size_bits = M::Target::field_size_bits();
         let mut log_inv_rate = whir_parameters.starting_log_inv_rate;
+        // `num_variables` counts binary variables only (the 2^a part).
         let mut num_variables = size.trailing_zeros() as usize;
+        // `current_size` tracks the actual polynomial size including 3^b factor.
+        let mut current_size = size;
 
         #[allow(clippy::cast_possible_wrap)]
         let initial_committer = irs_commit::Config::new(
@@ -71,6 +75,7 @@ where
         let mut in_domain_samples = initial_committer.in_domain_samples;
         let mut query_error = initial_committer.rbr_queries();
         num_variables -= whir_parameters.initial_folding_factor;
+        current_size >>= whir_parameters.initial_folding_factor;
         while num_variables >= whir_parameters.folding_factor {
             // Queries are set w.r.t. to old rate, while the rest to the new rate
             let round_folding_factor = if round == 0 {
@@ -86,7 +91,7 @@ where
                 whir_parameters.unique_decoding,
                 whir_parameters.hash_id,
                 1,
-                1 << num_variables,
+                current_size,
                 1 << whir_parameters.folding_factor,
                 0.5_f64.powi(next_rate as i32),
             );
@@ -109,7 +114,7 @@ where
                 irs_committer,
                 sumcheck: sumcheck::Config {
                     field: Type::new(),
-                    initial_size: 1 << num_variables,
+                    initial_size: current_size,
                     round_pow: pow(folding_pow_bits),
                     num_rounds: whir_parameters.folding_factor,
                 },
@@ -118,6 +123,7 @@ where
 
             round += 1;
             num_variables -= whir_parameters.folding_factor;
+            current_size >>= whir_parameters.folding_factor;
             log_inv_rate = next_rate;
             in_domain_samples = config.irs_committer.in_domain_samples;
             query_error = config.irs_committer.rbr_queries();
@@ -132,6 +138,13 @@ where
 
         let final_folding_pow_bits = 0_f64.max(security_level - field_size_bits + 1.0);
 
+        // After all binary folds: current_size = 3^b * 2^remaining_binary.
+        // For the final sumcheck, pad to the next power of two and run
+        // enough rounds to reduce to a single element.
+        let extra = extra_rounds(current_size);
+        let final_padded_size = 1usize << (num_variables + extra);
+        let final_num_rounds = num_variables + extra;
+
         Self {
             initial_committer,
             initial_sumcheck: sumcheck::Config {
@@ -144,9 +157,9 @@ where
             round_configs,
             final_sumcheck: sumcheck::Config {
                 field: Type::new(),
-                initial_size: 1 << num_variables,
+                initial_size: final_padded_size,
                 round_pow: pow(final_folding_pow_bits),
-                num_rounds: num_variables,
+                num_rounds: final_num_rounds,
             },
             final_pow: pow(final_pow_bits),
         }
@@ -270,9 +283,22 @@ where
         self.initial_committer.vector_size
     }
 
+    /// Number of binary sumcheck variables in the initial polynomial.
+    ///
+    /// For a smooth-domain size `2^a * 3^b * 13^c`, this returns `a`.  The
+    /// total evaluation-point entries contributed by the initial round is `a`
+    /// (the `3^b * 13^c` residual is handled in the final sumcheck padding).
     pub fn initial_num_variables(&self) -> usize {
-        assert!(self.initial_size().is_power_of_two());
         self.initial_size().trailing_zeros() as usize
+    }
+
+    /// Total number of evaluation-point entries for the initial polynomial.
+    ///
+    /// For a smooth-domain size `2^a * 3^b * 13^c`, this returns `a + ceil(log2(3^b * 13^c))`.
+    /// The extra rounds come from the final sumcheck padding the `3^b * 13^c`
+    /// residual to a power of two.
+    pub fn total_eval_variables(&self) -> usize {
+        self.initial_num_variables() + extra_rounds(self.initial_size())
     }
 
     pub const fn final_size(&self) -> usize {
@@ -447,13 +473,22 @@ impl<F: FftField> RoundConfig<F> {
         self.sumcheck.final_size()
     }
 
+    /// Number of binary sumcheck variables for this round.
+    ///
+    /// For a smooth-domain size `2^a * 3^b * 13^c`, this returns `a`.
     pub fn initial_num_variables(&self) -> usize {
-        assert!(self.irs_committer.vector_size.is_power_of_two());
-        self.irs_committer.vector_size.ilog2() as usize
+        self.irs_committer.vector_size.trailing_zeros() as usize
     }
 
     pub fn final_num_variables(&self) -> usize {
         self.initial_num_variables() - self.sumcheck.num_rounds
+    }
+
+    /// Total number of evaluation-point entries for this round's polynomial.
+    ///
+    /// For a smooth-domain size `2^a * 3^b * 13^c`, returns `a + ceil(log2(3^b * 13^c))`.
+    pub fn total_eval_variables(&self) -> usize {
+        self.initial_num_variables() + extra_rounds(self.initial_size())
     }
 }
 

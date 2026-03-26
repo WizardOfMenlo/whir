@@ -39,11 +39,11 @@ where
 impl<F: Field> Config<F> {
     pub fn validate(&self) -> Result<(), &'static str> {
         ensure!(
-            self.initial_size.is_power_of_two(),
-            "Initial size must be power of two."
+            self.initial_size > 0 && self.initial_size.is_multiple_of(2) || self.num_rounds == 0,
+            "Initial size must be even (or num_rounds must be 0)."
         );
         ensure!(
-            self.initial_size.ilog2() as usize >= self.num_rounds,
+            self.initial_size >> self.num_rounds >= 1,
             "Initial size must be >= 2^{rounds}."
         );
         Ok(())

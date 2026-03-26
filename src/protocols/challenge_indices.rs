@@ -3,6 +3,12 @@
 use crate::transcript::{Decoding, VerifierMessage};
 
 /// Generate a set of indices for challenges.
+///
+/// For power-of-2 `num_leaves`, indices are sampled without bias using exactly
+/// `ceil(log2(num_leaves))` bits per index.
+///
+/// For other `num_leaves` (e.g., `2^a * 3^b * 13^c`), extra entropy bytes are used
+/// to make the modular bias negligible (< 2^{-64}).
 pub fn challenge_indices<T>(
     transcript: &mut T,
     num_leaves: usize,
@@ -16,18 +22,23 @@ where
     if count == 0 {
         return Vec::new();
     }
-    assert!(
-        num_leaves.is_power_of_two(),
-        "Number of leaves must be a power of two for unbiased results."
-    );
+    assert!(num_leaves > 0, "Number of leaves must be positive.");
     if num_leaves == 1 {
         // `size_bytes` would be zero, making `chunks_exact` panic.
         return if deduplicate { vec![0] } else { vec![0; count] };
     }
 
-    // Calculate the required bytes of entropy
+    // Calculate the required bytes of entropy per index.
+    // For power-of-2, use exactly ceil(log2(N)) bits (no bias).
+    // For non-power-of-2, add 8 extra bytes to make modular bias < 2^{-64}.
     // TODO: Round total to bytes, instead of per index.
-    let size_bytes = (num_leaves.ilog2() as usize).div_ceil(8);
+    let size_bytes = if num_leaves.is_power_of_two() {
+        (num_leaves.ilog2() as usize).div_ceil(8)
+    } else {
+        // ceil(log2(num_leaves)) bits + 64 extra bits for negligible bias
+        let bits_needed = usize::BITS - (num_leaves - 1).leading_zeros();
+        (bits_needed as usize).div_ceil(8) + 8
+    };
 
     // Get required entropy bits.
     let entropy: Vec<u8> = (0..count * size_bytes)
@@ -199,5 +210,68 @@ mod tests {
             result, expected_indices,
             "Mismatch in computed indices for deduplication test"
         );
+    }
+
+    #[test]
+    fn test_challenge_indices_non_power_of_two() {
+        // Test with num_leaves = 12 (= 2^2 * 3), a mixed-radix size.
+        let num_leaves = 12;
+        let num_queries = 3;
+
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        // For non-power-of-2: ceil(log2(12)) = 4 bits → 1 byte + 8 extra = 9 bytes per index
+        // So 3 queries × 9 bytes = 27 bytes needed.
+        let sponge = MockSponge {
+            absorb: None,
+            squeeze: &[
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, // Query 1: index 5
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, // Query 2: index 11
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Query 3: index 0
+            ],
+        };
+        let mut prover_state = ProverState::new(&ds, sponge);
+
+        let result = challenge_indices(&mut prover_state, num_leaves, num_queries, true);
+
+        let mut expected = vec![5 % num_leaves, 11 % num_leaves, 0 % num_leaves];
+        expected.sort_unstable();
+        expected.dedup();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_challenge_indices_mixed_radix_large() {
+        // Test with num_leaves = 2^18 * 3^2 = 2359296.
+        let num_leaves = (1 << 18) * 9;
+        assert_eq!(num_leaves, 2_359_296);
+
+        // ceil(log2(2359296)) = 22 bits → 3 bytes + 8 extra = 11 bytes per index
+        let num_queries = 2;
+
+        let ds = DomainSeparator::protocol(&module_path!())
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&Empty);
+        // 2 queries × 11 bytes = 22 bytes
+        let sponge = MockSponge {
+            absorb: None,
+            squeeze: &[
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            ],
+        };
+        let mut prover_state = ProverState::new(&ds, sponge);
+
+        let result = challenge_indices(&mut prover_state, num_leaves, num_queries, true);
+
+        let val_1 = 0x00_00_00_00_00_00_00_01_23_45_67_usize % num_leaves;
+        let val_2 = 0x00_00_00_00_00_00_00_00_00_00_01_usize % num_leaves;
+        let mut expected = vec![val_1, val_2];
+        expected.sort_unstable();
+        expected.dedup();
+
+        assert_eq!(result, expected);
     }
 }

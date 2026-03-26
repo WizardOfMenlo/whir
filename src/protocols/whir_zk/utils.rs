@@ -227,7 +227,15 @@ pub fn fold_weight_to_mask_size<F: Field>(
         owned = Covector::from(weight);
         &owned.vector
     };
-    debug_assert_eq!(vector.len(), 1usize << num_witness_variables);
+    // For smooth-domain sizes (2^a * 3^b * 13^c), the vector length equals the full
+    // polynomial size which is >= 2^num_witness_variables.
+    debug_assert!(
+        vector.len() >= 1usize << num_witness_variables,
+        "weight vector too small: {} < 2^{} = {}",
+        vector.len(),
+        num_witness_variables,
+        1usize << num_witness_variables
+    );
 
     fold_vector_to_mask_size(vector, mask_size)
 }

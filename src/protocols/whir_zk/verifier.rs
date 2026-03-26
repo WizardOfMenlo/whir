@@ -113,9 +113,10 @@ impl<F: FftField + Field> Config<F> {
             .map(|(&eval, &m_eval)| eval + m_eval)
             .collect();
 
-        self.blinded_commitment
-            .verify(verifier_state, &commitments, &modified_evaluations)?
-            .verify(weights.iter().copied())?;
+        let final_claim =
+            self.blinded_commitment
+                .verify(verifier_state, &commitments, &modified_evaluations)?;
+        final_claim.verify(weights.iter().copied())?;
 
         verify!(batched_h_claims == expected_batched_h_claims);
         let g_hat_slices: Vec<&[F]> = g_hat_claims_per_poly.iter().map(Vec::as_slice).collect();

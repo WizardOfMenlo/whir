@@ -6,6 +6,7 @@ pub mod engines;
 pub mod hash;
 pub mod parameters;
 pub mod protocols;
+pub mod smooth_domain;
 pub mod transcript;
 pub mod type_info;
 pub mod type_map;

@@ -38,21 +38,59 @@ impl<F: Field> UnivariateEvaluation<F> {
     }
 }
 
+/// Lagrange basis polynomial L_index(point) on {0,1}^n (MSB-first).
+fn lagrange_basis_single<F: Field>(point: &[F], index: usize) -> F {
+    let n = point.len();
+    point.iter().enumerate().fold(F::ONE, |acc, (j, &r)| {
+        if (index >> (n - 1 - j)) & 1 == 1 {
+            acc * r
+        } else {
+            acc * (F::ONE - r)
+        }
+    })
+}
+
 impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
     fn size(&self) -> usize {
         self.size
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
-        // Multilinear extension of (1, x, x^2, ..) = ⨂_i (1, x^2^i).
+        let k = self.size.trailing_zeros() as usize;
+        let extra = point.len().saturating_sub(k);
+
+        if extra == 0 {
+            // Power-of-2 path: MLE of (1, x, x^2, ..) = ⊗_i (1, x^{2^i}).
+            let mut x2i = self.point;
+            let mut result = F::ONE;
+            for &r in point.iter().rev() {
+                result *= (F::ONE - r) + r * x2i;
+                x2i.square_in_place();
+            }
+            return result;
+        }
+
+        // Smooth path: size = 2^k * odd where odd = 3^b * 13^c.
+        let odd = self.size >> k;
+        let leading = &point[..extra];
+        let trailing = &point[extra..];
+
         let mut x2i = self.point;
-        let mut result = F::ONE;
-        for &r in point.iter().rev() {
-            // TODO: Why rev?
-            result *= (F::ONE - r) + r * x2i;
+        let mut inner = F::ONE;
+        for &r in trailing.iter().rev() {
+            inner *= (F::ONE - r) + r * x2i;
             x2i.square_in_place();
         }
-        result
+
+        let x_pow_2k = x2i;
+        let mut outer = F::ZERO;
+        let mut x_h = F::ONE;
+        for h in 0..odd {
+            outer += lagrange_basis_single(leading, h) * x_h;
+            x_h *= x_pow_2k;
+        }
+
+        outer * inner
     }
 
     /// See also [`Self::accumulate_many`] for a more efficient batched version.

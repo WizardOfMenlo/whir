@@ -282,8 +282,18 @@ where
             vector_rlc_coeffs = vec![M::Target::ONE];
         }
 
+        // Pad vector and covector to the final sumcheck's initial_size.
+        // For smooth-domain polynomials (2^a * 3^b * 13^c), the residual 3^b * 13^c elements
+        // are zero-padded to the next power of two before the final sumcheck.
+        let final_padded_size = self.final_sumcheck.initial_size;
+        vector.resize(final_padded_size, M::Target::ZERO);
+        if has_constraints {
+            covector.resize(final_padded_size, M::Target::ZERO);
+        }
+        debug_assert!(!has_constraints || dot(&vector, &covector) == the_sum);
+
         // Directly send the vector to the verifier.
-        assert_eq!(vector.len(), self.final_sumcheck.initial_size);
+        assert_eq!(vector.len(), final_padded_size);
         for coeff in &vector {
             prover_state.prover_message(coeff);
         }
@@ -311,10 +321,12 @@ where
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum);
         evaluation_point.extend(final_folding_randomness.0.iter().copied());
 
+        let binary_folds = evaluation_point.len() - self.final_sumcheck.num_rounds;
         FinalClaim {
             evaluation_point,
             rlc_coefficients: initial_forms_rlc_coeffs.to_vec(),
             linear_form_rlc: M::Target::ZERO,
+            binary_folds,
         }
     }
 }

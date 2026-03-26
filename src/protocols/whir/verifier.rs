@@ -2,12 +2,12 @@ use ark_ff::{AdditiveGroup, FftField, Field};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{Commitment, Config};
+use super::{fold_based_mle_evaluate, Commitment, Config};
 use crate::{
     algebra::{
         dot,
         embedding::{Embedding, Identity},
-        linear_form::{Evaluate, LinearForm, MultilinearExtension},
+        linear_form::{Evaluate, MultilinearExtension},
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
@@ -238,23 +238,30 @@ where
             .evaluate(&Identity::new(), &final_vector);
         let mut linear_form_rlc = the_sum / poly_eval;
 
+        let final_num_rounds = self.final_sumcheck.num_rounds;
+
         // Subtract all internal linear forms.
         for (round, (weights_rlc_coeffs, weights)) in round_constraints.into_iter().enumerate() {
             let num_variables = round.checked_sub(1).map_or_else(
-                || self.initial_num_variables(),
-                |p| self.round_configs[p].initial_num_variables(),
+                || self.total_eval_variables(),
+                |p| self.round_configs[p].total_eval_variables(),
             );
             let start = evaluation_point.len().saturating_sub(num_variables);
+            let binary_folds = num_variables - final_num_rounds;
             for (rlc_coeff, weights) in zip_strict(weights_rlc_coeffs, weights) {
-                linear_form_rlc -= rlc_coeff * weights.mle_evaluate(&evaluation_point[start..]);
+                linear_form_rlc -= rlc_coeff
+                    * fold_based_mle_evaluate(&weights, &evaluation_point[start..], binary_folds);
             }
         }
+
+        let binary_folds_initial = evaluation_point.len() - final_num_rounds;
 
         // Return the evaluation point and the claimed values of the deferred weights.
         Ok(FinalClaim {
             evaluation_point,
             rlc_coefficients: initial_form_rlc_coeffs.to_vec(),
             linear_form_rlc,
+            binary_folds: binary_folds_initial,
         })
     }
 }

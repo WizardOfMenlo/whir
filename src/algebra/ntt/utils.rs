@@ -1,53 +1,35 @@
 /// Compute the largest factor of `n` that is ≤ sqrt(n).
-/// Assumes `n` is of the form `2^k * {1,3,9}`.
+/// Assumes `n` is a smooth-{2,3,13} number, i.e. of the form `2^a * 3^b * 13^c`.
 pub fn sqrt_factor(n: usize) -> usize {
-    // Count the number of trailing zeros in `n`, i.e., the power of 2 in `n`
-    let twos = n.trailing_zeros();
+    let twos = n.trailing_zeros() as usize;
+    let odd = n >> twos;
 
-    // Divide `n` by the highest power of 2 to extract the base component
-    let base = n >> twos;
+    // Enumerate all divisors of the odd part and for each, find the largest
+    // power-of-2 multiplier that keeps the product ≤ sqrt(n).
+    let odd_divisors: &[usize] = match odd {
+        1 => &[1],
+        3 => &[1, 3],
+        9 => &[1, 3, 9],
+        13 => &[1, 13],
+        39 => &[1, 3, 13, 39],
+        117 => &[1, 3, 9, 13, 39, 117],
+        _ => panic!("n is not a smooth-{{2,3,13}} number"),
+    };
 
-    // Determine the largest factor ≤ sqrt(n) based on the extracted `base`
-    match base {
-        // Case: `n` is purely a power of 2 (base = 1)
-        // The largest factor ≤ sqrt(n) is 2^(twos/2)
-        1 => 1 << (twos / 2),
-
-        // Case: `n = 2^k * 3`
-        3 => {
-            if twos == 0 {
-                // sqrt(3) ≈ 1.73, so the largest integer factor ≤ sqrt(3) is 1
-                1
-            } else {
-                // - If `twos` is even: The largest factor is `3 * 2^((twos - 1) / 2)`
-                // - If `twos` is odd: The largest factor is `2^((twos / 2))`
-                if twos.is_multiple_of(2) {
-                    3 << ((twos - 1) / 2)
-                } else {
-                    2 << (twos / 2)
-                }
-            }
+    let mut best = 1usize;
+    for &d in odd_divisors {
+        let d_sq = d * d;
+        if d_sq > n {
+            continue;
         }
-
-        // Case: `n = 2^k * 9`
-        9 => {
-            if twos == 1 {
-                // sqrt(9 * 2^1) = sqrt(18) ≈ 4.24, largest factor ≤ sqrt(18) is 3
-                3
-            } else {
-                // - If `twos` is even: The largest factor is `3 * 2^(twos / 2)`
-                // - If `twos` is odd: The largest factor is `4 * 2^(twos / 2)`
-                if twos.is_multiple_of(2) {
-                    3 << (twos / 2)
-                } else {
-                    4 << (twos / 2)
-                }
-            }
-        }
-
-        // If `base` is not in {1,3,9}, `n` is not in the expected form
-        _ => panic!("n is not in the form 2^k * {{1,3,9}}"),
+        // We need d * 2^a ≤ sqrt(n), i.e. d² * 4^a ≤ n, i.e. 4^a ≤ n/d².
+        let ratio = n / d_sq;
+        // max a such that 4^a ≤ ratio: a = floor(log2(ratio)) / 2, capped at twos.
+        let max_2a = (usize::BITS - 1 - ratio.leading_zeros()) as usize;
+        let a = (max_2a / 2).min(twos);
+        best = best.max(d << a);
     }
+    best
 }
 
 /// Least common multiple.
@@ -136,11 +118,33 @@ mod tests {
         assert_eq!(sqrt_factor(144), 12); // 144 = 2^4 * 9
         assert_eq!(sqrt_factor(576), 24); // 576 = 2^6 * 9
         assert_eq!(sqrt_factor(2304), 48); // 2304 = 2^8 * 9
+
+        // Cases where n = 2^k * 13
+        assert_eq!(sqrt_factor(13), 1); // 13 = 2^0 * 13
+        assert_eq!(sqrt_factor(26), 2); // 26 = 2^1 * 13
+        assert_eq!(sqrt_factor(52), 4); // 52 = 2^2 * 13
+        assert_eq!(sqrt_factor(208), 13); // 208 = 2^4 * 13
+        assert_eq!(sqrt_factor(832), 26); // 832 = 2^6 * 13
+        assert_eq!(sqrt_factor(3328), 52); // 3328 = 2^8 * 13
+
+        // Cases where n = 2^k * 39
+        assert_eq!(sqrt_factor(39), 3); // 39 = 2^0 * 39
+        assert_eq!(sqrt_factor(78), 6); // 78 = 2^1 * 39
+        assert_eq!(sqrt_factor(156), 12); // 156 = 2^2 * 39
+        assert_eq!(sqrt_factor(624), 24); // 624 = 2^4 * 39
+        assert_eq!(sqrt_factor(2496), 48); // 2496 = 2^6 * 39
+
+        // Cases where n = 2^k * 117
+        assert_eq!(sqrt_factor(117), 9); // 117 = 2^0 * 117
+        assert_eq!(sqrt_factor(234), 13); // 234 = 2^1 * 117
+        assert_eq!(sqrt_factor(468), 18); // 468 = 2^2 * 117
+        assert_eq!(sqrt_factor(1872), 39); // 1872 = 2^4 * 117
+        assert_eq!(sqrt_factor(7488), 78); // 7488 = 2^6 * 117
     }
 
     proptest! {
         #[test]
-        fn proptest_sqrt_factor(k in 0usize..30, base in prop_oneof![Just(1), Just(3), Just(9)])
+        fn proptest_sqrt_factor(k in 0usize..30, base in prop_oneof![Just(1), Just(3), Just(9), Just(13), Just(39), Just(117)])
         {
             let n = (1 << k) * base;
             let expected = get_largest_divisor_up_to_sqrt(n);

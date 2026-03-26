@@ -30,9 +30,12 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
     }
 
     fn mle_evaluate(&self, point: &[F]) -> F {
-        zip_strict(&self.point, point).fold(F::ONE, |acc, (&l, &r)| {
+        let extra = point.len().saturating_sub(self.point.len());
+        let head_factor: F = point[..extra].iter().map(|p| F::ONE - *p).product::<F>();
+        let eq_value = zip_strict(&self.point, &point[extra..]).fold(F::ONE, |acc, (&l, &r)| {
             acc * (l * r + (F::ONE - l) * (F::ONE - r))
-        })
+        });
+        head_factor * eq_value
     }
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
