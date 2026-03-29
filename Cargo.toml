@@ -103,6 +103,6 @@ lto = "thin" # LTO breaks line attribution.
 opt-level = 3
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/arkworks-rs/algebra" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", branch = "z-tech/smallfp-support-const-vars" }
 ark-std = { git = "https://github.com/arkworks-rs/std" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra", branch = "z-tech/smallfp-support-const-vars" }
