@@ -1,4 +1,5 @@
 use ark_ff::FftField;
+use ark_std::rand::{distributions::Standard, prelude::Distribution};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -45,6 +46,7 @@ impl<F: FftField> Config<F> {
         polynomials: &[&[F]],
     ) -> Witness<F>
     where
+        Standard: Distribution<F>,
         H: DuplexSpongeInterface,
         R: ark_std::rand::RngCore + ark_std::rand::CryptoRng,
         F: Codec<[H::U]>,

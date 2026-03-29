@@ -7,7 +7,7 @@ mod verifier;
 use std::fmt::Debug;
 
 use ark_ff::{FftField, Field};
-use ark_std::rand::{CryptoRng, RngCore};
+use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -95,6 +95,7 @@ where
         vectors: &[&[M::Source]],
     ) -> Witness<M::Target, M>
     where
+        Standard: Distribution<M::Source>,
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
         M::Target: Codec<[H::U]>,

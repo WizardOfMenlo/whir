@@ -1,3 +1,4 @@
+#![cfg(feature = "rs_in_order")] // TODO: Support permuted.
 mod committer;
 mod prover;
 mod utils;
@@ -177,13 +178,16 @@ impl<F: FftField> Config<F> {
     pub(crate) fn omega_full(&self) -> F {
         let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
         let full_domain_size = codeword_length * self.interleaving_depth();
-        crate::algebra::ntt::generator(full_domain_size)
-            .expect("full IRS domain should have primitive root")
+        crate::algebra::ntt::evaluation_points(full_domain_size, full_domain_size, &[1])[0]
     }
 
     /// Sub-domain generator (ω_sub = ω^interleaving_depth).
+    // #[deprecated = "RS codes do not necessarily have a generator."]
     fn omega_sub(&self) -> F {
-        self.blinded_commitment.initial_committer.generator()
+        // Assume it has a generator, and the evaluation order is 1, g, g^2, ...
+        self.blinded_commitment
+            .initial_committer
+            .evaluation_points(&[1])[0]
     }
 
     /// ζ = ω^num_rows — the interleaving_depth-th root of unity.

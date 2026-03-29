@@ -65,11 +65,29 @@ pub const fn gcd(mut a: usize, mut b: usize) -> usize {
     a
 }
 
+/// Asserts that `n` factors over `primes` and returns a sorted list of divisors.
+pub fn divisors(n: usize, primes: &[usize]) -> Vec<usize> {
+    let mut result = vec![1usize];
+    let mut remaining = n;
+    for &p in primes {
+        let mut pk = 1usize;
+        let existing = result.clone();
+        while remaining.is_multiple_of(p) {
+            pk *= p;
+            remaining /= p;
+            result.extend(existing.iter().map(|d| d * pk));
+        }
+    }
+    assert_eq!(remaining, 1);
+    result.sort_unstable();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
-    use super::{gcd, lcm, sqrt_factor};
+    use super::{divisors, gcd, lcm, sqrt_factor};
 
     /// Computes the largest factor of `x` that is ≤ sqrt(x).
     /// If `x` is 0, returns 0.
@@ -136,6 +154,22 @@ mod tests {
         assert_eq!(sqrt_factor(144), 12); // 144 = 2^4 * 9
         assert_eq!(sqrt_factor(576), 24); // 576 = 2^6 * 9
         assert_eq!(sqrt_factor(2304), 48); // 2304 = 2^8 * 9
+    }
+
+    #[test]
+    fn test_divisors() {
+        assert_eq!(divisors(24, &[2, 3]), vec![1, 2, 3, 4, 6, 8, 12, 24]);
+        assert_eq!(
+            divisors(210, &[2, 3, 5, 7]),
+            vec![1, 2, 3, 5, 6, 7, 10, 14, 15, 21, 30, 35, 42, 70, 105, 210]
+        );
+        assert_eq!(
+            divisors(8 * 9 * 25, &[2, 3, 5]),
+            vec![
+                1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 25, 30, 36, 40, 45, 50, 60, 72, 75,
+                90, 100, 120, 150, 180, 200, 225, 300, 360, 450, 600, 900, 1800
+            ]
+        );
     }
 
     proptest! {

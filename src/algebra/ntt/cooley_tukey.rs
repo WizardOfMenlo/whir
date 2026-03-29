@@ -3,11 +3,7 @@
 //! Implements the √N Cooley-Tukey six-step algorithm to achieve parallelism with good locality.
 //! A global cache is used for twiddle factors.
 
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard},
-};
+use std::sync::{RwLock, RwLockReadGuard};
 
 use ark_ff::{FftField, Field};
 #[cfg(feature = "parallel")]
@@ -16,19 +12,25 @@ use {crate::utils::workload_size, rayon::prelude::*, std::cmp::max};
 use super::{
     transpose,
     utils::{lcm, sqrt_factor},
+    ReedSolomon,
+};
+#[cfg(not(feature = "rs_in_order"))]
+use crate::algebra::ntt::transpose::transpose_permute;
+use crate::{
+    algebra::ntt::utils::divisors,
+    utils::{chunks_exact_or_empty, zip_strict},
 };
 
-/// Global cache for NTT engines, indexed by field.
-// TODO: Skip `LazyLock` when `HashMap::with_hasher` becomes const.
-// see https://github.com/rust-lang/rust/issues/102575
-static ENGINE_CACHE: LazyLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// Supported primes
+const PRIMES: [usize; 2] = [2, 3];
 
 /// Engine for computing NTTs over arbitrary fields.
 /// Assumes the field has large two-adicity.
+#[derive(Debug)]
 pub struct NttEngine<F: Field> {
-    order: usize,   // order of omega_orger
-    omega_order: F, // primitive order'th root.
+    order: usize,         // order of omega_orger
+    divisors: Vec<usize>, // divisors of the order.
+    omega_order: F,       // primitive order'th root.
 
     // Roots of small order (zero if unavailable). The naming convention is that omega_foo has order foo.
     half_omega_3_1_plus_2: F, // ½(ω₃ + ω₃²)
@@ -44,70 +46,51 @@ pub struct NttEngine<F: Field> {
     roots: RwLock<Vec<F>>,
 }
 
-/// Returns the root-of-unity used for a domain of size `size`.
-pub fn generator<F: FftField>(size: usize) -> Option<F> {
-    NttEngine::<F>::new_from_cache().checked_root(size)
-}
-
-/// Compute the NTT of a slice of field elements using a cached engine.
-pub fn ntt<F: FftField>(values: &mut [F]) {
-    NttEngine::<F>::new_from_cache().ntt(values);
-}
-
-/// Compute the many NTTs of size `size` using a cached engine.
-pub fn ntt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::<F>::new_from_cache().ntt_batch(values, size);
-}
-
-/// Compute the inverse NTT of a slice of field element without the 1/n scaling factor, using a cached engine.
-pub fn intt<F: FftField>(values: &mut [F]) {
-    NttEngine::<F>::new_from_cache().intt(values);
-}
-
-/// Compute the inverse NTT of multiple slice of field elements, each of size `size`, without the 1/n scaling factor and using a cached engine.
-pub fn intt_batch<F: FftField>(values: &mut [F], size: usize) {
-    NttEngine::<F>::new_from_cache().intt_batch(values, size);
-}
-
 impl<F: FftField> NttEngine<F> {
-    /// Get or create a cached engine for the field `F`.
-    pub fn new_from_cache() -> Arc<Self> {
-        let mut cache = ENGINE_CACHE.lock().unwrap();
-        let type_id = TypeId::of::<F>();
-        #[allow(clippy::option_if_let_else)]
-        if let Some(engine) = cache.get(&type_id) {
-            engine.clone().downcast::<Self>().unwrap()
-        } else {
-            let engine = Arc::new(Self::new_from_fftfield());
-            cache.insert(type_id, engine.clone());
-            engine
-        }
-    }
-
     /// Construct a new engine from the field's `FftField` trait.
-    pub(crate) fn new_from_fftfield() -> Self {
-        // TODO: Support SMALL_SUBGROUP
-        if F::TWO_ADICITY <= 63 {
-            Self::new(1 << F::TWO_ADICITY, F::TWO_ADIC_ROOT_OF_UNITY)
-        } else {
-            let mut generator = F::TWO_ADIC_ROOT_OF_UNITY;
-            for _ in 0..(F::TWO_ADICITY - 63) {
-                generator = generator.square();
+    pub fn new_from_fftfield() -> Self {
+        let (mut omega, mut order) = if let (Some(mut omega), Some(b), Some(k)) = (
+            F::LARGE_SUBGROUP_ROOT_OF_UNITY,
+            F::SMALL_SUBGROUP_BASE,
+            F::SMALL_SUBGROUP_BASE_ADICITY,
+        ) {
+            // Extract supported subgroup q from small group b.
+            let mut order = 1;
+            let mut remaining = (b as usize).checked_pow(k).expect("Small group too large.");
+            for p in PRIMES {
+                while remaining.is_multiple_of(p) {
+                    order *= p;
+                    remaining /= p;
+                }
             }
-            Self::new(1 << 63, generator)
+            omega = omega.pow([remaining as u64]);
+            (omega, order)
+        } else {
+            (F::TWO_ADIC_ROOT_OF_UNITY, 1)
+        };
+        let twos = F::TWO_ADICITY.min(order.leading_zeros()) as usize;
+        for _ in 0..(F::TWO_ADICITY as usize - twos) {
+            omega.square_in_place();
         }
+        order <<= twos;
+        Self::new(order, omega)
     }
 }
 
 /// Creates a new NttEngine. `omega_order` must be a primitive root of unity of even order `omega`.
 impl<F: Field> NttEngine<F> {
     pub fn new(order: usize, omega_order: F) -> Self {
-        assert!(order.trailing_zeros() > 0, "Order must be a multiple of 2.");
-        // TODO: Assert that omega factors into 2s and 3s.
+        // Make sure `omega_order` is a primitive root of unity.
         assert_eq!(omega_order.pow([order as u64]), F::ONE);
-        assert_ne!(omega_order.pow([order as u64 / 2]), F::ONE);
+        for prime in PRIMES {
+            if order.is_multiple_of(prime) {
+                assert_ne!(omega_order.pow([(order / prime) as u64]), F::ONE);
+            }
+        }
+
         let mut res = Self {
             order,
+            divisors: divisors(order, &PRIMES),
             omega_order,
             half_omega_3_1_plus_2: F::ZERO,
             half_omega_3_1_min_2: F::ZERO,
@@ -147,12 +130,18 @@ impl<F: Field> NttEngine<F> {
 
     pub fn ntt_batch(&self, values: &mut [F], size: usize) {
         assert!(values.len().is_multiple_of(size));
+        if size <= 1 {
+            return;
+        }
         let roots = self.roots_table(size);
         self.ntt_dispatch(values, &roots, size);
     }
 
     /// Inverse NTT. Does not apply 1/n scaling factor.
     pub fn intt(&self, values: &mut [F]) {
+        if values.len() <= 1 {
+            return;
+        }
         values[1..].reverse();
         self.ntt(values);
     }
@@ -160,6 +149,9 @@ impl<F: Field> NttEngine<F> {
     /// Inverse batch NTT. Does not apply 1/n scaling factor.
     pub fn intt_batch(&self, values: &mut [F], size: usize) {
         assert!(values.len().is_multiple_of(size));
+        if size <= 1 {
+            return;
+        }
 
         #[cfg(not(feature = "parallel"))]
         values.chunks_exact_mut(size).for_each(|values| {
@@ -175,6 +167,9 @@ impl<F: Field> NttEngine<F> {
     }
 
     pub fn checked_root(&self, order: usize) -> Option<F> {
+        if order == 0 {
+            return Some(F::ONE);
+        }
         self.order
             .is_multiple_of(order)
             .then(|| self.omega_order.pow([(self.order / order) as u64]))
@@ -187,6 +182,11 @@ impl<F: Field> NttEngine<F> {
 
     /// Returns a cached table of roots of unity of the given order.
     fn roots_table(&self, order: usize) -> RwLockReadGuard<'_, Vec<F>> {
+        assert!(
+            self.order.is_multiple_of(order),
+            "No subgroup of order {order}."
+        );
+
         // Precompute more roots of unity if requested.
         let roots = self.roots.read().unwrap();
         if roots.is_empty() || !roots.len().is_multiple_of(order) {
@@ -237,7 +237,7 @@ impl<F: Field> NttEngine<F> {
     /// Recurses using the sqrt(N) Cooley-Tukey Six step NTT algorithm.
     fn ntt_recurse(&self, values: &mut [F], roots: &[F], size: usize) {
         debug_assert_eq!(values.len() % size, 0);
-        let n1 = sqrt_factor(size);
+        let n1 = sqrt_factor(size); // TODO: Replace with divisors search.
         let n2 = size / n1;
 
         transpose(values, n1, n2);
@@ -358,6 +358,113 @@ impl<F: Field> NttEngine<F> {
     }
 }
 
+impl<F: FftField> ReedSolomon<F> for NttEngine<F> {
+    fn next_order(&self, size: usize) -> Option<usize> {
+        match self.divisors.binary_search(&size) {
+            Ok(index) | Err(index) => self.divisors.get(index).copied(),
+        }
+    }
+
+    fn evaluation_points(
+        &self,
+        masked_message_length: usize,
+        codeword_length: usize,
+        indices: &[usize],
+    ) -> Vec<F> {
+        assert!(masked_message_length <= codeword_length);
+        assert!(self.order.is_multiple_of(codeword_length));
+        let mut result = Vec::new();
+        let generator = self
+            .omega_order
+            .pow([(self.order / codeword_length) as u64]);
+
+        // Coset transformation
+        let mut coset_size = self.next_order(masked_message_length).unwrap();
+        while !codeword_length.is_multiple_of(coset_size) {
+            coset_size = self.next_order(coset_size + 1).unwrap();
+        }
+        #[cfg(not(feature = "rs_in_order"))]
+        let num_cosets = codeword_length / coset_size;
+
+        for &index in indices {
+            assert!(index < codeword_length);
+
+            #[cfg(not(feature = "rs_in_order"))]
+            let index = transpose_permute(index, num_cosets, coset_size);
+            result.push(generator.pow([index as u64]));
+        }
+        result
+    }
+
+    fn interleaved_encode(&self, messages: &[&[F]], masks: &[F], codeword_length: usize) -> Vec<F> {
+        assert!(self.order.is_multiple_of(codeword_length));
+        if messages.is_empty() {
+            assert!(masks.is_empty());
+            return Vec::new();
+        }
+        let num_messages = messages.len();
+        let message_len = messages[0].len();
+        assert!(messages.iter().all(|m| m.len() == message_len));
+        assert!(masks.len().is_multiple_of(num_messages));
+        let mask_length = masks.len() / num_messages;
+        let masked_message_length = message_len + mask_length;
+        assert!(masked_message_length <= codeword_length);
+
+        // Coset-NTT: instead of doing one codeword-length NTT on mostly zeros,
+        // do `num_cosets` many `coset_size`-point NTTs on twisted coefficient
+        // vectors. For coset `c`, we evaluate on points
+        //
+        //     ω_N^{c + j * num_cosets} = ω_N^c · (ω_N^{num_cosets})^j
+        //
+        // so the coefficient of X^i must be multiplied by (ω_N^c)^i.
+        //
+        // You can also see this as applying a first round of Cooley-Tukey with
+        // N = coset_size × num_cosets, and solving it directly by observing that
+        // only the first coset is non-zero.
+        let mut coset_size = self.next_order(masked_message_length).unwrap();
+        while !codeword_length.is_multiple_of(coset_size) {
+            coset_size = self.next_order(coset_size + 1).unwrap();
+        }
+        let num_cosets = codeword_length / coset_size;
+        let coset_padding = coset_size - masked_message_length;
+
+        // Lay out twisted coefficients in contiguous coset blocks of length
+        // `coset_size`, zero-padding each block as needed.
+        let mut result = Vec::with_capacity(num_messages * codeword_length);
+        for (message, mask) in zip_strict(
+            messages,
+            chunks_exact_or_empty(masks, mask_length, num_messages),
+        ) {
+            // FFT[a 0 0 0] = [a a a a], so just replicate input in coset dimension.
+            for _ in 0..num_cosets {
+                result.extend_from_slice(message);
+                result.extend_from_slice(mask);
+                result.resize(result.len() + coset_padding, F::ZERO);
+            }
+        }
+        assert_eq!(result.len(), num_messages * codeword_length);
+
+        // NTT each coset block, then transpose each codeword block from
+        // coset-major `(num_cosets × coset_size)` layout into standard codeword
+        // order `(coset_size × num_cosets)`, where global index is
+        // `c + j * num_cosets`.
+        apply_twiddles(
+            &mut result,
+            self.roots_table(codeword_length).as_slice(),
+            num_cosets,
+            coset_size,
+        );
+        self.ntt_batch(&mut result, coset_size);
+
+        #[cfg(feature = "rs_in_order")]
+        transpose(&mut result, num_cosets, coset_size);
+
+        // Transpose to row-major order with vectors stacked horizontally.
+        transpose(&mut result, num_messages, codeword_length);
+        result
+    }
+}
+
 /// Applies twiddle factors to a slice of field elements in-place.
 ///
 /// This is part of the six-step Cooley-Tukey NTT algorithm,
@@ -466,13 +573,13 @@ mod tests {
         let engine = NttEngine::<Field64>::new_from_fftfield();
 
         // Verify that the order of the engine is correctly set
-        assert!(engine.order.is_power_of_two());
+        assert_eq!(engine.order, 3 << 32);
 
         // Verify that the root of unity is correctly initialized
-        let expected_root = Field64::TWO_ADIC_ROOT_OF_UNITY;
-        let computed_root = engine.root(engine.order);
-        assert_eq!(computed_root.pow([engine.order as u64]), Field64::ONE);
-        assert_eq!(computed_root, expected_root);
+        assert_eq!(
+            engine.omega_order,
+            Field64::GENERATOR.pow([(18_446_744_069_414_584_320 / engine.order) as u64])
+        );
     }
 
     #[test]
@@ -718,22 +825,6 @@ mod tests {
                 idx += 2 * row;
             }
         }
-    }
-
-    #[test]
-    fn test_new_from_cache_singleton() {
-        // Retrieve two instances of the engine
-        let engine1 = NttEngine::<Field64>::new_from_cache();
-        let engine2 = NttEngine::<Field64>::new_from_cache();
-
-        // Both instances should point to the same object in memory
-        assert!(Arc::ptr_eq(&engine1, &engine2));
-
-        // Verify that the cached instance has the expected properties
-        assert!(engine1.order.is_power_of_two());
-
-        let expected_root = Field64::TWO_ADIC_ROOT_OF_UNITY;
-        assert_eq!(engine1.root(engine1.order), expected_root);
     }
 
     #[test]

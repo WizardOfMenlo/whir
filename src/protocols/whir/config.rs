@@ -275,7 +275,7 @@ where
         self.initial_size().trailing_zeros() as usize
     }
 
-    pub const fn final_size(&self) -> usize {
+    pub fn final_size(&self) -> usize {
         self.final_sumcheck.final_size()
     }
 
@@ -443,7 +443,7 @@ impl<F: FftField> RoundConfig<F> {
         self.sumcheck.initial_size
     }
 
-    pub const fn final_size(&self) -> usize {
+    pub fn final_size(&self) -> usize {
         self.sumcheck.final_size()
     }
 
@@ -538,6 +538,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
+                    mask_length: 0,
                     codeword_length: 1 << (10 + 3 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),
@@ -559,6 +560,7 @@ mod tests {
                     embedding: Typed::new(embedding::Identity::new()),
                     num_vectors: 1,
                     vector_size: 1 << 10,
+                    mask_length: 0,
                     codeword_length: 1 << (10 + 4 - 2),
                     interleaving_depth: 1 << 2,
                     matrix_commit: matrix_commit::Config::<Field64_3>::new(0, 0),

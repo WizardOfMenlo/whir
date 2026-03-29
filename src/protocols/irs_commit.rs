@@ -24,7 +24,7 @@ use std::{
 };
 
 use ark_ff::{AdditiveGroup, FftField, Field};
-use ark_std::rand::{CryptoRng, RngCore};
+use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -32,13 +32,8 @@ use tracing::instrument;
 
 use crate::{
     algebra::{
-        dot,
-        embedding::Embedding,
-        fields::FieldWithSize,
-        lift,
-        linear_form::UnivariateEvaluation,
-        mixed_univariate_evaluate,
-        ntt::{self, interleaved_rs_encode},
+        dot, embedding::Embedding, fields::FieldWithSize, lift, linear_form::UnivariateEvaluation,
+        mixed_univariate_evaluate, ntt, random_vector,
     },
     engines::EngineId,
     hash::Hash,
@@ -48,7 +43,7 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::Typed,
-    utils::zip_strict,
+    utils::{chunks_exact_or_empty, zip_strict},
     verify,
 };
 
@@ -68,6 +63,9 @@ where
 
     /// The number of coefficients in each vector.
     pub vector_size: usize,
+
+    /// The number of masking values to add per codeword.
+    pub mask_length: usize,
 
     /// The number of Reed-Solomon evaluation points.
     pub codeword_length: usize,
@@ -98,7 +96,11 @@ where
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default, Serialize, Deserialize)]
 #[must_use]
-pub struct Witness<F: FftField, G: Field> {
+pub struct Witness<F: FftField, G = F>
+where
+    G: Field,
+{
+    pub masks: Vec<F>,
     pub matrix: Vec<F>,
     pub matrix_witness: matrix_commit::Witness,
     pub out_of_domain: Evaluations<G>,
@@ -193,6 +195,7 @@ where
             embedding: Typed::<M>::default(),
             num_vectors,
             vector_size,
+            mask_length: 0,
             codeword_length,
             interleaving_depth,
             matrix_commit: matrix_commit::Config::with_hash(
@@ -219,8 +222,8 @@ where
         &self.embedding
     }
 
-    pub fn generator(&self) -> M::Source {
-        ntt::generator(self.codeword_length).expect("Subgroup of requested size not found")
+    pub const fn num_messages(&self) -> usize {
+        self.interleaving_depth * self.num_vectors
     }
 
     pub fn message_length(&self) -> usize {
@@ -228,8 +231,21 @@ where
         self.vector_size / self.interleaving_depth
     }
 
+    /// Message length including mask coefficients.
+    pub fn masked_message_length(&self) -> usize {
+        self.message_length() + self.mask_length
+    }
+
+    pub fn evaluation_points(&self, indices: &[usize]) -> Vec<M::Source> {
+        ntt::evaluation_points::<M::Source>(
+            self.masked_message_length(),
+            self.codeword_length,
+            indices,
+        )
+    }
+
     pub fn rate(&self) -> f64 {
-        self.message_length() as f64 / self.codeword_length as f64
+        self.masked_message_length() as f64 / self.codeword_length as f64
     }
 
     pub fn unique_decoding(&self) -> bool {
@@ -272,7 +288,7 @@ where
     pub fn rbr_soundness_fold_prox_gaps(&self) -> f64 {
         let log_field_size = M::Target::field_size_bits();
         let log_inv_rate = self.rate().log2().neg();
-        let log_k = (self.message_length() as f64).log2();
+        let log_k = (self.masked_message_length() as f64).log2();
         // See WHIR Theorem 4.8
         // Recall, at each round we are only folding by two at a time
         let error = if self.unique_decoding() {
@@ -294,6 +310,7 @@ where
         vectors: &[&[M::Source]],
     ) -> Witness<M::Source, M::Target>
     where
+        Standard: Distribution<M::Source>,
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
         M::Target: Codec<[H::U]>,
@@ -302,17 +319,21 @@ where
         // Validate config
         assert!((self.vector_size).is_multiple_of(self.interleaving_depth));
         assert_eq!(self.matrix_commit.num_rows(), self.codeword_length);
-        assert_eq!(
-            self.matrix_commit.num_cols,
-            self.num_vectors * self.interleaving_depth
-        );
+        assert_eq!(self.matrix_commit.num_cols, self.num_messages());
 
         // Validate input
         assert_eq!(vectors.len(), self.num_vectors);
         assert!(vectors.iter().all(|p| p.len() == self.vector_size));
 
+        // Generate random mask
+        let masks = random_vector(prover_state.rng(), self.mask_length * self.num_messages());
+
         // Interleaved RS Encode the vectors
-        let matrix = interleaved_rs_encode(vectors, self.codeword_length, self.interleaving_depth);
+        let messages = vectors
+            .iter()
+            .flat_map(|v| chunks_exact_or_empty(v, self.message_length(), self.interleaving_depth))
+            .collect::<Vec<_>>();
+        let matrix = ntt::interleaved_rs_encode(&messages, &masks, self.codeword_length);
 
         // Commit to the matrix
         let matrix_witness = self.matrix_commit.commit(prover_state, &matrix);
@@ -330,6 +351,7 @@ where
         }
 
         Witness {
+            masks,
             matrix,
             matrix_witness,
             out_of_domain: Evaluations {
@@ -485,14 +507,7 @@ where
             self.in_domain_samples,
             self.deduplicate_in_domain,
         );
-
-        // Compute corresponding in-domain evaluation points
-        let generator = self.generator();
-        let points = indices
-            .iter()
-            .map(|index| generator.pow([*index as u64]))
-            .collect::<Vec<_>>();
-
+        let points = self.evaluation_points(&indices);
         (indices, points)
     }
 }
@@ -606,9 +621,11 @@ pub(crate) fn num_in_domain_queries(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use std::iter;
+
     use ark_std::rand::{
-        distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
+        distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng,
     };
     use proptest::{bool, prelude::Strategy, proptest, sample::select, strategy::Just};
 
@@ -616,62 +633,71 @@ mod tests {
     use crate::{
         algebra::{
             embedding::{Basefield, Compose, Frobenius, Identity},
-            fields, univariate_evaluate,
+            fields,
+            ntt::NTT,
+            random_vector, univariate_evaluate,
         },
         transcript::{codecs::U64, DomainSeparator},
     };
 
-    // Create a [`Strategy`] for generating [`irs_commit`] configurations.
-    pub fn config<M: Embedding + Clone>(
-        embedding: M,
-        num_vectors: usize,
-        vector_size: usize,
-        interleaving_depth: usize,
-    ) -> impl Strategy<Value = Config<M>>
+    impl<M: Embedding> Config<M>
     where
         M::Source: FftField,
     {
-        assert!(interleaving_depth != 0);
-        assert!(vector_size.is_multiple_of(interleaving_depth));
-        let message_length = vector_size / interleaving_depth;
+        pub fn arbitrary(
+            embedding: M,
+            num_vectors: usize,
+            vector_size: usize,
+            mask_length: usize,
+            interleaving_depth: usize,
+        ) -> impl Strategy<Value = Self> {
+            assert!(interleaving_depth != 0);
+            assert!(vector_size.is_multiple_of(interleaving_depth));
+            let message_length = vector_size / interleaving_depth + mask_length;
 
-        // Compute supported NTT domains for F
-        let valid_codeword_lengths = (1..=30)
-            .map(|n| n * message_length)
-            .filter(|&n| ntt::generator::<M::Source>(n).is_some())
-            .collect::<Vec<_>>();
-        let codeword_length = select(valid_codeword_lengths);
+            // Compute supported NTT domains for F
+            let engine = NTT.get::<M::Source>().expect("Unsupported field");
+            let valid_codeword_lengths =
+                iter::successors(engine.next_order(message_length), |size| {
+                    engine.next_order(*size + 1)
+                })
+                .filter(|n| n.is_power_of_two()) // TODO: Remove filter.
+                .take(4)
+                .collect::<Vec<_>>();
+            let codeword_length = select(valid_codeword_lengths);
 
-        // Combine with a matrix commitment config
-        let codeword_matrix = codeword_length.prop_flat_map(move |codeword_length| {
-            (
-                Just(codeword_length),
-                matrix_commit::tests::config::<M::Source>(
+            // Combine with a matrix commitment config
+            let codeword_matrix = codeword_length.prop_flat_map(move |codeword_length| {
+                (
+                    Just(codeword_length),
+                    matrix_commit::tests::config::<M::Source>(
+                        codeword_length,
+                        interleaving_depth * num_vectors,
+                    ),
+                )
+            });
+
+            (codeword_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
+                move |(
+                    (codeword_length, matrix_commit),
+                    in_domain_samples,
+                    out_domain_samples,
+                    deduplicate_in_domain,
+                )| Self {
+                    embedding: Typed::new(embedding.clone()),
+                    num_vectors,
+                    vector_size,
+                    mask_length,
                     codeword_length,
-                    interleaving_depth * num_vectors,
-                ),
+                    interleaving_depth,
+                    matrix_commit,
+                    johnson_slack: OrderedFloat::default(),
+                    in_domain_samples,
+                    out_domain_samples,
+                    deduplicate_in_domain,
+                },
             )
-        });
-
-        (codeword_matrix, 0_usize..=10, 0_usize..=10, bool::ANY).prop_map(
-            move |(
-                (codeword_length, matrix_commit),
-                in_domain_samples,
-                out_domain_samples,
-                deduplicate_in_domain,
-            )| Config {
-                embedding: Typed::new(embedding.clone()),
-                num_vectors,
-                vector_size,
-                codeword_length,
-                interleaving_depth,
-                matrix_commit,
-                johnson_slack: OrderedFloat::default(),
-                in_domain_samples,
-                out_domain_samples,
-                deduplicate_in_domain,
-            },
-        )
+        }
     }
 
     fn test<M: Embedding>(seed: u64, config: &Config<M>)
@@ -689,11 +715,7 @@ mod tests {
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
         let vectors = (0..config.num_vectors)
-            .map(|_| {
-                (0..config.vector_size)
-                    .map(|_| rng.gen::<M::Source>())
-                    .collect::<Vec<_>>()
-            })
+            .map(|_| random_vector(&mut rng, config.vector_size))
             .collect::<Vec<_>>();
 
         // TODO: Multiple commitments and openings.
@@ -784,16 +806,17 @@ mod tests {
         Standard: Distribution<M::Source> + Distribution<M::Target>,
     {
         let valid_sizes = (1..=1024)
-            .filter(|&n| ntt::generator::<M::Source>(n).is_some())
+            .filter(|&n| ntt::next_order::<M::Source>(n) == Some(n))
             .collect::<Vec<_>>();
         let size = select(valid_sizes);
 
         let config = (0_usize..=3, size, 1_usize..=10).prop_flat_map(
             |(num_vectors, size, interleaving_depth)| {
-                config(
+                Config::arbitrary(
                     embedding.clone(),
                     num_vectors,
                     size * interleaving_depth,
+                    0,
                     interleaving_depth,
                 )
             },

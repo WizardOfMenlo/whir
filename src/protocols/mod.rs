@@ -8,6 +8,7 @@
 //! hash of the Config serialization to serve as protocol domain separator for Spongefish.
 //!
 
+pub mod basecase;
 pub mod challenge_indices;
 pub mod geometric_challenge;
 pub mod irs_commit;

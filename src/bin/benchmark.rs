@@ -6,6 +6,7 @@ use std::{
 };
 
 use ark_ff::FftField;
+use ark_std::rand::{distributions::Standard, prelude::Distribution};
 use clap::Parser;
 use serde::Serialize;
 use whir::{
@@ -107,6 +108,7 @@ fn main() {
 #[allow(clippy::too_many_lines)]
 fn run_whir<M>(args: &Args)
 where
+    Standard: Distribution<M::Source> + Distribution<M::Target>,
     M: Embedding + Default,
     M::Source: FftField,
     M::Target: FftField + Codec,

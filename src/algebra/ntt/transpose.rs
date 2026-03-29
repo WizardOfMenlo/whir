@@ -6,6 +6,14 @@ use crate::utils::workload_size;
 // NOTE: The assumption that rows and cols are a power of two are actually only relevant for the square matrix case.
 // (This is because the algorithm recurses into 4 sub-matrices of half dimension; we assume those to be square matrices as well, which only works for powers of two).
 
+/// Compute the row-major index permutation for a transposition.
+#[cfg(not(feature = "rs_in_order"))]
+pub fn transpose_permute(index: usize, rows: usize, cols: usize) -> usize {
+    debug_assert!(index < rows * cols);
+    let (row, col) = (index / cols, index % cols);
+    row + col * rows
+}
+
 /// Transposes a matrix in-place.
 ///
 /// This function processes a batch of matrices if the slice length is a multiple of `rows * cols`.
@@ -371,11 +379,14 @@ mod tests {
         }
     }
 
+    fn arb_pow2() -> impl Strategy<Value = usize> {
+        (0..=8).prop_map(|log2_size| 1_usize << log2_size)
+    }
+
     /// Generates random square matrices with sizes that are powers of two.
     #[allow(clippy::cast_sign_loss)]
     fn arb_square_matrix() -> impl Strategy<Value = (Vec<usize>, usize)> {
-        (2usize..=64)
-            .prop_filter("Must be power of two", |&size| size.is_power_of_two())
+        arb_pow2()
             .prop_map(|size| size * size)
             .prop_flat_map(|matrix_size| {
                 prop::collection::vec(0usize..1000, matrix_size)
@@ -385,14 +396,10 @@ mod tests {
 
     /// Generates random rectangular matrices where rows and columns are powers of two.
     fn arb_rect_matrix() -> impl Strategy<Value = (Vec<usize>, usize, usize)> {
-        (2usize..=64, 2usize..=64)
-            .prop_filter("Rows and columns must be power of two", |&(r, c)| {
-                r.is_power_of_two() && c.is_power_of_two()
-            })
-            .prop_flat_map(|(rows, cols)| {
-                prop::collection::vec(0usize..1000, rows * cols)
-                    .prop_map(move |matrix| (matrix, rows, cols))
-            })
+        (arb_pow2(), arb_pow2()).prop_flat_map(|(rows, cols)| {
+            prop::collection::vec(0usize..1000, rows * cols)
+                .prop_map(move |matrix| (matrix, rows, cols))
+        })
     }
 
     proptest! {

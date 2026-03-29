@@ -1,7 +1,7 @@
 use std::{any::Any, borrow::Cow, mem};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
-use ark_std::rand::{CryptoRng, RngCore};
+use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -63,6 +63,7 @@ where
         evaluations: Cow<'a, [M::Target]>,
     ) -> FinalClaim<M::Target>
     where
+        Standard: Distribution<M::Source> + Distribution<M::Target>,
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
         M::Target: Codec<[H::U]>,

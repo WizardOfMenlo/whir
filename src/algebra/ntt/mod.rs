@@ -2,28 +2,21 @@
 
 mod cooley_tukey;
 mod matrix;
-
-#[cfg(test)]
-pub(crate) mod test_utils;
-
 mod transpose;
 mod utils;
 mod wavelet;
 
 use std::{
     fmt::Debug,
-    marker::PhantomData,
     sync::{Arc, LazyLock},
 };
 
-use ark_ff::{FftField, Field};
+use ark_ff::Field;
 use static_assertions::assert_obj_safe;
-#[cfg(feature = "tracing")]
-use tracing::instrument;
 
 use self::matrix::MatrixMut;
 pub use self::{
-    cooley_tukey::{generator, intt, intt_batch, ntt, ntt_batch},
+    cooley_tukey::NttEngine,
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
@@ -34,20 +27,30 @@ use crate::{
 
 pub static NTT: LazyLock<TypeMap<NttFamily>> = LazyLock::new(|| {
     let map = TypeMap::new();
-    map.insert(Arc::new(ArkNtt::<fields::Field64>::default()) as Arc<dyn ReedSolomon<_>>);
-    map.insert(Arc::new(ArkNtt::<fields::Field128>::default()) as Arc<dyn ReedSolomon<_>>);
-    map.insert(Arc::new(ArkNtt::<fields::Field192>::default()) as Arc<dyn ReedSolomon<_>>);
-    map.insert(Arc::new(ArkNtt::<fields::Field256>::default()) as Arc<dyn ReedSolomon<_>>);
-    map.insert(Arc::new(ArkNtt::<fields::Field64_2>::default()) as Arc<dyn ReedSolomon<_>>);
-    map.insert(Arc::new(ArkNtt::<fields::Field64_3>::default()) as Arc<dyn ReedSolomon<_>>);
     map.insert(
-        Arc::new(ArkNtt::<<fields::Field64_2 as Field>::BasePrimeField>::default())
-            as Arc<dyn ReedSolomon<_>>,
+        Arc::new(NttEngine::<fields::Field64>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>
     );
     map.insert(
-        Arc::new(ArkNtt::<<fields::Field64_3 as Field>::BasePrimeField>::default())
-            as Arc<dyn ReedSolomon<_>>,
+        Arc::new(NttEngine::<fields::Field128>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>
     );
+    map.insert(
+        Arc::new(NttEngine::<fields::Field192>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>
+    );
+    map.insert(
+        Arc::new(NttEngine::<fields::Field256>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>
+    );
+    map.insert(
+        Arc::new(NttEngine::<fields::Field64_2>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>,
+    );
+    map.insert(
+        Arc::new(NttEngine::<fields::Field64_3>::new_from_fftfield()) as Arc<dyn ReedSolomon<_>>,
+    );
+    map.insert(Arc::new(
+        NttEngine::<<fields::Field64_2 as Field>::BasePrimeField>::new_from_fftfield(),
+    ) as Arc<dyn ReedSolomon<_>>);
+    map.insert(Arc::new(
+        NttEngine::<<fields::Field64_3 as Field>::BasePrimeField>::new_from_fftfield(),
+    ) as Arc<dyn ReedSolomon<_>>);
     map
 });
 
@@ -60,294 +63,158 @@ impl type_map::Family for NttFamily {
 
 /// Trait for a Reed-Solomon encoder implementation for a given field `F`.
 pub trait ReedSolomon<F>: Debug + Send + Sync {
-    fn interleaved_encode(
+    /// Returns the next supported order equal or larger than `size`.
+    ///
+    /// The result will be an NTT-smooth number suitable for `codeword_length`.
+    ///
+    /// Returns `None` if `size` exceeds the largest supported order.
+    fn next_order(&self, size: usize) -> Option<usize>;
+
+    /// Returns the `index`th evaluation point.
+    ///
+    /// `masked_message_length`: the total message length including any mask values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any of the indices are `>= codeword_length` or `order` is not supported.
+    fn evaluation_points(
         &self,
-        interleaved_coeffs: &[&[F]],
+        masked_message_length: usize,
         codeword_length: usize,
-        interleaving_depth: usize,
+        indices: &[usize],
     ) -> Vec<F>;
+
+    /// Compute a masked interleaved Reed-Solomon encoding.
+    ///
+    /// `messages` are `num_messages` slices of `message_length` elements.
+    /// `masks` is a `num_messages` × `mask_length` matrix of blinding coefficients.
+    /// `codeword_length` must be an NTT-smooth number >= `message_length + mask_length`.
+    /// returns an `codeword_length × num_messages` matrix.
+    ///
+    /// Each output value is the univariate polynomial evaluation in the evaluation point
+    /// corresponding with the index of a coefficient list formed by concatenating message and mask.
+    ///
+    fn interleaved_encode(&self, messages: &[&[F]], masks: &[F], codeword_length: usize) -> Vec<F>;
 }
 
 assert_obj_safe!(ReedSolomon<crate::algebra::fields::Field256>);
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ArkNtt<F: FftField>(PhantomData<F>);
+pub fn next_order<F: 'static>(size: usize) -> Option<usize> {
+    NTT.get::<F>()
+        .expect("Unsupported NTT field.")
+        .next_order(size)
+}
 
-impl<F: FftField> ReedSolomon<F> for ArkNtt<F> {
-    fn interleaved_encode(
-        &self,
-        interleaved_coeffs: &[&[F]],
-        codeword_length: usize,
-        interleaving_depth: usize,
-    ) -> Vec<F> {
-        ark_ntt(interleaved_coeffs, codeword_length, interleaving_depth)
-    }
+pub fn evaluation_points<F: 'static>(
+    masked_message_length: usize,
+    codeword_length: usize,
+    indices: &[usize],
+) -> Vec<F> {
+    NTT.get::<F>()
+        .expect("Unsupported NTT field.")
+        .evaluation_points(masked_message_length, codeword_length, indices)
 }
 
 pub fn interleaved_rs_encode<F: 'static>(
-    interleaved_coeffs: &[&[F]],
+    messages: &[&[F]],
+    masks: &[F],
     codeword_length: usize,
-    interleaving_depth: usize,
 ) -> Vec<F> {
-    let engine = NTT.get::<F>().expect("Unsupported field");
-    engine.interleaved_encode(interleaved_coeffs, codeword_length, interleaving_depth)
-}
-
-///
-/// RS encode coefficients grouped in `interleaving_depth` contiguous blocks
-/// at the rate 1/`expansion`, then interleave the evaluations per point.
-///
-/// This function computes the RS-code for each interleaved message and
-/// outputs the interleaved alphabets in the same order as the input.
-///
-#[cfg_attr(feature = "tracing", instrument(level = "debug", skip(coeffs), fields(size = coeffs.len())))]
-fn ark_ntt<F: FftField>(
-    coeffs: &[&[F]],
-    codeword_length: usize,
-    interleaving_depth: usize,
-) -> Vec<F> {
-    if coeffs.is_empty() {
-        return Vec::new();
-    }
-    let poly_size = coeffs[0].len();
-    for poly in coeffs {
-        assert_eq!(poly.len(), poly_size);
-    }
-    assert!(poly_size.is_multiple_of(interleaving_depth));
-    let message_length = poly_size / interleaving_depth;
-    let per_poly_size = codeword_length * interleaving_depth;
-    let total_size = per_poly_size * coeffs.len();
-
-    assert!(codeword_length.is_multiple_of(message_length));
-
-    // Lay out coefficients in contiguous blocks and zero-pad each block.
-    let mut result = vec![F::ZERO; total_size];
-    for (poly_index, poly) in coeffs.iter().enumerate() {
-        for (block_index, block) in poly.chunks_exact(message_length).enumerate() {
-            let dst = poly_index * per_poly_size + block_index * codeword_length;
-            result[dst..dst + message_length].copy_from_slice(block);
-        }
-    }
-
-    // NTT each block, then transpose to row-major order with vectors
-    // stacked horizontally.
-    ntt_batch(&mut result, codeword_length);
-    transpose(
-        &mut result,
-        coeffs.len() * interleaving_depth,
-        codeword_length,
-    );
-    result
+    NTT.get::<F>()
+        .expect("Unsupported NTT field.")
+        .interleaved_encode(messages, masks, codeword_length)
 }
 
 #[cfg(test)]
 mod tests {
-    use ark_ff::Field;
+    use std::iter;
+
+    use ark_std::rand::{
+        distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng,
+    };
+    use proptest::{collection, prelude::Just, proptest, sample::select, strategy::Strategy};
 
     use super::*;
-    use crate::algebra::{fields::Field64, ntt::cooley_tukey::NttEngine};
+    use crate::{
+        algebra::{random_vector, univariate_evaluate},
+        utils::{chunks_exact_or_empty, zip_strict},
+    };
 
-    #[test]
-    fn test_expand_from_coeff_size_2() {
-        let engine = NttEngine::<Field64>::new_from_fftfield();
-
-        let c0 = Field64::from(1);
-        let c1 = Field64::from(2);
-        let coeffs = vec![c0, c1];
-        let expansion = 2;
-
-        let omega = engine.root(4);
-
-        // Expansion of the coefficient vector
-        //
-        // The expansion factor is 2, so we extend the original coefficients as follows:
-        //
-        //   f0 = c0
-        //   f1 = c1
-        //   f2 = c0 * ω⁰ = c0
-        //   f3 = c1 * ω¹ = c1 * ω
-        //
-        // Using c0 = 1, c1 = 2, and ω as the generator:
-
-        let f0 = c0;
-        let f1 = c1;
-        let f2 = c0 * omega.pow([0]);
-        let f3 = c1 * omega.pow([1]);
-
-        // Compute the expected NTT
-        //
-        // The NTT for a size-2 batch follows:
-        //
-        //   F(0) = f0 + f1
-        //   F(1) = f0 - f1
-        //
-        // We apply this to both pairs (f0, f1) and (f2, f3):
-        //
-        //   F(0) = f0 + f1
-        //   F(1) = f0 - f1
-        //
-        //   F(2) = f2 + f3
-        //   F(3) = f2 - f3
-        //
-        // Now using the omega-based approach:
-
-        let expected_f0 = f0 + f1;
-        let expected_f1 = f0 - f1;
-        let expected_f2 = f2 + f3;
-        let expected_f3 = f2 - f3;
-
-        // The expected NTT result should be in transposed order:
-        let expected_values_transposed = vec![expected_f0, expected_f2, expected_f1, expected_f3];
-
-        let computed_values = test_utils::expand_from_coeff(&coeffs, expansion);
-        assert_eq!(computed_values, expected_values_transposed);
+    fn valid_codeword_lengths<F: 'static>(size: usize, count: usize) -> Vec<usize> {
+        let ntt = NTT.get::<F>().expect("No NTT engine for field.");
+        iter::successors(ntt.next_order(size), |size| ntt.next_order(*size + 1))
+            .take(count)
+            .collect()
     }
 
-    #[test]
-    fn test_expand_from_coeff_size_4() {
-        let engine = NttEngine::<Field64>::new_from_fftfield();
+    fn test<F: Field>(ntt: &dyn ReedSolomon<F>)
+    where
+        Standard: Distribution<F>,
+    {
+        let cases = (
+            0_usize..10,
+            0_usize..(1 << 10),
+            0_usize..(1 << 10),
+            1_usize..=32,
+        )
+            .prop_flat_map(|(num_messages, message_length, mask_length, sample_size)| {
+                let valid_codeword_lengths =
+                    valid_codeword_lengths::<F>(message_length + mask_length, 6);
+                select(valid_codeword_lengths).prop_flat_map(move |codeword_length| {
+                    let sample_size = sample_size.min(codeword_length.max(1));
+                    (
+                        Just(num_messages),
+                        Just(message_length),
+                        Just(mask_length),
+                        Just(codeword_length),
+                        collection::vec(0..codeword_length, sample_size),
+                    )
+                })
+            });
+        proptest!(|(
+            seed: u64,
+            (num_messages, message_length, mask_length, codeword_length, sampled_indices) in cases
+        )| {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let messages = (0..num_messages)
+                .map(|_| random_vector(&mut rng, message_length))
+                .collect::<Vec<_>>();
+            let masks = random_vector(&mut rng, mask_length * num_messages);
+            let message_refs = messages.iter().map(|v| v.as_slice()).collect::<Vec<_>>();
+            let codeword = ntt.interleaved_encode(
+                &message_refs,
+                &masks,
+                codeword_length,
+            );
 
-        let c0 = Field64::from(1);
-        let c1 = Field64::from(2);
-        let c2 = Field64::from(3);
-        let c3 = Field64::from(4);
-        let coeffs = vec![c0, c1, c2, c3];
-        let expansion = 4;
+            // Output must be the right size.
+            assert_eq!(codeword.len(), codeword_length * num_messages);
 
-        let omega = engine.root(16);
-
-        // Manual expansion of the coefficient vector
-        //
-        // The expansion factor is 4, so we extend the original coefficients into 16 values:
-        //
-        //   f0  = c0
-        //   f1  = c1
-        //   f2  = c2
-        //   f3  = c3
-        //   f4  = c0 * ω⁰  = c0
-        //   f5  = c1 * ω¹  = c1 * ω
-        //   f6  = c2 * ω²  = c2 * ω²
-        //   f7  = c3 * ω³  = c3 * ω³
-        //   f8  = c0 * ω⁰  = c0
-        //   f9  = c1 * ω²  = c1 * ω²
-        //   f10 = c2 * ω⁴  = c2 * ω⁴
-        //   f11 = c3 * ω⁶  = c3 * ω⁶
-        //   f12 = c0 * ω⁰  = c0
-        //   f13 = c1 * ω³  = c1 * ω³
-        //   f14 = c2 * ω⁶  = c2 * ω⁶
-        //   f15 = c3 * ω⁹  = c3 * ω⁹
-        //
-        // With c0 = 1, c1 = 2, c2 = 3, c3 = 4, and ω as the generator:
-
-        let f0 = c0;
-        let f1 = c1;
-        let f2 = c2;
-        let f3 = c3;
-
-        let f4 = c0 * omega.pow([1]).pow([0]);
-        let f5 = c1 * omega.pow([1]).pow([1]);
-        let f6 = c2 * omega.pow([1]).pow([2]);
-        let f7 = c3 * omega.pow([1]).pow([3]);
-
-        let f8 = c0 * omega.pow([2]).pow([0]);
-        let f9 = c1 * omega.pow([2]).pow([1]);
-        let f10 = c2 * omega.pow([2]).pow([2]);
-        let f11 = c3 * omega.pow([2]).pow([3]);
-
-        let f12 = c0 * omega.pow([3]).pow([0]);
-        let f13 = c1 * omega.pow([3]).pow([1]);
-        let f14 = c2 * omega.pow([3]).pow([2]);
-        let f15 = c3 * omega.pow([3]).pow([3]);
-
-        // Compute the expected NTT manually using omega powers
-        //
-        // We process the values in **four chunks of four elements**, following the radix-2
-        // butterfly structure.
-
-        let omega = engine.root(4);
-
-        let omega1 = omega; // ω
-        let omega2 = omega * omega; // ω²
-        let omega3 = omega * omega2; // ω³
-        let omega4 = omega * omega3; // ω⁴
-
-        // Chunk 1 (f0 to f3)
-        let expected_f0 = f0 + f1 + f2 + f3;
-        let expected_f1 = f0 + f1 * omega1 + f2 * omega2 + f3 * omega3;
-        let expected_f2 = f0 + f1 * omega2 + f2 * omega4 + f3 * omega2;
-        let expected_f3 = f0 + f1 * omega3 + f2 * omega2 + f3 * omega1;
-
-        // Chunk 2 (f4 to f7)
-        let expected_f4 = f4 + f5 + f6 + f7;
-        let expected_f5 = f4 + f5 * omega1 + f6 * omega2 + f7 * omega3;
-        let expected_f6 = f4 + f5 * omega2 + f6 * omega4 + f7 * omega2;
-        let expected_f7 = f4 + f5 * omega3 + f6 * omega2 + f7 * omega1;
-
-        // Chunk 3 (f8 to f11)
-        let expected_f8 = f8 + f9 + f10 + f11;
-        let expected_f9 = f8 + f9 * omega1 + f10 * omega2 + f11 * omega3;
-        let expected_f10 = f8 + f9 * omega2 + f10 * omega4 + f11 * omega2;
-        let expected_f11 = f8 + f9 * omega3 + f10 * omega2 + f11 * omega1;
-
-        // Chunk 4 (f12 to f15)
-        let expected_f12 = f12 + f13 + f14 + f15;
-        let expected_f13 = f12 + f13 * omega1 + f14 * omega2 + f15 * omega3;
-        let expected_f14 = f12 + f13 * omega2 + f14 * omega4 + f15 * omega2;
-        let expected_f15 = f12 + f13 * omega3 + f14 * omega2 + f15 * omega1;
-
-        // Ensure correct NTT ordering
-        let expected_values_transposed = vec![
-            expected_f0,
-            expected_f4,
-            expected_f8,
-            expected_f12,
-            expected_f1,
-            expected_f5,
-            expected_f9,
-            expected_f13,
-            expected_f2,
-            expected_f6,
-            expected_f10,
-            expected_f14,
-            expected_f3,
-            expected_f7,
-            expected_f11,
-            expected_f15,
-        ];
-
-        let computed_values = test_utils::expand_from_coeff(&coeffs, expansion);
-        assert_eq!(computed_values, expected_values_transposed);
-    }
-
-    #[test]
-    fn test_interleaved_rs_encode() {
-        use ark_std::UniformRand;
-
-        let mut rng = ark_std::test_rng();
-        let count = 1 << 20;
-        let expansion = 4;
-        let folding_factor = 6;
-        let codeword_length = (count >> folding_factor) * expansion;
-
-        let poly: Vec<_> = (0..count).map(|_| Field64::rand(&mut rng)).collect();
-
-        // Compute things the old way
-        let block_size = count / (1 << folding_factor);
-        let mut blocks = Vec::with_capacity(1 << folding_factor);
-        for block in poly.chunks_exact(block_size) {
-            blocks.push(test_utils::expand_from_coeff(block, expansion));
-        }
-        let evals_len = block_size * expansion;
-        let mut expected = Vec::with_capacity(count * expansion);
-        for i in 0..evals_len {
-            for block in &blocks {
-                expected.push(block[i]);
+            // Output values are polynomial evaluations in the evaluation points.
+            let mut evaluation_points = ntt.evaluation_points(message_length + mask_length, codeword_length, &sampled_indices);
+            for (&index, &evaluation_point) in zip_strict(&sampled_indices, &evaluation_points) {
+                let evaluations = &codeword[index * num_messages.. (index + 1) * num_messages];
+                let masks = chunks_exact_or_empty(&masks, mask_length, num_messages);
+                for ((message, mask), value) in zip_strict(zip_strict(&messages, masks), evaluations) {
+                    assert_eq!(*value,
+                        univariate_evaluate(message, evaluation_point)
+                        + evaluation_point.pow([message_length as u64])
+                        * univariate_evaluate(mask, evaluation_point));
+                }
             }
-        }
 
-        // Compute things the new way
-        let interleaved_ntt =
-            interleaved_rs_encode(&[poly.as_slice()], codeword_length, 1 << folding_factor);
-        assert_eq!(expected, interleaved_ntt);
+            // Evaluation points are unique.
+            let mut sample_indices = sampled_indices;
+            sample_indices.sort_unstable();
+            sample_indices.dedup();
+            evaluation_points.sort_unstable();
+            evaluation_points.dedup();
+            assert_eq!(sample_indices.len(), evaluation_points.len());
+        });
+    }
+
+    #[test]
+    fn test_field64_1() {
+        test::<fields::Field64>(NTT.get().unwrap().as_ref());
     }
 }

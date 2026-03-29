@@ -16,6 +16,7 @@ where
     if count == 0 {
         return Vec::new();
     }
+    // TODO: This is blocking non-power-of-two support.
     assert!(
         num_leaves.is_power_of_two(),
         "Number of leaves must be a power of two for unbiased results."

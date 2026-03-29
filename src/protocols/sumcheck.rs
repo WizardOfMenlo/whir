@@ -14,14 +14,12 @@ use crate::{
         sumcheck::{compute_sumcheck_polynomial, fold},
         MultilinearPoint,
     },
-    ensure,
     protocols::proof_of_work,
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
     type_info::Type,
-    verify,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,20 +35,15 @@ where
 }
 
 impl<F: Field> Config<F> {
-    pub fn validate(&self) -> Result<(), &'static str> {
-        ensure!(
-            self.initial_size.is_power_of_two(),
-            "Initial size must be power of two."
+    pub fn final_size(&self) -> usize {
+        assert!(
+            self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
-        ensure!(
-            self.initial_size.ilog2() as usize >= self.num_rounds,
-            "Initial size must be >= 2^{rounds}."
-        );
-        Ok(())
-    }
-
-    pub const fn final_size(&self) -> usize {
-        self.initial_size >> self.num_rounds
+        if self.initial_size == 0 || self.num_rounds == 0 {
+            self.initial_size
+        } else {
+            self.initial_size.next_power_of_two() >> self.num_rounds
+        }
     }
 
     /// Runs the quadratic sumcheck protocol as configured.
@@ -78,13 +71,16 @@ impl<F: Field> Config<F> {
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
     {
-        self.validate().expect("Invalid configuration");
+        assert!(
+            self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
+        );
         assert_eq!(a.len(), self.initial_size);
         assert_eq!(b.len(), self.initial_size);
         debug_assert_eq!(dot(a, b), *sum);
 
         let mut res = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
+            debug_assert!(a.len() > 1);
             // Send sumcheck polynomial c0 and c2
             let (c0, c2) = compute_sumcheck_polynomial(a, b);
             let c1 = *sum - c0.double() - c2;
@@ -119,8 +115,9 @@ impl<F: Field> Config<F> {
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
     {
-        verify!(self.validate().is_ok());
-
+        assert!(
+            self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
+        );
         let mut res = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
             // Receive sumcheck polynomial c0 and c2
@@ -159,4 +156,123 @@ impl<F: Field> fmt::Display for Config<F> {
 mod tests {
 
     // TODO: Proptest based tests checking invariants and post conditions.
+    use ark_std::rand::{
+        distributions::{Distribution, Standard},
+        rngs::StdRng,
+        SeedableRng,
+    };
+    use proptest::{proptest, strategy::Strategy};
+    #[cfg(feature = "tracing")]
+    use tracing::instrument;
+
+    use super::*;
+    use crate::{
+        algebra::{fields, multilinear_extend, random_vector},
+        transcript::DomainSeparator,
+    };
+
+    impl<F: Field> Config<F> {
+        pub fn arbitrary() -> impl Strategy<Value = Self> {
+            (0_usize..(1 << 12), 0_usize..12).prop_map(|(initial_size, num_rounds)| {
+                let num_rounds =
+                    num_rounds.min(initial_size.next_power_of_two().trailing_zeros() as usize);
+                Self {
+                    field: Type::new(),
+                    initial_size,
+                    num_rounds,
+                    round_pow: proof_of_work::Config::none(),
+                }
+            })
+        }
+    }
+
+    #[cfg_attr(feature = "tracing", instrument)]
+    fn test_config<F>(seed: u64, config: &Config<F>)
+    where
+        F: Field + Codec,
+        Standard: Distribution<F>,
+    {
+        // Pseudo-random Instance
+        let instance = U64(seed);
+        let ds = DomainSeparator::protocol(config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+        let mut rng = StdRng::seed_from_u64(seed);
+        let initial_vector = random_vector(&mut rng, config.initial_size);
+        let initial_covector = random_vector(&mut rng, config.initial_size);
+        let initial_sum = dot(&initial_vector, &initial_covector);
+
+        // Prover
+        let mut vector = initial_vector.clone();
+        let mut covector = initial_covector.clone();
+        let mut sum = initial_sum;
+        let mut prover_state = ProverState::new_std(&ds);
+        let point = config.prove(&mut prover_state, &mut vector, &mut covector, &mut sum);
+        assert_eq!(vector.len(), config.final_size());
+        assert_eq!(covector.len(), config.final_size());
+        assert_eq!(dot(&vector, &covector), sum);
+        if config.final_size() == 1 {
+            assert_eq!(multilinear_extend(&initial_vector, &point.0), vector[0]);
+            assert_eq!(multilinear_extend(&initial_covector, &point.0), covector[0]);
+        } else {
+            // TODO: Check correct folding.
+        }
+        let proof = prover_state.proof();
+
+        // Verifier
+        let mut verifier_sum = initial_sum;
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let verifier_point = config
+            .verify(&mut verifier_state, &mut verifier_sum)
+            .unwrap();
+        assert_eq!(verifier_point, point);
+        assert_eq!(verifier_sum, sum);
+        verifier_state.check_eof().unwrap();
+    }
+
+    fn test_sumcheck<F>()
+    where
+        F: Field + Codec,
+        Standard: Distribution<F>,
+    {
+        crate::tests::init();
+        proptest!(|(seed: u64, config in Config::arbitrary())| {
+            test_config(seed, &config);
+        });
+    }
+
+    #[test]
+    fn test_field64_1() {
+        test_sumcheck::<fields::Field64>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field64_2() {
+        test_sumcheck::<fields::Field64_2>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field64_3() {
+        test_sumcheck::<fields::Field64_3>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field128() {
+        test_sumcheck::<fields::Field128>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field192() {
+        test_sumcheck::<fields::Field192>();
+    }
+
+    #[test]
+    #[ignore = "Somewhat expensive and redundant"]
+    fn test_field256() {
+        test_sumcheck::<fields::Field256>();
+    }
 }

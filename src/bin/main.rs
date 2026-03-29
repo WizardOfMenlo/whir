@@ -1,6 +1,7 @@
 use std::{borrow::Cow, time::Instant};
 
 use ark_ff::FftField;
+use ark_std::rand::distributions::{Distribution, Standard};
 use clap::Parser;
 use whir::{
     algebra::{
@@ -68,6 +69,9 @@ fn main() {
 
     // Dispatch on embedding
     if args.zk {
+        #[cfg(not(feature = "rs_in_order"))]
+        panic!("ZK requires --features rs_in_order");
+        #[cfg(feature = "rs_in_order")]
         match field {
             AF::Goldilocks1 => run_whir_zk::<Field64>(&args),
             AF::Goldilocks2 => run_whir_zk::<Field64_2>(&args),
@@ -91,6 +95,7 @@ fn main() {
 #[allow(clippy::too_many_lines)]
 fn run_whir<M>(args: &Args)
 where
+    Standard: Distribution<M::Source> + Distribution<M::Target>,
     M: Embedding + Default,
     M::Source: FftField,
     M::Target: FftField + Codec,
@@ -223,9 +228,11 @@ where
     );
 }
 
+#[cfg(feature = "rs_in_order")]
 #[allow(clippy::too_many_lines)]
 fn run_whir_zk<F>(args: &Args)
 where
+    Standard: Distribution<F>,
     F: FftField + Codec,
 {
     use whir::protocols::whir_zk::Config;

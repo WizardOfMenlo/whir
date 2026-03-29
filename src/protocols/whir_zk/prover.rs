@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use ark_ff::FftField;
+use ark_std::rand::{distributions::Standard, prelude::Distribution};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "tracing")]
@@ -214,6 +215,7 @@ impl<F: FftField> Config<F> {
         evaluations: Cow<'a, [F]>,
     ) -> FinalClaim<F>
     where
+        Standard: Distribution<F>,
         H: DuplexSpongeInterface<U = u8>,
         R: ark_std::rand::RngCore + ark_std::rand::CryptoRng,
         F: Codec<[H::U]>,

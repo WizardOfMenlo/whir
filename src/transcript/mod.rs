@@ -201,6 +201,16 @@ where
     }
 
     #[cfg_attr(test, track_caller)]
+    pub fn prover_messages<T>(&mut self, messages: &[T])
+    where
+        T: Encoding<[H::U]> + NargSerialize,
+    {
+        for message in messages {
+            self.prover_message(message);
+        }
+    }
+
+    #[cfg_attr(test, track_caller)]
     pub fn prover_hint<T>(&mut self, hint: &T)
     where
         T: NargSerialize,
