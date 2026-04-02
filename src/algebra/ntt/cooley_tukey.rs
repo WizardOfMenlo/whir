@@ -367,6 +367,11 @@ impl<F: Field> ReedSolomon<F> for NttEngine<F> {
         }
     }
 
+    fn generator(&self, codeword_length: usize) -> F {
+        self.omega_order
+            .pow([(self.order / codeword_length) as u64])
+    }
+
     fn evaluation_points(
         &self,
         masked_message_length: usize,
@@ -376,9 +381,7 @@ impl<F: Field> ReedSolomon<F> for NttEngine<F> {
         assert!(masked_message_length <= codeword_length);
         assert!(self.order.is_multiple_of(codeword_length));
         let mut result = Vec::new();
-        let generator = self
-            .omega_order
-            .pow([(self.order / codeword_length) as u64]);
+        let generator = self.generator(codeword_length);
 
         // Coset transformation
         let mut coset_size = self.next_order(masked_message_length).unwrap();

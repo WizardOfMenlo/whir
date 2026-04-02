@@ -70,6 +70,8 @@ pub trait ReedSolomon<F>: Debug + Send + Sync {
     /// Returns `None` if `size` exceeds the largest supported order.
     fn next_order(&self, size: usize) -> Option<usize>;
 
+    fn generator(&self, codeword_length: usize) -> F;
+
     /// Returns the `index`th evaluation point.
     ///
     /// `masked_message_length`: the total message length including any mask values.
@@ -123,6 +125,12 @@ pub fn interleaved_rs_encode<F: 'static>(
     NTT.get::<F>()
         .expect("Unsupported NTT field.")
         .interleaved_encode(messages, masks, codeword_length)
+}
+
+pub fn generator<F: 'static>(codeword_length: usize) -> F {
+    NTT.get::<F>()
+        .expect("Unsupported NTT field.")
+        .generator(codeword_length)
 }
 
 #[cfg(test)]
