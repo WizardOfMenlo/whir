@@ -6,6 +6,8 @@
 use std::sync::{RwLock, RwLockReadGuard};
 
 use ark_ff::{FftField, Field};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 #[cfg(feature = "parallel")]
 use {crate::utils::workload_size, rayon::prelude::*, std::cmp::max};
 
@@ -396,6 +398,13 @@ impl<F: Field> ReedSolomon<F> for NttEngine<F> {
         result
     }
 
+    #[cfg_attr(feature = "tracing", instrument(skip(self, messages, masks), fields(
+        num_messages = messages.len(),
+        message_len = messages.first().map(|c| c.len()),
+        codeword_length = codeword_length,
+        mask_len = masks.len().checked_div(messages.len())
+
+    )))]
     fn interleaved_encode(&self, messages: &[&[F]], masks: &[F], codeword_length: usize) -> Vec<F> {
         assert!(self.order.is_multiple_of(codeword_length));
         if messages.is_empty() {
