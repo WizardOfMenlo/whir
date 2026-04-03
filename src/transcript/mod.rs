@@ -48,8 +48,8 @@ where
 
 #[derive(Clone, Copy, Debug)]
 pub struct DomainSeparator<'a, I> {
-    protocol_id: [u8; 64],
-    session_id: [u8; 32],
+    pub protocol_id: [u8; 64],
+    pub session_id: [u8; 32],
     instance: &'a I,
 }
 
