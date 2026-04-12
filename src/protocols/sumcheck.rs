@@ -4,16 +4,15 @@ use std::fmt;
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
+use efficient_sumcheck::{
+    order_strategy::MSBOrder, simd_ops as effsc_simd, streams::reorder_vec,
+};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use crate::{
-    algebra::{
-        dot,
-        sumcheck::{compute_sumcheck_polynomial, fold},
-        MultilinearPoint,
-    },
+    algebra::{dot, MultilinearPoint},
     protocols::proof_of_work,
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
@@ -79,10 +78,34 @@ impl<F: Field> Config<F> {
         debug_assert_eq!(dot(a, b), *sum);
 
         let mut res = Vec::with_capacity(self.num_rounds);
+        if self.num_rounds == 0 {
+            return MultilinearPoint(res);
+        }
+
+        // Pad to next power of two (zero extension preserves the sum).
+        let padded = self.initial_size.next_power_of_two();
+        if padded > self.initial_size {
+            a.resize(padded, F::ZERO);
+            b.resize(padded, F::ZERO);
+        }
+
+        // Bit-reverse to convert whir's MSB-indexed layout into the LSB-indexed
+        // (ark-poly / efficient-sumcheck) layout expected by the SIMD kernels.
+        // After this, adjacent pairs correspond to whir's (low, high) halves, so
+        // effsc's LSB-first fold binds variables in whir's x_0, x_1, ... order.
+        if padded > 1 {
+            *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
+            *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
+        }
+
         for _ in 0..self.num_rounds {
             debug_assert!(a.len() > 1);
-            // Send sumcheck polynomial c0 and c2
-            let (c0, c2) = compute_sumcheck_polynomial(a, b);
+            // effsc returns (c_const, c_linear) of the round poly q(X) in the
+            // reordered (LSB-first) pairing. c_const = c0 (matches whir's c0);
+            // c_linear relates to whir's c2 via q(0) + q(1) = claim:
+            //     c2 = claim - c_linear
+            let (c0, lin) = effsc_simd::pairwise_product_sum(a, b);
+            let c2 = *sum - lin;
             let c1 = *sum - c0.double() - c2;
             prover_state.prover_message(&c0);
             prover_state.prover_message(&c2);
@@ -94,10 +117,16 @@ impl<F: Field> Config<F> {
             let folding_randomness = prover_state.verifier_message::<F>();
             res.push(folding_randomness);
 
-            // Fold the inputs
-            fold(a, folding_randomness);
-            fold(b, folding_randomness);
+            // SIMD-accelerated fold (halves length in place).
+            effsc_simd::fold(a, folding_randomness);
+            effsc_simd::fold(b, folding_randomness);
             *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
+        }
+
+        // Restore whir's MSB-indexed layout for downstream consumers.
+        if a.len() > 1 {
+            *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
+            *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
         }
 
         MultilinearPoint(res)

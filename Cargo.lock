@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10,6 +22,12 @@ checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "android_system_properties"
@@ -98,6 +116,7 @@ dependencies = [
  "educe",
  "num-bigint",
  "num-traits",
+ "rayon",
  "zeroize",
 ]
 
@@ -123,6 +142,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-poly"
+version = "0.5.0"
+source = "git+https://github.com/arkworks-rs/algebra?branch=z-tech%2Fmacro_auto_detect_subgroup#2644053e2fe913b0aba2c89d1fcd8277dbb826e4"
+dependencies = [
+ "ahash",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
+ "educe",
+ "fnv",
+ "hashbrown 0.16.1",
+ "rayon",
+]
+
+[[package]]
 name = "ark-serialize"
 version = "0.5.0"
 source = "git+https://github.com/arkworks-rs/algebra?branch=z-tech%2Fmacro_auto_detect_subgroup#39464f8deadee46e27e1b8de57bcab203297bbea"
@@ -131,6 +165,7 @@ dependencies = [
  "ark-std",
  "digest",
  "num-bigint",
+ "rayon",
  "serde_with",
 ]
 
@@ -151,6 +186,7 @@ source = "git+https://github.com/arkworks-rs/std#1693bc56d2ca6657b623f33a3f0b009
 dependencies = [
  "num-traits",
  "rand 0.8.5",
+ "rayon",
 ]
 
 [[package]]
@@ -543,6 +579,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "efficient-sumcheck"
+version = "0.0.2"
+source = "git+https://github.com/compsec-epfl/efficient-sumcheck.git?branch=z-tech%2Fsimd_goldilocks_experimental#3e614f916a28c0b13d110ae14a57df42f30a242c"
+dependencies = [
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "ark-std",
+ "memmap2",
+ "nohash-hasher",
+ "rayon",
+ "spongefish",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -691,6 +742,9 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+]
 
 [[package]]
 name = "heck"
@@ -858,6 +912,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memmap2"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -868,6 +931,12 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nu-ansi-term"
@@ -1553,7 +1622,6 @@ dependencies = [
 [[package]]
 name = "spongefish"
 version = "0.4.0"
-source = "git+https://github.com/z-tech/spongefish?rev=2613967#2613967409998dc4f81ac6f0c1799456f7878b82"
 dependencies = [
  "ark-ff",
  "ark-serialize",
@@ -1943,6 +2011,7 @@ dependencies = [
  "const-oid",
  "derive-where",
  "digest",
+ "efficient-sumcheck",
  "hex",
  "hex-literal",
  "ordered-float",
