@@ -44,6 +44,7 @@ serde_json = "1.0"
 spongefish = { git = "https://github.com/z-tech/spongefish", rev = "2613967", features = ["ark-ff"]}
 rayon = { version = "1.10", optional = true }
 tracing = { version = "0.1", features = ["attributes"], optional = true }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"], optional = true }
 hex = "0.4"
 static_assertions = "1.1.0"
 ciborium = "0.2"
@@ -73,7 +74,7 @@ verifier_panics = []
 parallel = ["dep:rayon"]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
 # Do not permute evaluation pointsin RS
 # This flag is to be removed after whir_zk supports it.
 rs_in_order = []
