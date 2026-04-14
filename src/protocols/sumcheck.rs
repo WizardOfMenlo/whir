@@ -5,9 +5,11 @@ use std::fmt;
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 use efficient_sumcheck::{
-    order_strategy::MSBOrder, simd_ops as effsc_simd, streams::reorder_vec,
+    inner_product_sumcheck_partial_with_hook, order_strategy::MSBOrder, streams::reorder_vec,
+    transcript::Transcript as EffscTranscript,
 };
 use serde::{Deserialize, Serialize};
+use spongefish::NargSerialize;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -20,6 +22,32 @@ use crate::{
     },
     type_info::Type,
 };
+
+#[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = a.len())))]
+fn reorder_in<F: Field>(a: &mut Vec<F>, b: &mut Vec<F>) {
+    *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
+    *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
+}
+
+#[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = a.len())))]
+fn reorder_out<F: Field>(a: &mut Vec<F>, b: &mut Vec<F>) {
+    *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
+    *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
+}
+
+impl<F, H, R> EffscTranscript<F> for ProverState<H, R>
+where
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+    F: Codec<[H::U]> + NargSerialize,
+{
+    fn read(&mut self) -> F {
+        self.verifier_message::<F>()
+    }
+    fn write(&mut self, value: F) {
+        self.prover_message(&value);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -66,7 +94,7 @@ impl<F: Field> Config<F> {
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
-        F: Codec<[H::U]>,
+        F: Codec<[H::U]> + NargSerialize,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
     {
@@ -77,59 +105,36 @@ impl<F: Field> Config<F> {
         assert_eq!(b.len(), self.initial_size);
         debug_assert_eq!(dot(a, b), *sum);
 
-        let mut res = Vec::with_capacity(self.num_rounds);
         if self.num_rounds == 0 {
-            return MultilinearPoint(res);
+            return MultilinearPoint(Vec::new());
         }
 
-        // Pad to next power of two (zero extension preserves the sum).
         let padded = self.initial_size.next_power_of_two();
         if padded > self.initial_size {
             a.resize(padded, F::ZERO);
             b.resize(padded, F::ZERO);
         }
-
-        // Bit-reverse to convert whir's MSB-indexed layout into the LSB-indexed
-        // (ark-poly / efficient-sumcheck) layout expected by the SIMD kernels.
-        // After this, adjacent pairs correspond to whir's (low, high) halves, so
-        // effsc's LSB-first fold binds variables in whir's x_0, x_1, ... order.
         if padded > 1 {
-            *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
-            *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
+            reorder_in(a, b);
         }
 
-        for _ in 0..self.num_rounds {
-            debug_assert!(a.len() > 1);
-            // effsc returns (c_const, c_linear) of the round poly q(X) in the
-            // reordered (LSB-first) pairing. c_const = c0 (matches whir's c0);
-            // c_linear relates to whir's c2 via q(0) + q(1) = claim:
-            //     c2 = claim - c_linear
-            let (c0, lin) = effsc_simd::pairwise_product_sum(a, b);
-            let c2 = *sum - lin;
-            let c1 = *sum - c0.double() - c2;
-            prover_state.prover_message(&c0);
-            prover_state.prover_message(&c2);
+        let result = inner_product_sumcheck_partial_with_hook(
+            a,
+            b,
+            prover_state,
+            self.num_rounds,
+            |_, t| self.round_pow.prove(t),
+        );
 
-            // Do Proof of Work (if any)
-            self.round_pow.prove(prover_state);
-
-            // Receive the random evaluation point
-            let folding_randomness = prover_state.verifier_message::<F>();
-            res.push(folding_randomness);
-
-            // SIMD-accelerated fold (halves length in place).
-            effsc_simd::fold(a, folding_randomness);
-            effsc_simd::fold(b, folding_randomness);
-            *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
+        if a.len() == 1 {
+            let (final_a, final_b) = result.final_evaluations;
+            *sum = final_a * final_b;
+        } else {
+            reorder_out(a, b);
+            *sum = dot(a, b);
         }
 
-        // Restore whir's MSB-indexed layout for downstream consumers.
-        if a.len() > 1 {
-            *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
-            *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
-        }
-
-        MultilinearPoint(res)
+        MultilinearPoint(result.verifier_messages)
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -149,20 +154,15 @@ impl<F: Field> Config<F> {
         );
         let mut res = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
-            // Receive sumcheck polynomial c0 and c2
-            let c0: F = verifier_state.prover_message()?;
-            let c2: F = verifier_state.prover_message()?;
-            let c1 = *sum - c0.double() - c2;
+            let a: F = verifier_state.prover_message()?;
+            let b: F = verifier_state.prover_message()?;
 
-            // Check proof of work (if any)
             self.round_pow.verify(verifier_state)?;
 
-            // Receive the random evaluation point
-            let folding_randomness = verifier_state.verifier_message::<F>();
-            res.push(folding_randomness);
+            let r = verifier_state.verifier_message::<F>();
+            res.push(r);
 
-            // Update the sum
-            *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
+            *sum = a + (b - a.double()) * r + (*sum - b) * r.square();
         }
 
         Ok(MultilinearPoint(res))

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 15c34319c1d5d357f51a76e80909f309313ba4e0a317976aa4c9188e6ec7368a # shrinks to seed = 0, config = Config { field: FieldInfo { characteristic: [255, 255, 255, 255, 0, 0, 0, 1], extension_degree: 1 }, initial_size: 2, round_pow: Config { hash_id: 03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c, threshold: 18446744073709551615 }, num_rounds: 1 }

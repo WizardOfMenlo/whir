@@ -581,7 +581,7 @@ dependencies = [
 [[package]]
 name = "efficient-sumcheck"
 version = "0.0.2"
-source = "git+https://github.com/compsec-epfl/efficient-sumcheck.git?branch=z-tech%2Fsimd_goldilocks_experimental#3e614f916a28c0b13d110ae14a57df42f30a242c"
+source = "git+https://github.com/compsec-epfl/efficient-sumcheck.git?branch=z-tech%2Fsimd_goldilocks_experimental#432744c21535ca6cb5f9efe5b8b63d132f1e427e"
 dependencies = [
  "ark-ff",
  "ark-poly",
