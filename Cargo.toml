@@ -117,4 +117,4 @@ ark-poly = { git = "https://github.com/arkworks-rs/algebra", branch = "z-tech/ma
 # which predates an incompatibility with the newer ark-ff API. Uses a local path to satisfy cargo's
 # "patches must point to different sources" rule.
 [patch."https://github.com/z-tech/spongefish.git"]
-spongefish = { path = "/tmp/spongefish-local/spongefish" }
+spongefish = { path = "/tmp/spongefish-local/spongefish/spongefish" }

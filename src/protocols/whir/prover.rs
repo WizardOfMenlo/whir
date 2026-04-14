@@ -13,11 +13,13 @@ use crate::{
         lift,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
         mixed_scalar_mul_add,
-        sumcheck::fold,
         tensor_product, MultilinearPoint,
     },
     hash::Hash,
-    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
+    protocols::{
+        geometric_challenge::geometric_challenge, irs_commit, sumcheck::multilinear_fold,
+        whir::FinalClaim,
+    },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
@@ -207,14 +209,12 @@ where
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck vectors would be constant zero)
             // TODO: Don't compute evaluations and constraints in the first place.
-            let folding_randomness = (0..self.initial_sumcheck.num_rounds)
+            let folding_randomness: Vec<M::Target> = (0..self.initial_sumcheck.num_rounds)
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_skip_pow.prove(prover_state);
-            // Fold vector
-            for &f in &folding_randomness {
-                fold(&mut vector, f);
-            }
+            // Fold vector using effsc's SIMD-dispatched fold
+            multilinear_fold(&mut vector, &folding_randomness);
             // Covector must be all zeros.
             covector = vec![M::Target::ZERO; self.initial_sumcheck.final_size()];
             MultilinearPoint(folding_randomness)
