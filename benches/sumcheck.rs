@@ -10,7 +10,7 @@ use whir::algebra::{
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
-const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20];
+const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20, 1 << 22];
 
 // ── Whir baseline kernel: compute_sumcheck_polynomial + fold ───────────────
 

@@ -145,7 +145,11 @@ impl<F: Field> Config<F> {
             b,
             prover_state,
             self.num_rounds,
-            |_, t| self.round_pow.prove(t),
+            |_, t| {
+                #[cfg(feature = "tracing")]
+                let _s = tracing::info_span!("round_pow_cb").entered();
+                self.round_pow.prove(t)
+            },
         );
 
         if a.len() == 1 {
