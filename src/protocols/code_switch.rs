@@ -69,10 +69,9 @@ pub struct Witness<F: Field> {
     pub mask: Option<MaskOracle<F>>,
 }
 
-/// Verifier output from the code-switch. `sum` is updated in-place to μ';
-/// this struct carries only the new oracle commitments.
+/// Verifier output from the code-switch.
 #[derive(Clone, Debug)]
-pub struct Commitments<F: Field> {
+pub struct Commitment<F: Field> {
     pub target: IrsCommitment<F>,
     pub mask: Option<IrsCommitment<F>>,
 }
@@ -168,8 +167,7 @@ impl<M: Embedding> Config<M> {
         }
     }
 
-    /// Prove the code-switch. Updates `covector` in-place with the new linear
-    /// form sl' for the next sumcheck (Completeness proof, p.55-56).
+    /// Prove the code-switch
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -276,14 +274,14 @@ impl<M: Embedding> Config<M> {
         }
     }
 
-    /// Verify the code-switch.
+    /// Verify the code-switch
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn verify<H>(
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut M::Target,
         commitment: &IrsCommitment<M::Target>,
-    ) -> VerificationResult<Commitments<M::Target>>
+    ) -> VerificationResult<Commitment<M::Target>>
     where
         H: DuplexSpongeInterface,
         Standard: Distribution<M::Target>,
@@ -328,7 +326,7 @@ impl<M: Embedding> Config<M> {
                 &source_evaluations.matrix,
             );
 
-        Ok(Commitments {
+        Ok(Commitment {
             target: target_commitment,
             mask: mask_commitment,
         })
