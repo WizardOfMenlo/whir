@@ -139,7 +139,7 @@ impl<F: Field> Config<F> {
             |_, t| {
                 #[cfg(feature = "tracing")]
                 let _s = tracing::info_span!("round_pow_cb").entered();
-                self.round_pow.prove(t)
+                self.round_pow.prove(t);
             },
         );
 
