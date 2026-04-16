@@ -1,5 +1,9 @@
+use ark_std::rand::{rngs::StdRng, SeedableRng};
 use divan::{black_box, AllocProfiler, Bencher};
-use efficient_sumcheck::{order_strategy::MSBOrder, simd_ops as effsc_simd, streams::reorder_vec};
+use efficient_sumcheck::{
+    inner_product_sumcheck_partial_with_hook,
+    transcript::{SanityTranscript, Transcript},
+};
 use whir::algebra::{
     fields::{Field64 as G1, Field64_2 as G2, Field64_3 as G3},
     sumcheck::{compute_sumcheck_polynomial, fold},
@@ -8,105 +12,84 @@ use whir::algebra::{
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
-const SIZES: &[u64] = &[1 << 16, 1 << 18, 1 << 20, 1 << 22];
+const SIZES: &[u64] = &[1 << 20, 1 << 24];
+const SEED: u64 = 0xA110C8ED;
 
-// ── Whir baseline kernel: compute_sumcheck_polynomial + fold ───────────────
+// ── Whir baseline: full sumcheck via compute_sumcheck_polynomial + fold + fold
+//    looped log2(n) times. Challenges drawn from the same SanityTranscript
+//    shape as effsc so both sides do identical work per round.
 
 #[divan::bench(args = SIZES)]
-fn whir_g1(bencher: Bencher, size: u64) {
-    run_whir::<G1>(bencher, size);
+fn whir_full_g1(bencher: Bencher, size: u64) {
+    run_whir_full::<G1>(bencher, size);
 }
 #[divan::bench(args = SIZES)]
-fn whir_g2(bencher: Bencher, size: u64) {
-    run_whir::<G2>(bencher, size);
+fn whir_full_g2(bencher: Bencher, size: u64) {
+    run_whir_full::<G2>(bencher, size);
 }
 #[divan::bench(args = SIZES)]
-fn whir_g3(bencher: Bencher, size: u64) {
-    run_whir::<G3>(bencher, size);
+fn whir_full_g3(bencher: Bencher, size: u64) {
+    run_whir_full::<G3>(bencher, size);
 }
 
-fn run_whir<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
+fn run_whir_full<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
+    let num_rounds = (size as u64).trailing_zeros() as usize;
     bencher
         .with_inputs(|| {
             let a: Vec<F> = (0..size).map(F::from).collect();
             let b: Vec<F> = (0..size).map(F::from).collect();
-            let r = F::from(42);
-            (a, b, r)
+            (a, b)
         })
-        .bench_values(|(mut a, mut b, r)| {
-            let poly = compute_sumcheck_polynomial(&a, &b);
-            fold(&mut a, r);
-            fold(&mut b, r);
-            black_box((poly, a, b))
+        .bench_values(|(mut a, mut b)| {
+            let mut rng = StdRng::seed_from_u64(SEED);
+            let mut t = SanityTranscript::<StdRng>::new(&mut rng);
+            for _ in 0..num_rounds {
+                let poly = compute_sumcheck_polynomial(&a, &b);
+                black_box(poly);
+                let r: F = t.read();
+                fold(&mut a, r);
+                fold(&mut b, r);
+            }
+            black_box((a, b))
         });
 }
 
-// ── effsc SIMD path: reorder + pairwise_product_sum + fold ─────────────────
-// Includes the bit-reversal permutation cost on the first round.
+// ── effsc MSB fused path: inner_product_sumcheck_partial_with_hook runs all
+//    rounds internally — round 0 = compute_sumcheck_polynomial, rounds ≥1 =
+//    fused_fold_and_compute_polynomial (the 8R+4W-per-quadruple kernel).
 
 #[divan::bench(args = SIZES)]
-fn effsc_g1(bencher: Bencher, size: u64) {
-    run_effsc::<G1>(bencher, size);
+fn effsc_full_g1(bencher: Bencher, size: u64) {
+    run_effsc_full::<G1>(bencher, size);
 }
 #[divan::bench(args = SIZES)]
-fn effsc_g2(bencher: Bencher, size: u64) {
-    run_effsc::<G2>(bencher, size);
+fn effsc_full_g2(bencher: Bencher, size: u64) {
+    run_effsc_full::<G2>(bencher, size);
 }
 #[divan::bench(args = SIZES)]
-fn effsc_g3(bencher: Bencher, size: u64) {
-    run_effsc::<G3>(bencher, size);
+fn effsc_full_g3(bencher: Bencher, size: u64) {
+    run_effsc_full::<G3>(bencher, size);
 }
 
-fn run_effsc<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
+fn run_effsc_full<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
+    let num_rounds = (size as u64).trailing_zeros() as usize;
     bencher
         .with_inputs(|| {
             let a: Vec<F> = (0..size).map(F::from).collect();
             let b: Vec<F> = (0..size).map(F::from).collect();
-            let r = F::from(42);
-            (a, b, r)
+            (a, b)
         })
-        .bench_values(|(a, b, r)| {
-            // Bit-reverse to LSB-first so effsc's adjacent-pair kernels
-            // bind whir's x_0, x_1, ... in order.
-            let mut a = reorder_vec::<F, MSBOrder>(a);
-            let mut b = reorder_vec::<F, MSBOrder>(b);
-            let poly = effsc_simd::pairwise_product_sum(&a, &b);
-            effsc_simd::fold(&mut a, r);
-            effsc_simd::fold(&mut b, r);
-            black_box((poly, a, b))
-        });
-}
-
-// ── effsc SIMD path WITHOUT the entry permutation ──────────────────────────
-// Isolates the kernel speedup from the permutation overhead, simulating
-// mid-sumcheck rounds where the data is already in LSB-first layout.
-
-#[divan::bench(args = SIZES)]
-fn effsc_nopermute_g1(bencher: Bencher, size: u64) {
-    run_effsc_nopermute::<G1>(bencher, size);
-}
-#[divan::bench(args = SIZES)]
-fn effsc_nopermute_g2(bencher: Bencher, size: u64) {
-    run_effsc_nopermute::<G2>(bencher, size);
-}
-#[divan::bench(args = SIZES)]
-fn effsc_nopermute_g3(bencher: Bencher, size: u64) {
-    run_effsc_nopermute::<G3>(bencher, size);
-}
-
-fn run_effsc_nopermute<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
-    bencher
-        .with_inputs(|| {
-            let a: Vec<F> = (0..size).map(F::from).collect();
-            let b: Vec<F> = (0..size).map(F::from).collect();
-            let r = F::from(42);
-            (a, b, r)
-        })
-        .bench_values(|(mut a, mut b, r)| {
-            let poly = effsc_simd::pairwise_product_sum(&a, &b);
-            effsc_simd::fold(&mut a, r);
-            effsc_simd::fold(&mut b, r);
-            black_box((poly, a, b))
+        .bench_values(|(mut a, mut b)| {
+            let mut rng = StdRng::seed_from_u64(SEED);
+            let mut t = SanityTranscript::<StdRng>::new(&mut rng);
+            let result = inner_product_sumcheck_partial_with_hook(
+                &mut a,
+                &mut b,
+                &mut t,
+                num_rounds,
+                |_, _| {},
+            );
+            black_box((result, a, b))
         });
 }
 
