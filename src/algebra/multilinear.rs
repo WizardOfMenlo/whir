@@ -188,9 +188,19 @@ mod tests {
     use proptest::proptest;
 
     use super::*;
-    use crate::algebra::{random_vector, sumcheck::tests::zero_pad};
+    use crate::algebra::random_vector;
 
     pub type F = crate::algebra::fields::Field64;
+
+    /// Zero-pad to the next power of two.
+    fn zero_pad<G: ark_ff::Field>(values: &[G]) -> Vec<G> {
+        if values.is_empty() {
+            return Vec::new();
+        }
+        let mut vec = values.to_vec();
+        vec.resize(vec.len().next_power_of_two(), G::ZERO);
+        vec
+    }
 
     #[test]
     fn test_multilinear_zero_extend() {

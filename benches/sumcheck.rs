@@ -4,55 +4,13 @@ use efficient_sumcheck::{
     inner_product_sumcheck_partial_with_hook,
     transcript::{SanityTranscript, Transcript},
 };
-use whir::algebra::{
-    fields::{Field64 as G1, Field64_2 as G2, Field64_3 as G3},
-    sumcheck::{compute_sumcheck_polynomial, fold},
-};
+use whir::algebra::fields::{Field64 as G1, Field64_2 as G2, Field64_3 as G3};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 const SIZES: &[u64] = &[1 << 20, 1 << 24];
 const SEED: u64 = 0xA110C8ED;
-
-// ── Whir baseline: full sumcheck via compute_sumcheck_polynomial + fold + fold
-//    looped log2(n) times. Challenges drawn from the same SanityTranscript
-//    shape as effsc so both sides do identical work per round.
-
-#[divan::bench(args = SIZES)]
-fn whir_full_g1(bencher: Bencher, size: u64) {
-    run_whir_full::<G1>(bencher, size);
-}
-#[divan::bench(args = SIZES)]
-fn whir_full_g2(bencher: Bencher, size: u64) {
-    run_whir_full::<G2>(bencher, size);
-}
-#[divan::bench(args = SIZES)]
-fn whir_full_g3(bencher: Bencher, size: u64) {
-    run_whir_full::<G3>(bencher, size);
-}
-
-fn run_whir_full<F: ark_ff::Field + From<u64>>(bencher: Bencher, size: u64) {
-    let num_rounds = (size as u64).trailing_zeros() as usize;
-    bencher
-        .with_inputs(|| {
-            let a: Vec<F> = (0..size).map(F::from).collect();
-            let b: Vec<F> = (0..size).map(F::from).collect();
-            (a, b)
-        })
-        .bench_values(|(mut a, mut b)| {
-            let mut rng = StdRng::seed_from_u64(SEED);
-            let mut t = SanityTranscript::<StdRng>::new(&mut rng);
-            for _ in 0..num_rounds {
-                let poly = compute_sumcheck_polynomial(&a, &b);
-                black_box(poly);
-                let r: F = t.read();
-                fold(&mut a, r);
-                fold(&mut b, r);
-            }
-            black_box((a, b))
-        });
-}
 
 // ── effsc MSB fused path: inner_product_sumcheck_partial_with_hook runs all
 //    rounds internally — round 0 = compute_sumcheck_polynomial, rounds ≥1 =
