@@ -1,7 +1,5 @@
 use divan::{black_box, AllocProfiler, Bencher};
-use efficient_sumcheck::{
-    order_strategy::MSBOrder, simd_ops as effsc_simd, streams::reorder_vec,
-};
+use efficient_sumcheck::{order_strategy::MSBOrder, simd_ops as effsc_simd, streams::reorder_vec};
 use whir::algebra::{
     fields::{Field64 as G1, Field64_2 as G2, Field64_3 as G3},
     sumcheck::{compute_sumcheck_polynomial, fold},

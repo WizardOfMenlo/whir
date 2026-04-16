@@ -67,8 +67,7 @@ fn main() {
     {
         use tracing_subscriber::{fmt, fmt::format::FmtSpan, EnvFilter};
 
-        let filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         fmt()
             .with_env_filter(filter)
             .with_span_events(FmtSpan::CLOSE)

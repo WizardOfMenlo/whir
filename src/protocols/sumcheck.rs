@@ -4,6 +4,11 @@ use std::fmt;
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
+// `inner_product_sumcheck_partial_with_hook` is half-split (folds top var
+// first); `simd_ops::fold` is pair-split (folds bottom var first). WHIR is
+// MSB-first, so the protocol calls the half-split kernel on lex-ordered
+// data directly; `multilinear_fold` wraps the pair-split kernel in a
+// bit-reversal sandwich to present MSB-first semantics.
 use efficient_sumcheck::{
     inner_product_sumcheck_partial_with_hook, order_strategy::MSBOrder, simd_ops,
     streams::reorder_vec, transcript::Transcript as EffscTranscript,
@@ -23,22 +28,11 @@ use crate::{
     type_info::Type,
 };
 
-#[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = a.len())))]
-fn reorder_in<F: Field>(a: &mut Vec<F>, b: &mut Vec<F>) {
-    *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
-    *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
-}
-
-#[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = a.len())))]
-fn reorder_out<F: Field>(a: &mut Vec<F>, b: &mut Vec<F>) {
-    *a = reorder_vec::<F, MSBOrder>(std::mem::take(a));
-    *b = reorder_vec::<F, MSBOrder>(std::mem::take(b));
-}
-
-/// Sequentially folds a single vector by a list of challenges, using
-/// efficient-sumcheck's SIMD-dispatched `fold` (falls back to generic rayon
-/// when SIMD doesn't apply). Handles LSB<->MSB ordering and zero-padding to
-/// match WHIR's `algebra::sumcheck::fold` semantics.
+/// Sequentially folds a single vector by a list of challenges.
+///
+/// Uses efficient-sumcheck's SIMD-dispatched `fold` (falls back to generic
+/// rayon when SIMD doesn't apply). Handles LSB<->MSB ordering and
+/// zero-padding to match WHIR's `algebra::sumcheck::fold` semantics.
 #[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = values.len(), rounds = challenges.len())))]
 pub fn multilinear_fold<F: Field>(values: &mut Vec<F>, challenges: &[F]) {
     if challenges.is_empty() || values.len() <= 1 {
@@ -136,9 +130,6 @@ impl<F: Field> Config<F> {
             a.resize(padded, F::ZERO);
             b.resize(padded, F::ZERO);
         }
-        if padded > 1 {
-            reorder_in(a, b);
-        }
 
         let result = inner_product_sumcheck_partial_with_hook(
             a,
@@ -156,7 +147,6 @@ impl<F: Field> Config<F> {
             let (final_a, final_b) = result.final_evaluations;
             *sum = final_a * final_b;
         } else {
-            reorder_out(a, b);
             *sum = dot(a, b);
         }
 
@@ -180,15 +170,16 @@ impl<F: Field> Config<F> {
         );
         let mut res = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
-            let a: F = verifier_state.prover_message()?;
-            let b: F = verifier_state.prover_message()?;
+            let c0: F = verifier_state.prover_message()?;
+            let c2: F = verifier_state.prover_message()?;
+            let c1 = *sum - c0.double() - c2;
 
             self.round_pow.verify(verifier_state)?;
 
             let r = verifier_state.verifier_message::<F>();
             res.push(r);
 
-            *sum = a + (b - a.double()) * r + (*sum - b) * r.square();
+            *sum = (c2 * r + c1) * r + c0;
         }
 
         Ok(MultilinearPoint(res))

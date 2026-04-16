@@ -12,8 +12,7 @@ use crate::{
         embedding::Embedding,
         lift,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
-        mixed_scalar_mul_add,
-        tensor_product, MultilinearPoint,
+        mixed_scalar_mul_add, tensor_product, MultilinearPoint,
     },
     hash::Hash,
     protocols::{
