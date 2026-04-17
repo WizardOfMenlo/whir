@@ -210,11 +210,6 @@ where
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_skip_pow.prove(prover_state);
-            // Fold vector using effsc's SIMD-dispatched fold.
-            let padded = vector.len().next_power_of_two();
-            if padded > vector.len() {
-                vector.resize(padded, M::Target::ZERO);
-            }
             for &c in &folding_randomness {
                 effsc_fold(&mut vector, c);
             }

@@ -96,24 +96,14 @@ impl<F: Field> Config<F> {
             return MultilinearPoint(Vec::new());
         }
 
-        let padded = self.initial_size.next_power_of_two();
-        if padded > self.initial_size {
-            a.resize(padded, F::ZERO);
-            b.resize(padded, F::ZERO);
-        }
-
+        // effsc folds a, b in place and handles the transcript (c0, c2 per
+        // round + PoW hook + verifier challenges). It does not update `sum`.
         let result = inner_product_sumcheck_partial(a, b, prover_state, self.num_rounds, |_, t| {
             #[cfg(feature = "tracing")]
             let _s = tracing::info_span!("round_pow_cb").entered();
             self.round_pow.prove(t);
         });
-
-        if a.len() == 1 {
-            let (final_a, final_b) = result.final_evaluations;
-            *sum = final_a * final_b;
-        } else {
-            *sum = dot(a, b);
-        }
+        *sum = dot(a, b);
 
         MultilinearPoint(result.verifier_messages)
     }
