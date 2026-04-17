@@ -4,14 +4,8 @@ use std::fmt;
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
-// `inner_product_sumcheck_partial_with_hook` is half-split (folds top var
-// first); `simd_ops::fold` is pair-split (folds bottom var first). WHIR is
-// MSB-first, so the protocol calls the half-split kernel on lex-ordered
-// data directly; `multilinear_fold` wraps the pair-split kernel in a
-// bit-reversal sandwich to present MSB-first semantics.
 use efficient_sumcheck::{
-    inner_product_sumcheck_partial_with_hook, order_strategy::MSBOrder, simd_ops,
-    streams::reorder_vec, transcript::Transcript as EffscTranscript,
+    inner_product_sumcheck_partial, simd_ops, transcript::Transcript as EffscTranscript,
 };
 use serde::{Deserialize, Serialize};
 use spongefish::NargSerialize;
@@ -28,11 +22,8 @@ use crate::{
     type_info::Type,
 };
 
-/// Sequentially folds a single vector by a list of challenges.
-///
-/// Uses efficient-sumcheck's SIMD-dispatched `fold` (falls back to generic
-/// rayon when SIMD doesn't apply). Handles LSB<->MSB ordering and
-/// zero-padding to match WHIR's `algebra::sumcheck::fold` semantics.
+/// Folds a single vector by a list of challenges using effsc's
+/// SIMD-dispatched fold (MSB half-split layout, matching WHIR).
 #[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = values.len(), rounds = challenges.len())))]
 pub fn multilinear_fold<F: Field>(values: &mut Vec<F>, challenges: &[F]) {
     if challenges.is_empty() || values.len() <= 1 {
@@ -42,12 +33,8 @@ pub fn multilinear_fold<F: Field>(values: &mut Vec<F>, challenges: &[F]) {
     if padded > values.len() {
         values.resize(padded, F::ZERO);
     }
-    *values = reorder_vec::<F, MSBOrder>(std::mem::take(values));
     for &c in challenges {
         simd_ops::fold(values, c);
-    }
-    if values.len() > 1 {
-        *values = reorder_vec::<F, MSBOrder>(std::mem::take(values));
     }
 }
 
@@ -131,17 +118,11 @@ impl<F: Field> Config<F> {
             b.resize(padded, F::ZERO);
         }
 
-        let result = inner_product_sumcheck_partial_with_hook(
-            a,
-            b,
-            prover_state,
-            self.num_rounds,
-            |_, t| {
-                #[cfg(feature = "tracing")]
-                let _s = tracing::info_span!("round_pow_cb").entered();
-                self.round_pow.prove(t);
-            },
-        );
+        let result = inner_product_sumcheck_partial(a, b, prover_state, self.num_rounds, |_, t| {
+            #[cfg(feature = "tracing")]
+            let _s = tracing::info_span!("round_pow_cb").entered();
+            self.round_pow.prove(t);
+        });
 
         if a.len() == 1 {
             let (final_a, final_b) = result.final_evaluations;
