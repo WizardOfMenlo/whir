@@ -44,8 +44,7 @@ serde_json = "1.0"
 spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = ["ark-ff"]}
 efficient-sumcheck = { git = "https://github.com/compsec-epfl/efficient-sumcheck.git", branch = "z-tech/simd_goldilocks_experimental", default-features = false, features = ["parallel"] }
 rayon = { version = "1.10", optional = true }
-tracing = { version = "0.1", features = ["attributes"], optional = true }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"], optional = true }
+tracing = { version = "0.1.41", optional = true }
 hex = "0.4"
 static_assertions = "1.1.0"
 ciborium = "0.2"
@@ -62,7 +61,6 @@ ordered-float = { version = "5.1.0", features = ["serde"] }
 proptest = "1.0"
 serde_json = "1.0"
 divan = { version = "4.2", package = "codspeed-divan-compat" }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
 debug = "line-tables-only"
@@ -75,7 +73,7 @@ verifier_panics = []
 parallel = ["dep:rayon"]
 rayon = ["dep:rayon"]
 asm = ["ark-ff/asm"]
-tracing = ["dep:tracing", "dep:tracing-subscriber"]
+tracing = ["dep:tracing"]
 # Do not permute evaluation pointsin RS
 # This flag is to be removed after whir_zk supports it.
 rs_in_order = []
