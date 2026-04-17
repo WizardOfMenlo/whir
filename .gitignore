@@ -15,4 +15,3 @@ outputs/
 rustc-ice-*.txt
 profile.json.gz
 .claude/
-proptest-regressions/
