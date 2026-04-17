@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use ark_ff::Field;
+use ark_ff::{AdditiveGroup, Field};
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -245,26 +245,24 @@ impl<M: Embedding> Config<M> {
 
         // Covector update — sl' from Completeness proof (p.55-56)
         let embedding = self.source.embedding();
-        // ν_1 · sl(st): scale previous constraint
+        let eval_points: Vec<_> = source_evaluations
+            .points
+            .iter()
+            .map(|&p| embedding.map(p))
+            .collect();
+        let all_points: Vec<_> = ood_points.iter().chain(&eval_points).copied().collect();
+        let mut pows: Vec<_> = ood_rlc_coeffs
+            .iter()
+            .chain(in_domain_rlc_coeffs)
+            .copied()
+            .collect();
         for c in &mut *covector {
-            *c *= original_sl_coeff;
-        }
-        // include OOD message weights
-        for (&weight, &ood_point) in ood_rlc_coeffs.iter().zip(&ood_points) {
-            let mut point_pow = M::Target::ONE;
-            for c in &mut *covector {
-                *c += weight * point_pow;
-                point_pow *= ood_point;
+            let mut sum = M::Target::ZERO;
+            for (pow, &point) in pows.iter_mut().zip(&all_points) {
+                sum += *pow;
+                *pow *= point;
             }
-        }
-        // include In-domain message weights
-        for (&weight, &query_point) in in_domain_rlc_coeffs.iter().zip(&source_evaluations.points) {
-            let eval_point = embedding.map(query_point);
-            let mut point_pow = M::Target::ONE;
-            for c in &mut *covector {
-                *c += weight * point_pow;
-                point_pow *= eval_point;
-            }
+            *c = *c * original_sl_coeff + sum;
         }
 
         Witness {
