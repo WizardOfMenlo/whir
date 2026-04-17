@@ -84,10 +84,6 @@ rs_in_order = []
 name = "expand_from_coeff"
 harness = false
 
-[[bench]]
-name = "sumcheck"
-harness = false
-
 # Disable untill fixed.
 # [[bench]]
 # name = "zk_whir"
