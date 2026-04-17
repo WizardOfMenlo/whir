@@ -32,6 +32,7 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::Typed,
+    utils::zip_strict,
 };
 
 /// Code-switching IOR config with optional ZK.
@@ -122,6 +123,8 @@ impl<M: Embedding> Config<M> {
                 source_randomness_len > 0,
                 "ZK code-switch requires source_config.mask_length > 0"
             );
+            // TODO : move the mask config out for shared mask tree per iteration
+            // inputs to the new function will also change
             let mut mask_config = IrsConfig::<Identity<M::Target>>::new(
                 security_target,
                 unique_decoding,
@@ -186,6 +189,11 @@ impl<M: Embedding> Config<M> {
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(message.len(), self.source.message_length());
+        assert_eq!(
+            self.source.num_messages(),
+            1,
+            "code-switch only supports num_messages() == 1 (single polynomial)"
+        );
         assert_eq!(
             masks.len(),
             self.source.mask_length * self.source.num_messages()
@@ -258,7 +266,7 @@ impl<M: Embedding> Config<M> {
             .collect();
         for c in &mut *covector {
             let mut sum = M::Target::ZERO;
-            for (pow, &point) in pows.iter_mut().zip(&all_points) {
+            for (pow, &point) in zip_strict(&mut pows, &all_points) {
                 sum += *pow;
                 *pow *= point;
             }
@@ -287,6 +295,11 @@ impl<M: Embedding> Config<M> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        assert_eq!(
+            self.source.num_messages(),
+            1,
+            "code-switch only supports num_messages() == 1 (single polynomial)"
+        );
         assert!(
             self.mask_commit.is_some() == (self.target.mask_length > 0),
             "mask config and target mask_length must agree"
