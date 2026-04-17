@@ -206,7 +206,7 @@ where
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck vectors would be constant zero)
             // TODO: Don't compute evaluations and constraints in the first place.
-            let folding_randomness: Vec<M::Target> = (0..self.initial_sumcheck.num_rounds)
+            let folding_randomness = (0..self.initial_sumcheck.num_rounds)
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_skip_pow.prove(prover_state);
