@@ -2,6 +2,7 @@ use std::{any::Any, borrow::Cow, mem};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
+use efficient_sumcheck::fold as effsc_fold;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -15,10 +16,7 @@ use crate::{
         mixed_scalar_mul_add, tensor_product, MultilinearPoint,
     },
     hash::Hash,
-    protocols::{
-        geometric_challenge::geometric_challenge, irs_commit, sumcheck::multilinear_fold,
-        whir::FinalClaim,
-    },
+    protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerifierMessage,
@@ -212,8 +210,14 @@ where
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_skip_pow.prove(prover_state);
-            // Fold vector using effsc's SIMD-dispatched fold
-            multilinear_fold(&mut vector, &folding_randomness);
+            // Fold vector using effsc's SIMD-dispatched fold.
+            let padded = vector.len().next_power_of_two();
+            if padded > vector.len() {
+                vector.resize(padded, M::Target::ZERO);
+            }
+            for &c in &folding_randomness {
+                effsc_fold(&mut vector, c);
+            }
             // Covector must be all zeros.
             covector = vec![M::Target::ZERO; self.initial_sumcheck.final_size()];
             MultilinearPoint(folding_randomness)

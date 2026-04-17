@@ -5,7 +5,7 @@ use std::fmt;
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 use efficient_sumcheck::{
-    inner_product_sumcheck_partial, simd_ops, transcript::Transcript as EffscTranscript,
+    inner_product_sumcheck_partial, transcript::Transcript as EffscTranscript,
 };
 use serde::{Deserialize, Serialize};
 use spongefish::NargSerialize;
@@ -21,22 +21,6 @@ use crate::{
     },
     type_info::Type,
 };
-
-/// Folds a single vector by a list of challenges using effsc's
-/// SIMD-dispatched fold (MSB half-split layout, matching WHIR).
-#[cfg_attr(feature = "tracing", instrument(skip_all, fields(len = values.len(), rounds = challenges.len())))]
-pub fn multilinear_fold<F: Field>(values: &mut Vec<F>, challenges: &[F]) {
-    if challenges.is_empty() || values.len() <= 1 {
-        return;
-    }
-    let padded = values.len().next_power_of_two();
-    if padded > values.len() {
-        values.resize(padded, F::ZERO);
-    }
-    for &c in challenges {
-        simd_ops::fold(values, c);
-    }
-}
 
 impl<F, H, R> EffscTranscript<F> for ProverState<H, R>
 where
