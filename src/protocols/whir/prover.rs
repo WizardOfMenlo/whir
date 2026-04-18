@@ -2,7 +2,7 @@ use std::{any::Any, borrow::Cow, mem};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
-use efficient_sumcheck::fold as effsc_fold;
+use effsc::fold as effsc_fold;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 

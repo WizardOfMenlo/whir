@@ -623,9 +623,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "efficient-sumcheck"
+name = "effsc"
 version = "0.0.2"
-source = "git+https://github.com/compsec-epfl/efficient-sumcheck.git?branch=z-tech%2Fsimd_goldilocks_experimental#82e99119f0c4daf62b975b8d9a7de1da29127d48"
+source = "git+https://github.com/compsec-epfl/space-efficient-sumcheck.git?branch=z-tech%2Frewrite#104643774b7291f0981c37ac2f2000daaa861231"
 dependencies = [
  "ark-ff",
  "ark-poly",
@@ -635,6 +635,7 @@ dependencies = [
  "nohash-hasher",
  "rayon",
  "spongefish",
+ "zerocopy",
 ]
 
 [[package]]
@@ -2018,7 +2019,7 @@ dependencies = [
  "const-oid 0.9.6",
  "derive-where",
  "digest 0.10.7",
- "efficient-sumcheck",
+ "effsc",
  "hex",
  "hex-literal",
  "ordered-float",

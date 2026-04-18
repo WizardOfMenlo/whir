@@ -4,7 +4,7 @@ use std::fmt;
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
-use efficient_sumcheck::{
+use effsc::{
     inner_product_sumcheck_partial, transcript::Transcript as EffscTranscript,
 };
 use serde::{Deserialize, Serialize};
