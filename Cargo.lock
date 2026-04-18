@@ -625,7 +625,7 @@ dependencies = [
 [[package]]
 name = "effsc"
 version = "0.0.2"
-source = "git+https://github.com/compsec-epfl/space-efficient-sumcheck.git?branch=z-tech%2Frewrite#104643774b7291f0981c37ac2f2000daaa861231"
+source = "git+https://github.com/compsec-epfl/space-efficient-sumcheck.git?branch=z-tech%2Frewrite#1f72c064af142efedb46150a41cc53c145738cd0"
 dependencies = [
  "ark-ff",
  "ark-poly",

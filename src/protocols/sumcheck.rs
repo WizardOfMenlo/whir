@@ -5,10 +5,12 @@ use std::fmt;
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 use effsc::{
-    inner_product_sumcheck_partial, transcript::Transcript as EffscTranscript,
+    inner_product_sumcheck_partial, inner_product_sumcheck_verify,
+    proof::SumcheckError,
+    transcript::{ProverTranscript, VerifierTranscript},
 };
 use serde::{Deserialize, Serialize};
-use spongefish::NargSerialize;
+use spongefish::{NargDeserialize, NargSerialize, VerificationError};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -22,17 +24,37 @@ use crate::{
     type_info::Type,
 };
 
-impl<F, H, R> EffscTranscript<F> for ProverState<H, R>
+impl<F, H, R> ProverTranscript<F> for ProverState<H, R>
 where
     H: DuplexSpongeInterface,
     R: RngCore + CryptoRng,
     F: Codec<[H::U]> + NargSerialize,
 {
-    fn read(&mut self) -> F {
+    fn send(&mut self, value: F) {
+        self.prover_message(&value);
+    }
+    fn challenge(&mut self) -> F {
         self.verifier_message::<F>()
     }
-    fn write(&mut self, value: F) {
-        self.prover_message(&value);
+}
+
+impl<F, H> VerifierTranscript<F> for VerifierState<'_, H>
+where
+    H: DuplexSpongeInterface,
+    F: Codec<[H::U]> + NargDeserialize,
+{
+    type Error = VerificationError;
+
+    fn send(&mut self, _value: F) {
+        // Re-absorbing known prover data is not exercised by effsc's current
+        // verify paths; spongefish doesn't expose a public absorb primitive.
+        unreachable!("VerifierTranscript::send is unused by effsc's legacy verify")
+    }
+    fn receive(&mut self) -> Result<F, Self::Error> {
+        self.prover_message::<F>()
+    }
+    fn challenge(&mut self) -> F {
+        self.verifier_message::<F>()
     }
 }
 
@@ -123,21 +145,16 @@ impl<F: Field> Config<F> {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
-        let mut res = Vec::with_capacity(self.num_rounds);
-        for _ in 0..self.num_rounds {
-            let c0: F = verifier_state.prover_message()?;
-            let c2: F = verifier_state.prover_message()?;
-            let c1 = *sum - c0.double() - c2;
-
-            self.round_pow.verify(verifier_state)?;
-
-            let r = verifier_state.verifier_message::<F>();
-            res.push(r);
-
-            *sum = (c2 * r + c1) * r + c0;
-        }
-
-        Ok(MultilinearPoint(res))
+        let round_pow = &self.round_pow;
+        let challenges =
+            inner_product_sumcheck_verify(verifier_state, sum, self.num_rounds, |round, vs| {
+                round_pow.verify(vs).map_err(|_| SumcheckError::HookError {
+                    round,
+                    detail: "proof-of-work verification failed".into(),
+                })
+            })
+            .map_err(|_| VerificationError)?;
+        Ok(MultilinearPoint(challenges))
     }
 }
 
