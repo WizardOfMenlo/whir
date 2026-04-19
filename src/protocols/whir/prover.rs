@@ -2,6 +2,7 @@ use std::{any::Any, borrow::Cow, mem};
 
 use ark_ff::{AdditiveGroup, FftField, Field};
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
+use effsc::fold as effsc_fold;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -12,9 +13,7 @@ use crate::{
         embedding::Embedding,
         lift,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
-        mixed_scalar_mul_add,
-        sumcheck::fold,
-        tensor_product, MultilinearPoint,
+        mixed_scalar_mul_add, tensor_product, MultilinearPoint,
     },
     hash::Hash,
     protocols::{geometric_challenge::geometric_challenge, irs_commit, whir::FinalClaim},
@@ -211,9 +210,8 @@ where
                 .map(|_| prover_state.verifier_message())
                 .collect();
             self.initial_skip_pow.prove(prover_state);
-            // Fold vector
-            for &f in &folding_randomness {
-                fold(&mut vector, f);
+            for &c in &folding_randomness {
+                effsc_fold(&mut vector, c);
             }
             // Covector must be all zeros.
             covector = vec![M::Target::ZERO; self.initial_sumcheck.final_size()];

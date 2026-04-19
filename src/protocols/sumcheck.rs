@@ -1,19 +1,23 @@
 //! Quadratic sumcheck protocol.
 
-use std::fmt;
+use std::{fmt, mem};
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
+use effsc::{
+    proof::SumcheckError,
+    provers::inner_product::InnerProductProver,
+    runner::sumcheck,
+    transcript::{ProverTranscript, VerifierTranscript},
+    verifier::sumcheck_verify,
+};
 use serde::{Deserialize, Serialize};
+use spongefish::{NargDeserialize, NargSerialize, VerificationError};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use crate::{
-    algebra::{
-        dot,
-        sumcheck::{compute_sumcheck_polynomial, fold},
-        MultilinearPoint,
-    },
+    algebra::{dot, MultilinearPoint},
     protocols::proof_of_work,
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
@@ -21,6 +25,35 @@ use crate::{
     },
     type_info::Type,
 };
+
+impl<F, H, R> ProverTranscript<F> for ProverState<H, R>
+where
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+    F: Codec<[H::U]> + NargSerialize,
+{
+    fn send(&mut self, value: F) {
+        self.prover_message(&value);
+    }
+    fn challenge(&mut self) -> F {
+        self.verifier_message::<F>()
+    }
+}
+
+impl<F, H> VerifierTranscript<F> for VerifierState<'_, H>
+where
+    H: DuplexSpongeInterface,
+    F: Codec<[H::U]> + NargDeserialize,
+{
+    type Error = VerificationError;
+
+    fn receive(&mut self) -> Result<F, Self::Error> {
+        self.prover_message::<F>()
+    }
+    fn challenge(&mut self) -> F {
+        self.verifier_message::<F>()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -67,7 +100,7 @@ impl<F: Field> Config<F> {
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
-        F: Codec<[H::U]>,
+        F: Codec<[H::U]> + NargSerialize,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
     {
@@ -78,29 +111,32 @@ impl<F: Field> Config<F> {
         assert_eq!(b.len(), self.initial_size);
         debug_assert_eq!(dot(a, b), *sum);
 
-        let mut res = Vec::with_capacity(self.num_rounds);
-        for _ in 0..self.num_rounds {
-            debug_assert!(a.len() > 1);
-            // Send sumcheck polynomial c0 and c2
-            let (c0, c2) = compute_sumcheck_polynomial(a, b);
-            let c1 = *sum - c0.double() - c2;
-            prover_state.prover_message(&c0);
-            prover_state.prover_message(&c2);
-
-            // Do Proof of Work (if any)
-            self.round_pow.prove(prover_state);
-
-            // Receive the random evaluation point
-            let folding_randomness = prover_state.verifier_message::<F>();
-            res.push(folding_randomness);
-
-            // Fold the inputs
-            fold(a, folding_randomness);
-            fold(b, folding_randomness);
-            *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
+        if self.num_rounds == 0 {
+            return MultilinearPoint(Vec::new());
         }
 
-        MultilinearPoint(res)
+        // Hand vectors to the InnerProductProver, drive the canonical runner.
+        // The prover writes (g(0), g(1), g(2)) per round (value form) to the
+        // transcript and folds a, b internally. The hook runs PoW grinding.
+        let mut ip_prover = InnerProductProver::new(mem::take(a), mem::take(b));
+        let proof = sumcheck(
+            &mut ip_prover,
+            self.num_rounds,
+            prover_state,
+            |_round, t| {
+                #[cfg(feature = "tracing")]
+                let _s = tracing::info_span!("round_pow_cb").entered();
+                self.round_pow.prove(t);
+            },
+        );
+
+        // Pull folded vectors back so the caller can continue working with them.
+        let (folded_a, folded_b) = ip_prover.evaluations();
+        *a = folded_a.to_vec();
+        *b = folded_b.to_vec();
+        *sum = dot(a, b);
+
+        MultilinearPoint(proof.challenges)
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -118,25 +154,18 @@ impl<F: Field> Config<F> {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
-        let mut res = Vec::with_capacity(self.num_rounds);
-        for _ in 0..self.num_rounds {
-            // Receive sumcheck polynomial c0 and c2
-            let c0: F = verifier_state.prover_message()?;
-            let c2: F = verifier_state.prover_message()?;
-            let c1 = *sum - c0.double() - c2;
-
-            // Check proof of work (if any)
-            self.round_pow.verify(verifier_state)?;
-
-            // Receive the random evaluation point
-            let folding_randomness = verifier_state.verifier_message::<F>();
-            res.push(folding_randomness);
-
-            // Update the sum
-            *sum = (c2 * folding_randomness + c1) * folding_randomness + c0;
-        }
-
-        Ok(MultilinearPoint(res))
+        let round_pow = &self.round_pow;
+        let result = sumcheck_verify(*sum, 2, self.num_rounds, verifier_state, |round, vs| {
+            round_pow
+                .verify(vs)
+                .map_err(|_| SumcheckError::HookError { round })
+        })
+        .map_err(|_| VerificationError)?;
+        // Composed protocol: the reduced claim flows into the next WHIR layer,
+        // which performs the equivalent oracle check (next sumcheck's round-0
+        // consistency, or final direct-send comparison).
+        *sum = result.final_claim;
+        Ok(MultilinearPoint(result.challenges))
     }
 }
 

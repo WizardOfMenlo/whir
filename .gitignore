@@ -14,3 +14,4 @@ outputs/
 .flake
 rustc-ice-*.txt
 profile.json.gz
+.claude/

@@ -41,9 +41,10 @@ sha3 = { version = "0.10.7", features = ["asm", "oid"] }
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-spongefish = { git = "https://github.com/z-tech/spongefish", rev = "2613967", features = ["ark-ff"]}
+spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = ["ark-ff"]}
+effsc = { git = "https://github.com/compsec-epfl/space-efficient-sumcheck.git", branch = "main", default-features = false, features = ["arkworks", "parallel"] }
 rayon = { version = "1.10", optional = true }
-tracing = { version = "0.1", features = ["attributes"], optional = true }
+tracing = { version = "0.1.41", optional = true }
 hex = "0.4"
 static_assertions = "1.1.0"
 ciborium = "0.2"
@@ -60,7 +61,6 @@ ordered-float = { version = "5.1.0", features = ["serde"] }
 proptest = "1.0"
 serde_json = "1.0"
 divan = { version = "4.2", package = "codspeed-divan-compat" }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
 debug = "line-tables-only"
@@ -80,10 +80,6 @@ rs_in_order = []
 
 [[bench]]
 name = "expand_from_coeff"
-harness = false
-
-[[bench]]
-name = "sumcheck"
 harness = false
 
 # Disable untill fixed.
@@ -106,6 +102,8 @@ lto = "thin" # LTO breaks line attribution.
 opt-level = 3
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/arkworks-rs/algebra", branch = "z-tech/macro_auto_detect_subgroup" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", branch = "master" }
 ark-std = { git = "https://github.com/arkworks-rs/std" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra", branch = "z-tech/macro_auto_detect_subgroup" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra", branch = "master" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra", branch = "master" }
+
