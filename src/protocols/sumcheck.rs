@@ -1,13 +1,15 @@
 //! Quadratic sumcheck protocol.
 
-use std::fmt;
+use std::{fmt, mem};
 
 use ark_ff::Field;
 use ark_std::rand::{CryptoRng, RngCore};
 use effsc::{
-    inner_product_sumcheck_partial, inner_product_sumcheck_verify,
     proof::SumcheckError,
+    provers::inner_product::InnerProductProver,
+    runner::sumcheck,
     transcript::{ProverTranscript, VerifierTranscript},
+    verifier::sumcheck_verify,
 };
 use serde::{Deserialize, Serialize};
 use spongefish::{NargDeserialize, NargSerialize, VerificationError};
@@ -113,16 +115,28 @@ impl<F: Field> Config<F> {
             return MultilinearPoint(Vec::new());
         }
 
-        // effsc folds a, b in place and handles the transcript (c0, c2 per
-        // round + PoW hook + verifier challenges). It does not update `sum`.
-        let result = inner_product_sumcheck_partial(a, b, prover_state, self.num_rounds, |_, t| {
-            #[cfg(feature = "tracing")]
-            let _s = tracing::info_span!("round_pow_cb").entered();
-            self.round_pow.prove(t);
-        });
+        // Hand vectors to the InnerProductProver, drive the canonical runner.
+        // The prover writes (g(0), g(1), g(2)) per round (value form) to the
+        // transcript and folds a, b internally. The hook runs PoW grinding.
+        let mut ip_prover = InnerProductProver::new(mem::take(a), mem::take(b));
+        let proof = sumcheck(
+            &mut ip_prover,
+            self.num_rounds,
+            prover_state,
+            |_round, t| {
+                #[cfg(feature = "tracing")]
+                let _s = tracing::info_span!("round_pow_cb").entered();
+                self.round_pow.prove(t);
+            },
+        );
+
+        // Pull folded vectors back so the caller can continue working with them.
+        let (folded_a, folded_b) = ip_prover.evaluations();
+        *a = folded_a.to_vec();
+        *b = folded_b.to_vec();
         *sum = dot(a, b);
 
-        MultilinearPoint(result.verifier_messages)
+        MultilinearPoint(proof.challenges)
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -141,13 +155,26 @@ impl<F: Field> Config<F> {
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
         let round_pow = &self.round_pow;
-        let challenges =
-            inner_product_sumcheck_verify(verifier_state, sum, self.num_rounds, |round, vs| {
+        let mut final_claim: Option<F> = None;
+        let challenges = sumcheck_verify(
+            *sum,
+            2,
+            self.num_rounds,
+            verifier_state,
+            |round, vs| {
                 round_pow
                     .verify(vs)
                     .map_err(|_| SumcheckError::HookError { round })
-            })
-            .map_err(|_| VerificationError)?;
+            },
+            |claim, _challenges| {
+                // Composed protocol: the oracle check is deferred to the outer
+                // WHIR rounds, so we just capture the reduced claim here.
+                final_claim = Some(claim);
+                Ok(())
+            },
+        )
+        .map_err(|_| VerificationError)?;
+        *sum = final_claim.expect("oracle_check runs on success");
         Ok(MultilinearPoint(challenges))
     }
 }
