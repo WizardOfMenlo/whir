@@ -63,17 +63,6 @@ struct Args {
 }
 
 fn main() {
-    #[cfg(feature = "tracing")]
-    {
-        use tracing_subscriber::{fmt, fmt::format::FmtSpan, EnvFilter};
-
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-        fmt()
-            .with_env_filter(filter)
-            .with_span_events(FmtSpan::CLOSE)
-            .init();
-    }
-
     use AvailableFields as AF;
     let args = Args::parse();
     let field = args.field;
