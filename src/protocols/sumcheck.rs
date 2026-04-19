@@ -155,27 +155,17 @@ impl<F: Field> Config<F> {
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
         let round_pow = &self.round_pow;
-        let mut final_claim: Option<F> = None;
-        let challenges = sumcheck_verify(
-            *sum,
-            2,
-            self.num_rounds,
-            verifier_state,
-            |round, vs| {
-                round_pow
-                    .verify(vs)
-                    .map_err(|_| SumcheckError::HookError { round })
-            },
-            |claim, _challenges| {
-                // Composed protocol: the oracle check is deferred to the outer
-                // WHIR rounds, so we just capture the reduced claim here.
-                final_claim = Some(claim);
-                Ok(())
-            },
-        )
+        let result = sumcheck_verify(*sum, 2, self.num_rounds, verifier_state, |round, vs| {
+            round_pow
+                .verify(vs)
+                .map_err(|_| SumcheckError::HookError { round })
+        })
         .map_err(|_| VerificationError)?;
-        *sum = final_claim.expect("oracle_check runs on success");
-        Ok(MultilinearPoint(challenges))
+        // Composed protocol: the reduced claim flows into the next WHIR layer,
+        // which performs the equivalent oracle check (next sumcheck's round-0
+        // consistency, or final direct-send comparison).
+        *sum = result.final_claim;
+        Ok(MultilinearPoint(result.challenges))
     }
 }
 
