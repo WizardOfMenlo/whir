@@ -45,11 +45,6 @@ where
 {
     type Error = VerificationError;
 
-    fn send(&mut self, _value: F) {
-        // Re-absorbing known prover data is not exercised by effsc's current
-        // verify paths; spongefish doesn't expose a public absorb primitive.
-        unreachable!("VerifierTranscript::send is unused by effsc's legacy verify")
-    }
     fn receive(&mut self) -> Result<F, Self::Error> {
         self.prover_message::<F>()
     }
@@ -148,10 +143,9 @@ impl<F: Field> Config<F> {
         let round_pow = &self.round_pow;
         let challenges =
             inner_product_sumcheck_verify(verifier_state, sum, self.num_rounds, |round, vs| {
-                round_pow.verify(vs).map_err(|_| SumcheckError::HookError {
-                    round,
-                    detail: "proof-of-work verification failed".into(),
-                })
+                round_pow
+                    .verify(vs)
+                    .map_err(|_| SumcheckError::HookError { round })
             })
             .map_err(|_| VerificationError)?;
         Ok(MultilinearPoint(challenges))

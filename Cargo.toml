@@ -42,7 +42,7 @@ clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spongefish = { git = "https://github.com/z-tech/spongefish.git", branch = "smallfp-support", features = ["ark-ff"]}
-effsc = { git = "https://github.com/compsec-epfl/space-efficient-sumcheck.git", branch = "z-tech/rewrite", default-features = false, features = ["arkworks", "parallel"] }
+effsc = { git = "https://github.com/compsec-epfl/space-efficient-sumcheck.git", branch = "z-tech/rewrite-v2", default-features = false, features = ["arkworks", "parallel"] }
 rayon = { version = "1.10", optional = true }
 tracing = { version = "0.1.41", optional = true }
 hex = "0.4"
