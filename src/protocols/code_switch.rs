@@ -15,17 +15,13 @@ use crate::{
     algebra::{
         dot,
         embedding::{Embedding, Identity},
-        fields::FieldWithSize,
-        lift, mixed_dot, random_vector, univariate_evaluate,
+        mixed_dot, univariate_evaluate,
     },
     engines::EngineId,
     hash::Hash,
     protocols::{
         geometric_challenge::geometric_challenge,
-        irs_commit::{
-            num_ood_samples, Commitment as IrsCommitment, Config as IrsConfig,
-            Witness as IrsWitness,
-        },
+        irs_commit::{Commitment as IrsCommitment, Config as IrsConfig, Witness as IrsWitness},
     },
     transcript::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
@@ -42,17 +38,16 @@ pub struct Config<M: Embedding> {
     pub embedding: Typed<M>,
     pub source: IrsConfig<M>,
     pub target: IrsConfig<Identity<M::Target>>,
-    pub out_domain_samples: usize,
-    pub mask_commit: Option<IrsConfig<Identity<M::Target>>>,
+    pub ood_samples: usize,
+    pub zk: bool,
 }
 
-/// Next stage's query budgets for ZK encoding (Prop 3.19).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub struct ZkQueryBudget {
-    /// Queries the next stage makes to the target oracle g.
-    pub target: usize,
-    /// Queries the next stage makes to the mask oracle s.
-    pub mask: usize,
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct TargetConfigParams {
+    pub security_target: f64,
+    pub unique_decoding: bool,
+    pub target_log_inv_rate: usize,
+    pub target_interleaving_depth: usize,
 }
 
 /// ZK mask oracle: the message and its IRS witness.
@@ -67,106 +62,56 @@ pub struct MaskOracle<F: Field> {
 pub struct Witness<F: Field> {
     pub message: Vec<F>,
     pub target_witness: IrsWitness<F>,
-    pub mask: Option<MaskOracle<F>>,
 }
 
 /// Verifier output from the code-switch.
 #[derive(Clone, Debug)]
 pub struct Commitment<F: Field> {
     pub target: IrsCommitment<F>,
-    pub mask: Option<IrsCommitment<F>>,
 }
 
 impl<M: Embedding> Config<M> {
-    /// `zk`: `None` for non-ZK, `Some(budget)` for ZK with next stage's query budgets.
+    /// `zk`: whether ZK mode is active (mask oracle expected in prove/verify).
     pub fn new(
-        security_target: f64,
-        unique_decoding: bool,
         hash_id: EngineId,
         source_config: IrsConfig<M>,
-        target_log_inv_rate: usize,
-        target_interleaving_depth: usize,
-        zk: Option<ZkQueryBudget>,
+        target_config_params: &TargetConfigParams,
+        ood_samples: usize,
+        zk: bool,
     ) -> Self
     where
         M: Default,
         M::Target: Default,
     {
-        assert!(target_log_inv_rate > 0);
-        assert!(target_interleaving_depth > 0);
+        assert!(target_config_params.target_log_inv_rate > 0);
+        assert!(target_config_params.target_interleaving_depth > 0);
+        assert!(!target_config_params.unique_decoding);
+        assert!(
+            ood_samples > 0,
+            "code-switch requires OOD samples for cross-oracle consistency"
+        );
 
         let source_message_length = source_config.message_length();
-        let target_rate = 0.5_f64.powf(target_log_inv_rate as f64);
-        let target_vector_size = source_message_length * target_interleaving_depth;
+        let target_rate = 0.5_f64.powf(target_config_params.target_log_inv_rate as f64);
+        let target_vector_size =
+            source_message_length * target_config_params.target_interleaving_depth;
 
-        let mut target_config = IrsConfig::<Identity<M::Target>>::new(
-            security_target,
-            unique_decoding,
+        let target_config = IrsConfig::<Identity<M::Target>>::new(
+            target_config_params.security_target,
+            target_config_params.unique_decoding,
             hash_id,
             1,
             target_vector_size,
-            target_interleaving_depth,
+            target_config_params.target_interleaving_depth,
             target_rate,
-        );
-
-        let mask_commit = zk.map(|budget| {
-            assert!(budget.target > 0, "ZK requires nonzero target query budget");
-            assert!(budget.mask > 0, "ZK requires nonzero mask query budget");
-            // TODO : find a better way to set mask length for ZK code-switch
-            // leaving right now for code switching. This will change in parameter
-            // selection
-            target_config.mask_length = budget.target;
-            target_config.reparameterise_security(security_target, unique_decoding);
-
-            let source_randomness_len = source_config.mask_length * source_config.num_messages();
-            assert!(
-                source_randomness_len > 0,
-                "ZK code-switch requires source_config.mask_length > 0"
-            );
-            // TODO : move the mask config out for shared mask tree per iteration
-            // inputs to the new function will also change
-            let mut mask_config = IrsConfig::<Identity<M::Target>>::new(
-                security_target,
-                unique_decoding,
-                hash_id,
-                1,
-                source_randomness_len,
-                1,
-                source_config.rate(),
-            );
-            mask_config.mask_length = budget.mask;
-            mask_config.reparameterise_security(security_target, unique_decoding);
-            mask_config
-        });
-
-        assert!(
-            source_config.mask_length == 0 || mask_commit.is_some(),
-            "source with ZK randomness requires ZK code-switch (mask_commit)"
-        );
-
-        let (list_size, degree) = mask_commit.as_ref().map_or_else(
-            || (target_config.list_size(), source_message_length),
-            |mask_cfg| {
-                (
-                    target_config.list_size() * mask_cfg.list_size(),
-                    source_message_length + mask_cfg.message_length(),
-                )
-            },
-        );
-        let out_domain_samples = num_ood_samples(
-            unique_decoding,
-            security_target,
-            M::Target::field_size_bits(),
-            list_size,
-            degree,
         );
 
         Self {
             embedding: Typed::<M>::default(),
             source: source_config,
             target: target_config,
-            out_domain_samples,
-            mask_commit,
+            ood_samples,
+            zk,
         }
     }
 
@@ -176,9 +121,9 @@ impl<M: Embedding> Config<M> {
         &self,
         prover_state: &mut ProverState<H, R>,
         message: Vec<M::Target>,
-        masks: &[M::Source],
         witness: &IrsWitness<M::Source, M::Target>,
         covector: &mut [M::Target],
+        mask_oracle: Option<&MaskOracle<M::Target>>,
     ) -> Witness<M::Target>
     where
         H: DuplexSpongeInterface,
@@ -195,43 +140,20 @@ impl<M: Embedding> Config<M> {
             "code-switch only supports num_messages() == 1 (single polynomial)"
         );
         assert_eq!(
-            masks.len(),
-            self.source.mask_length * self.source.num_messages()
-        );
-        assert!(
-            self.mask_commit.is_some() == (self.target.mask_length > 0),
-            "mask config and target mask_length must agree"
+            mask_oracle.is_some(),
+            self.zk,
+            "mask_oracle presence must match zk flag"
         );
 
-        // Step 1a: g := Enc_{C'}(f, r') — Construction 9.7 Step 1, p.55
+        // Step 1: g := Enc_{C'}(f, r') — Construction 9.7 Step 1, p.55
         let target_witness = self.target.commit(prover_state, &[&message]);
 
-        // Step 1b: s := Enc_{C_zk}((r || padding), r'') — Construction 9.7 Step 1, p.55
-        #[allow(clippy::option_if_let_else)]
-        let mask = if let Some(mask_config) = &self.mask_commit {
-            let mask_msg_len = mask_config.message_length();
-            let r_embedded = lift(self.source.embedding(), masks);
-            let embedded_randomness_len = r_embedded.len();
-            let mut mask_msg = Vec::with_capacity(mask_msg_len);
-            mask_msg.extend_from_slice(&r_embedded);
-            let random_padding: Vec<M::Target> =
-                random_vector(prover_state.rng(), mask_msg_len - embedded_randomness_len);
-            mask_msg.extend_from_slice(&random_padding);
-            let witness = mask_config.commit(prover_state, &[&mask_msg]);
-            Some(MaskOracle {
-                message: mask_msg,
-                witness,
-            })
-        } else {
-            None
-        };
-
         // Step 2-3: OOD challenge + answers — Construction 9.7 Steps 2-3, p.55
-        let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.out_domain_samples);
+        let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.ood_samples);
         let msg_len = message.len();
         for &point in &ood_points {
             let f_eval = univariate_evaluate(&message, point);
-            if let Some(ref mask_oracle) = mask {
+            if let Some(mask_oracle) = mask_oracle {
                 let mask_msg_eval = univariate_evaluate(&mask_oracle.message, point);
                 let shift = point.pow([msg_len as u64]);
                 prover_state.prover_message(&(f_eval + shift * mask_msg_eval));
@@ -244,7 +166,7 @@ impl<M: Embedding> Config<M> {
         let source_evaluations = self.source.open(prover_state, &[witness]);
 
         // Step 5: batching — Construction 9.7 Step 5, p.55
-        let num_ood = self.out_domain_samples;
+        let num_ood = self.ood_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let batching_coeffs =
             geometric_challenge::<_, M::Target>(prover_state, 1 + num_ood + num_in_domain);
@@ -276,7 +198,6 @@ impl<M: Embedding> Config<M> {
         Witness {
             message,
             target_witness,
-            mask,
         }
     }
 
@@ -300,30 +221,19 @@ impl<M: Embedding> Config<M> {
             1,
             "code-switch only supports num_messages() == 1 (single polynomial)"
         );
-        assert!(
-            self.mask_commit.is_some() == (self.target.mask_length > 0),
-            "mask config and target mask_length must agree"
-        );
 
-        // Step 1: commitments — Construction 9.7 Step 1, p.55
+        // Step 1: target commitment — Construction 9.7 Step 1, p.55
         let target_commitment = self.target.receive_commitment(verifier_state)?;
-        let mask_commitment = self
-            .mask_commit
-            .as_ref()
-            .map(|mask_cfg| mask_cfg.receive_commitment(verifier_state))
-            .transpose()?;
 
         // Step 2-3: OOD — Construction 9.7 Steps 2-3, p.55
-        let _ood_points: Vec<M::Target> =
-            verifier_state.verifier_message_vec(self.out_domain_samples);
-        let ood_answers: Vec<M::Target> =
-            verifier_state.prover_messages_vec(self.out_domain_samples)?;
+        let _ood_points: Vec<M::Target> = verifier_state.verifier_message_vec(self.ood_samples);
+        let ood_answers: Vec<M::Target> = verifier_state.prover_messages_vec(self.ood_samples)?;
 
         // Step 4: source opening — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.verify(verifier_state, &[commitment])?;
 
         // Step 5-6: batching + μ' — Construction 9.7 Decision phase, p.55
-        let num_ood = self.out_domain_samples;
+        let num_ood = self.ood_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let coeffs = geometric_challenge(verifier_state, 1 + num_ood + num_in_domain);
         let (&original_sl_coeff, all_rlc_coeffs) = coeffs.split_first().unwrap();
@@ -339,7 +249,6 @@ impl<M: Embedding> Config<M> {
 
         Ok(Commitment {
             target: target_commitment,
-            mask: mask_commitment,
         })
     }
 }
@@ -349,10 +258,7 @@ impl<M: Embedding> fmt::Display for Config<M> {
         write!(
             f,
             "Config(source={}, target={}, ood_samples={}, zk={})",
-            self.source,
-            self.target,
-            self.out_domain_samples,
-            self.mask_commit.is_some()
+            self.source, self.target, self.ood_samples, self.zk
         )
     }
 }
@@ -360,9 +266,9 @@ impl<M: Embedding> fmt::Display for Config<M> {
 #[cfg(test)]
 mod tests {
     use ark_std::rand::{
-        distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
+        distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng,
     };
-    use proptest::{bool, prelude::Strategy, proptest, sample::select, strategy::Just};
+    use proptest::{prelude::Strategy, proptest, sample::select, strategy::Just};
 
     use super::*;
     use crate::{
@@ -379,53 +285,33 @@ mod tests {
                 .filter(|&n| ntt::next_order::<M::Source>(n) == Some(n))
                 .collect::<Vec<_>>();
 
-            let emb1 = embedding.clone();
-            let emb2 = embedding;
+            let emb2 = embedding.clone();
 
-            (select(valid_sizes), 0_usize..=3, bool::ANY)
-                .prop_flat_map(move |(size, mask_length, masked)| {
-                    let source_mask = if masked { mask_length.max(1) } else { 0 };
-                    let source = IrsConfig::arbitrary(emb1.clone(), 1, size, source_mask, 1);
-                    (source, Just(masked))
+            // Generate source config, then derive target from it
+            (select(valid_sizes), 0_usize..=3, 0_usize..=5)
+                .prop_flat_map(move |(size, mask_length, ood_samples)| {
+                    let source = IrsConfig::arbitrary(embedding.clone(), 1, size, mask_length, 1);
+                    (source, Just(ood_samples))
                 })
-                .prop_flat_map(|(source, masked)| {
+                .prop_flat_map(|(source, ood_samples)| {
                     let msg_len = source.message_length();
-                    let rnd_len = source.mask_length * source.num_messages();
-                    let target_mask = usize::from(masked);
-
                     let target = IrsConfig::<Identity<M::Target>>::arbitrary(
                         Identity::new(),
                         1,
                         msg_len,
-                        target_mask,
+                        0,
                         1,
                     );
-
-                    let mask = if masked && rnd_len > 0 {
-                        IrsConfig::<Identity<M::Target>>::arbitrary(
-                            Identity::new(),
-                            1,
-                            rnd_len,
-                            0,
-                            1,
-                        )
-                        .prop_map(Some)
-                        .boxed()
-                    } else {
-                        Just(None).boxed()
-                    };
-
-                    (Just(source), target, mask, 0_usize..=5)
+                    (Just(source), target, Just(ood_samples))
                 })
-                .prop_map(
-                    move |(source, target, mask_commit, out_domain_samples)| Self {
-                        embedding: Typed::new(emb2.clone()),
-                        source,
-                        target,
-                        out_domain_samples,
-                        mask_commit,
-                    },
-                )
+                .prop_map(move |(source, target, ood_samples)| Self {
+                    embedding: Typed::new(emb2.clone()),
+                    source,
+                    target,
+                    ood_samples,
+                    // TODO : ZK path requires orchestrator; tested at integration level
+                    zk: false,
+                })
         }
     }
 
@@ -442,18 +328,20 @@ mod tests {
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
         let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let target_mu: F = rng.gen();
-
         let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
+
+        // Honest input: μ = ⟨f, sl⟩
+        let initial_mu = dot(&message, &covector);
 
         let mut prover_state = ProverState::new_std(&ds);
         let source_witness = config.source.commit(&mut prover_state, &[&message]);
+        // Non-ZK test path: no mask oracle
         let witness = config.prove(
             &mut prover_state,
             message.clone(),
-            &source_witness.masks,
             &source_witness,
             &mut covector,
+            None,
         );
         let proof = prover_state.proof();
 
@@ -462,17 +350,18 @@ mod tests {
             .source
             .receive_commitment(&mut verifier_state)
             .unwrap();
-        let mut verifier_sum = target_mu;
-        let commitments = config
+        let mut verifier_sum = initial_mu;
+        let _commitments = config
             .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
             .unwrap();
 
         // Transcript fully consumed — prover and verifier are in sync
         verifier_state.check_eof().unwrap();
-        // Mask commitment present if ZK mode
-        assert_eq!(commitments.mask.is_some(), config.mask_commit.is_some());
         assert_eq!(witness.message, message);
-        assert_eq!(witness.mask.is_some(), config.mask_commit.is_some());
+        // Non ZK case check only
+        if config.source.mask_length == 0 {
+            assert_eq!(dot(&message, &covector), verifier_sum);
+        }
     }
 
     fn test<F: Field + Codec<[u8]> + 'static>()

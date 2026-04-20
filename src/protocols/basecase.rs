@@ -74,7 +74,7 @@ impl<F: Field> Config<F> {
             let point = self
                 .sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut sum, &[])
-                .0;
+                .folding_randomness;
             assert!(!vector[0].is_zero(), "Proof failed");
             return (point, covector[0]);
         }
@@ -113,7 +113,7 @@ impl<F: Field> Config<F> {
                 &mut masked_sum,
                 &[],
             )
-            .0;
+            .folding_randomness;
 
         // If the MLE of `masked_vector` evaluates to zero, the verifier can not proceed.
         // Basically the sumcheck equation has degenerated to 0 * l(r) = 0, which provides
@@ -153,7 +153,10 @@ impl<F: Field> Config<F> {
             let masks = verifier_state
                 .prover_messages_vec(self.commit.mask_length * self.commit.num_messages())?;
             let evals = self.commit.verify(verifier_state, &[commitment])?;
-            let point = self.sumcheck.verify(verifier_state, &mut sum)?.0;
+            let point = self
+                .sumcheck
+                .verify(verifier_state, &mut sum)?
+                .folding_randomness;
 
             for (&point, value) in zip_strict(&evals.points, evals.values(&[F::ONE])) {
                 // We expected `f(x) + x^l · g(x)` where l = deg(f) + 1, f is the message and g the mask.
@@ -191,7 +194,10 @@ impl<F: Field> Config<F> {
 
         // Sumcheck on masked inner product
         let mut masked_sum = mask_sum + mask_rlc * sum;
-        let point = self.sumcheck.verify(verifier_state, &mut masked_sum)?.0;
+        let point = self
+            .sumcheck
+            .verify(verifier_state, &mut masked_sum)?
+            .folding_randomness;
 
         // Compute implied MLE of the linear form
         // f*(r) · l(r) = sum  =>  l(r) = sum / f*(r)
@@ -229,7 +235,7 @@ mod tests {
                     initial_size: size,
                     round_pow: proof_of_work::Config::none(),
                     num_rounds: size.next_power_of_two().trailing_zeros() as usize,
-                    mask_config: None,
+                    mask_length: 0,
                 },
                 masked,
             })

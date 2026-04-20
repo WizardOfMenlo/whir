@@ -11,12 +11,11 @@ use tracing::instrument;
 use crate::{
     algebra::{
         dot,
-        embedding::Identity,
         sumcheck::{compute_sumcheck_polynomial, fold, fold_and_compute_polynomial},
         univariate_evaluate,
     },
     hash::Hash,
-    protocols::{irs_commit, proof_of_work},
+    protocols::proof_of_work,
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
         VerificationResult, VerifierMessage, VerifierState,
@@ -24,6 +23,24 @@ use crate::{
     type_info::Type,
     utils::chunks_exact_or_empty,
 };
+
+/// Prover output from the sumcheck protocol.
+pub struct Witness<F: Field> {
+    /// Random folding points sampled during each reduction round.
+    pub folding_randomness: Vec<F>,
+    /// Accumulated mask sum (zero when non-ZK).
+    pub mask_sum: F,
+    /// Random linear-combination coefficient for masks (one when non-ZK).
+    pub mask_rlc: F,
+}
+
+/// Verifier output from the sumcheck protocol.
+pub struct Commitment<F: Field> {
+    /// Random folding points sampled during each reduction round.
+    pub folding_randomness: Vec<F>,
+    /// Random linear-combination coefficient for masks (one when non-ZK).
+    pub mask_rlc: F,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -35,17 +52,10 @@ where
     pub initial_size: usize,
     pub round_pow: proof_of_work::Config,
     pub num_rounds: usize,
-    /// C_zk config for ZK masking. None = no masking.
-    /// Mask polynomial degree = mask_config.message_length().
-    pub mask_config: Option<irs_commit::Config<Identity<F>>>,
+    pub mask_length: usize,
 }
 
 impl<F: Field> Config<F> {
-    /// Mask polynomial degree per round. 0 when non-ZK.
-    pub fn mask_length(&self) -> usize {
-        self.mask_config.as_ref().map_or(0, |c| c.message_length())
-    }
-
     pub fn final_size(&self) -> usize {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
@@ -75,7 +85,7 @@ impl<F: Field> Config<F> {
         b: &mut Vec<F>,
         sum: &mut F,
         masks: &[F],
-    ) -> (Vec<F>, F, F, Vec<irs_commit::Witness<F>>)
+    ) -> Witness<F>
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
@@ -89,42 +99,31 @@ impl<F: Field> Config<F> {
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
         // Mask must cover all 3 sumcheck polynomial coefficients (c0, c1, c2)
-        assert!(self.mask_length() == 0 || self.mask_length() >= 3);
+        assert!(self.mask_length == 0 || self.mask_length >= 3);
         assert_eq!(a.len(), self.initial_size);
         assert_eq!(b.len(), self.initial_size);
         debug_assert_eq!(dot(a, b), *sum);
-        assert_eq!(masks.len(), self.num_rounds * self.mask_length());
+        assert_eq!(masks.len(), self.num_rounds * self.mask_length);
         let half = F::from(2).inverse().unwrap();
 
-        // Commit masks under C_zk (if present), send mask sum, get combination randomness.
-        let mut mask_witnesses = Vec::new();
         let mut mask_sum = F::ZERO;
         let mut mask_rlc = F::ONE;
         if !masks.is_empty() {
-            if let Some(ref mask_config) = self.mask_config {
-                for mask in masks.chunks_exact(self.mask_length()) {
-                    mask_witnesses.push(mask_config.commit(prover_state, &[mask]));
-                }
-            }
             let sum_multiple = F::from(1 << self.num_rounds.saturating_sub(1));
-            mask_sum = masks
-                .chunks_exact(self.mask_length())
-                .map(eval_01)
-                .sum::<F>()
-                * sum_multiple;
+            mask_sum = masks.chunks_exact(self.mask_length).map(eval_01).sum::<F>() * sum_multiple;
             prover_state.prover_message(&mask_sum);
             mask_rlc = prover_state.verifier_message();
         }
 
         // We do a staggered Sumcheck loop so we can merge the inner fold+compute loops.
         let mut univariate = Vec::new();
-        let mut res = Vec::with_capacity(self.num_rounds);
-        let mut folding_randomness = None;
+        let mut folding_randomness = Vec::with_capacity(self.num_rounds);
+        let mut prev_round_challenge = None;
         for (round, mask) in
-            chunks_exact_or_empty(masks, self.mask_length(), self.num_rounds).enumerate()
+            chunks_exact_or_empty(masks, self.mask_length, self.num_rounds).enumerate()
         {
             // Fold and compute sumcheck polynomial in one pass.
-            let (c0, c2) = if let Some(w) = folding_randomness {
+            let (c0, c2) = if let Some(w) = prev_round_challenge {
                 fold_and_compute_polynomial(a, b, w)
             } else {
                 compute_sumcheck_polynomial(a, b)
@@ -155,22 +154,26 @@ impl<F: Field> Config<F> {
             // Receive the random evaluation point and update the sum
             self.round_pow.prove(prover_state);
             let r = prover_state.verifier_message::<F>();
-            res.push(r);
+            folding_randomness.push(r);
             *sum = (c2 * r + c1) * r + c0;
             if !masks.is_empty() {
                 let masked_sum = univariate_evaluate(&univariate, r);
                 mask_sum = masked_sum - mask_rlc * *sum;
             }
-            folding_randomness = Some(r);
+            prev_round_challenge = Some(r);
         }
-        if let Some(w) = folding_randomness {
+        if let Some(w) = prev_round_challenge {
             // Final fold of the inputs (no polynomial computation)
             fold(a, w);
             fold(b, w);
         }
 
         *sum = mask_sum + mask_rlc * *sum;
-        (res, mask_sum, mask_rlc, mask_witnesses)
+        Witness {
+            folding_randomness,
+            mask_sum,
+            mask_rlc,
+        }
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -178,7 +181,7 @@ impl<F: Field> Config<F> {
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut F,
-    ) -> VerificationResult<(Vec<F>, F, Vec<irs_commit::Commitment<F>>)>
+    ) -> VerificationResult<Commitment<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -190,24 +193,17 @@ impl<F: Field> Config<F> {
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
         // Mask must cover all 3 sumcheck polynomial coefficients (c0, c1, c2)
-        assert!(self.mask_length() == 0 || self.mask_length() >= 3);
+        assert!(self.mask_length == 0 || self.mask_length >= 3);
 
-        // Receive mask commitments (mirrors prover's mask_config.commit calls)
-        let mut mask_commitments = Vec::new();
         let mut mask_rlc = F::ONE;
-        if self.mask_length() > 0 && self.num_rounds > 0 {
-            if let Some(ref mask_config) = self.mask_config {
-                for _ in 0..self.num_rounds {
-                    mask_commitments.push(mask_config.receive_commitment(verifier_state)?);
-                }
-            }
+        if self.mask_length > 0 && self.num_rounds > 0 {
             let mask_sum: F = verifier_state.prover_message()?;
             mask_rlc = verifier_state.verifier_message();
             *sum = mask_sum + mask_rlc * *sum;
         }
 
-        let mut univariate = vec![F::ZERO; self.mask_length().max(3)];
-        let mut res = Vec::with_capacity(self.num_rounds);
+        let mut univariate = vec![F::ZERO; self.mask_length.max(3)];
+        let mut folding_randomness = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
             // Receive all but linear coefficient.
             univariate[0] = verifier_state.prover_message()?;
@@ -222,13 +218,16 @@ impl<F: Field> Config<F> {
             self.round_pow.verify(verifier_state)?;
 
             // Receive the random evaluation point
-            let folding_randomness = verifier_state.verifier_message::<F>();
-            res.push(folding_randomness);
+            let round_challenge = verifier_state.verifier_message::<F>();
+            folding_randomness.push(round_challenge);
 
             // Update the sum
-            *sum = univariate_evaluate(&univariate, folding_randomness);
+            *sum = univariate_evaluate(&univariate, round_challenge);
         }
-        Ok((res, mask_rlc, mask_commitments))
+        Ok(Commitment {
+            folding_randomness,
+            mask_rlc,
+        })
     }
 }
 
@@ -240,7 +239,7 @@ impl<F: Field> fmt::Display for Config<F> {
             self.initial_size,
             self.num_rounds,
             self.round_pow.difficulty(),
-            self.mask_length()
+            self.mask_length == 0
         )
     }
 }
@@ -284,48 +283,19 @@ mod tests {
                 3 => Just(0_usize),
                 7 => 3_usize..20,
             ];
-            (
-                0_usize..(1 << 12),
-                0_usize..12,
-                mask_length,
-                proptest::bool::ANY,
-            )
-                .prop_map(|(initial_size, num_rounds, mask_length, use_zk)| {
+            (0_usize..(1 << 12), 0_usize..12, mask_length).prop_map(
+                |(initial_size, num_rounds, mask_length)| {
                     let num_rounds =
                         num_rounds.min(initial_size.next_power_of_two().trailing_zeros() as usize);
-                    // Enable C_zk when masks are active and NTT-compatible
-                    let mask_config = if use_zk && mask_length >= 3 && num_rounds > 0 {
-                        // mask_length must be NTT-friendly for commit to work
-                        crate::algebra::ntt::next_order::<F>(mask_length).and_then(|_| {
-                            let codeword_len = mask_length * 2; // rate 0.5
-                            if codeword_len.is_power_of_two()
-                                && crate::algebra::ntt::next_order::<F>(codeword_len)
-                                    == Some(codeword_len)
-                            {
-                                Some(irs_commit::Config::<Identity<F>>::new(
-                                    32.0,
-                                    false,
-                                    crate::hash::BLAKE3,
-                                    1,
-                                    mask_length,
-                                    1,
-                                    0.5,
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    };
                     Self {
                         field: Type::new(),
                         initial_size,
                         num_rounds,
                         round_pow: proof_of_work::Config::none(),
-                        mask_config,
+                        mask_length,
                     }
-                })
+                },
+            )
         }
     }
 
@@ -345,14 +315,18 @@ mod tests {
         let initial_vector = random_vector(&mut rng, config.initial_size);
         let initial_covector = random_vector(&mut rng, config.initial_size);
         let initial_sum = dot(&initial_vector, &initial_covector);
-        let masks = random_vector(&mut rng, config.mask_length() * config.num_rounds);
+        let masks = random_vector(&mut rng, config.mask_length * config.num_rounds);
 
         // Prover
         let mut vector = initial_vector.clone();
         let mut covector = initial_covector.clone();
         let mut sum = initial_sum;
         let mut prover_state = ProverState::new_std(&ds);
-        let (point, mask_sum, mask_rlc, mask_witnesses) = config.prove(
+        let Witness {
+            folding_randomness: point,
+            mask_sum,
+            mask_rlc,
+        } = config.prove(
             &mut prover_state,
             &mut vector,
             &mut covector,
@@ -360,7 +334,7 @@ mod tests {
             &masks,
         );
         let expected_mask_sum = zip_strict(
-            chunks_exact_or_empty(&masks, config.mask_length(), config.num_rounds),
+            chunks_exact_or_empty(&masks, config.mask_length, config.num_rounds),
             &point,
         )
         .map(|(m, x)| univariate_evaluate(m, *x))
@@ -380,7 +354,10 @@ mod tests {
         // Verifier
         let mut verifier_sum = initial_sum;
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let (verifier_point, verifier_mask_rlc, mask_commitments) = config
+        let Commitment {
+            folding_randomness: verifier_point,
+            mask_rlc: verifier_mask_rlc,
+        } = config
             .verify(&mut verifier_state, &mut verifier_sum)
             .unwrap();
         assert_eq!(verifier_point, point);
@@ -388,13 +365,14 @@ mod tests {
         assert_eq!(verifier_sum, sum);
         verifier_state.check_eof().unwrap();
 
-        // ZK path: verify mask oracle counts match
-        if config.mask_config.is_some() && config.num_rounds > 0 && !masks.is_empty() {
-            assert_eq!(mask_witnesses.len(), config.num_rounds, "prover should produce one witness per round");
-            assert_eq!(mask_commitments.len(), config.num_rounds, "verifier should receive one commitment per round");
+        // ZK vs non-ZK path invariants
+        if config.mask_length > 0 && config.num_rounds > 0 {
+            // ZK path: mask_rlc is a random challenge, mask contribution is non-trivial
+            assert_ne!(mask_rlc, F::ONE, "ZK path should have random mask_rlc");
         } else {
-            assert!(mask_witnesses.is_empty());
-            assert!(mask_commitments.is_empty());
+            // Non-ZK path: mask_rlc defaults to ONE, mask_sum defaults to ZERO
+            assert_eq!(mask_rlc, F::ONE);
+            assert_eq!(mask_sum, F::ZERO);
         }
     }
 
@@ -418,7 +396,7 @@ mod tests {
                 initial_size: 2,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 1,
-                mask_config: None,
+                mask_length: 0,
             },
         );
     }
@@ -432,7 +410,7 @@ mod tests {
                 initial_size: 3,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 2,
-                mask_config: None,
+                mask_length: 0,
             },
         );
     }
@@ -446,7 +424,7 @@ mod tests {
                 initial_size: 5,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 3,
-                mask_config: None,
+                mask_length: 0,
             },
         );
     }
