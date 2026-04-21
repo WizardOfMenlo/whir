@@ -24,13 +24,25 @@ use crate::{
     verify,
 };
 
+/// Prover output from the base case.
+pub struct ProverResult<F: Field> {
+    pub evaluation_points: Vec<F>,
+    pub linear_form_evaluation: F,
+}
+
+/// Verifier output from the base case.
+pub struct VerifierResult<F: Field> {
+    pub evaluation_points: Vec<F>,
+    pub linear_form_evaluation: F,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Config<F: Field> {
     pub commit: irs_commit::Config<Identity<F>>,
     pub sumcheck: sumcheck::Config<F>,
 
-    /// Whether to mask the vectors, whichs adds HVZK.
+    /// Whether to mask the vectors, which adds HVZK.
     pub masked: bool,
 }
 
@@ -46,7 +58,7 @@ impl<F: Field> Config<F> {
         witness: &irs_commit::Witness<F>,
         mut covector: Vec<F>,
         mut sum: F,
-    ) -> (Vec<F>, F)
+    ) -> ProverResult<F>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -63,7 +75,10 @@ impl<F: Field> Config<F> {
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         debug_assert_eq!(dot(&vector, &covector), sum);
         if self.size() == 0 {
-            return (Vec::new(), F::ZERO);
+            return ProverResult {
+                evaluation_points: Vec::new(),
+                linear_form_evaluation: F::ZERO,
+            };
         }
 
         // Even more trivial non-zk protocol: send f an r directly.
@@ -76,7 +91,10 @@ impl<F: Field> Config<F> {
                 .prove(prover_state, &mut vector, &mut covector, &mut sum, &[])
                 .round_challenges;
             assert!(!vector[0].is_zero(), "Proof failed");
-            return (point, covector[0]);
+            return ProverResult {
+                evaluation_points: point,
+                linear_form_evaluation: covector[0],
+            };
         }
 
         // Create masking vector.
@@ -121,8 +139,10 @@ impl<F: Field> Config<F> {
         // This event is cryptographically unlikely as `F` is challenge sized.
         assert!(!masked_vector[0].is_zero(), "Proof failed");
 
-        // Return evaluation point and value of the covector.
-        (point, covector[0])
+        ProverResult {
+            evaluation_points: point,
+            linear_form_evaluation: covector[0],
+        }
     }
 
     pub fn verify<H>(
@@ -130,7 +150,7 @@ impl<F: Field> Config<F> {
         verifier_state: &mut VerifierState<H>,
         commitment: &irs_commit::Commitment<F>,
         mut sum: F,
-    ) -> VerificationResult<(Vec<F>, F)>
+    ) -> VerificationResult<VerifierResult<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -144,7 +164,10 @@ impl<F: Field> Config<F> {
         assert_eq!(self.commit.vector_size, self.sumcheck.initial_size);
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         if self.size() == 0 {
-            return Ok((Vec::new(), F::ZERO));
+            return Ok(VerifierResult {
+                evaluation_points: Vec::new(),
+                linear_form_evaluation: F::ZERO,
+            });
         }
 
         // Unmasked protocol
@@ -168,7 +191,10 @@ impl<F: Field> Config<F> {
             let mle = multilinear_extend(&vector, &point);
             verify!(!mle.is_zero());
             let linear_mle = sum / mle;
-            return Ok((point, linear_mle));
+            return Ok(VerifierResult {
+                evaluation_points: point,
+                linear_form_evaluation: linear_mle,
+            });
         }
 
         let mask_commitment = self.commit.receive_commitment(verifier_state)?;
@@ -205,7 +231,10 @@ impl<F: Field> Config<F> {
         verify!(!masked_mle.is_zero());
         let linear_mle = masked_sum / masked_mle;
 
-        Ok((point, linear_mle))
+        Ok(VerifierResult {
+            evaluation_points: point,
+            linear_form_evaluation: linear_mle,
+        })
     }
 }
 
@@ -261,14 +290,17 @@ mod tests {
         // Prover
         let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit.commit(&mut prover_state, &[&vector]);
-        let (point, value) = config.prove(
+        let prover_result = config.prove(
             &mut prover_state,
             vector.clone(),
             &witness,
             covector.clone(),
             sum,
         );
-        assert_eq!(multilinear_extend(&covector, &point), value);
+        assert_eq!(
+            multilinear_extend(&covector, &prover_result.evaluation_points),
+            prover_result.linear_form_evaluation
+        );
         let proof = prover_state.proof();
 
         // Verifier
@@ -277,11 +309,17 @@ mod tests {
             .commit
             .receive_commitment(&mut verifier_state)
             .unwrap();
-        let (verifier_point, verifier_value) = config
+        let verifier_result = config
             .verify(&mut verifier_state, &commitment, sum)
             .unwrap();
-        assert_eq!(verifier_point, point);
-        assert_eq!(verifier_value, value);
+        assert_eq!(
+            verifier_result.evaluation_points,
+            prover_result.evaluation_points
+        );
+        assert_eq!(
+            verifier_result.linear_form_evaluation,
+            prover_result.linear_form_evaluation
+        );
         verifier_state.check_eof().unwrap();
     }
 

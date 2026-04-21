@@ -46,8 +46,9 @@ pub struct Config<M: Embedding> {
 pub struct TargetConfigParams {
     pub security_target: f64,
     pub unique_decoding: bool,
-    pub target_log_inv_rate: usize,
-    pub target_interleaving_depth: usize,
+    pub log_inv_rate: usize,
+    pub interleaving_depth: usize,
+    pub mask_length: usize,
 }
 
 /// ZK mask oracle: the message and its IRS witness.
@@ -83,28 +84,37 @@ impl<M: Embedding> Config<M> {
         M: Default,
         M::Target: Default,
     {
-        assert!(target_config_params.target_log_inv_rate > 0);
-        assert!(target_config_params.target_interleaving_depth > 0);
+        assert!(target_config_params.log_inv_rate > 0);
+        assert!(target_config_params.interleaving_depth > 0);
         assert!(!target_config_params.unique_decoding);
         assert!(
             ood_samples > 0,
             "code-switch requires OOD samples for cross-oracle consistency"
         );
+        assert!((target_config_params.mask_length > 0) == zk);
 
         let source_message_length = source_config.message_length();
-        let target_rate = 0.5_f64.powf(target_config_params.target_log_inv_rate as f64);
-        let target_vector_size =
-            source_message_length * target_config_params.target_interleaving_depth;
+        let target_rate = 0.5_f64.powf(target_config_params.log_inv_rate as f64);
+        let target_vector_size = source_message_length * target_config_params.interleaving_depth;
 
-        let target_config = IrsConfig::<Identity<M::Target>>::new(
+        let mut target_config = IrsConfig::<Identity<M::Target>>::new(
             target_config_params.security_target,
             target_config_params.unique_decoding,
             hash_id,
             1,
             target_vector_size,
-            target_config_params.target_interleaving_depth,
+            target_config_params.interleaving_depth,
             target_rate,
         );
+        if target_config_params.mask_length > 0 {
+            target_config.mask_length = target_config_params.mask_length;
+            // TODO : delegate this recalculation to a good parameter selection function
+            // (In the next PR)
+            target_config.reparameterise_security(
+                target_config_params.security_target,
+                target_config_params.unique_decoding,
+            );
+        }
 
         Self {
             embedding: Typed::<M>::default(),
@@ -288,7 +298,7 @@ mod tests {
             let emb2 = embedding.clone();
 
             // Generate source config, then derive target from it
-            (select(valid_sizes), 0_usize..=3, 0_usize..=5)
+            (select(valid_sizes), 0_usize..=3, 1_usize..=5)
                 .prop_flat_map(move |(size, mask_length, ood_samples)| {
                     let source = IrsConfig::arbitrary(embedding.clone(), 1, size, mask_length, 1);
                     (source, Just(ood_samples))
@@ -320,8 +330,6 @@ mod tests {
         Standard: Distribution<F>,
         Hash: ProverMessage<[u8]>,
     {
-        crate::tests::init();
-
         let instance = U64(seed);
         let ds = DomainSeparator::protocol(config)
             .session(&format!("Test at {}:{}", file!(), line!()))
@@ -369,6 +377,7 @@ mod tests {
         Standard: Distribution<F>,
         Hash: ProverMessage<[u8]>,
     {
+        crate::tests::init();
         let configs = Config::arbitrary(Identity::<F>::new());
         proptest!(|(seed: u64, config in configs)| {
             test_config(seed, &config);
@@ -408,5 +417,75 @@ mod tests {
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
         test::<fields::Field256>();
+    }
+
+    /// ZK path: prove/verify with a MaskOracle (zk = true).
+    #[test]
+    fn test_zk() {
+        type F = fields::Field64;
+        crate::tests::init();
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let msg_len = 8;
+
+        let source =
+            IrsConfig::<Identity<F>>::new(32.0, false, crate::hash::BLAKE3, 1, msg_len, 1, 0.5);
+        let target =
+            IrsConfig::<Identity<F>>::new(32.0, false, crate::hash::BLAKE3, 1, msg_len, 1, 0.5);
+
+        let config = Config::<Identity<F>> {
+            embedding: Typed::new(Identity::new()),
+            source,
+            target,
+            ood_samples: 2,
+            zk: true,
+        };
+
+        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let initial_mu = dot(&message, &covector);
+
+        // MaskOracle with a random mask polynomial.
+        // prove() only reads mask_oracle.message for OOD evaluation;
+        // the witness field is consumed by the orchestrator / mask_proximity, not here.
+        let mask_msg: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let mask_oracle = MaskOracle {
+            message: mask_msg,
+            witness: IrsWitness::default(),
+        };
+
+        let instance = U64(42);
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+
+        // Prover
+        let mut prover_state = ProverState::new_std(&ds);
+        let source_witness = config.source.commit(&mut prover_state, &[&message]);
+        let _witness = config.prove(
+            &mut prover_state,
+            message,
+            &source_witness,
+            &mut covector,
+            Some(&mask_oracle),
+        );
+        let proof = prover_state.proof();
+
+        // Verifier
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let source_commitment = config
+            .source
+            .receive_commitment(&mut verifier_state)
+            .unwrap();
+        let mut verifier_sum = initial_mu;
+        config
+            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
+            .unwrap();
+        verifier_state.check_eof().unwrap();
+
+        assert_ne!(
+            verifier_sum, initial_mu,
+            "mask oracle should shift the batched sum"
+        );
     }
 }

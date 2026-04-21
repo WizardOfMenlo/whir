@@ -234,7 +234,7 @@ impl<F: Field> fmt::Display for Config<F> {
             self.initial_size,
             self.num_rounds,
             self.round_pow.difficulty(),
-            self.mask_length == 0
+            self.mask_length
         )
     }
 }
@@ -262,14 +262,14 @@ mod tests {
     use super::*;
     use crate::{
         algebra::{
-            fields::{self, Field64, FieldWithSize},
+            fields::{self, Field64},
             multilinear_extend, random_vector,
         },
         transcript::DomainSeparator,
         utils::zip_strict,
     };
 
-    impl<F: Field + FieldWithSize + 'static> Config<F>
+    impl<F: Field + 'static> Config<F>
     where
         Standard: Distribution<F>,
     {
@@ -297,7 +297,7 @@ mod tests {
     #[cfg_attr(feature = "tracing", instrument)]
     fn test_config<F>(seed: u64, config: &Config<F>)
     where
-        F: Field + FieldWithSize + Codec<[u8]> + 'static,
+        F: Field + Codec<[u8]> + 'static,
         Standard: Distribution<F>,
         Hash: crate::transcript::ProverMessage<[u8]>,
     {
@@ -371,7 +371,7 @@ mod tests {
         }
     }
 
-    fn test_sumcheck<F: Field + FieldWithSize + Codec<[u8]> + 'static>()
+    fn test<F: Field + Codec<[u8]> + 'static>()
     where
         Standard: Distribution<F>,
         Hash: crate::transcript::ProverMessage<[u8]>,
@@ -391,7 +391,7 @@ mod tests {
                 initial_size: 2,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 1,
-                mask_length: 0,
+                mask_length: 3,
             },
         );
     }
@@ -405,7 +405,7 @@ mod tests {
                 initial_size: 3,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 2,
-                mask_length: 0,
+                mask_length: 3,
             },
         );
     }
@@ -419,43 +419,43 @@ mod tests {
                 initial_size: 5,
                 round_pow: proof_of_work::Config::none(),
                 num_rounds: 3,
-                mask_length: 0,
+                mask_length: 3,
             },
         );
     }
 
     #[test]
     fn test_field64_1() {
-        test_sumcheck::<fields::Field64>();
+        test::<fields::Field64>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_2() {
-        test_sumcheck::<fields::Field64_2>();
+        test::<fields::Field64_2>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_3() {
-        test_sumcheck::<fields::Field64_3>();
+        test::<fields::Field64_3>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field128() {
-        test_sumcheck::<fields::Field128>();
+        test::<fields::Field128>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field192() {
-        test_sumcheck::<fields::Field192>();
+        test::<fields::Field192>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
-        test_sumcheck::<fields::Field256>();
+        test::<fields::Field256>();
     }
 }
