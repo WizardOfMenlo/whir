@@ -69,6 +69,10 @@ impl<F: Field> Config<F> {
             2 * num_masks,
             "c_zk.num_vectors must be 2 * num_masks"
         );
+        assert_eq!(
+            c_zk_commit.interleaving_depth, 1,
+            "mask proximity requires interleaving_depth = 1"
+        );
         Self {
             c_zk_commit,
             num_masks,
