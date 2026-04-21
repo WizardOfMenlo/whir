@@ -74,7 +74,7 @@ impl<F: Field> Config<F> {
             let point = self
                 .sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut sum, &[])
-                .folding_randomness;
+                .round_challenges;
             assert!(!vector[0].is_zero(), "Proof failed");
             return (point, covector[0]);
         }
@@ -113,7 +113,7 @@ impl<F: Field> Config<F> {
                 &mut masked_sum,
                 &[],
             )
-            .folding_randomness;
+            .round_challenges;
 
         // If the MLE of `masked_vector` evaluates to zero, the verifier can not proceed.
         // Basically the sumcheck equation has degenerated to 0 * l(r) = 0, which provides
@@ -156,7 +156,7 @@ impl<F: Field> Config<F> {
             let point = self
                 .sumcheck
                 .verify(verifier_state, &mut sum)?
-                .folding_randomness;
+                .round_challenges;
 
             for (&point, value) in zip_strict(&evals.points, evals.values(&[F::ONE])) {
                 // We expected `f(x) + x^l · g(x)` where l = deg(f) + 1, f is the message and g the mask.
@@ -197,7 +197,7 @@ impl<F: Field> Config<F> {
         let point = self
             .sumcheck
             .verify(verifier_state, &mut masked_sum)?
-            .folding_randomness;
+            .round_challenges;
 
         // Compute implied MLE of the linear form
         // f*(r) · l(r) = sum  =>  l(r) = sum / f*(r)

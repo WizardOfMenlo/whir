@@ -25,20 +25,15 @@ use crate::{
 };
 
 /// Prover output from the sumcheck protocol.
-pub struct Witness<F: Field> {
-    /// Random folding points sampled during each reduction round.
-    pub folding_randomness: Vec<F>,
-    /// Accumulated mask sum (zero when non-ZK).
+pub struct ProverResult<F: Field> {
+    pub round_challenges: Vec<F>,
     pub mask_sum: F,
-    /// Random linear-combination coefficient for masks (one when non-ZK).
     pub mask_rlc: F,
 }
 
 /// Verifier output from the sumcheck protocol.
-pub struct Commitment<F: Field> {
-    /// Random folding points sampled during each reduction round.
-    pub folding_randomness: Vec<F>,
-    /// Random linear-combination coefficient for masks (one when non-ZK).
+pub struct VerifierResult<F: Field> {
+    pub round_challenges: Vec<F>,
     pub mask_rlc: F,
 }
 
@@ -85,7 +80,7 @@ impl<F: Field> Config<F> {
         b: &mut Vec<F>,
         sum: &mut F,
         masks: &[F],
-    ) -> Witness<F>
+    ) -> ProverResult<F>
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
@@ -117,7 +112,7 @@ impl<F: Field> Config<F> {
 
         // We do a staggered Sumcheck loop so we can merge the inner fold+compute loops.
         let mut univariate = Vec::new();
-        let mut folding_randomness = Vec::with_capacity(self.num_rounds);
+        let mut round_challenges = Vec::with_capacity(self.num_rounds);
         let mut prev_round_challenge = None;
         for (round, mask) in
             chunks_exact_or_empty(masks, self.mask_length, self.num_rounds).enumerate()
@@ -154,7 +149,7 @@ impl<F: Field> Config<F> {
             // Receive the random evaluation point and update the sum
             self.round_pow.prove(prover_state);
             let r = prover_state.verifier_message::<F>();
-            folding_randomness.push(r);
+            round_challenges.push(r);
             *sum = (c2 * r + c1) * r + c0;
             if !masks.is_empty() {
                 let masked_sum = univariate_evaluate(&univariate, r);
@@ -169,8 +164,8 @@ impl<F: Field> Config<F> {
         }
 
         *sum = mask_sum + mask_rlc * *sum;
-        Witness {
-            folding_randomness,
+        ProverResult {
+            round_challenges,
             mask_sum,
             mask_rlc,
         }
@@ -181,7 +176,7 @@ impl<F: Field> Config<F> {
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut F,
-    ) -> VerificationResult<Commitment<F>>
+    ) -> VerificationResult<VerifierResult<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -203,7 +198,7 @@ impl<F: Field> Config<F> {
         }
 
         let mut univariate = vec![F::ZERO; self.mask_length.max(3)];
-        let mut folding_randomness = Vec::with_capacity(self.num_rounds);
+        let mut round_challenges = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
             // Receive all but linear coefficient.
             univariate[0] = verifier_state.prover_message()?;
@@ -219,13 +214,13 @@ impl<F: Field> Config<F> {
 
             // Receive the random evaluation point
             let round_challenge = verifier_state.verifier_message::<F>();
-            folding_randomness.push(round_challenge);
+            round_challenges.push(round_challenge);
 
             // Update the sum
             *sum = univariate_evaluate(&univariate, round_challenge);
         }
-        Ok(Commitment {
-            folding_randomness,
+        Ok(VerifierResult {
+            round_challenges,
             mask_rlc,
         })
     }
@@ -322,8 +317,8 @@ mod tests {
         let mut covector = initial_covector.clone();
         let mut sum = initial_sum;
         let mut prover_state = ProverState::new_std(&ds);
-        let Witness {
-            folding_randomness: point,
+        let ProverResult {
+            round_challenges: point,
             mask_sum,
             mask_rlc,
         } = config.prove(
@@ -354,8 +349,8 @@ mod tests {
         // Verifier
         let mut verifier_sum = initial_sum;
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let Commitment {
-            folding_randomness: verifier_point,
+        let VerifierResult {
+            round_challenges: verifier_point,
             mask_rlc: verifier_mask_rlc,
         } = config
             .verify(&mut verifier_state, &mut verifier_sum)

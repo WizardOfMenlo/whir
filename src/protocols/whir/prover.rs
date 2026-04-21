@@ -196,7 +196,7 @@ impl<M: Embedding> Config<M> {
         let mut folding_randomness = if has_constraints {
             self.initial_sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum, &[])
-                .folding_randomness
+                .round_challenges
         } else {
             // There are no constraints yet, so we can skip the sumcheck.
             // (If we did run it, all sumcheck vectors would be constant zero)
@@ -268,7 +268,7 @@ impl<M: Embedding> Config<M> {
             folding_randomness = round_config
                 .sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut the_sum, &[])
-                .folding_randomness;
+                .round_challenges;
 
             evaluation_point.extend(folding_randomness.iter().copied());
             debug_assert_eq!(dot(&vector, &covector), the_sum);
@@ -304,7 +304,7 @@ impl<M: Embedding> Config<M> {
         let final_folding_randomness = self
             .final_sumcheck
             .prove(prover_state, &mut vector, &mut covector, &mut the_sum, &[])
-            .folding_randomness;
+            .round_challenges;
         evaluation_point.extend(final_folding_randomness.iter().copied());
 
         FinalClaim {
