@@ -39,6 +39,7 @@ use crate::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
+    utils::zip_strict,
     verify,
 };
 
@@ -212,11 +213,10 @@ impl<F: Field> Config<F> {
 
         // Step 4: spot-check γ-combination at each opened position
         let num_cols = self.c_zk_commit.num_cols();
-        for (row, &point) in evaluations
-            .matrix
-            .chunks_exact(num_cols)
-            .zip(&evaluations.points)
-        {
+        for (row, &point) in zip_strict(
+            evaluations.matrix.chunks_exact(num_cols),
+            &evaluations.points,
+        ) {
             let shift = combined_rs.as_ref().map(|_| point.pow([msg_len as u64]));
             for i in 0..self.num_masks {
                 let original_val = row[i * self.c_zk_commit.interleaving_depth];
