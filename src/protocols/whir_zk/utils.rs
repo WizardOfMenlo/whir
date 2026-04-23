@@ -8,19 +8,19 @@ use crate::algebra::{geometric_accumulate, geometric_sequence};
 /// Computed once from the config and reused across prover/verifier steps
 /// to avoid recomputing (and passing individually) the same derived values.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ProtocolDims {
-    pub(super) mu: usize,
-    pub(super) ell: usize,
-    pub(super) rem: usize,
+pub struct ProtocolDims {
+    pub(crate) mu: usize,
+    pub(crate) ell: usize,
+    pub(crate) rem: usize,
     /// ν blinding polynomials excluding g₀; total g-polynomials = ν + 1 = `num_g_polys()`.
-    pub(super) nu: usize,
-    pub(super) size: usize,
-    pub(super) num_vectors: usize,
-    pub(super) num_blinding_vecs: usize,
+    pub(crate) nu: usize,
+    pub(crate) size: usize,
+    pub(crate) num_vectors: usize,
+    pub(crate) num_blinding_vecs: usize,
 }
 
 impl ProtocolDims {
-    pub(super) fn new<F: FftField>(config: &Config<F>, num_vectors: usize) -> Self {
+    pub(crate) fn new<F: FftField>(config: &Config<F>, num_vectors: usize) -> Self {
         let mu = config.blinded_polynomial.initial_num_variables();
         let ell = config
             .blinding_polynomial
@@ -46,12 +46,12 @@ impl ProtocolDims {
     }
 
     /// Number of blinding g-polynomials: ν + 1.
-    pub(super) const fn num_g_polys(&self) -> usize {
+    pub(crate) const fn num_g_polys(&self) -> usize {
         self.nu + 1
     }
 
     /// Convenience wrapper for [`phi_i_bits`] using this instance's dimensions.
-    pub(super) const fn phi_i_bits(&self, hypercube_idx: usize, phi_index: usize) -> usize {
+    pub(crate) const fn phi_i_bits(&self, hypercube_idx: usize, phi_index: usize) -> usize {
         phi_i_bits(hypercube_idx, phi_index, self.mu, self.ell, self.rem)
     }
 }
@@ -97,12 +97,7 @@ const fn phi_i_bits(
 /// Panics if `target` is not in `⟨gen⟩`.
 ///
 /// Complexity: O(log_order²) field multiplications — vs O(2^log_order) for linear scan.
-pub(super) fn discrete_log_pow2<F: FftField>(
-    target: F,
-    gen: F,
-    gen_inv: F,
-    log_order: u32,
-) -> usize {
+pub fn discrete_log_pow2<F: FftField>(target: F, gen: F, gen_inv: F, log_order: u32) -> usize {
     debug_assert_eq!(gen * gen_inv, F::ONE, "gen_inv must be the inverse of gen");
     let mut result = 0usize;
     let mut current = target;
@@ -140,7 +135,7 @@ pub(super) fn discrete_log_pow2<F: FftField>(
 ///
 /// The z-derived coordinates use descending powers (big-endian convention)
 /// to match the codebase's `UnivariateEvaluation::mle_evaluate` squaring ladder.
-pub(super) fn build_fold_args<F: FftField>(r_bar: &[F], z: F, mu: usize) -> Vec<F> {
+pub fn build_fold_args<F: FftField>(r_bar: &[F], z: F, mu: usize) -> Vec<F> {
     let num_folded_vars = r_bar.len();
     let num_z_vars = mu - num_folded_vars;
     let mut point = Vec::with_capacity(mu);
@@ -165,7 +160,7 @@ pub(super) fn build_fold_args<F: FftField>(r_bar: &[F], z: F, mu: usize) -> Vec<
 ///
 /// `beq_i[k] = Σ_j τ^{j+1} · Σ_{c,m} eq(r̄, c) · z_j^m · δ(Φ_i(c·M+m), k)`
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, fields(num_points = lambda_z_points.len(), mu = dims.mu, ell = dims.ell, num_g_polys = dims.num_g_polys())))]
-pub(super) fn build_beq_tables<F: FftField>(
+pub fn build_beq_tables<F: FftField>(
     lambda_z_points: &[F],
     eq_weights: &[F],
     tau: F,
@@ -283,9 +278,9 @@ pub(super) fn build_beq_tables<F: FftField>(
 /// Produced by [`compute_rs_fold_blinding_coeffs`]; consumed when evaluating
 /// m̃(r̄, z, ρ) and g̃ᵢ(r̄, z) at OOD/STIR/Γ points.
 #[derive(Debug)]
-pub(super) struct RsFoldCoeffs<F> {
-    pub(super) masking_coeffs_all: Vec<Vec<F>>,
-    pub(super) g_i_coeffs: Vec<Vec<F>>,
+pub struct RsFoldCoeffs<F> {
+    pub(crate) masking_coeffs_all: Vec<Vec<F>>,
+    pub(crate) g_i_coeffs: Vec<Vec<F>>,
 }
 
 /// Precompute RS-fold coefficient vectors for the blinding polynomials (Steps 5-6).
@@ -310,7 +305,7 @@ pub(super) struct RsFoldCoeffs<F> {
 ///
 /// Returns [`RsFoldCoeffs`] where each inner vector has length M.
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, fields(mu = dims.mu, ell = dims.ell, num_g_polys = g_polys.len())))]
-pub(super) fn compute_rs_fold_blinding_coeffs<F: FftField>(
+pub fn compute_rs_fold_blinding_coeffs<F: FftField>(
     eq_weights: &[F],
     g_polys: &[Vec<F>],
     masking_polys: &[Vec<F>],
@@ -393,7 +388,7 @@ pub(super) fn compute_rs_fold_blinding_coeffs<F: FftField>(
 ///   - `w_0`:      `beq_0[k]` for g₀, `(-ρ)·beq_0[k]` for msk₀
 ///   - `w_i`:      `(-ρ·αⁱ)·beq_0[k]` for mskᵢ  (1 ≤ i < num_vectors)
 ///   - `w_{n+j}`:  `beq_{j+1}[k]` for ĝ_{j+1}    (0 ≤ j < ν)
-pub(super) fn build_weight_covectors<F: FftField>(
+pub fn build_weight_covectors<F: FftField>(
     beq_tables: &[Vec<F>],
     rho: F,
     alpha_coeffs: &[F],
@@ -446,7 +441,7 @@ pub(super) fn build_weight_covectors<F: FftField>(
 /// recovers the position in the initial codeword.
 ///
 /// Used identically by both prover (to open [[f̂]]) and verifier (to verify openings).
-pub(super) fn gamma_to_f_hat_indices<F: FftField>(
+pub fn gamma_to_f_hat_indices<F: FftField>(
     gamma_points: &[F],
     config: &super::Config<F>,
 ) -> Vec<usize> {
@@ -472,7 +467,7 @@ pub(super) fn gamma_to_f_hat_indices<F: FftField>(
 }
 
 /// Compute eq_weights from r_bar. Shared helper to avoid redundant computation.
-pub(super) fn compute_eq_weights<F: FftField>(r_bar: &[F]) -> Vec<F> {
+pub fn compute_eq_weights<F: FftField>(r_bar: &[F]) -> Vec<F> {
     let len = 1usize << r_bar.len();
     let mut buf = vec![F::ONE; len];
     for (i, &r) in r_bar.iter().enumerate() {
@@ -489,14 +484,14 @@ pub(super) fn compute_eq_weights<F: FftField>(r_bar: &[F]) -> Vec<F> {
 ///
 /// Collects (z, m_evals, g_evals) tuples during Steps 5-6 for use in Step 7.
 #[derive(Debug)]
-pub(super) struct LambdaAccumulator<F> {
+pub struct LambdaAccumulator<F> {
     z_points: Vec<F>,
     m_evals: Vec<Vec<F>>,
     g_evals: Vec<Vec<F>>,
 }
 
 impl<F> LambdaAccumulator<F> {
-    pub(super) const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             z_points: Vec::new(),
             m_evals: Vec::new(),
@@ -504,11 +499,11 @@ impl<F> LambdaAccumulator<F> {
         }
     }
 
-    pub(super) fn z_points(&self) -> &[F] {
+    pub(crate) fn z_points(&self) -> &[F] {
         &self.z_points
     }
 
-    pub(super) fn push(&mut self, z: F, m: Vec<F>, g: Vec<F>) {
+    pub(crate) fn push(&mut self, z: F, m: Vec<F>, g: Vec<F>) {
         assert!(
             self.m_evals.is_empty() || m.len() == self.m_evals[0].len(),
             "m_evals length mismatch: expected {}, got {}",
@@ -527,7 +522,7 @@ impl<F> LambdaAccumulator<F> {
     }
 
     #[must_use]
-    pub(super) const fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         self.z_points.len()
     }
 
@@ -535,7 +530,7 @@ impl<F> LambdaAccumulator<F> {
     ///
     /// Vectors `0..num_vectors` index into `m_evals`; vectors `num_vectors..` index
     /// into `g_evals` (shifted by `num_vectors`).
-    pub(super) fn claim(&self, lambda_idx: usize, vec_idx: usize, num_vectors: usize) -> F
+    pub(crate) fn claim(&self, lambda_idx: usize, vec_idx: usize, num_vectors: usize) -> F
     where
         F: Copy,
     {

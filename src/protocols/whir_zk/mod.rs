@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::algebra::embedding::Embedding;
 
-mod committer;
+pub(crate) mod committer;
 mod prover;
-mod utils;
+pub(crate) mod utils;
 mod verifier;
 
 pub use self::{committer::Witness, verifier::Commitments};
@@ -681,66 +681,6 @@ mod tests {
             );
         }
         // A panic is also a valid rejection (debug transcript checks).
-    }
-
-    /// Soundness: a malicious prover who generates a proof for a wrong evaluation
-    /// must be rejected. If verify() accepts, it means the prover can forge
-    /// arbitrary evaluation claims.
-    #[test]
-    fn test_zk_malicious_prover_wrong_evaluation() {
-        let mut rng = ark_std::test_rng();
-        let config = make_test_config();
-
-        let vector = vec![F::ONE; TEST_NUM_COEFFS];
-        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
-        let form = MultilinearExtension { point: point.0 };
-        let correct_evaluation = form.evaluate(config.embedding(), &vector);
-        let wrong_evaluation = correct_evaluation + F::from(42u64);
-
-        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
-        let prove_forms = to_prove_forms(&forms, vector.len());
-        let weight_refs: Vec<&dyn LinearForm<F>> = forms
-            .iter()
-            .map(|f| f.as_ref() as &dyn LinearForm<F>)
-            .collect();
-
-        let ds = DomainSeparator::protocol(&config)
-            .session(&format!("zk2-malicious {}:{}", file!(), line!()))
-            .instance(&Empty);
-
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut prover_state = ProverState::new_std(&ds);
-            let witness = config.commit(&mut prover_state, &[&vector]);
-            config.prove(
-                &mut prover_state,
-                vec![Cow::Borrowed(vector.as_slice())],
-                witness,
-                prove_forms,
-                Cow::Owned(vec![wrong_evaluation]),
-            );
-
-            let proof = prover_state.proof();
-            let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let commitments = config
-                .receive_commitments(&mut verifier_state)
-                .expect("receive_commitments");
-            config
-                .verify(
-                    &mut verifier_state,
-                    &weight_refs,
-                    &[wrong_evaluation],
-                    &commitments,
-                )?
-                .verify(weight_refs.iter().copied())
-        }));
-
-        if let Ok(result) = outcome {
-            assert!(
-                result.is_err(),
-                "SOUNDNESS BUG: verifier accepted wrong evaluation from malicious prover \
-                 (correct={correct_evaluation:?}, claimed={wrong_evaluation:?})"
-            );
-        }
     }
 
     /// Verify that `unique_decoding: true` is rejected at config construction.

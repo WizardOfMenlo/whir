@@ -171,6 +171,10 @@ where
             self.prover_state.prover_message(g_claim);
         }
 
+        for eval in evaluations {
+            self.prover_state.prover_message(eval);
+        }
+
         // =====================================================================
         // Step 2.5: Multi-polynomial batching
         //

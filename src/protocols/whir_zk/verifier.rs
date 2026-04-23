@@ -130,6 +130,11 @@ where
         let beta_powers = geometric_sequence(beta, num_g_polys);
         let g_claims: Vec<F> = self.verifier_state.prover_messages_vec(num_forms)?;
 
+        for &expected in evaluations {
+            let read: F = self.verifier_state.prover_message()?;
+            verify!(read == expected);
+        }
+
         // =====================================================================
         // Step 2.5: Multi-polynomial batching
         //
