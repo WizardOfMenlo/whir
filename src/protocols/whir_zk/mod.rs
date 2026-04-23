@@ -736,15 +736,6 @@ mod tests {
         prove_and_verify(&config, vec![vector], vec![Box::new(form)], &[evaluation]);
     }
 
-    // =====================================================================
-    // Soundness regression — evaluation forgery (issues #1, #2, #3)
-    //
-    // Root cause: evaluations were not bound in the Fiat-Shamir transcript
-    // before α, ρ, or constraint_rlc were sampled.  The fix absorbs all
-    // evals as prover messages; the verifier reads them back and checks
-    // `verify!(read == expected)`.
-    // =====================================================================
-
     /// Generate an honest zkWHIR proof and sanity-check that it verifies.
     /// Returns the domain separator and proof for use in forgery tests.
     fn honest_proof_and_verify(

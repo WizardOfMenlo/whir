@@ -920,15 +920,6 @@ mod tests {
         }
     }
 
-    // =====================================================================
-    // Soundness regression — evaluation forgery
-    //
-    // Root cause: evaluations were not bound in the Fiat-Shamir transcript
-    // before α / constraint_rlc were sampled.  The fix absorbs all evals
-    // as prover messages; the verifier reads them back and checks
-    // `verify!(read == expected)`.
-    // =====================================================================
-
     /// Number of variables for the soundness regression tests.
     /// Kept small (4) so the tests run fast while still exercising
     /// all transcript-level challenge extraction paths.
