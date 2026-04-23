@@ -918,4 +918,323 @@ mod tests {
             }
         }
     }
+
+    // =====================================================================
+    // Soundness regression — evaluation forgery (issues #1, #3)
+    //
+    // Root cause: evaluations were not bound in the Fiat-Shamir transcript
+    // before α / constraint_rlc were sampled.  The fix absorbs all evals
+    // as prover messages; the verifier reads them back and checks
+    // `verify!(read == expected)`.
+    // =====================================================================
+
+    use crate::protocols::geometric_challenge::geometric_challenge;
+
+    /// Number of variables for the soundness regression tests.
+    /// Kept small (4) so the tests run fast while still exercising
+    /// all transcript-level challenge extraction paths.
+    const SOUNDNESS_NUM_VARIABLES: usize = 4;
+    const SOUNDNESS_NUM_COEFFS: usize = 1 << SOUNDNESS_NUM_VARIABLES;
+
+    /// Build a WHIR config for soundness tests with PoW disabled.
+    fn soundness_config(batch_size: usize) -> Config<Basefield<EF>> {
+        let params = ProtocolParameters {
+            security_level: 32,
+            pow_bits: 0,
+            initial_folding_factor: 2,
+            folding_factor: 2,
+            unique_decoding: false,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+        let mut config = Config::<Basefield<EF>>::new(SOUNDNESS_NUM_COEFFS, &params);
+        config.disable_pow();
+        config
+    }
+
+    /// Build `Evaluate`-trait linear forms from multilinear evaluation points.
+    /// Used to compute honest evaluations (the `Evaluate` trait provides
+    /// `evaluate(embedding, vector)` which `LinearForm` alone does not).
+    fn evaluation_forms(points: &[MultilinearPoint<EF>]) -> Vec<Box<dyn Evaluate<Basefield<EF>>>> {
+        points
+            .iter()
+            .map(|p| Box::new(MultilinearExtension { point: p.0.clone() }) as _)
+            .collect()
+    }
+
+    /// Build owned `LinearForm` objects consumed by `prove()`.
+    fn owned_linear_forms(points: &[MultilinearPoint<EF>]) -> Vec<Box<dyn LinearForm<EF>>> {
+        points
+            .iter()
+            .map(|p| Box::new(MultilinearExtension { point: p.0.clone() }) as _)
+            .collect()
+    }
+
+    /// Run the WHIR verifier with the given evaluations.
+    /// Returns `true` if accepted (soundness bug), `false` if rejected.
+    ///
+    /// Uses `catch_unwind` because the `verify!` macro can either return
+    /// `Err` or panic depending on build configuration — both count as
+    /// correct rejection.
+    fn verifier_accepts(
+        config: &Config<Basefield<EF>>,
+        ds: &DomainSeparator<'_, Empty>,
+        proof: &crate::transcript::Proof,
+        forms: &[Box<dyn Evaluate<Basefield<EF>>>],
+        claimed_evals: &[EF],
+        num_commits: usize,
+    ) -> bool {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut vs = VerifierState::new_std(ds, proof);
+            let cs: Vec<_> = (0..num_commits)
+                .map(|_| config.receive_commitment(&mut vs).unwrap())
+                .collect();
+            let refs: Vec<_> = cs.iter().collect();
+            config
+                .verify(&mut vs, &refs, claimed_evals)
+                .and_then(|fc| fc.verify(forms.iter().map(|l| l.as_ref() as &dyn LinearForm<EF>)))
+        }));
+        matches!(result, Ok(Ok(())))
+    }
+
+    /// Replay the WHIR verifier transcript up to the vector_rlc challenge
+    /// to extract the batching coefficient α.
+    ///
+    /// Transcript structure after `receive_commitment`:
+    ///   1. OOD cross-terms (prover messages) — one per commitment per OOD
+    ///      row for each out-of-range vector index
+    ///   2. Public evaluations (prover messages) — the fix
+    ///   3. vector_rlc_coeffs = geometric_challenge(num_vectors) → [1, α]
+    fn extract_alpha(
+        config: &Config<Basefield<EF>>,
+        ds: &DomainSeparator<'_, Empty>,
+        proof: &crate::transcript::Proof,
+        num_evals: usize,
+    ) -> EF {
+        let mut vs = VerifierState::new_std(ds, proof);
+        let c0 = config.receive_commitment(&mut vs).unwrap();
+        let c1 = config.receive_commitment(&mut vs).unwrap();
+
+        // Skip OOD cross-terms: with 2 separate commits of 1 vector each,
+        // each commitment produces 1 cross-term per OOD row (the other vector).
+        let num_ood_cross_terms = c0.out_of_domain().points.len() + c1.out_of_domain().points.len();
+        for _ in 0..num_ood_cross_terms {
+            let _: EF = vs.prover_message().unwrap();
+        }
+
+        // Skip evaluation messages (the transcript-binding fix).
+        for _ in 0..num_evals {
+            let _: EF = vs.prover_message().unwrap();
+        }
+
+        // vector_rlc_coeffs = [1, α] for 2 vectors.
+        geometric_challenge::<_, EF>(&mut vs, 2)[1]
+    }
+
+    /// Replay the WHIR verifier transcript up to the constraint_rlc challenge
+    /// to extract the per-form coefficient c₁.
+    ///
+    /// Transcript structure after `receive_commitment` (single commit, single vector):
+    ///   1. No OOD cross-terms (1 commit × 1 vector = no cross terms)
+    ///   2. Public evaluations (prover messages)
+    ///   3. vector_rlc = geometric_challenge(1) → [1] (no transcript squeeze)
+    ///   4. constraint_rlc = geometric_challenge(num_ood + num_forms) → [1, c₁, ...]
+    fn extract_constraint_rlc_coeff(
+        config: &Config<Basefield<EF>>,
+        ds: &DomainSeparator<'_, Empty>,
+        proof: &crate::transcript::Proof,
+        num_evals: usize,
+        num_forms: usize,
+    ) -> EF {
+        let mut vs = VerifierState::new_std(ds, proof);
+        let c = config.receive_commitment(&mut vs).unwrap();
+
+        // No OOD cross-terms for a single commit with a single vector.
+        // Skip evaluation messages.
+        for _ in 0..num_evals {
+            let _: EF = vs.prover_message().unwrap();
+        }
+
+        // vector_rlc for 1 vector: geometric_challenge(1) returns [ONE]
+        // without squeezing from the transcript (see geometric_challenge.rs),
+        // but we must still call it to keep the replay in sync.
+        let _vector_rlc: Vec<EF> = geometric_challenge(&mut vs, 1);
+
+        // constraint_rlc for (num_ood + num_forms) constraints.
+        let num_ood = c.out_of_domain().points.len();
+        geometric_challenge::<_, EF>(&mut vs, num_ood + num_forms)[1]
+    }
+
+    /// Issue #1, separate commitments (batch_size=1, n=2, f=1).
+    #[test]
+    fn test_whir_issue1_separate_commits() {
+        let config = soundness_config(1);
+        let mut rng = ark_std::test_rng();
+
+        let v0 = vec![F::ONE; SOUNDNESS_NUM_COEFFS];
+        let v1 = vec![F::from(2u64); SOUNDNESS_NUM_COEFFS];
+        let points = vec![MultilinearPoint::rand(&mut rng, SOUNDNESS_NUM_VARIABLES)];
+        let forms = evaluation_forms(&points);
+        let evals: Vec<EF> = forms
+            .iter()
+            .flat_map(|lf| [&v0, &v1].map(|v| lf.evaluate(config.embedding(), v)))
+            .collect();
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let w0 = config.commit(&mut ps, &[&v0]);
+        let w1 = config.commit(&mut ps, &[&v1]);
+        let _ = config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(&v0[..]), Cow::Borrowed(&v1[..])],
+            vec![Cow::Owned(w0), Cow::Owned(w1)],
+            owned_linear_forms(&points),
+            Cow::Borrowed(&evals),
+        );
+        let proof = ps.proof();
+
+        assert!(verifier_accepts(&config, &ds, &proof, &forms, &evals, 2));
+
+        let mut forged = evals.clone();
+        forged[0] += EF::from(1u64);
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged, 2),
+            "REGRESSION issue #1: single-entry forgery (separate commits) must be rejected"
+        );
+    }
+
+    /// Issue #1, batched commitment (batch_size=2, n=2, f=1).
+    #[test]
+    fn test_whir_issue1_batched_commit() {
+        let config = soundness_config(2);
+        let mut rng = ark_std::test_rng();
+
+        let v0: Vec<F> = std::iter::repeat_n(F::ONE, SOUNDNESS_NUM_COEFFS).collect();
+        let v1: Vec<F> = std::iter::repeat_n(F::from(3u64), SOUNDNESS_NUM_COEFFS).collect();
+        let vec_refs: Vec<&[F]> = vec![&v0[..], &v1[..]];
+        let points = vec![MultilinearPoint::rand(&mut rng, SOUNDNESS_NUM_VARIABLES)];
+        let forms = evaluation_forms(&points);
+        let evals: Vec<EF> = forms
+            .iter()
+            .flat_map(|lf| vec_refs.iter().map(|v| lf.evaluate(config.embedding(), v)))
+            .collect();
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let w = config.commit(&mut ps, &vec_refs);
+        let _ = config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(&v0[..]), Cow::Borrowed(&v1[..])],
+            vec![Cow::Owned(w)],
+            owned_linear_forms(&points),
+            Cow::Borrowed(&evals),
+        );
+        let proof = ps.proof();
+
+        assert!(verifier_accepts(&config, &ds, &proof, &forms, &evals, 1));
+
+        let mut forged = evals.clone();
+        forged[0] += EF::from(1u64);
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged, 1),
+            "REGRESSION issue #1: single-entry forgery (batched commit) must be rejected"
+        );
+    }
+
+    /// Issue #1, exact α-cancelling forgery (n=2, f=1).
+    /// Replays verifier transcript to extract α, constructs `[+Δ, −Δ/α]`.
+    #[test]
+    fn test_whir_issue1_alpha_cancelling() {
+        let config = soundness_config(1);
+        let mut rng = ark_std::test_rng();
+
+        let v0 = vec![F::ONE; SOUNDNESS_NUM_COEFFS];
+        let v1 = vec![F::from(2u64); SOUNDNESS_NUM_COEFFS];
+        let points = vec![MultilinearPoint::rand(&mut rng, SOUNDNESS_NUM_VARIABLES)];
+        let forms = evaluation_forms(&points);
+        let evals: Vec<EF> = forms
+            .iter()
+            .flat_map(|lf| [&v0, &v1].map(|v| lf.evaluate(config.embedding(), v)))
+            .collect();
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let w0 = config.commit(&mut ps, &[&v0]);
+        let w1 = config.commit(&mut ps, &[&v1]);
+        let _ = config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(&v0[..]), Cow::Borrowed(&v1[..])],
+            vec![Cow::Owned(w0), Cow::Owned(w1)],
+            owned_linear_forms(&points),
+            Cow::Borrowed(&evals),
+        );
+        let proof = ps.proof();
+
+        let alpha = extract_alpha(&config, &ds, &proof, evals.len());
+
+        // Exact cancelling forgery: e'₀ + α·e'₁ = e₀ + α·e₁.
+        let delta = EF::from(42u64);
+        let mut forged = evals.clone();
+        forged[0] += delta;
+        forged[1] -= delta / alpha;
+        assert_eq!(evals[0] + alpha * evals[1], forged[0] + alpha * forged[1]);
+
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged, 2),
+            "REGRESSION issue #1: α-cancelling forgery [+Δ, −Δ/α] must be rejected"
+        );
+    }
+
+    /// Issue #3, exact c₁-cancelling forgery (n=1, f=2).
+    /// Replays verifier transcript to extract c₁, constructs `[+Δ, −Δ/c₁]`.
+    #[test]
+    fn test_whir_issue3_constraint_rlc_cancelling() {
+        let config = soundness_config(1);
+        let mut rng = ark_std::test_rng();
+
+        let vector = vec![F::ONE; SOUNDNESS_NUM_COEFFS];
+        let points: Vec<_> = (0..2)
+            .map(|_| MultilinearPoint::rand(&mut rng, SOUNDNESS_NUM_VARIABLES))
+            .collect();
+        let forms = evaluation_forms(&points);
+        let evals: Vec<EF> = forms
+            .iter()
+            .flat_map(|lf| [&vector].map(|v| lf.evaluate(config.embedding(), v)))
+            .collect();
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let w = config.commit(&mut ps, &[&vector]);
+        let _ = config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(vector.as_slice())],
+            vec![Cow::Owned(w)],
+            owned_linear_forms(&points),
+            Cow::Borrowed(&evals),
+        );
+        let proof = ps.proof();
+
+        let c1 = extract_constraint_rlc_coeff(&config, &ds, &proof, evals.len(), 2);
+
+        // Exact cancelling forgery: e'₀ + c₁·e'₁ = e₀ + c₁·e₁.
+        let delta = EF::from(99u64);
+        let mut forged = evals.clone();
+        forged[0] += delta;
+        forged[1] -= delta / c1;
+        assert_eq!(evals[0] + c1 * evals[1], forged[0] + c1 * forged[1]);
+
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged, 1),
+            "REGRESSION issue #3: constraint-RLC-cancelling forgery must be rejected"
+        );
+    }
 }

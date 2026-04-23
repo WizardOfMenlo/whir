@@ -15,13 +15,13 @@ use crate::{
 /// destructurable (no custom `Drop`) while guaranteeing zeroization
 /// of the secret data regardless of how the witness is consumed.
 #[derive(Zeroize, ZeroizeOnDrop)]
-pub struct BlindingSecrets<F: FftField> {
+pub(super) struct BlindingSecrets<F: FftField> {
     /// Per-witness masking polynomials mskᵢ (ℓ-variate, 2^ℓ coefficients).
-    pub(crate) masking_polys: Vec<Vec<F>>,
+    pub(super) masking_polys: Vec<Vec<F>>,
     /// Blinding polynomials ĝ₀..ĝ_ν (ℓ-variate, 2^ℓ coefficients each).
-    pub(crate) g_polys: Vec<Vec<F>>,
+    pub(super) g_polys: Vec<Vec<F>>,
     /// Interleaved blinding vectors [M₀, ..., M_{n-1}, ĝ₁, ..., ĝ_ν] as committed.
-    pub(crate) blinding_vectors: Vec<Vec<F>>,
+    pub(super) blinding_vectors: Vec<Vec<F>>,
 }
 
 /// Prover-side witness produced by Step 1 (Commitment).
@@ -36,13 +36,13 @@ pub struct BlindingSecrets<F: FftField> {
 #[allow(clippy::struct_field_names)]
 pub struct Witness<F: FftField> {
     /// IRS-commit witness for [[f̂]] (first WHIR instance).
-    pub(crate) f_hat_witness: irs_commit::Witness<F, F>,
+    pub(super) f_hat_witness: irs_commit::Witness<F, F>,
     /// IRS-commit witness for [[M]], [[ĝ₁]]..[[ĝ_ν]] (second WHIR instance).
-    pub(crate) blinding_poly_witness: irs_commit::Witness<F, F>,
+    pub(super) blinding_poly_witness: irs_commit::Witness<F, F>,
     /// f̂ᵢ = fᵢ + mskᵢ(Φ₀) for each of the n witness polynomials.
-    pub(crate) f_hat_polys: Vec<Vec<F>>,
+    pub(super) f_hat_polys: Vec<Vec<F>>,
     /// Secret blinding randomness (zeroized on drop).
-    pub(crate) secrets: BlindingSecrets<F>,
+    pub(super) secrets: BlindingSecrets<F>,
 }
 
 impl<F: FftField> Config<F> {
