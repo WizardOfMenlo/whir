@@ -147,6 +147,7 @@ mod tests {
         },
         hash,
         parameters::ProtocolParameters,
+        protocols::geometric_challenge::geometric_challenge,
         transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
         utils::test_serde,
     };
@@ -920,7 +921,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Soundness regression — evaluation forgery (issues #1, #3)
+    // Soundness regression — evaluation forgery
     //
     // Root cause: evaluations were not bound in the Fiat-Shamir transcript
     // before α / constraint_rlc were sampled.  The fix absorbs all evals
@@ -928,12 +929,10 @@ mod tests {
     // `verify!(read == expected)`.
     // =====================================================================
 
-    use crate::protocols::geometric_challenge::geometric_challenge;
-
     /// Number of variables for the soundness regression tests.
     /// Kept small (4) so the tests run fast while still exercising
     /// all transcript-level challenge extraction paths.
-    const SOUNDNESS_NUM_VARIABLES: usize = 4;
+    const SOUNDNESS_NUM_VARIABLES: usize = 8;
     const SOUNDNESS_NUM_COEFFS: usize = 1 << SOUNDNESS_NUM_VARIABLES;
 
     /// Build a WHIR config for soundness tests with PoW disabled.
@@ -1066,9 +1065,9 @@ mod tests {
         geometric_challenge::<_, EF>(&mut vs, num_ood + num_forms)[1]
     }
 
-    /// Issue #1, separate commitments (batch_size=1, n=2, f=1).
+    /// Forging a single evaluation with separate commitments (n=2, f=1) is rejected.
     #[test]
-    fn test_whir_issue1_separate_commits() {
+    fn test_rejects_forged_eval_separate_commits() {
         let config = soundness_config(1);
         let mut rng = ark_std::test_rng();
 
@@ -1106,9 +1105,9 @@ mod tests {
         );
     }
 
-    /// Issue #1, batched commitment (batch_size=2, n=2, f=1).
+    /// Forging a single evaluation with batched commitment (batch_size=2, n=2, f=1) is rejected.
     #[test]
-    fn test_whir_issue1_batched_commit() {
+    fn test_rejects_forged_eval_batched_commit() {
         let config = soundness_config(2);
         let mut rng = ark_std::test_rng();
 
@@ -1146,10 +1145,11 @@ mod tests {
         );
     }
 
-    /// Issue #1, exact α-cancelling forgery (n=2, f=1).
-    /// Replays verifier transcript to extract α, constructs `[+Δ, −Δ/α]`.
+    /// α-cancelling forgery across batched vectors (n=2, f=1) is rejected.
+    /// Extracts α from transcript, constructs `[+Δ, −Δ/α]` preserving the
+    /// batched sum — verifier rejects because evals are individually bound.
     #[test]
-    fn test_whir_issue1_alpha_cancelling() {
+    fn test_rejects_alpha_cancelling_forgery() {
         let config = soundness_config(1);
         let mut rng = ark_std::test_rng();
 
@@ -1192,10 +1192,11 @@ mod tests {
         );
     }
 
-    /// Issue #3, exact c₁-cancelling forgery (n=1, f=2).
-    /// Replays verifier transcript to extract c₁, constructs `[+Δ, −Δ/c₁]`.
+    /// Constraint-RLC-cancelling forgery across forms (n=1, f=2) is rejected.
+    /// Extracts c₁ from transcript, constructs `[+Δ, −Δ/c₁]` preserving the
+    /// weighted sum — verifier rejects because evals are individually bound.
     #[test]
-    fn test_whir_issue3_constraint_rlc_cancelling() {
+    fn test_rejects_constraint_rlc_cancelling_forgery() {
         let config = soundness_config(1);
         let mut rng = ark_std::test_rng();
 

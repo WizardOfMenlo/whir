@@ -282,16 +282,28 @@ mod tests {
 
     use ark_ff::{AdditiveGroup, Field};
 
-    use super::Config;
+    use super::{
+        committer::Witness,
+        utils::{
+            build_beq_tables, build_fold_args, build_weight_covectors, compute_eq_weights,
+            compute_rs_fold_blinding_coeffs, gamma_to_f_hat_indices, ProtocolDims, RsFoldCoeffs,
+        },
+        Config,
+    };
     use crate::{
         algebra::{
+            dot,
+            embedding::Identity,
             fields::Field64,
-            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
-            MultilinearPoint,
+            geometric_sequence,
+            linear_form::{
+                Covector, Evaluate, LinearForm, MultilinearExtension, UnivariateEvaluation,
+            },
+            multilinear_extend, univariate_evaluate, MultilinearPoint,
         },
         hash,
         parameters::ProtocolParameters,
-        protocols::geometric_challenge::geometric_challenge,
+        protocols::{geometric_challenge::geometric_challenge, whir},
         transcript::{
             codecs::Empty, DomainSeparator, Proof, ProverState, VerifierMessage, VerifierState,
         },
@@ -733,21 +745,6 @@ mod tests {
     // `verify!(read == expected)`.
     // =====================================================================
 
-    use super::{
-        committer::Witness,
-        utils::{
-            build_beq_tables, build_fold_args, build_weight_covectors, compute_eq_weights,
-            compute_rs_fold_blinding_coeffs, gamma_to_f_hat_indices, ProtocolDims, RsFoldCoeffs,
-        },
-    };
-    use crate::{
-        algebra::{
-            dot, embedding::Identity, geometric_sequence, linear_form::UnivariateEvaluation,
-            multilinear_extend, univariate_evaluate,
-        },
-        protocols::whir,
-    };
-
     /// Generate an honest zkWHIR proof and sanity-check that it verifies.
     /// Returns the domain separator and proof for use in forgery tests.
     fn honest_proof_and_verify(
@@ -812,10 +809,11 @@ mod tests {
         matches!(result, Ok(Ok(())))
     }
 
-    /// Issue #1 (n=2, f=1): exact α-cancelling forgery.
-    /// Extracts α from transcript, constructs `[+Δ, −Δ/α]`.
+    /// α-cancelling forgery across batched vectors (n=2, f=1) is rejected.
+    /// Extracts α from transcript, constructs `[+Δ, −Δ/α]` preserving the
+    /// batched sum — verifier rejects because evals are individually bound.
     #[test]
-    fn test_zkwhir_issue1_alpha_cancelling() {
+    fn test_rejects_alpha_cancelling_forgery() {
         let config = make_test_config_batch(2);
         let mut rng = ark_std::test_rng();
 
@@ -862,17 +860,19 @@ mod tests {
         );
     }
 
-    /// Issue #2 (n=1, f=1): full manual transcript replay with forged g_claim.
+    /// G-claim forgery compensated via ρ (n=1, f=1) is rejected.
     ///
-    /// 1. Commit honestly.
-    /// 2. Send G' = G + Δ.
-    /// 3. Absorb honest eval (must commit before ρ).
-    /// 4. ρ is squeezed → construct e' = e − Δ/ρ.
-    /// 5. Complete proof honestly.
-    /// 6. Verifier reads honest e from transcript, compares to e' → rejected.
+    /// Full manual transcript replay with a malicious prover that:
+    /// 1. Commits honestly.
+    /// 2. Sends forged G' = G + Δ.
+    /// 3. Absorbs honest eval (must commit before ρ is sampled).
+    /// 4. After ρ is sampled, constructs e' = e − Δ/ρ to preserve ρ·e + G.
+    /// 5. Completes the rest of the proof honestly.
+    ///
+    /// Verifier reads the honest eval from the transcript and rejects e'.
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn test_zkwhir_issue2_g_claim_forgery() {
+    fn test_rejects_g_claim_forgery_via_rho() {
         let mut rng = ark_std::test_rng();
         let config = make_test_config();
 
@@ -1103,10 +1103,11 @@ mod tests {
         );
     }
 
-    /// Issue #3 (n=1, f=2): exact c₁-cancelling forgery.
-    /// Extracts c₁ from transcript, constructs `[+Δ, −Δ/c₁]`.
+    /// Constraint-RLC-cancelling forgery across forms (n=1, f=2) is rejected.
+    /// Extracts c₁ from transcript, constructs `[+Δ, −Δ/c₁]` preserving the
+    /// weighted sum — verifier rejects because evals are individually bound.
     #[test]
-    fn test_zkwhir_issue3_constraint_rlc_cancelling() {
+    fn test_rejects_constraint_rlc_cancelling_forgery() {
         let config = make_test_config();
         let mut rng = ark_std::test_rng();
 
@@ -1164,10 +1165,11 @@ mod tests {
         );
     }
 
-    /// Issues #1+#2+#3 combined (n=2, f=2): 4 evaluations.
-    /// Tests single-entry, cross-vector, and cross-form forgeries.
+    /// All forgery surfaces combined (n=2, f=2, 4 evaluations).
+    /// Tests single-entry, cross-vector, and cross-form forgeries
+    /// in one proof to exercise α, ρ, and constraint_rlc binding together.
     #[test]
-    fn test_zkwhir_combined_n2_f2() {
+    fn test_rejects_all_forgery_patterns_n2_f2() {
         let config = make_test_config_batch(2);
         let mut rng = ark_std::test_rng();
 
