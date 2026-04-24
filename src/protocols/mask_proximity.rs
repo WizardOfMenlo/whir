@@ -17,8 +17,21 @@
 //!   4. Verifier checks: Enc(ξ*_i, r*_i)(y_j) = s_i(y_j) + γ·ξ_i(y_j)
 //!      at each opened position, using linearity of the RS encoding
 //!
-//! ZK safety: only the combined ξ*_i is revealed in full. Since s_i is
-//! uniformly random, ξ*_i = s_i + γ·ξ_i is uniform regardless of ξ_i.
+//! ZK safety (follows the pattern of Construction 7.2, §7.1):
+//!   - Only the combined ξ*_i = s_i + γ·ξ_i is revealed in full. Since s_i
+//!     is uniformly random, ξ*_i is uniform regardless of ξ_i.
+//!   - The tree is opened at ≤ t_zk positions, revealing ξ_i(y_j) and s_i(y_j)
+//!     at each opened position. This is within the ZK query budget per mask.
+//!
+//! Note: Lemma 7.3 (p.44) derives the ZK bound ζ_C + n·ζ_{C_zk} assuming
+//! each mask is a separate oracle. This implementation uses a shared tree
+//! for all 2n vectors, so a single opening reveals 2n values. The per-mask
+//! query count is unchanged (each ξ_i is opened at t_zk positions), but the
+//! shared tree means all masks are opened at the SAME positions. The ZK
+//! bound should be re-derived for this shared-tree variant; the analysis
+//! carries over because the simulator can simulate all 2n values at each
+//! position independently (each pair (ξ_i, s_i) is simulatable from C_zk's
+//! ZK property, and the pairs are independent across i).
 //!
 //! Soundness: if ξ_i is far from C_zk, the spot-check fails with high
 //! probability over γ (Lemma 7.4, p.45).
@@ -72,6 +85,14 @@ impl<F: Field> Config<F> {
         assert_eq!(
             c_zk_commit.interleaving_depth, 1,
             "mask proximity requires interleaving_depth = 1"
+        );
+        // OOD evaluations are sent in the clear during IRS commit/receive,
+        // which would leak raw mask values before the γ-combination and
+        // break the ZK contract. The OOD path in irs_commit is slated for
+        // removal in the new construction; until then, enforce zero here.
+        assert_eq!(
+            c_zk_commit.out_domain_samples, 0,
+            "mask proximity requires out_domain_samples = 0 (OOD openings would leak raw mask evaluations)"
         );
         Self {
             c_zk_commit,
@@ -156,6 +177,10 @@ impl<F: Field> Config<F> {
         // Step 2: compute and send combined polynomials + IRS randomness
         let irs_masks_per_vector =
             self.c_zk_commit.mask_length * self.c_zk_commit.interleaving_depth;
+        debug_assert_eq!(
+            witness.mask_witness.masks.len(),
+            2 * self.num_masks * irs_masks_per_vector
+        );
         for (i, (orig_msg, fresh_msg)) in original_msgs
             .iter()
             .zip(witness.fresh_msgs.iter())
@@ -254,7 +279,7 @@ mod tests {
         rngs::StdRng,
         SeedableRng,
     };
-    use proptest::{prelude::Strategy, prop_oneof, proptest, strategy::Just};
+    use proptest::{prelude::Strategy, prop_assume, prop_oneof, proptest, strategy::Just};
 
     use super::*;
     use crate::{
@@ -290,6 +315,10 @@ mod tests {
                     );
                     (Just(num_masks), c_zk)
                 })
+                .prop_filter(
+                    "mask proximity requires out_domain_samples = 0",
+                    |(_, c_zk)| c_zk.out_domain_samples == 0,
+                )
                 .prop_map(|(num_masks, c_zk)| Self::new(c_zk, num_masks))
         }
     }
@@ -367,45 +396,108 @@ mod tests {
         test::<fields::Field256>();
     }
 
-    #[test]
-    fn test_tampered_mask_rejected() {
-        let mut rng = StdRng::seed_from_u64(999);
-        let num_masks = 3;
-        let vector_size = 8;
-
-        let c_zk = IrsConfig::<Identity<fields::Field64>>::new(
-            32.0,
-            false,
-            crate::hash::BLAKE3,
-            2 * num_masks,
-            vector_size,
-            1,
-            0.5,
-        );
-        let config = Config::new(c_zk, num_masks);
-
-        let original_msgs: Vec<Vec<fields::Field64>> = (0..num_masks)
-            .map(|_| random_vector(&mut rng, vector_size))
-            .collect();
-
-        let instance = U64(999);
-        let ds = DomainSeparator::protocol(&config)
+    /// Pre-γ tamper: commit honestly, then prove with different original masks.
+    fn test_tampered_mask_config<F>(seed: u64, config: &Config<F>)
+    where
+        F: Field + Codec<[u8]> + 'static,
+        Standard: Distribution<F>,
+        Hash: crate::transcript::ProverMessage<[u8]>,
+    {
+        let instance = U64(seed);
+        let ds = DomainSeparator::protocol(config)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
+        let mut rng = StdRng::seed_from_u64(seed);
 
-        // Commit with honest masks
+        let original_msgs: Vec<Vec<F>> = (0..config.num_masks)
+            .map(|_| random_vector(&mut rng, config.c_zk_commit.vector_size))
+            .collect();
+
         let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit(&mut prover_state, &original_msgs);
 
-        // Tamper: prove with different original masks than what was committed
         let mut tampered_msgs = original_msgs;
-        tampered_msgs[0][0] += fields::Field64::ONE;
+        tampered_msgs[0][0] += F::ONE;
         config.prove(&mut prover_state, &witness, &tampered_msgs);
         let proof = prover_state.proof();
 
-        // Verifier should reject
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
         assert!(config.verify(&mut verifier_state, &commitment).is_err());
+    }
+
+    /// Post-γ tamper: commit honestly, then corrupt the combined message to
+    /// exercise the verifier's spot-check (step 4).
+    fn test_tampered_combined_msg_config<F>(seed: u64, config: &Config<F>)
+    where
+        F: Field + Codec<[u8]> + 'static,
+        Standard: Distribution<F>,
+        Hash: crate::transcript::ProverMessage<[u8]>,
+    {
+        let instance = U64(seed);
+        let ds = DomainSeparator::protocol(config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let original_msgs: Vec<Vec<F>> = (0..config.num_masks)
+            .map(|_| random_vector(&mut rng, config.c_zk_commit.vector_size))
+            .collect();
+
+        let mut prover_state = ProverState::new_std(&ds);
+        let witness = config.commit(&mut prover_state, &original_msgs);
+
+        let gamma: F = prover_state.verifier_message();
+        let irs_masks_per_vector =
+            config.c_zk_commit.mask_length * config.c_zk_commit.interleaving_depth;
+
+        for (i, (orig_msg, fresh_msg)) in original_msgs
+            .iter()
+            .zip(witness.fresh_msgs.iter())
+            .enumerate()
+        {
+            let mut combined_msg = scalar_mul_add_new(fresh_msg, gamma, orig_msg);
+            if i == 0 {
+                combined_msg[0] += F::ONE;
+            }
+            prover_state.prover_messages(&combined_msg);
+
+            if irs_masks_per_vector > 0 {
+                let orig_r = &witness.mask_witness.masks
+                    [i * irs_masks_per_vector..(i + 1) * irs_masks_per_vector];
+                let fresh_r = &witness.mask_witness.masks[(config.num_masks + i)
+                    * irs_masks_per_vector
+                    ..(config.num_masks + i + 1) * irs_masks_per_vector];
+                let combined_r = scalar_mul_add_new(fresh_r, gamma, orig_r);
+                prover_state.prover_messages(&combined_r);
+            }
+        }
+
+        config
+            .c_zk_commit
+            .open(&mut prover_state, &[&witness.mask_witness]);
+        let proof = prover_state.proof();
+
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let commitment = config.receive_commitment(&mut verifier_state).unwrap();
+        assert!(config.verify(&mut verifier_state, &commitment).is_err());
+    }
+
+    #[test]
+    fn test_tampered_mask_rejected() {
+        crate::tests::init();
+        proptest!(|(seed: u64, config in Config::<fields::Field64>::arbitrary())| {
+            prop_assume!(config.c_zk_commit.in_domain_samples > 0);
+            test_tampered_mask_config(seed, &config);
+        });
+    }
+
+    #[test]
+    fn test_tampered_combined_msg_rejected() {
+        crate::tests::init();
+        proptest!(|(seed: u64, config in Config::<fields::Field64>::arbitrary())| {
+            prop_assume!(config.c_zk_commit.in_domain_samples > 0);
+            test_tampered_combined_msg_config(seed, &config);
+        });
     }
 }

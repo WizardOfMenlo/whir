@@ -236,6 +236,9 @@ impl<M: Embedding> Config<M> {
         let target_commitment = self.target.receive_commitment(verifier_state)?;
 
         // Step 2-3: OOD — Construction 9.7 Steps 2-3, p.55
+        // In ZK mode, ood_answers include the mask contribution: f(ρ) + ρ^ℓ · s(ρ).
+        // The mask oracle's proximity to C_zk is NOT checked here — that is the
+        // orchestrator's responsibility via mask_proximity::verify() (Construction 7.2).
         let _ood_points: Vec<M::Target> = verifier_state.verifier_message_vec(self.ood_samples);
         let ood_answers: Vec<M::Target> = verifier_state.prover_messages_vec(self.ood_samples)?;
 
@@ -421,7 +424,7 @@ mod tests {
 
     /// ZK path: prove/verify with a MaskOracle (zk = true).
     #[test]
-    fn test_zk() {
+    fn test_mask_oracle_shifts_ood() {
         type F = fields::Field64;
         crate::tests::init();
 

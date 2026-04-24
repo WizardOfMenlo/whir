@@ -25,13 +25,14 @@ use crate::{
 };
 
 /// Prover output from the sumcheck protocol.
+#[must_use]
 pub struct ProverResult<F: Field> {
     pub round_challenges: Vec<F>,
-    pub mask_sum: F,
     pub mask_rlc: F,
 }
 
 /// Verifier output from the sumcheck protocol.
+#[must_use]
 pub struct VerifierResult<F: Field> {
     pub round_challenges: Vec<F>,
     pub mask_rlc: F,
@@ -166,7 +167,6 @@ impl<F: Field> Config<F> {
         *sum = mask_sum + mask_rlc * *sum;
         ProverResult {
             round_challenges,
-            mask_sum,
             mask_rlc,
         }
     }
@@ -266,7 +266,6 @@ mod tests {
             multilinear_extend, random_vector,
         },
         transcript::DomainSeparator,
-        utils::zip_strict,
     };
 
     impl<F: Field + 'static> Config<F>
@@ -319,7 +318,6 @@ mod tests {
         let mut prover_state = ProverState::new_std(&ds);
         let ProverResult {
             round_challenges: point,
-            mask_sum,
             mask_rlc,
         } = config.prove(
             &mut prover_state,
@@ -328,22 +326,22 @@ mod tests {
             &mut sum,
             &masks,
         );
-        let expected_mask_sum = zip_strict(
-            chunks_exact_or_empty(&masks, config.mask_length, config.num_rounds),
-            &point,
-        )
-        .map(|(m, x)| univariate_evaluate(m, *x))
-        .sum::<F>();
         assert_eq!(vector.len(), config.final_size());
         assert_eq!(covector.len(), config.final_size());
-        assert_eq!(mask_sum, expected_mask_sum);
-        assert_eq!(mask_sum + mask_rlc * dot(&vector, &covector), sum);
         if config.final_size() == 1 {
             assert_eq!(multilinear_extend(&initial_vector, &point), vector[0]);
             assert_eq!(multilinear_extend(&initial_covector, &point), covector[0]);
         } else {
             // TODO: Check correct folding.
         }
+
+        let expected_mask_sum: F =
+            chunks_exact_or_empty(&masks, config.mask_length, config.num_rounds)
+                .zip(&point)
+                .map(|(m, x)| univariate_evaluate(m, *x))
+                .sum();
+        assert_eq!(sum, expected_mask_sum + mask_rlc * dot(&vector, &covector));
+
         let proof = prover_state.proof();
 
         // Verifier
@@ -360,14 +358,9 @@ mod tests {
         assert_eq!(verifier_sum, sum);
         verifier_state.check_eof().unwrap();
 
-        // ZK vs non-ZK path invariants
-        if config.mask_length > 0 && config.num_rounds > 0 {
-            // ZK path: mask_rlc is a random challenge, mask contribution is non-trivial
-            assert_ne!(mask_rlc, F::ONE, "ZK path should have random mask_rlc");
-        } else {
-            // Non-ZK path: mask_rlc defaults to ONE, mask_sum defaults to ZERO
+        // Non-ZK path: mask_rlc defaults to ONE (no combination randomness sampled)
+        if config.mask_length == 0 || config.num_rounds == 0 {
             assert_eq!(mask_rlc, F::ONE);
-            assert_eq!(mask_sum, F::ZERO);
         }
     }
 

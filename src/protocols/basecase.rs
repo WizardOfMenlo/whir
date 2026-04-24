@@ -24,14 +24,9 @@ use crate::{
     verify,
 };
 
-/// Prover output from the base case.
-pub struct ProverResult<F: Field> {
-    pub evaluation_points: Vec<F>,
-    pub linear_form_evaluation: F,
-}
-
-/// Verifier output from the base case.
-pub struct VerifierResult<F: Field> {
+/// Output from the base case protocol (shared by prover and verifier).
+#[must_use]
+pub struct Opening<F: Field> {
     pub evaluation_points: Vec<F>,
     pub linear_form_evaluation: F,
 }
@@ -58,7 +53,7 @@ impl<F: Field> Config<F> {
         witness: &irs_commit::Witness<F>,
         mut covector: Vec<F>,
         mut sum: F,
-    ) -> ProverResult<F>
+    ) -> Opening<F>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -75,7 +70,7 @@ impl<F: Field> Config<F> {
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         debug_assert_eq!(dot(&vector, &covector), sum);
         if self.size() == 0 {
-            return ProverResult {
+            return Opening {
                 evaluation_points: Vec::new(),
                 linear_form_evaluation: F::ZERO,
             };
@@ -91,7 +86,7 @@ impl<F: Field> Config<F> {
                 .prove(prover_state, &mut vector, &mut covector, &mut sum, &[])
                 .round_challenges;
             assert!(!vector[0].is_zero(), "Proof failed");
-            return ProverResult {
+            return Opening {
                 evaluation_points: point,
                 linear_form_evaluation: covector[0],
             };
@@ -139,7 +134,7 @@ impl<F: Field> Config<F> {
         // This event is cryptographically unlikely as `F` is challenge sized.
         assert!(!masked_vector[0].is_zero(), "Proof failed");
 
-        ProverResult {
+        Opening {
             evaluation_points: point,
             linear_form_evaluation: covector[0],
         }
@@ -150,7 +145,7 @@ impl<F: Field> Config<F> {
         verifier_state: &mut VerifierState<H>,
         commitment: &irs_commit::Commitment<F>,
         mut sum: F,
-    ) -> VerificationResult<VerifierResult<F>>
+    ) -> VerificationResult<Opening<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -164,7 +159,7 @@ impl<F: Field> Config<F> {
         assert_eq!(self.commit.vector_size, self.sumcheck.initial_size);
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         if self.size() == 0 {
-            return Ok(VerifierResult {
+            return Ok(Opening {
                 evaluation_points: Vec::new(),
                 linear_form_evaluation: F::ZERO,
             });
@@ -191,7 +186,7 @@ impl<F: Field> Config<F> {
             let mle = multilinear_extend(&vector, &point);
             verify!(!mle.is_zero());
             let linear_mle = sum / mle;
-            return Ok(VerifierResult {
+            return Ok(Opening {
                 evaluation_points: point,
                 linear_form_evaluation: linear_mle,
             });
@@ -231,7 +226,7 @@ impl<F: Field> Config<F> {
         verify!(!masked_mle.is_zero());
         let linear_mle = masked_sum / masked_mle;
 
-        Ok(VerifierResult {
+        Ok(Opening {
             evaluation_points: point,
             linear_form_evaluation: linear_mle,
         })
