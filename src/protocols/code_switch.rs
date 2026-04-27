@@ -281,7 +281,7 @@ mod tests {
     use ark_std::rand::{
         distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng,
     };
-    use proptest::{prelude::Strategy, proptest, sample::select, strategy::Just};
+    use proptest::{prelude::Strategy, prop_assume, proptest, sample::select, strategy::Just};
 
     use super::*;
     use crate::{
@@ -290,7 +290,7 @@ mod tests {
     };
 
     impl<M: Embedding> Config<M> {
-        pub fn arbitrary(embedding: M) -> impl Strategy<Value = Self>
+        pub fn arbitrary(embedding: M, zk: bool) -> impl Strategy<Value = Self>
         where
             M: 'static,
         {
@@ -299,20 +299,28 @@ mod tests {
                 .collect::<Vec<_>>();
 
             let emb2 = embedding.clone();
+            let target_mask_range = if zk { 1_usize..=3 } else { 0_usize..=0 };
 
-            // Generate source config, then derive target from it
-            (select(valid_sizes), 0_usize..=3, 1_usize..=5)
-                .prop_flat_map(move |(size, mask_length, ood_samples)| {
-                    let source = IrsConfig::arbitrary(embedding.clone(), 1, size, mask_length, 1);
-                    (source, Just(ood_samples))
-                })
-                .prop_flat_map(|(source, ood_samples)| {
+            (
+                select(valid_sizes),
+                0_usize..=3,
+                target_mask_range,
+                1_usize..=5,
+            )
+                .prop_flat_map(
+                    move |(size, source_mask_length, target_mask_length, ood_samples)| {
+                        let source =
+                            IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask_length, 1);
+                        (source, Just(target_mask_length), Just(ood_samples))
+                    },
+                )
+                .prop_flat_map(|(source, target_mask_length, ood_samples)| {
                     let msg_len = source.message_length();
                     let target = IrsConfig::<Identity<M::Target>>::arbitrary(
                         Identity::new(),
                         1,
                         msg_len,
-                        0,
+                        target_mask_length,
                         1,
                     );
                     (Just(source), target, Just(ood_samples))
@@ -322,8 +330,7 @@ mod tests {
                     source,
                     target,
                     ood_samples,
-                    // TODO : ZK path requires orchestrator; tested at integration level
-                    zk: false,
+                    zk,
                 })
         }
     }
@@ -381,7 +388,7 @@ mod tests {
         Hash: ProverMessage<[u8]>,
     {
         crate::tests::init();
-        let configs = Config::arbitrary(Identity::<F>::new());
+        let configs = Config::arbitrary(Identity::<F>::new(), false);
         proptest!(|(seed: u64, config in configs)| {
             test_config(seed, &config);
         });
@@ -422,59 +429,40 @@ mod tests {
         test::<fields::Field256>();
     }
 
-    /// ZK path: prove/verify with a MaskOracle (zk = true).
-    #[test]
-    fn test_mask_oracle_shifts_ood() {
-        type F = fields::Field64;
-        crate::tests::init();
-
-        let mut rng = StdRng::seed_from_u64(42);
-        let msg_len = 8;
-
-        let source =
-            IrsConfig::<Identity<F>>::new(32.0, false, crate::hash::BLAKE3, 1, msg_len, 1, 0.5);
-        let target =
-            IrsConfig::<Identity<F>>::new(32.0, false, crate::hash::BLAKE3, 1, msg_len, 1, 0.5);
-
-        let config = Config::<Identity<F>> {
-            embedding: Typed::new(Identity::new()),
-            source,
-            target,
-            ood_samples: 2,
-            zk: true,
-        };
-
+    /// Tampered OOD: commit honest message in source tree, then call prove()
+    /// with a different message. OOD answers come from the wrong polynomial
+    /// while the source opening uses the honest commitment.
+    fn test_tampered_ood_config<F: Field + Codec<[u8]>>(seed: u64, config: &Config<Identity<F>>)
+    where
+        Standard: Distribution<F>,
+        Hash: ProverMessage<[u8]>,
+    {
+        let instance = U64(seed);
+        let ds = DomainSeparator::protocol(config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+        let mut rng = StdRng::seed_from_u64(seed);
         let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
         let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
         let initial_mu = dot(&message, &covector);
 
-        // MaskOracle with a random mask polynomial.
-        // prove() only reads mask_oracle.message for OOD evaluation;
-        // the witness field is consumed by the orchestrator / mask_proximity, not here.
-        let mask_msg: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let mask_oracle = MaskOracle {
-            message: mask_msg,
-            witness: IrsWitness::default(),
-        };
-
-        let instance = U64(42);
-        let ds = DomainSeparator::protocol(&config)
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&instance);
-
-        // Prover
+        // Commit with honest message
         let mut prover_state = ProverState::new_std(&ds);
         let source_witness = config.source.commit(&mut prover_state, &[&message]);
+
+        // Prove with tampered message — OOD answers are for f', tree is for f
+        let mut tampered_message = message.clone();
+        tampered_message[0] += F::ONE;
         let _witness = config.prove(
             &mut prover_state,
-            message,
+            tampered_message,
             &source_witness,
             &mut covector,
-            Some(&mask_oracle),
+            None,
         );
         let proof = prover_state.proof();
 
-        // Verifier
+        // Verify — accepts because Merkle proofs are valid
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let source_commitment = config
             .source
@@ -486,9 +474,73 @@ mod tests {
             .unwrap();
         verifier_state.check_eof().unwrap();
 
-        assert_ne!(
-            verifier_sum, initial_mu,
-            "mask oracle should shift the batched sum"
+        // downstream sumcheck will reject inconsistent sum
+        assert_ne!(dot(&message, &covector), verifier_sum);
+    }
+
+    #[test]
+    fn test_tampered_ood() {
+        crate::tests::init();
+        let configs = Config::arbitrary(Identity::<fields::Field64>::new(), false);
+        proptest!(|(seed: u64, config in configs)| {
+            prop_assume!(config.source.mask_length == 0);
+            test_tampered_ood_config(seed, &config);
+        });
+    }
+
+    fn test_zk_config<F: Field + Codec<[u8]>>(seed: u64, config: &Config<Identity<F>>)
+    where
+        Standard: Distribution<F>,
+        Hash: ProverMessage<[u8]>,
+    {
+        let instance = U64(seed);
+        let ds = DomainSeparator::protocol(config)
+            .session(&format!("Test at {}:{}", file!(), line!()))
+            .instance(&instance);
+        let mut rng = StdRng::seed_from_u64(seed);
+        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let initial_mu = dot(&message, &covector);
+
+        let mask_msg: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let mask_oracle = MaskOracle {
+            message: mask_msg,
+            witness: IrsWitness::default(),
+        };
+
+        let mut prover_state = ProverState::new_std(&ds);
+        let source_witness = config.source.commit(&mut prover_state, &[&message]);
+        let _witness = config.prove(
+            &mut prover_state,
+            message.clone(),
+            &source_witness,
+            &mut covector,
+            Some(&mask_oracle),
         );
+        let proof = prover_state.proof();
+
+        let mut verifier_state = VerifierState::new_std(&ds, &proof);
+        let source_commitment = config
+            .source
+            .receive_commitment(&mut verifier_state)
+            .unwrap();
+        let mut verifier_sum = initial_mu;
+        config
+            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
+            .unwrap();
+        verifier_state.check_eof().unwrap();
+
+        // Mask contribution shifts the sum
+        assert_ne!(verifier_sum, initial_mu);
+        assert_ne!(dot(&message, &covector), verifier_sum);
+    }
+
+    #[test]
+    fn test_zk() {
+        crate::tests::init();
+        let configs = Config::arbitrary(Identity::<fields::Field64>::new(), true);
+        proptest!(|(seed: u64, config in configs)| {
+            test_zk_config(seed, &config);
+        });
     }
 }
