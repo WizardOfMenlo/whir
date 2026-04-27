@@ -121,6 +121,19 @@ where
         assert_eq!(evaluations.len(), num_forms * num_vectors);
 
         // =====================================================================
+        // Bind linear forms into Fiat-Shamir transcript
+        // =====================================================================
+        let size = self.dims.size;
+        for weight in weights {
+            let mut cv = vec![F::ZERO; size];
+            weight.accumulate(&mut cv, F::ONE);
+            for &expected in &cv {
+                let read: F = self.verifier_state.prover_message()?;
+                verify!(read == expected);
+            }
+        }
+
+        // =====================================================================
         // Step 2: Blinding Polynomial Claim Generation
         //
         // V → P: β ←$ F_q

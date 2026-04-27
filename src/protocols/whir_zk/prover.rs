@@ -127,6 +127,17 @@ where
         let size = self.dims.size;
 
         // =====================================================================
+        // Bind linear forms into Fiat-Shamir transcript
+        // =====================================================================
+        for lf in linear_forms {
+            let mut cv = vec![F::ZERO; size];
+            lf.accumulate(&mut cv, F::ONE);
+            for val in &cv {
+                self.prover_state.prover_message(val);
+            }
+        }
+
+        // =====================================================================
         // Step 2: Blinding Polynomial Claim Generation
         //
         // V → P: β ←$ F_q

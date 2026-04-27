@@ -825,13 +825,17 @@ mod tests {
         // Replay the verifier transcript to extract the batching coefficient α.
         //
         // zkWHIR transcript after receive_commitments (n=2, f=1):
-        //   1. V → P: β                          (verifier challenge)
-        //   2. P → V: G = ⟨w, g⟩                 (1 g_claim for 1 form)
-        //   3. P → V: eval₀, eval₁               (2 evals — the fix)
+        //   0. P → V: linear form covector        (1 form × TEST_NUM_COEFFS entries)
+        //   1. V → P: β                           (verifier challenge)
+        //   2. P → V: G = ⟨w, g⟩                  (1 g_claim for 1 form)
+        //   3. P → V: eval₀, eval₁                (2 evals)
         //   4. V → P: α via geometric_challenge(2) → [1, α]
         let alpha = {
             let mut vs = VerifierState::new_std(&ds, &proof);
             let _ = config.receive_commitments(&mut vs).unwrap();
+            for _ in 0..TEST_NUM_COEFFS {
+                let _: F = vs.prover_message().unwrap();
+            } // step 0: linear form binding
             let _beta: F = vs.verifier_message(); // step 1
             let _g_claim: F = vs.prover_message().unwrap(); // step 2
             let _eval_0: F = vs.prover_message().unwrap(); // step 3
@@ -1121,15 +1125,19 @@ mod tests {
         // Replay the verifier transcript to extract constraint RLC coefficient c₁.
         //
         // zkWHIR transcript after receive_commitments (n=1, f=2):
-        //   1. V → P: β                                    (verifier challenge)
-        //   2. P → V: G₀, G₁                               (2 g_claims for 2 forms)
-        //   3. P → V: eval₀, eval₁                         (2 evals — the fix)
-        //   4. V → P: α via geometric_challenge(1) → [1]   (no transcript squeeze for n=1)
-        //   5. V → P: ρ                                    (verifier challenge)
+        //   0. P → V: linear form covectors          (2 forms × TEST_NUM_COEFFS entries)
+        //   1. V → P: β                              (verifier challenge)
+        //   2. P → V: G₀, G₁                         (2 g_claims for 2 forms)
+        //   3. P → V: eval₀, eval₁                   (2 evals)
+        //   4. V → P: α via geometric_challenge(1) → [1]
+        //   5. V → P: ρ                              (verifier challenge)
         //   6. V → P: c via geometric_challenge(2) → [1, c₁]
         let c1 = {
             let mut vs = VerifierState::new_std(&ds, &proof);
             let _ = config.receive_commitments(&mut vs).unwrap();
+            for _ in 0..2 * TEST_NUM_COEFFS {
+                let _: F = vs.prover_message().unwrap();
+            } // step 0: linear form binding
             let _beta: F = vs.verifier_message(); // step 1
             for _ in 0..2 {
                 let _: F = vs.prover_message().unwrap();
@@ -1137,9 +1145,7 @@ mod tests {
             for _ in 0..2 {
                 let _: F = vs.prover_message().unwrap();
             } // step 3: evals
-              // step 4: geometric_challenge(1) returns [ONE] without squeezing,
-              // but must be called to keep the transcript replay in sync.
-            let _alpha: Vec<F> = geometric_challenge(&mut vs, 1);
+            let _alpha: Vec<F> = geometric_challenge(&mut vs, 1); // step 4
             let _rho: F = vs.verifier_message(); // step 5
             geometric_challenge::<_, F>(&mut vs, 2)[1] // step 6: c₁
         };
@@ -1206,6 +1212,69 @@ mod tests {
         assert!(
             !verifier_accepts(&config, &ds, &proof, &forms, &fc),
             "cross-form forgery must be rejected"
+        );
+    }
+
+    /// Linear form replay: w' with same MLE at the final point
+    /// but different inner product. Verifier must reject.
+    #[test]
+    fn test_rejects_forged_linear_form_with_same_mle_at_eval_point() {
+        use crate::algebra::eval_eq;
+
+        let config = make_test_config();
+        let mut rng = ark_std::test_rng();
+
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let embedding = config.embedding();
+        let honest_eval = form.evaluate(embedding, &vector);
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
+
+        let (ds, proof) = honest_proof_and_verify(&config, &[&vector], &forms, &[honest_eval]);
+
+        // Extract evaluation point r from verifier's FinalClaim.
+        let eval_point = {
+            let weights: Vec<&dyn LinearForm<F>> = forms
+                .iter()
+                .map(|f| f.as_ref() as &dyn LinearForm<F>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs).unwrap();
+            config
+                .verify(&mut vs, &weights, &[honest_eval], &commitments)
+                .unwrap()
+                .evaluation_point
+        };
+
+        // Build forged form w' via two-index delta on the honest covector.
+        // w'[a] += eq(r, b), w'[b] -= eq(r, a)  preserves the MLE at r.
+        let mut forged_weights = vec![F::ZERO; TEST_NUM_COEFFS];
+        forms[0].accumulate(&mut forged_weights, F::ONE);
+
+        let mut eq_r = vec![F::ZERO; TEST_NUM_COEFFS];
+        eval_eq(&mut eq_r, &eval_point, F::ONE);
+
+        let (a, b) = (0, 1);
+        forged_weights[a] += eq_r[b];
+        forged_weights[b] -= eq_r[a];
+        let forged_form = Covector::new(forged_weights);
+
+        // Sanity: MLE agrees at r, but inner product differs.
+        assert_eq!(
+            forged_form.mle_evaluate(&eval_point),
+            forms[0].as_ref().mle_evaluate(&eval_point),
+        );
+        assert_ne!(forged_form.evaluate(embedding, &vector), honest_eval);
+
+        // Attack: claim ⟨w', f⟩ = e with unchanged proof bytes.
+        let forged_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(forged_form)];
+
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forged_forms, &[honest_eval]),
+            "REGRESSION : forged linear form must be rejected"
         );
     }
 }
