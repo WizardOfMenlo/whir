@@ -40,6 +40,7 @@ where
         verifier_state: &mut VerifierState<'_, H>,
         commitments: &[&Commitment<M::Target>],
         evaluations: &[M::Target],
+        linear_forms: &[&dyn LinearForm<M::Target>],
     ) -> VerificationResult<FinalClaim<M::Target>>
     where
         H: DuplexSpongeInterface,
@@ -54,6 +55,17 @@ where
         let num_linear_forms = evaluations.len() / num_vectors;
         if num_vectors == 0 {
             return Ok(FinalClaim::default());
+        }
+
+        // Bind linear forms into Fiat-Shamir transcript
+        let size = self.initial_size();
+        for lf in linear_forms {
+            let mut cv = vec![M::Target::ZERO; size];
+            lf.accumulate(&mut cv, M::Target::ONE);
+            for &expected in &cv {
+                let read: M::Target = verifier_state.prover_message()?;
+                verify!(read == expected);
+            }
         }
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.

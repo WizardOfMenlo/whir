@@ -96,6 +96,15 @@ where
             return FinalClaim::default();
         }
 
+        // Bind linear forms into Fiat-Shamir transcript
+        for lf in &linear_forms {
+            let mut cv = vec![M::Target::ZERO; self.initial_size()];
+            lf.accumulate(&mut cv, M::Target::ONE);
+            for val in &cv {
+                prover_state.prover_message(val);
+            }
+        }
+
         // Complete evaluations of EVERY vector at EVERY linear form.
         let (oods_evals, oods_matrix) = {
             let mut oods_evals = Vec::new();

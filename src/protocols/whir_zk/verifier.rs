@@ -591,17 +591,18 @@ impl<F: FftField> Config<F> {
             .collect();
 
         // Run blinding WHIR verifier.
+        let blinding_form_refs: Vec<&dyn LinearForm<F>> = blinding_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<F>)
+            .collect();
         self.blinding_polynomial
             .verify(
                 verifier_state,
                 &[&commitments.blinding_commitment],
                 &eval_matrix,
+                &blinding_form_refs,
             )?
-            .verify(
-                blinding_forms
-                    .iter()
-                    .map(|l| l.as_ref() as &dyn LinearForm<F>),
-            )?;
+            .verify(blinding_form_refs.iter().copied())?;
 
         Ok(blinded_final_claim)
     }

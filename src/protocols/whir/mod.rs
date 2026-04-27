@@ -135,7 +135,7 @@ where
 mod tests {
     use std::borrow::Cow;
 
-    use ark_ff::{Field, UniformRand};
+    use ark_ff::{AdditiveGroup, Field, UniformRand};
 
     use super::*;
     use crate::{
@@ -274,15 +274,20 @@ mod tests {
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
 
         // Verify the proof
+        let linear_form_refs: Vec<&dyn LinearForm<EF>> = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect();
         let final_claim = params
-            .verify(&mut verifier_state, &[&commitment], &evaluations)
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &evaluations,
+                &linear_form_refs,
+            )
             .unwrap();
         final_claim
-            .verify(
-                linear_forms
-                    .iter()
-                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
-            )
+            .verify(linear_form_refs.iter().copied())
             .unwrap();
     }
 
@@ -461,15 +466,20 @@ mod tests {
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
         // Verify the batched proof
+        let linear_form_refs: Vec<&dyn LinearForm<EF>> = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect();
         let final_claim = params
-            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .verify(
+                &mut verifier_state,
+                &commitment_refs,
+                &evaluations,
+                &linear_form_refs,
+            )
             .unwrap();
         final_claim
-            .verify(
-                linear_forms
-                    .iter()
-                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
-            )
+            .verify(linear_form_refs.iter().copied())
             .unwrap();
     }
 
@@ -611,18 +621,19 @@ mod tests {
             commitments.push(parsed_commitment);
         }
 
+        let linear_form_refs: Vec<&dyn LinearForm<EF>> = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect();
         let final_claim = params
             .verify(
                 &mut verifier_state,
                 &[&commitments[0], &commitments[1]],
                 &evaluations,
+                &linear_form_refs,
             )
             .unwrap();
-        let verifier_result = final_claim.verify(
-            linear_forms
-                .iter()
-                .map(|l| l.as_ref() as &dyn LinearForm<EF>),
-        );
+        let verifier_result = final_claim.verify(linear_form_refs.iter().copied());
         assert!(
             verifier_result.is_err(),
             "Verifier should reject mismatched polynomial"
@@ -733,15 +744,20 @@ mod tests {
         }
         let commitment_refs = commitments.iter().collect::<Vec<_>>();
 
+        let linear_form_refs: Vec<&dyn LinearForm<EF>> = linear_forms
+            .iter()
+            .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+            .collect();
         let final_claim = params
-            .verify(&mut verifier_state, &commitment_refs, &evaluations)
+            .verify(
+                &mut verifier_state,
+                &commitment_refs,
+                &evaluations,
+                &linear_form_refs,
+            )
             .unwrap();
         final_claim
-            .verify(
-                linear_forms
-                    .iter()
-                    .map(|l| l.as_ref() as &dyn LinearForm<EF>),
-            )
+            .verify(linear_form_refs.iter().copied())
             .unwrap();
     }
 
@@ -883,9 +899,14 @@ mod tests {
 
         // Verify that the generated proof satisfies the statement
         params
-            .verify(&mut verifier_state, &[&commitment], &values)
+            .verify(
+                &mut verifier_state,
+                &[&commitment],
+                &values,
+                &weights_dyn_refs,
+            )
             .unwrap()
-            .verify(weights_dyn_refs)
+            .verify(weights_dyn_refs.iter().copied())
             .unwrap();
     }
 
@@ -981,9 +1002,13 @@ mod tests {
                 .map(|_| config.receive_commitment(&mut vs).unwrap())
                 .collect();
             let refs: Vec<_> = cs.iter().collect();
+            let form_refs: Vec<&dyn LinearForm<EF>> = forms
+                .iter()
+                .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+                .collect();
             config
-                .verify(&mut vs, &refs, claimed_evals)
-                .and_then(|fc| fc.verify(forms.iter().map(|l| l.as_ref() as &dyn LinearForm<EF>)))
+                .verify(&mut vs, &refs, claimed_evals, &form_refs)
+                .and_then(|fc| fc.verify(form_refs.iter().copied()))
         }));
         matches!(result, Ok(Ok(())))
     }
@@ -992,19 +1017,26 @@ mod tests {
     /// to extract the batching coefficient α.
     ///
     /// Transcript structure after `receive_commitment`:
+    ///   0. Linear form covectors (num_forms × initial_size entries)
     ///   1. OOD cross-terms (prover messages) — one per commitment per OOD
     ///      row for each out-of-range vector index
-    ///   2. Public evaluations (prover messages) — the fix
+    ///   2. Public evaluations (prover messages)
     ///   3. vector_rlc_coeffs = geometric_challenge(num_vectors) → [1, α]
     fn extract_alpha(
         config: &Config<Basefield<EF>>,
         ds: &DomainSeparator<'_, Empty>,
         proof: &crate::transcript::Proof,
         num_evals: usize,
+        num_forms: usize,
     ) -> EF {
         let mut vs = VerifierState::new_std(ds, proof);
         let c0 = config.receive_commitment(&mut vs).unwrap();
         let c1 = config.receive_commitment(&mut vs).unwrap();
+
+        // Skip linear form binding messages.
+        for _ in 0..num_forms * config.initial_size() {
+            let _: EF = vs.prover_message().unwrap();
+        }
 
         // Skip OOD cross-terms: with 2 separate commits of 1 vector each,
         // each commitment produces 1 cross-term per OOD row (the other vector).
@@ -1013,7 +1045,7 @@ mod tests {
             let _: EF = vs.prover_message().unwrap();
         }
 
-        // Skip evaluation messages (the transcript-binding fix).
+        // Skip evaluation messages.
         for _ in 0..num_evals {
             let _: EF = vs.prover_message().unwrap();
         }
@@ -1026,6 +1058,7 @@ mod tests {
     /// to extract the per-form coefficient c₁.
     ///
     /// Transcript structure after `receive_commitment` (single commit, single vector):
+    ///   0. Linear form covectors (num_forms × initial_size entries)
     ///   1. No OOD cross-terms (1 commit × 1 vector = no cross terms)
     ///   2. Public evaluations (prover messages)
     ///   3. vector_rlc = geometric_challenge(1) → [1] (no transcript squeeze)
@@ -1039,6 +1072,11 @@ mod tests {
     ) -> EF {
         let mut vs = VerifierState::new_std(ds, proof);
         let c = config.receive_commitment(&mut vs).unwrap();
+
+        // Skip linear form binding messages.
+        for _ in 0..num_forms * config.initial_size() {
+            let _: EF = vs.prover_message().unwrap();
+        }
 
         // No OOD cross-terms for a single commit with a single vector.
         // Skip evaluation messages.
@@ -1168,7 +1206,7 @@ mod tests {
         );
         let proof = ps.proof();
 
-        let alpha = extract_alpha(&config, &ds, &proof, evals.len());
+        let alpha = extract_alpha(&config, &ds, &proof, evals.len(), 1);
 
         // Exact cancelling forgery: e'₀ + α·e'₁ = e₀ + α·e₁.
         let delta = EF::from(42u64);
@@ -1227,6 +1265,94 @@ mod tests {
         assert!(
             !verifier_accepts(&config, &ds, &proof, &forms, &forged, 1),
             "REGRESSION issue #3: constraint-RLC-cancelling forgery must be rejected"
+        );
+    }
+
+    /// Issue Q — Linear form replay: w' with same MLE at the final point
+    /// but different inner product. Verifier must reject.
+    #[test]
+    fn test_rejects_forged_linear_form_with_same_mle_at_eval_point() {
+        use crate::algebra::eval_eq;
+
+        let config = soundness_config(1);
+        let mut rng = ark_std::test_rng();
+
+        let vector = vec![F::ONE; SOUNDNESS_NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, SOUNDNESS_NUM_VARIABLES);
+        let form: Box<dyn Evaluate<Basefield<EF>>> = Box::new(MultilinearExtension {
+            point: point.0.clone(),
+        });
+        let honest_eval = form.evaluate(config.embedding(), &vector);
+        let forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = vec![form];
+
+        // Generate honest proof
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let w = config.commit(&mut ps, &[&vector]);
+        let _ = config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(&vector[..])],
+            vec![Cow::Owned(w)],
+            owned_linear_forms(&[point]),
+            Cow::Borrowed(&[honest_eval][..]),
+        );
+        let proof = ps.proof();
+
+        // Verify honest proof works
+        assert!(verifier_accepts(
+            &config,
+            &ds,
+            &proof,
+            &forms,
+            &[honest_eval],
+            1
+        ));
+
+        // Extract evaluation_point from verifier's FinalClaim.
+        let eval_point = {
+            let form_refs: Vec<&dyn LinearForm<EF>> = forms
+                .iter()
+                .map(|l| l.as_ref() as &dyn LinearForm<EF>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let c = config.receive_commitment(&mut vs).unwrap();
+            config
+                .verify(&mut vs, &[&c], &[honest_eval], &form_refs)
+                .unwrap()
+                .evaluation_point
+        };
+
+        // Build forged form w' via two-index delta on the honest covector.
+        let mut forged_weights = vec![EF::ZERO; SOUNDNESS_NUM_COEFFS];
+        forms[0].accumulate(&mut forged_weights, EF::ONE);
+
+        let mut eq_r = vec![EF::ZERO; SOUNDNESS_NUM_COEFFS];
+        eval_eq(&mut eq_r, &eval_point, EF::ONE);
+
+        let (a, b) = (0, 1);
+        forged_weights[a] += eq_r[b];
+        forged_weights[b] -= eq_r[a];
+        let forged_form: Box<dyn Evaluate<Basefield<EF>>> = Box::new(Covector {
+            vector: forged_weights.clone(),
+        });
+
+        // Sanity: MLE agrees at eval_point, but inner product differs.
+        assert_eq!(
+            forged_form.mle_evaluate(&eval_point),
+            forms[0].as_ref().mle_evaluate(&eval_point),
+        );
+        let forged_inner_product = forged_form.evaluate(config.embedding(), &vector);
+        assert_ne!(forged_inner_product, honest_eval);
+
+        // Attack: claim ⟨w', f⟩ = e with unchanged proof bytes.
+        let forged_forms: Vec<Box<dyn Evaluate<Basefield<EF>>>> = vec![forged_form];
+        let accepts = verifier_accepts(&config, &ds, &proof, &forged_forms, &[honest_eval], 1);
+
+        assert!(
+            !accepts,
+            "REGRESSION issue Q: forged linear form must be rejected"
         );
     }
 }
