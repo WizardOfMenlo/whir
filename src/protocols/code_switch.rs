@@ -114,6 +114,15 @@ impl<M: Embedding> Config<M> {
             // TODO : find a better way to set mask length for ZK code-switch
             // leaving right now for code switching. This will change in parameter
             // selection
+            let target_slack =
+                target_config.codeword_length - target_config.message_length();
+            assert!(
+                budget.target <= target_slack,
+                "budget.target ({}) exceeds target codeword slack ({codeword_len} - {msg_len} = {target_slack})",
+                budget.target,
+                codeword_len = target_config.codeword_length,
+                msg_len = target_config.message_length(),
+            );
             target_config.mask_length = budget.target;
             target_config.recompute_security_parameters(security_target, unique_decoding);
 
@@ -132,6 +141,15 @@ impl<M: Embedding> Config<M> {
                 source_randomness_len,
                 1,
                 source_config.rate(),
+            );
+            let mask_slack =
+                mask_config.codeword_length - mask_config.message_length();
+            assert!(
+                budget.mask <= mask_slack,
+                "budget.mask ({}) exceeds mask codeword slack ({codeword_len} - {msg_len} = {mask_slack})",
+                budget.mask,
+                codeword_len = mask_config.codeword_length,
+                msg_len = mask_config.message_length(),
             );
             mask_config.mask_length = budget.mask;
             mask_config.recompute_security_parameters(security_target, unique_decoding);
