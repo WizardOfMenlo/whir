@@ -10,6 +10,7 @@
 
 pub mod basecase;
 pub mod challenge_indices;
+pub mod code_switch;
 pub mod geometric_challenge;
 pub mod irs_commit;
 pub mod matrix_commit;
