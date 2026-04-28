@@ -267,7 +267,7 @@ impl<M: Embedding> Config<M> {
         // Step 4: in-domain queries — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.open(prover_state, &[witness]);
 
-        // Step 5: batching — Construction 9.7 Step 5, p.55
+        // Step 4.1: batching — Construction 9.7 Step 4, p.55
         let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let batching_coeffs =
@@ -335,7 +335,7 @@ impl<M: Embedding> Config<M> {
         // Step 4: source opening — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.verify(verifier_state, &[commitment])?;
 
-        // Step 5-6: batching + μ' — Construction 9.7 Decision phase, p.55
+        // Step 4.1: batching + μ' — Construction 9.7 Decision phase, p.55
         let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let coeffs = geometric_challenge(verifier_state, 1 + num_ood + num_in_domain);
