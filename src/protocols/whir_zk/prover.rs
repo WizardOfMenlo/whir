@@ -130,9 +130,7 @@ where
         // Bind linear forms into Fiat-Shamir transcript
         // =====================================================================
         for lf in linear_forms {
-            let mut cv = vec![F::ZERO; size];
-            lf.accumulate(&mut cv, F::ONE);
-            for val in &cv {
+            for val in lf.transcript_identity().iter() {
                 self.prover_state.prover_message(val);
             }
         }

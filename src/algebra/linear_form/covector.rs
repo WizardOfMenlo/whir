@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ark_ff::Field;
 
 use super::{Evaluate, LinearForm};
@@ -20,6 +22,10 @@ impl<F: Field> LinearForm<F> for Covector<F> {
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         scalar_mul_add(accumulator, scalar, &self.vector);
+    }
+
+    fn transcript_identity(&self) -> Cow<'_, [F]> {
+        Cow::Borrowed(&self.vector)
     }
 }
 

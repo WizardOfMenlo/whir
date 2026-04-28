@@ -278,7 +278,7 @@ const fn ell_from_q_ub(q_ub: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
+    use std::{any::Any, borrow::Cow};
 
     use ark_ff::{AdditiveGroup, Field};
 
@@ -318,15 +318,20 @@ mod tests {
         make_test_config_batch(1)
     }
 
-    /// Materialize linear forms into Covectors for the prover.
-    fn to_prove_forms(
-        forms: &[Box<dyn LinearForm<F>>],
-        size: usize,
-    ) -> Vec<Box<dyn LinearForm<F>>> {
+    /// Clone linear forms for the prover (which consumes them).
+    /// Preserves concrete types so `transcript_identity` matches the verifier's.
+    fn clone_forms(forms: &[Box<dyn LinearForm<F>>]) -> Vec<Box<dyn LinearForm<F>>> {
         forms
             .iter()
             .map(|f| {
-                let mut cv = vec![F::ZERO; size];
+                // Try to preserve the compact MultilinearExtension type.
+                if let Some(mle) =
+                    (f.as_ref() as &dyn Any).downcast_ref::<MultilinearExtension<F>>()
+                {
+                    return Box::new(mle.clone()) as Box<dyn LinearForm<F>>;
+                }
+                // Fallback: materialize as Covector.
+                let mut cv = vec![F::ZERO; f.size()];
                 f.accumulate(&mut cv, F::ONE);
                 Box::new(Covector::new(cv)) as Box<dyn LinearForm<F>>
             })
@@ -548,7 +553,7 @@ mod tests {
         ];
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
-        let prove_forms = to_prove_forms(&forms, vector.len());
+        let prove_forms = clone_forms(&forms);
 
         let ds = DomainSeparator::protocol(&config)
             .session(&format!("zk2-wrong-eval {}:{}", file!(), line!()))
@@ -615,7 +620,7 @@ mod tests {
         ];
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
-        let prove_forms = to_prove_forms(&forms, vector.len());
+        let prove_forms = clone_forms(&forms);
 
         let ds = DomainSeparator::protocol(&config)
             .session(&format!("zk2-tamper {}:{}", file!(), line!()))
@@ -753,7 +758,7 @@ mod tests {
             &mut ps,
             vectors.iter().map(|&v| Cow::Borrowed(v)).collect(),
             witness,
-            to_prove_forms(forms, vectors[0].len()),
+            clone_forms(forms),
             Cow::Borrowed(evals),
         );
         let proof = ps.proof();
@@ -825,7 +830,7 @@ mod tests {
         // Replay the verifier transcript to extract the batching coefficient α.
         //
         // zkWHIR transcript after receive_commitments (n=2, f=1):
-        //   0. P → V: linear form covector        (1 form × TEST_NUM_COEFFS entries)
+        //   0. P → V: linear form identity        (1 form × TEST_NUM_VARIABLES entries)
         //   1. V → P: β                           (verifier challenge)
         //   2. P → V: G = ⟨w, g⟩                  (1 g_claim for 1 form)
         //   3. P → V: eval₀, eval₁                (2 evals)
@@ -833,7 +838,7 @@ mod tests {
         let alpha = {
             let mut vs = VerifierState::new_std(&ds, &proof);
             let _ = config.receive_commitments(&mut vs).unwrap();
-            for _ in 0..TEST_NUM_COEFFS {
+            for _ in 0..TEST_NUM_VARIABLES {
                 let _: F = vs.prover_message().unwrap();
             } // step 0: linear form binding
             let _beta: F = vs.verifier_message(); // step 1
@@ -1125,7 +1130,7 @@ mod tests {
         // Replay the verifier transcript to extract constraint RLC coefficient c₁.
         //
         // zkWHIR transcript after receive_commitments (n=1, f=2):
-        //   0. P → V: linear form covectors          (2 forms × TEST_NUM_COEFFS entries)
+        //   0. P → V: linear form identities          (2 forms × TEST_NUM_VARIABLES entries)
         //   1. V → P: β                              (verifier challenge)
         //   2. P → V: G₀, G₁                         (2 g_claims for 2 forms)
         //   3. P → V: eval₀, eval₁                   (2 evals)
@@ -1135,7 +1140,7 @@ mod tests {
         let c1 = {
             let mut vs = VerifierState::new_std(&ds, &proof);
             let _ = config.receive_commitments(&mut vs).unwrap();
-            for _ in 0..2 * TEST_NUM_COEFFS {
+            for _ in 0..2 * TEST_NUM_VARIABLES {
                 let _: F = vs.prover_message().unwrap();
             } // step 0: linear form binding
             let _beta: F = vs.verifier_message(); // step 1

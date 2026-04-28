@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ark_ff::Field;
 
 use super::{Evaluate, LinearForm};
@@ -37,6 +39,10 @@ impl<F: Field> LinearForm<F> for MultilinearExtension<F> {
 
     fn accumulate(&self, accumulator: &mut [F], scalar: F) {
         eval_eq(accumulator, &self.point, scalar);
+    }
+
+    fn transcript_identity(&self) -> Cow<'_, [F]> {
+        Cow::Borrowed(&self.point)
     }
 }
 

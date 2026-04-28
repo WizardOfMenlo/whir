@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ark_ff::Field;
 
 use super::LinearForm;
@@ -63,6 +65,10 @@ impl<F: Field> LinearForm<F> for UnivariateEvaluation<F> {
             *entry += power;
             power *= self.point;
         }
+    }
+
+    fn transcript_identity(&self) -> Cow<'_, [F]> {
+        Cow::Owned(vec![self.point, F::from(self.size as u64)])
     }
 }
 
