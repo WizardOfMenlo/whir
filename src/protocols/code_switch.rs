@@ -159,6 +159,7 @@ impl<M: Embedding> Config<M> {
         let target_witness = self.target.commit(prover_state, &[&message]);
 
         // Step 2-3: OOD challenge + answers — Construction 9.7 Steps 2-3, p.55
+        // TODO : check the private zero evader for code switch protocol.
         let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.ood_samples);
         let msg_len = message.len();
         for &point in &ood_points {

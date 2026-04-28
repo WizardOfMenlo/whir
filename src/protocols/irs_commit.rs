@@ -239,7 +239,7 @@ impl<M: Embedding> Config<M> {
 
     /// Recompute `johnson_slack`, `in_domain_samples`, and `out_domain_samples`
     /// for the current rate (which accounts for `mask_length`).
-    pub fn reparameterise_security(&mut self, security_target: f64, unique_decoding: bool) {
+    pub fn recompute_security_parameters(&mut self, security_target: f64, unique_decoding: bool) {
         let rate = self.rate();
         let johnson_slack = if unique_decoding {
             0.0
