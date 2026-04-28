@@ -116,7 +116,7 @@ impl<M: Embedding> Config<M> {
             // leaving right now for code switching. This will change in parameter
             // selection
             target_config.mask_length = budget.target;
-            target_config.reparameterise_security(security_target, unique_decoding);
+            target_config.recompute_security_parameters(security_target, unique_decoding);
 
             let source_randomness_len = source_config.mask_length * source_config.num_messages();
             assert!(
@@ -135,7 +135,7 @@ impl<M: Embedding> Config<M> {
                 source_config.rate(),
             );
             mask_config.mask_length = budget.mask;
-            mask_config.reparameterise_security(security_target, unique_decoding);
+            mask_config.recompute_security_parameters(security_target, unique_decoding);
             mask_config
         });
 
@@ -227,6 +227,7 @@ impl<M: Embedding> Config<M> {
         };
 
         // Step 2-3: OOD challenge + answers — Construction 9.7 Steps 2-3, p.55
+        // TODO : check the private zero evader for code switch protocol.
         let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.out_domain_samples);
         let msg_len = message.len();
         for &point in &ood_points {
