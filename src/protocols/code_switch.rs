@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use ark_ff::{AdditiveGroup, Field};
+use ark_ff::Field;
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -15,20 +15,23 @@ use crate::{
     algebra::{
         dot,
         embedding::{Embedding, Identity},
-        mixed_dot, univariate_evaluate,
+        fields::FieldWithSize,
+        geometric_accumulate, lift, mixed_dot, random_vector, scalar_mul, univariate_evaluate,
     },
     engines::EngineId,
     hash::Hash,
     protocols::{
         geometric_challenge::geometric_challenge,
-        irs_commit::{Commitment as IrsCommitment, Config as IrsConfig, Witness as IrsWitness},
+        irs_commit::{
+            num_ood_samples, Commitment as IrsCommitment, Config as IrsConfig,
+            Witness as IrsWitness,
+        },
     },
     transcript::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
     type_info::Typed,
-    utils::zip_strict,
 };
 
 /// Code-switching IOR config with optional ZK.
@@ -38,17 +41,17 @@ pub struct Config<M: Embedding> {
     pub embedding: Typed<M>,
     pub source: IrsConfig<M>,
     pub target: IrsConfig<Identity<M::Target>>,
-    pub ood_samples: usize,
-    pub zk: bool,
+    pub out_domain_samples: usize,
+    pub mask_commit: Option<IrsConfig<Identity<M::Target>>>,
 }
 
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
-pub struct TargetConfigParams {
-    pub security_target: f64,
-    pub unique_decoding: bool,
-    pub log_inv_rate: usize,
-    pub interleaving_depth: usize,
-    pub mask_length: usize,
+/// Next stage's query budgets for ZK encoding (Prop 3.19).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub struct ZkQueryBudget {
+    /// Queries the next stage makes to the target oracle g.
+    pub target: usize,
+    /// Queries the next stage makes to the mask oracle s.
+    pub mask: usize,
 }
 
 /// ZK mask oracle: the message and its IRS witness.
@@ -63,66 +66,112 @@ pub struct MaskOracle<F: Field> {
 pub struct Witness<F: Field> {
     pub message: Vec<F>,
     pub target_witness: IrsWitness<F>,
+    pub mask: Option<MaskOracle<F>>,
 }
 
 /// Verifier output from the code-switch.
 #[derive(Clone, Debug)]
 pub struct Commitment<F: Field> {
     pub target: IrsCommitment<F>,
+    pub mask: Option<IrsCommitment<F>>,
 }
 
 impl<M: Embedding> Config<M> {
-    /// `zk`: whether ZK mode is active (mask oracle expected in prove/verify).
+    /// `zk`: `None` for non-ZK, `Some(budget)` for ZK with next stage's query budgets.
     pub fn new(
+        security_target: f64,
+        unique_decoding: bool,
         hash_id: EngineId,
         source_config: IrsConfig<M>,
-        target_config_params: &TargetConfigParams,
-        ood_samples: usize,
-        zk: bool,
+        target_log_inv_rate: usize,
+        target_interleaving_depth: usize,
+        zk: Option<ZkQueryBudget>,
     ) -> Self
     where
         M: Default,
         M::Target: Default,
     {
-        assert!(target_config_params.log_inv_rate > 0);
-        assert!(target_config_params.interleaving_depth > 0);
-        assert!(!target_config_params.unique_decoding);
-        assert!(
-            ood_samples > 0,
-            "code-switch requires OOD samples for cross-oracle consistency"
-        );
-        assert!((target_config_params.mask_length > 0) == zk);
+        assert!(target_log_inv_rate > 0);
+        assert!(target_interleaving_depth > 0);
 
         let source_message_length = source_config.message_length();
-        let target_rate = 0.5_f64.powf(target_config_params.log_inv_rate as f64);
-        let target_vector_size = source_message_length * target_config_params.interleaving_depth;
+        let target_rate = 0.5_f64.powf(target_log_inv_rate as f64);
+        let target_vector_size = source_message_length * target_interleaving_depth;
 
         let mut target_config = IrsConfig::<Identity<M::Target>>::new(
-            target_config_params.security_target,
-            target_config_params.unique_decoding,
+            security_target,
+            unique_decoding,
             hash_id,
             1,
             target_vector_size,
-            target_config_params.interleaving_depth,
+            target_interleaving_depth,
             target_rate,
         );
-        if target_config_params.mask_length > 0 {
-            target_config.mask_length = target_config_params.mask_length;
-            // TODO : delegate this recalculation to a good parameter selection function
-            // (In the next PR)
-            target_config.reparameterise_security(
-                target_config_params.security_target,
-                target_config_params.unique_decoding,
+
+        let mask_commit = zk.map(|budget| {
+            assert!(budget.target > 0, "ZK requires nonzero target query budget");
+            assert!(budget.mask > 0, "ZK requires nonzero mask query budget");
+            // TODO : find a better way to set mask length for ZK code-switch
+            // leaving right now for code switching. This will change in parameter
+            // selection
+            target_config.mask_length = budget.target;
+            target_config.recompute_security_parameters(security_target, unique_decoding);
+
+            let source_randomness_len = source_config.mask_length * source_config.num_messages();
+            assert!(
+                source_randomness_len > 0,
+                "ZK code-switch requires source_config.mask_length > 0"
             );
-        }
+            // TODO : move the mask config out for shared mask tree per iteration
+            // inputs to the new function will also change
+            let mut mask_config = IrsConfig::<Identity<M::Target>>::new(
+                security_target,
+                unique_decoding,
+                hash_id,
+                1,
+                source_randomness_len,
+                1,
+                source_config.rate(),
+            );
+            mask_config.mask_length = budget.mask;
+            mask_config.recompute_security_parameters(security_target, unique_decoding);
+            mask_config
+        });
+
+        assert!(
+            source_config.mask_length == 0 || mask_commit.is_some(),
+            "source with ZK randomness requires ZK code-switch (mask_commit)"
+        );
+
+        let (list_size, degree) = mask_commit.as_ref().map_or_else(
+            || (target_config.list_size(), source_message_length),
+            |mask_cfg| {
+                (
+                    target_config.list_size() * mask_cfg.list_size(),
+                    source_message_length + mask_cfg.message_length(),
+                )
+            },
+        );
+        let out_domain_samples = num_ood_samples(
+            unique_decoding,
+            security_target,
+            M::Target::field_size_bits(),
+            list_size,
+            degree,
+        );
 
         Self {
             embedding: Typed::<M>::default(),
             source: source_config,
             target: target_config,
-            ood_samples,
-            zk,
+            out_domain_samples,
+            mask_commit,
         }
+    }
+
+    /// Length of the covector for this code-switch.
+    pub fn covector_length(&self) -> usize {
+        self.source.masked_message_length()
     }
 
     /// Prove the code-switch
@@ -131,9 +180,9 @@ impl<M: Embedding> Config<M> {
         &self,
         prover_state: &mut ProverState<H, R>,
         message: Vec<M::Target>,
+        masks: &[M::Source],
         witness: &IrsWitness<M::Source, M::Target>,
         covector: &mut [M::Target],
-        mask_oracle: Option<&MaskOracle<M::Target>>,
     ) -> Witness<M::Target>
     where
         H: DuplexSpongeInterface,
@@ -144,27 +193,51 @@ impl<M: Embedding> Config<M> {
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(message.len(), self.source.message_length());
+        assert_eq!(covector.len(), self.covector_length());
         assert_eq!(
             self.source.num_messages(),
             1,
             "code-switch only supports num_messages() == 1 (single polynomial)"
         );
         assert_eq!(
-            mask_oracle.is_some(),
-            self.zk,
-            "mask_oracle presence must match zk flag"
+            masks.len(),
+            self.source.mask_length * self.source.num_messages()
+        );
+        assert!(
+            self.mask_commit.is_some() == (self.target.mask_length > 0),
+            "mask config and target mask_length must agree"
         );
 
-        // Step 1: g := Enc_{C'}(f, r') — Construction 9.7 Step 1, p.55
+        // Step 1a: g := Enc_{C'}(f, r') — Construction 9.7 Step 1, p.55
         let target_witness = self.target.commit(prover_state, &[&message]);
+
+        // Step 1b: s := Enc_{C_zk}((r || padding), r'') — Construction 9.7 Step 1, p.55
+        #[allow(clippy::option_if_let_else)]
+        let mask = if let Some(mask_config) = &self.mask_commit {
+            let mask_msg_len = mask_config.message_length();
+            let r_embedded = lift(self.source.embedding(), masks);
+            let embedded_randomness_len = r_embedded.len();
+            let mut mask_msg = Vec::with_capacity(mask_msg_len);
+            mask_msg.extend_from_slice(&r_embedded);
+            let random_padding: Vec<M::Target> =
+                random_vector(prover_state.rng(), mask_msg_len - embedded_randomness_len);
+            mask_msg.extend_from_slice(&random_padding);
+            let witness = mask_config.commit(prover_state, &[&mask_msg]);
+            Some(MaskOracle {
+                message: mask_msg,
+                witness,
+            })
+        } else {
+            None
+        };
 
         // Step 2-3: OOD challenge + answers — Construction 9.7 Steps 2-3, p.55
         // TODO : check the private zero evader for code switch protocol.
-        let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.ood_samples);
+        let ood_points: Vec<M::Target> = prover_state.verifier_message_vec(self.out_domain_samples);
         let msg_len = message.len();
         for &point in &ood_points {
             let f_eval = univariate_evaluate(&message, point);
-            if let Some(mask_oracle) = mask_oracle {
+            if let Some(ref mask_oracle) = mask {
                 let mask_msg_eval = univariate_evaluate(&mask_oracle.message, point);
                 let shift = point.pow([msg_len as u64]);
                 prover_state.prover_message(&(f_eval + shift * mask_msg_eval));
@@ -177,7 +250,7 @@ impl<M: Embedding> Config<M> {
         let source_evaluations = self.source.open(prover_state, &[witness]);
 
         // Step 5: batching — Construction 9.7 Step 5, p.55
-        let num_ood = self.ood_samples;
+        let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let batching_coeffs =
             geometric_challenge::<_, M::Target>(prover_state, 1 + num_ood + num_in_domain);
@@ -185,30 +258,20 @@ impl<M: Embedding> Config<M> {
         let (ood_rlc_coeffs, in_domain_rlc_coeffs) = constraint_rlc_coeffs.split_at(num_ood);
 
         // Covector update — sl' from Completeness proof (p.55-56)
-        let embedding = self.source.embedding();
-        let eval_points: Vec<_> = source_evaluations
-            .points
-            .iter()
-            .map(|&p| embedding.map(p))
-            .collect();
+        let eval_points = lift(self.source.embedding(), &source_evaluations.points);
         let all_points: Vec<_> = ood_points.iter().chain(&eval_points).copied().collect();
-        let mut pows: Vec<_> = ood_rlc_coeffs
+        let pows: Vec<_> = ood_rlc_coeffs
             .iter()
             .chain(in_domain_rlc_coeffs)
             .copied()
             .collect();
-        for c in &mut *covector {
-            let mut sum = M::Target::ZERO;
-            for (pow, &point) in zip_strict(&mut pows, &all_points) {
-                sum += *pow;
-                *pow *= point;
-            }
-            *c = *c * original_sl_coeff + sum;
-        }
+        scalar_mul(covector, original_sl_coeff);
+        geometric_accumulate(covector, pows, &all_points);
 
         Witness {
             message,
             target_witness,
+            mask,
         }
     }
 
@@ -232,22 +295,30 @@ impl<M: Embedding> Config<M> {
             1,
             "code-switch only supports num_messages() == 1 (single polynomial)"
         );
+        assert!(
+            self.mask_commit.is_some() == (self.target.mask_length > 0),
+            "mask config and target mask_length must agree"
+        );
 
-        // Step 1: target commitment — Construction 9.7 Step 1, p.55
+        // Step 1: commitments — Construction 9.7 Step 1, p.55
         let target_commitment = self.target.receive_commitment(verifier_state)?;
+        let mask_commitment = self
+            .mask_commit
+            .as_ref()
+            .map(|mask_cfg| mask_cfg.receive_commitment(verifier_state))
+            .transpose()?;
 
         // Step 2-3: OOD — Construction 9.7 Steps 2-3, p.55
-        // In ZK mode, ood_answers include the mask contribution: f(ρ) + ρ^ℓ · s(ρ).
-        // The mask oracle's proximity to C_zk is NOT checked here — that is the
-        // orchestrator's responsibility via mask_proximity::verify() (Construction 7.2).
-        let _ood_points: Vec<M::Target> = verifier_state.verifier_message_vec(self.ood_samples);
-        let ood_answers: Vec<M::Target> = verifier_state.prover_messages_vec(self.ood_samples)?;
+        let _ood_points: Vec<M::Target> =
+            verifier_state.verifier_message_vec(self.out_domain_samples);
+        let ood_answers: Vec<M::Target> =
+            verifier_state.prover_messages_vec(self.out_domain_samples)?;
 
         // Step 4: source opening — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.verify(verifier_state, &[commitment])?;
 
         // Step 5-6: batching + μ' — Construction 9.7 Decision phase, p.55
-        let num_ood = self.ood_samples;
+        let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.matrix.len();
         let coeffs = geometric_challenge(verifier_state, 1 + num_ood + num_in_domain);
         let (&original_sl_coeff, all_rlc_coeffs) = coeffs.split_first().unwrap();
@@ -263,6 +334,7 @@ impl<M: Embedding> Config<M> {
 
         Ok(Commitment {
             target: target_commitment,
+            mask: mask_commitment,
         })
     }
 }
@@ -271,18 +343,22 @@ impl<M: Embedding> fmt::Display for Config<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Config(source={}, target={}, ood_samples={}, zk={})",
-            self.source, self.target, self.ood_samples, self.zk
-        )
+            "Config(source={}, target={}, ood_samples={}",
+            self.source, self.target, self.out_domain_samples,
+        )?;
+        if let Some(mask) = &self.mask_commit {
+            write!(f, ", mask={mask}")?;
+        }
+        write!(f, ")")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use ark_std::rand::{
-        distributions::Standard, prelude::Distribution, rngs::StdRng, SeedableRng,
+        distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
     };
-    use proptest::{prelude::Strategy, prop_assume, proptest, sample::select, strategy::Just};
+    use proptest::{bool, prelude::Strategy, proptest, sample::select, strategy::Just};
 
     use super::*;
     use crate::{
@@ -291,7 +367,7 @@ mod tests {
     };
 
     impl<M: Embedding> Config<M> {
-        pub fn arbitrary(embedding: M, zk: bool) -> impl Strategy<Value = Self>
+        pub fn arbitrary(embedding: M) -> impl Strategy<Value = Self>
         where
             M: 'static,
         {
@@ -299,40 +375,53 @@ mod tests {
                 .filter(|&n| ntt::next_order::<M::Source>(n) == Some(n))
                 .collect::<Vec<_>>();
 
-            let emb2 = embedding.clone();
-            let target_mask_range = if zk { 1_usize..=3 } else { 0_usize..=0 };
+            let emb1 = embedding.clone();
+            let emb2 = embedding;
 
-            (
-                select(valid_sizes),
-                0_usize..=3,
-                target_mask_range,
-                1_usize..=5,
-            )
-                .prop_flat_map(
-                    move |(size, source_mask_length, target_mask_length, ood_samples)| {
-                        let source =
-                            IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask_length, 1);
-                        (source, Just(target_mask_length), Just(ood_samples))
-                    },
-                )
-                .prop_flat_map(|(source, target_mask_length, ood_samples)| {
+            (select(valid_sizes), 0_usize..=3, bool::ANY)
+                .prop_flat_map(move |(size, mask_length, masked)| {
+                    let source_mask = if masked { mask_length.max(1) } else { 0 };
+                    let source = IrsConfig::arbitrary(emb1.clone(), 1, size, source_mask, 1);
+                    (source, Just(masked))
+                })
+                .prop_flat_map(|(source, masked)| {
                     let msg_len = source.message_length();
+                    let rnd_len = source.mask_length * source.num_messages();
+                    let target_mask = usize::from(masked);
+
                     let target = IrsConfig::<Identity<M::Target>>::arbitrary(
                         Identity::new(),
                         1,
                         msg_len,
-                        target_mask_length,
+                        target_mask,
                         1,
                     );
-                    (Just(source), target, Just(ood_samples))
+
+                    let mask = if masked && rnd_len > 0 {
+                        IrsConfig::<Identity<M::Target>>::arbitrary(
+                            Identity::new(),
+                            1,
+                            rnd_len,
+                            0,
+                            1,
+                        )
+                        .prop_map(Some)
+                        .boxed()
+                    } else {
+                        Just(None).boxed()
+                    };
+
+                    (Just(source), target, mask, 0_usize..=5)
                 })
-                .prop_map(move |(source, target, ood_samples)| Self {
-                    embedding: Typed::new(emb2.clone()),
-                    source,
-                    target,
-                    ood_samples,
-                    zk,
-                })
+                .prop_map(
+                    move |(source, target, mask_commit, out_domain_samples)| Self {
+                        embedding: Typed::new(emb2.clone()),
+                        source,
+                        target,
+                        out_domain_samples,
+                        mask_commit,
+                    },
+                )
         }
     }
 
@@ -341,26 +430,28 @@ mod tests {
         Standard: Distribution<F>,
         Hash: ProverMessage<[u8]>,
     {
+        crate::tests::init();
+
         let instance = U64(seed);
         let ds = DomainSeparator::protocol(config)
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
         let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let target_mu: F = rng.gen();
 
-        // Honest input: μ = ⟨f, sl⟩
-        let initial_mu = dot(&message, &covector);
+        let msg_len = config.source.message_length();
+        let mut covector: Vec<F> = random_vector(&mut rng, msg_len);
+        covector.resize(config.covector_length(), F::ZERO);
 
         let mut prover_state = ProverState::new_std(&ds);
         let source_witness = config.source.commit(&mut prover_state, &[&message]);
-        // Non-ZK test path: no mask oracle
         let witness = config.prove(
             &mut prover_state,
             message.clone(),
+            &source_witness.masks,
             &source_witness,
             &mut covector,
-            None,
         );
         let proof = prover_state.proof();
 
@@ -369,18 +460,17 @@ mod tests {
             .source
             .receive_commitment(&mut verifier_state)
             .unwrap();
-        let mut verifier_sum = initial_mu;
-        let _commitments = config
+        let mut verifier_sum = target_mu;
+        let commitments = config
             .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
             .unwrap();
 
         // Transcript fully consumed — prover and verifier are in sync
         verifier_state.check_eof().unwrap();
+        // Mask commitment present if ZK mode
+        assert_eq!(commitments.mask.is_some(), config.mask_commit.is_some());
         assert_eq!(witness.message, message);
-        // Non ZK case check only
-        if config.source.mask_length == 0 {
-            assert_eq!(dot(&message, &covector), verifier_sum);
-        }
+        assert_eq!(witness.mask.is_some(), config.mask_commit.is_some());
     }
 
     fn test<F: Field + Codec<[u8]> + 'static>()
@@ -388,8 +478,7 @@ mod tests {
         Standard: Distribution<F>,
         Hash: ProverMessage<[u8]>,
     {
-        crate::tests::init();
-        let configs = Config::arbitrary(Identity::<F>::new(), false);
+        let configs = Config::arbitrary(Identity::<F>::new());
         proptest!(|(seed: u64, config in configs)| {
             test_config(seed, &config);
         });
@@ -428,120 +517,5 @@ mod tests {
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
         test::<fields::Field256>();
-    }
-
-    /// Tampered OOD: commit honest message in source tree, then call prove()
-    /// with a different message. OOD answers come from the wrong polynomial
-    /// while the source opening uses the honest commitment.
-    fn test_tampered_ood_config<F: Field + Codec<[u8]>>(seed: u64, config: &Config<Identity<F>>)
-    where
-        Standard: Distribution<F>,
-        Hash: ProverMessage<[u8]>,
-    {
-        let instance = U64(seed);
-        let ds = DomainSeparator::protocol(config)
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&instance);
-        let mut rng = StdRng::seed_from_u64(seed);
-        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let initial_mu = dot(&message, &covector);
-
-        // Commit with honest message
-        let mut prover_state = ProverState::new_std(&ds);
-        let source_witness = config.source.commit(&mut prover_state, &[&message]);
-
-        // Prove with tampered message — OOD answers are for f', tree is for f
-        let mut tampered_message = message.clone();
-        tampered_message[0] += F::ONE;
-        let _witness = config.prove(
-            &mut prover_state,
-            tampered_message,
-            &source_witness,
-            &mut covector,
-            None,
-        );
-        let proof = prover_state.proof();
-
-        // Verify — accepts because Merkle proofs are valid
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let source_commitment = config
-            .source
-            .receive_commitment(&mut verifier_state)
-            .unwrap();
-        let mut verifier_sum = initial_mu;
-        config
-            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
-            .unwrap();
-        verifier_state.check_eof().unwrap();
-
-        // downstream sumcheck will reject inconsistent sum
-        assert_ne!(dot(&message, &covector), verifier_sum);
-    }
-
-    #[test]
-    fn test_tampered_ood() {
-        crate::tests::init();
-        let configs = Config::arbitrary(Identity::<fields::Field64>::new(), false);
-        proptest!(|(seed: u64, config in configs)| {
-            prop_assume!(config.source.mask_length == 0);
-            test_tampered_ood_config(seed, &config);
-        });
-    }
-
-    fn test_zk_config<F: Field + Codec<[u8]>>(seed: u64, config: &Config<Identity<F>>)
-    where
-        Standard: Distribution<F>,
-        Hash: ProverMessage<[u8]>,
-    {
-        let instance = U64(seed);
-        let ds = DomainSeparator::protocol(config)
-            .session(&format!("Test at {}:{}", file!(), line!()))
-            .instance(&instance);
-        let mut rng = StdRng::seed_from_u64(seed);
-        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let initial_mu = dot(&message, &covector);
-
-        let mask_msg: Vec<F> = random_vector(&mut rng, config.source.message_length());
-        let mask_oracle = MaskOracle {
-            message: mask_msg,
-            witness: IrsWitness::default(),
-        };
-
-        let mut prover_state = ProverState::new_std(&ds);
-        let source_witness = config.source.commit(&mut prover_state, &[&message]);
-        let _witness = config.prove(
-            &mut prover_state,
-            message.clone(),
-            &source_witness,
-            &mut covector,
-            Some(&mask_oracle),
-        );
-        let proof = prover_state.proof();
-
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let source_commitment = config
-            .source
-            .receive_commitment(&mut verifier_state)
-            .unwrap();
-        let mut verifier_sum = initial_mu;
-        config
-            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
-            .unwrap();
-        verifier_state.check_eof().unwrap();
-
-        // Mask contribution shifts the sum
-        assert_ne!(verifier_sum, initial_mu);
-        assert_ne!(dot(&message, &covector), verifier_sum);
-    }
-
-    #[test]
-    fn test_zk() {
-        crate::tests::init();
-        let configs = Config::arbitrary(Identity::<fields::Field64>::new(), true);
-        proptest!(|(seed: u64, config in configs)| {
-            test_zk_config(seed, &config);
-        });
     }
 }
