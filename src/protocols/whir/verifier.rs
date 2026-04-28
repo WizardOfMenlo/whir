@@ -58,11 +58,8 @@ where
         }
 
         // Bind linear forms into Fiat-Shamir transcript
-        let size = self.initial_size();
         for lf in linear_forms {
-            let mut cv = vec![M::Target::ZERO; size];
-            lf.accumulate(&mut cv, M::Target::ONE);
-            for &expected in &cv {
+            for &expected in lf.transcript_identity().iter() {
                 let read: M::Target = verifier_state.prover_message()?;
                 verify!(read == expected);
             }

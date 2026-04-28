@@ -1033,8 +1033,8 @@ mod tests {
         let c0 = config.receive_commitment(&mut vs).unwrap();
         let c1 = config.receive_commitment(&mut vs).unwrap();
 
-        // Skip linear form binding messages.
-        for _ in 0..num_forms * config.initial_size() {
+        // Skip linear form binding messages (SOUNDNESS_NUM_VARIABLES per MLE form).
+        for _ in 0..num_forms * SOUNDNESS_NUM_VARIABLES {
             let _: EF = vs.prover_message().unwrap();
         }
 
@@ -1073,8 +1073,8 @@ mod tests {
         let mut vs = VerifierState::new_std(ds, proof);
         let c = config.receive_commitment(&mut vs).unwrap();
 
-        // Skip linear form binding messages.
-        for _ in 0..num_forms * config.initial_size() {
+        // Skip linear form binding messages (SOUNDNESS_NUM_VARIABLES per MLE form).
+        for _ in 0..num_forms * SOUNDNESS_NUM_VARIABLES {
             let _: EF = vs.prover_message().unwrap();
         }
 
