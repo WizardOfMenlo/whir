@@ -123,11 +123,8 @@ where
         // =====================================================================
         // Bind linear forms into Fiat-Shamir transcript
         // =====================================================================
-        let size = self.dims.size;
         for weight in weights {
-            let mut cv = vec![F::ZERO; size];
-            weight.accumulate(&mut cv, F::ONE);
-            for &expected in &cv {
+            for &expected in weight.transcript_identity().iter() {
                 let read: F = self.verifier_state.prover_message()?;
                 verify!(read == expected);
             }
