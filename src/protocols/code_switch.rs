@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use ark_ff::{AdditiveGroup, Field};
+use ark_ff::Field;
 use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
@@ -16,7 +16,7 @@ use crate::{
         dot,
         embedding::{Embedding, Identity},
         fields::FieldWithSize,
-        lift, mixed_dot, random_vector, univariate_evaluate,
+        geometric_accumulate, lift, mixed_dot, random_vector, scalar_mul, univariate_evaluate,
     },
     engines::EngineId,
     hash::Hash,
@@ -32,7 +32,6 @@ use crate::{
         VerifierMessage, VerifierState,
     },
     type_info::Typed,
-    utils::zip_strict,
 };
 
 /// Code-switching IOR config with optional ZK.
@@ -170,6 +169,11 @@ impl<M: Embedding> Config<M> {
         }
     }
 
+    /// Length of the covector for this code-switch.
+    pub fn covector_length(&self) -> usize {
+        self.source.masked_message_length()
+    }
+
     /// Prove the code-switch
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
@@ -189,6 +193,7 @@ impl<M: Embedding> Config<M> {
         Hash: ProverMessage<[H::U]>,
     {
         assert_eq!(message.len(), self.source.message_length());
+        assert_eq!(covector.len(), self.covector_length());
         assert_eq!(
             self.source.num_messages(),
             1,
@@ -253,26 +258,15 @@ impl<M: Embedding> Config<M> {
         let (ood_rlc_coeffs, in_domain_rlc_coeffs) = constraint_rlc_coeffs.split_at(num_ood);
 
         // Covector update — sl' from Completeness proof (p.55-56)
-        let embedding = self.source.embedding();
-        let eval_points: Vec<_> = source_evaluations
-            .points
-            .iter()
-            .map(|&p| embedding.map(p))
-            .collect();
+        let eval_points = lift(self.source.embedding(), &source_evaluations.points);
         let all_points: Vec<_> = ood_points.iter().chain(&eval_points).copied().collect();
-        let mut pows: Vec<_> = ood_rlc_coeffs
+        let pows: Vec<_> = ood_rlc_coeffs
             .iter()
             .chain(in_domain_rlc_coeffs)
             .copied()
             .collect();
-        for c in &mut *covector {
-            let mut sum = M::Target::ZERO;
-            for (pow, &point) in zip_strict(&mut pows, &all_points) {
-                sum += *pow;
-                *pow *= point;
-            }
-            *c = *c * original_sl_coeff + sum;
-        }
+        scalar_mul(covector, original_sl_coeff);
+        geometric_accumulate(covector, pows, &all_points);
 
         Witness {
             message,
@@ -349,12 +343,13 @@ impl<M: Embedding> fmt::Display for Config<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Config(source={}, target={}, ood_samples={}, zk={})",
-            self.source,
-            self.target,
-            self.out_domain_samples,
-            self.mask_commit.is_some()
-        )
+            "Config(source={}, target={}, ood_samples={}",
+            self.source, self.target, self.out_domain_samples,
+        )?;
+        if let Some(mask) = &self.mask_commit {
+            write!(f, ", mask={mask}")?;
+        }
+        write!(f, ")")
     }
 }
 
@@ -445,7 +440,9 @@ mod tests {
         let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
         let target_mu: F = rng.gen();
 
-        let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let msg_len = config.source.message_length();
+        let mut covector: Vec<F> = random_vector(&mut rng, msg_len);
+        covector.resize(config.covector_length(), F::ZERO);
 
         let mut prover_state = ProverState::new_std(&ds);
         let source_witness = config.source.commit(&mut prover_state, &[&message]);
