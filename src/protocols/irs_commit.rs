@@ -237,27 +237,6 @@ impl<M: Embedding> Config<M> {
         self.out_domain_samples == 0 && self.johnson_slack == 0.0
     }
 
-    /// Recompute `johnson_slack`, `in_domain_samples`, and `out_domain_samples`
-    /// for the current rate (which accounts for `mask_length`).
-    pub fn recompute_security_parameters(&mut self, security_target: f64, unique_decoding: bool) {
-        let rate = self.rate();
-        let johnson_slack = if unique_decoding {
-            0.0
-        } else {
-            rate.sqrt() / 20.
-        };
-        self.johnson_slack = OrderedFloat(johnson_slack);
-        self.in_domain_samples = num_in_domain_queries(unique_decoding, security_target, rate);
-        let list_size = self.list_size();
-        self.out_domain_samples = num_ood_samples(
-            unique_decoding,
-            security_target,
-            M::Target::field_size_bits(),
-            list_size,
-            self.vector_size,
-        );
-    }
-
     /// Compute a list size bound.
     pub fn list_size(&self) -> f64 {
         if self.unique_decoding() {
@@ -346,7 +325,8 @@ impl<M: Embedding> Config<M> {
 
         // Handle out-of-domain points and values
         // TODO : Remove this logic after main whir protocol is updated
-        // as this is not required in the new construction.
+        // as this is not required in the new construction. This will be
+        // removed in next PR (Parameter Selection)
         let oods_points: Vec<M::Target> =
             prover_state.verifier_message_vec(self.out_domain_samples);
         let mut oods_matrix = Vec::with_capacity(self.out_domain_samples * self.num_vectors);

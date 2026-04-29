@@ -27,11 +27,13 @@
 //! each mask is a separate oracle. This implementation uses a shared tree
 //! for all 2n vectors, so a single opening reveals 2n values. The per-mask
 //! query count is unchanged (each ξ_i is opened at t_zk positions), but the
-//! shared tree means all masks are opened at the SAME positions. The ZK
-//! bound should be re-derived for this shared-tree variant; the analysis
-//! carries over because the simulator can simulate all 2n values at each
-//! position independently (each pair (ξ_i, s_i) is simulatable from C_zk's
-//! ZK property, and the pairs are independent across i).
+//! shared tree means all masks are opened at the SAME positions.
+//!
+//! Assumed: the shared-tree variant preserves the ZK bound. The argument
+//! is that the simulator can simulate all 2n values at each position
+//! independently (each pair (ξ_i, s_i) is simulatable from C_zk's ZK
+//! property, and the pairs are independent across i). Formal derivation
+//! for the shared-tree case is pending.
 //!
 //! Soundness: if ξ_i is far from C_zk, the spot-check fails with high
 //! probability over γ (Lemma 7.4, p.45).
@@ -67,6 +69,7 @@ pub struct Config<F: Field> {
 }
 
 /// Prover output from the commit phase.
+#[must_use]
 pub struct Witness<F: Field> {
     pub mask_witness: IrsWitness<F>,
     pub fresh_msgs: Vec<Vec<F>>,
@@ -296,6 +299,7 @@ mod tests {
                 .filter(|&n| ntt::next_order::<F>(n) == Some(n))
                 .collect::<Vec<_>>();
 
+            // mask_length=0: tests non-ZK mask tree (no IRS masking on the committed vectors).
             let mask_length = prop_oneof![
                 3 => Just(0_usize),
                 7 => 1_usize..=4,

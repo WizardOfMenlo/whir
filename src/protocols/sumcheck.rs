@@ -24,16 +24,9 @@ use crate::{
     utils::chunks_exact_or_empty,
 };
 
-/// Prover output from the sumcheck protocol.
+/// Output from the sumcheck protocol (shared by prover and verifier).
 #[must_use]
-pub struct ProverResult<F: Field> {
-    pub round_challenges: Vec<F>,
-    pub mask_rlc: F,
-}
-
-/// Verifier output from the sumcheck protocol.
-#[must_use]
-pub struct VerifierResult<F: Field> {
+pub struct SumcheckOpening<F: Field> {
     pub round_challenges: Vec<F>,
     pub mask_rlc: F,
 }
@@ -81,7 +74,7 @@ impl<F: Field> Config<F> {
         b: &mut Vec<F>,
         sum: &mut F,
         masks: &[F],
-    ) -> ProverResult<F>
+    ) -> SumcheckOpening<F>
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
@@ -165,7 +158,7 @@ impl<F: Field> Config<F> {
         }
 
         *sum = mask_sum + mask_rlc * *sum;
-        ProverResult {
+        SumcheckOpening {
             round_challenges,
             mask_rlc,
         }
@@ -176,7 +169,7 @@ impl<F: Field> Config<F> {
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut F,
-    ) -> VerificationResult<VerifierResult<F>>
+    ) -> VerificationResult<SumcheckOpening<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -219,7 +212,7 @@ impl<F: Field> Config<F> {
             // Update the sum
             *sum = univariate_evaluate(&univariate, round_challenge);
         }
-        Ok(VerifierResult {
+        Ok(SumcheckOpening {
             round_challenges,
             mask_rlc,
         })
@@ -249,7 +242,6 @@ fn eval_01<F: Field>(coefficients: &[F]) -> F {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Proptest based tests checking invariants and post conditions.
     use ark_std::rand::{
         distributions::{Distribution, Standard},
         rngs::StdRng,
@@ -316,7 +308,7 @@ mod tests {
         let mut covector = initial_covector.clone();
         let mut sum = initial_sum;
         let mut prover_state = ProverState::new_std(&ds);
-        let ProverResult {
+        let SumcheckOpening {
             round_challenges: point,
             mask_rlc,
         } = config.prove(
@@ -347,7 +339,7 @@ mod tests {
         // Verifier
         let mut verifier_sum = initial_sum;
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let VerifierResult {
+        let SumcheckOpening {
             round_challenges: verifier_point,
             mask_rlc: verifier_mask_rlc,
         } = config
