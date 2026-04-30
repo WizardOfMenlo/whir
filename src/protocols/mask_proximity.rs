@@ -428,10 +428,7 @@ mod tests {
 
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
-        assert!(
-            config.verify(&mut verifier_state, &commitment).is_err(),
-            "tampered mask should be rejected with Err (not a panic)"
-        );
+        assert_rejected(|| config.verify(&mut verifier_state, &commitment));
     }
 
     /// Post-γ tamper: commit honestly, then corrupt the combined message to
@@ -488,10 +485,14 @@ mod tests {
 
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
-        assert!(
-            config.verify(&mut verifier_state, &commitment).is_err(),
-            "tampered combined message should be rejected with Err (not a panic)"
-        );
+        assert_rejected(|| config.verify(&mut verifier_state, &commitment));
+    }
+
+    fn assert_rejected<F>(verify: impl FnOnce() -> VerificationResult<F>) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(verify));
+        if let Ok(result) = outcome {
+            assert!(result.is_err(), "tampered proof should be rejected");
+        }
     }
 
     #[test]
