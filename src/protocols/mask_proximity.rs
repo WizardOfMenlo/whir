@@ -250,9 +250,10 @@ impl<F: Field> Config<F> {
             &evaluations.points,
         ) {
             let shift = combined_rs.as_ref().map(|_| point.pow([msg_len as u64]));
+            // Direct indexing: c_zk_commit.interleaving_depth == 1 by Config::new.
             for i in 0..self.num_masks {
-                let original_val = row[i * self.c_zk_commit.interleaving_depth];
-                let fresh_val = row[(self.num_masks + i) * self.c_zk_commit.interleaving_depth];
+                let original_val = row[i];
+                let fresh_val = row[self.num_masks + i];
 
                 // Enc(ξ*_i, r*_i)(point) = ξ*_i(point) + point^msg_len · r*_i(point)
                 let mut expected = univariate_evaluate(&combined_msgs[i], point);
@@ -427,7 +428,10 @@ mod tests {
 
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
-        assert!(config.verify(&mut verifier_state, &commitment).is_err());
+        assert!(
+            config.verify(&mut verifier_state, &commitment).is_err(),
+            "tampered mask should be rejected with Err (not a panic)"
+        );
     }
 
     /// Post-γ tamper: commit honestly, then corrupt the combined message to
@@ -484,7 +488,10 @@ mod tests {
 
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
         let commitment = config.receive_commitment(&mut verifier_state).unwrap();
-        assert!(config.verify(&mut verifier_state, &commitment).is_err());
+        assert!(
+            config.verify(&mut verifier_state, &commitment).is_err(),
+            "tampered combined message should be rejected with Err (not a panic)"
+        );
     }
 
     #[test]

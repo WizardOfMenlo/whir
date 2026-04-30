@@ -15,7 +15,7 @@ use crate::{
     algebra::{
         dot,
         embedding::{Embedding, Identity},
-        geometric_accumulate, lift, mixed_dot, scalar_mul, univariate_evaluate,
+        eq_weights, geometric_accumulate, lift, mixed_dot, scalar_mul, univariate_evaluate,
     },
     hash::Hash,
     protocols::{
@@ -68,33 +68,26 @@ impl<M: Embedding> Config<M> {
         target_config: IrsConfig<Identity<M::Target>>,
         out_domain_samples: usize,
         message_mask_length: usize,
-    ) -> Self
-    where
-        M: Default,
-    {
+    ) -> Self {
         assert_eq!(
             source_config.num_vectors, 1,
             "code-switch requires a single source vector"
         );
-        // TODO : add support for interleaving depth l
-        // Current commitment.open() gives l values per position and
-        // we need to remove the ood_points opening and account for
-        // it in code switch.
-        // Current accumulation will break if interleaving depth > 1
-        // Leaving this for now as after irs_commit is refactored we
-        // can add the proper implementation here in code switch.
         assert_eq!(
-            source_config.interleaving_depth, 1,
-            "Currently code switch supports interleaving depth = 1"
+            target_config.num_vectors, 1,
+            "code-switch requires a single target vector"
         );
-        assert_eq!(
-            source_config.interleaving_depth, target_config.interleaving_depth,
-            "source and target interleaving_depth must match"
-        );
+        // Target encodes one polynomial of length ℓ = source.message_length()
+        // under C' = D^{ι_t}. The IRS splits the input of length ℓ into ι_t
+        // parallel slices of length ℓ/ι_t, each encoded under D.
         assert_eq!(
             target_config.vector_size,
-            source_config.message_length() * target_config.interleaving_depth,
-            "target vector_size must equal source message_length × target interleaving_depth"
+            source_config.message_length(),
+            "target vector_size must equal source message_length (target encodes one polynomial of length ℓ)"
+        );
+        assert!(
+            target_config.interleaving_depth.is_power_of_two(),
+            "target.interleaving_depth must be a power of 2"
         );
         // Theorem 9.6: ℓ_zk ≥ r (mask oracle must cover source randomness).
         if message_mask_length > 0 {
@@ -106,7 +99,11 @@ impl<M: Embedding> Config<M> {
         }
         assert!(
             source_config.mask_length == 0 || message_mask_length > 0,
-            "source with message_mask_length > 0 requires ZK mode (message_mask_length > 0)"
+            "source with mask_length > 0 (IRS randomness) requires ZK mode (message_mask_length > 0)"
+        );
+        assert!(
+            source_config.interleaving_depth.is_power_of_two(),
+            "source.interleaving_depth must be a power of 2"
         );
 
         Self {
@@ -123,6 +120,25 @@ impl<M: Embedding> Config<M> {
     }
 
     /// Prove the code-switch.
+    ///
+    /// # Soundness-critical inputs
+    ///
+    /// `folding_randomness` is the **sumcheck folding randomness `γ`** that
+    /// was sampled from the verifier in the preceding sumcheck protocol
+    /// (Construction 6.3, p.37-38). It must be the same `γ` the verifier
+    /// derived from the transcript — it is NOT caller-supplied randomness.
+    ///
+    /// Used by the verifier to collapse ι_s parallel codeword columns into a
+    /// single value of `Fold(f, γ)` via `eq_weights(γ)`. Passing different
+    /// randomness here breaks IOR completeness; passing locally-sampled
+    /// randomness breaks Fiat-Shamir soundness in the composed protocol.
+    ///
+    /// `message` is `Fold(f, γ)`, the post-sumcheck polynomial of length
+    /// `source.message_length()`.
+    ///
+    /// `mask_input` is `(r || s)` from the orchestrator's shared mask tree
+    /// (see Construction 9.7 Step 1, p.55). Must be `None` when
+    /// `message_mask_length == 0`.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn prove<H, R>(
         &self,
@@ -130,6 +146,7 @@ impl<M: Embedding> Config<M> {
         message: Vec<M::Target>,
         witness: &IrsWitness<M::Source, M::Target>,
         covector: &mut [M::Target],
+        folding_randomness: &[M::Target],
         mask_input: &MaskInput<'_, M::Target>,
     ) -> Witness<M::Target>
     where
@@ -142,6 +159,13 @@ impl<M: Embedding> Config<M> {
     {
         assert_eq!(message.len(), self.source.message_length());
         assert_eq!(covector.len(), self.covector_length());
+        assert_eq!(
+            1 << folding_randomness.len(),
+            self.source.interleaving_depth,
+            "folding_randomness must have length log2(source.interleaving_depth) ({} != log2({}))",
+            folding_randomness.len(),
+            self.source.interleaving_depth,
+        );
         let mask_msg: Option<&[M::Target]> = match &mask_input {
             MaskInput::Disabled => {
                 assert_eq!(
@@ -183,7 +207,7 @@ impl<M: Embedding> Config<M> {
 
         // Step 5: batching — Construction 9.7 Step 5, p.55
         let num_ood = self.out_domain_samples;
-        let num_in_domain = source_evaluations.matrix.len();
+        let num_in_domain = source_evaluations.points.len();
         let batching_coeffs =
             geometric_challenge::<_, M::Target>(prover_state, 1 + num_ood + num_in_domain);
         let (&original_sl_coeff, constraint_rlc_coeffs) = batching_coeffs.split_first().unwrap();
@@ -219,6 +243,11 @@ impl<M: Embedding> Config<M> {
 
     /// Verify the code-switch.
     ///
+    /// `folding_randomness` is the **sumcheck folding randomness `γ`** the
+    /// verifier derived from the transcript during the preceding sumcheck.
+    /// It must match what the prover received from the same transcript —
+    /// not caller-supplied randomness. See `prove` doc for details.
+    ///
     /// Returns the target commitment. In ZK mode, the caller **must**
     /// additionally run `mask_proximity::verify` on the mask commitment
     /// to ensure the mask oracle `(r, s)` is close to a `C_zk` codeword.
@@ -228,6 +257,7 @@ impl<M: Embedding> Config<M> {
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut M::Target,
+        folding_randomness: &[M::Target],
         commitment: &Commitment<M::Target>,
     ) -> VerificationResult<Commitment<M::Target>>
     where
@@ -237,6 +267,16 @@ impl<M: Embedding> Config<M> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
+        assert_eq!(
+            1 << folding_randomness.len(),
+            self.source.interleaving_depth,
+            "folding_randomness must have length log2(source.interleaving_depth) ({} != log2({}))",
+            folding_randomness.len(),
+            self.source.interleaving_depth,
+        );
+
+        let collapse_weights = eq_weights(folding_randomness);
+
         // Step 1: target commitment — Construction 9.7 Step 1, p.55
         // Mask oracle is committed in the shared mask tree by the orchestrator.
         let target_commitment = self.target.receive_commitment(verifier_state)?;
@@ -251,21 +291,22 @@ impl<M: Embedding> Config<M> {
 
         // Step 4: source opening — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.verify(verifier_state, &[commitment])?;
+        let collapsed_values: Vec<M::Target> = source_evaluations
+            .matrix
+            .chunks_exact(self.source.interleaving_depth)
+            .map(|row| mixed_dot(self.source.embedding(), &collapse_weights, row))
+            .collect();
 
         // Step 5: batching + μ' — Construction 9.7 Decision phase, p.55
         let num_ood = self.out_domain_samples;
-        let num_in_domain = source_evaluations.matrix.len();
+        let num_in_domain = source_evaluations.points.len();
         let coeffs = geometric_challenge(verifier_state, 1 + num_ood + num_in_domain);
         let (&original_sl_coeff, all_rlc_coeffs) = coeffs.split_first().unwrap();
         let (ood_rlc_coeffs, in_domain_rlc_coeffs) = all_rlc_coeffs.split_at(num_ood);
 
         *sum = original_sl_coeff * *sum
             + dot(ood_rlc_coeffs, &ood_answers)
-            + mixed_dot(
-                self.source.embedding(),
-                in_domain_rlc_coeffs,
-                &source_evaluations.matrix,
-            );
+            + dot(in_domain_rlc_coeffs, &collapsed_values);
 
         Ok(target_commitment)
     }
@@ -304,35 +345,57 @@ mod tests {
         where
             M: Default + 'static,
         {
-            let valid_sizes = (1..=256)
+            // Sizes ≥ 4 to allow ι ∈ {1, 2, 4} with non-trivial message_length.
+            let valid_sizes = (4..=256)
                 .filter(|&n| ntt::next_order::<M::Source>(n) == Some(n))
+                .filter(|&n| n.is_power_of_two())
                 .collect::<Vec<_>>();
 
-            // fresh_s_len: extra padding beyond r for ZK privacy (0..=3)
             (
                 select(valid_sizes),
-                0_usize..=3,
-                bool::ANY,
-                0_usize..=5,
-                0_usize..=3,
+                0_usize..=3,                 // src_mask_len
+                bool::ANY,                   // zk
+                0_usize..=5,                 // out_domain_samples
+                0_usize..=3,                 // fresh_s_len
+                select(vec![1_usize, 2, 4]), // ι_s (source interleaving)
             )
-                .prop_flat_map(move |(size, src_mask_len, zk, ood, fresh_s_len)| {
+                .prop_flat_map(move |(size, src_mask_len, zk, ood, fresh_s_len, iota_s)| {
                     let source_mask = if zk { src_mask_len.max(1) } else { 0 };
-                    let source = IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask, 1);
+                    let source =
+                        IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask, iota_s);
                     (source, Just(zk), Just(ood), Just(fresh_s_len))
                 })
                 .prop_flat_map(|(source, zk, ood, fresh_s_len)| {
                     let msg_len = source.message_length();
+                    // ι_t must divide msg_len and be a power of 2.
+                    let iota_t_choices: Vec<usize> = [1usize, 2, 4]
+                        .into_iter()
+                        .filter(|&i| msg_len.is_multiple_of(i))
+                        .collect();
+                    (
+                        Just(source),
+                        Just(zk),
+                        Just(ood),
+                        Just(fresh_s_len),
+                        select(iota_t_choices),
+                    )
+                })
+                .prop_flat_map(|(source, zk, ood, fresh_s_len, iota_t)| {
+                    let msg_len = source.message_length();
                     let target_mask = usize::from(zk);
+                    // target.vector_size = ℓ (= source.message_length()).
+                    // target.interleaving_depth = ι_t structures the encoding as
+                    // C' = D^{ι_t} where D's message length = ℓ / ι_t.
                     let target = IrsConfig::<Identity<M::Target>>::arbitrary(
                         Identity::new(),
                         1,
                         msg_len,
                         target_mask,
-                        1,
+                        iota_t,
                     );
-                    let r = source.mask_length * source.num_messages();
-                    // message_mask_length = r + fresh_s_len (paper: ℓ_zk ≥ r, Section 9.2)
+                    // r = post-fold randomness length = source.mask_length
+                    // (the ι_s parallel masks fold into one of length mask_length).
+                    let r = source.mask_length;
                     let message_mask_length = if zk { r + fresh_s_len } else { 0 };
                     (Just(source), target, Just(ood), Just(message_mask_length))
                 })
@@ -342,11 +405,43 @@ mod tests {
         }
     }
 
-    /// Simulate what the orchestrator does: build (r || fresh_s) from the
-    /// source IRS witness. Returns empty vec in non-ZK mode.
+    /// Fold ι parallel chunks of length `chunk_len` into a single chunk via
+    /// eq_weights(γ). Layout: values = [chunk_0; chunk_1; ...; chunk_{ι-1}],
+    /// each of length `chunk_len`. Returns Σ_l eq_weights(γ)[l] · chunk_l.
+    fn fold_chunks<F: Field>(values: &[F], chunk_len: usize, folding_randomness: &[F]) -> Vec<F> {
+        let iota = 1 << folding_randomness.len();
+        assert_eq!(values.len(), chunk_len * iota);
+        if iota == 1 {
+            return values.to_vec();
+        }
+        let weights = eq_weights(folding_randomness);
+        (0..chunk_len)
+            .map(|j| {
+                (0..iota)
+                    .map(|l| weights[l] * values[l * chunk_len + j])
+                    .sum()
+            })
+            .collect()
+    }
+
+    /// Sample folding randomness of length log2(source.interleaving_depth).
+    fn sample_folding_randomness<F: Field>(
+        config: &Config<Identity<F>>,
+        rng: &mut impl RngCore,
+    ) -> Vec<F>
+    where
+        Standard: Distribution<F>,
+    {
+        let log_iota = config.source.interleaving_depth.trailing_zeros() as usize;
+        random_vector(rng, log_iota)
+    }
+
+    /// Simulate what the orchestrator does: build (r || fresh_s) where r is
+    /// the *folded* source IRS randomness. Returns empty vec in non-ZK mode.
     fn build_mask_msg<F: Field>(
         config: &Config<Identity<F>>,
         source_witness: &IrsWitness<F>,
+        folding_randomness: &[F],
         rng: &mut impl RngCore,
     ) -> Vec<F>
     where
@@ -355,7 +450,11 @@ mod tests {
         if config.message_mask_length == 0 {
             return Vec::new();
         }
-        let mut mask = lift(config.source.embedding(), &source_witness.masks);
+        // Lift ι parallel masks (total length source.mask_length × ι) and fold
+        // chunks of length source.mask_length down to a single chunk.
+        let raw = lift(config.source.embedding(), &source_witness.masks);
+        let mut mask = fold_chunks(&raw, config.source.mask_length, folding_randomness);
+        // Append fresh padding s of length message_mask_length - source.mask_length.
         mask.extend(random_vector::<F>(
             rng,
             config.message_mask_length - mask.len(),
@@ -377,7 +476,9 @@ mod tests {
         Hash: ProverMessage<[u8]>,
     {
         let mut rng = StdRng::seed_from_u64(seed);
-        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        // Commit the full pre-fold vector of length source.vector_size
+        // (= ι · message_length), which IRS encodes as ι parallel codewords.
+        let f_full: Vec<F> = random_vector(&mut rng, config.source.vector_size);
         let initial_sum: F = rng.gen();
 
         let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
@@ -388,14 +489,21 @@ mod tests {
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut prover_state = ProverState::new_std(&ds);
-        let source_witness = config.source.commit(&mut prover_state, &[&message]);
-        let mask_msg = build_mask_msg(config, &source_witness, &mut rng);
+        let source_witness = config.source.commit(&mut prover_state, &[&f_full]);
+
+        // Sample γ for sumcheck folding (length log2(ι)).
+        let folding_randomness = sample_folding_randomness(config, &mut rng);
+        // Post-fold message Fold(f_full, γ) of length message_length.
+        let folded_message =
+            fold_chunks(&f_full, config.source.message_length(), &folding_randomness);
+        let mask_msg = build_mask_msg(config, &source_witness, &folding_randomness, &mut rng);
 
         let witness = config.prove(
             &mut prover_state,
-            message.clone(),
+            folded_message.clone(),
             &source_witness,
             &mut covector,
+            &folding_randomness,
             &mask_input(&mask_msg),
         );
         let proof = prover_state.proof();
@@ -407,10 +515,15 @@ mod tests {
             .unwrap();
         let mut verifier_sum = initial_sum;
         let _ = config
-            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
+            .verify(
+                &mut verifier_state,
+                &mut verifier_sum,
+                &folding_randomness,
+                &source_commitment,
+            )
             .unwrap();
         verifier_state.check_eof().unwrap();
-        assert_eq!(witness.message, message);
+        assert_eq!(witness.message, folded_message);
     }
 
     fn test_ior_identity_config<F: Field + Codec<[u8]>>(seed: u64, config: &Config<Identity<F>>)
@@ -419,7 +532,7 @@ mod tests {
         Hash: ProverMessage<[u8]>,
     {
         let mut rng = StdRng::seed_from_u64(seed);
-        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let f_full: Vec<F> = random_vector(&mut rng, config.source.vector_size);
 
         let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
         covector.resize(config.covector_length(), F::ZERO);
@@ -429,22 +542,34 @@ mod tests {
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut prover_state = ProverState::new_std(&ds);
-        let source_witness = config.source.commit(&mut prover_state, &[&message]);
-        let mask_msg = build_mask_msg(config, &source_witness, &mut rng);
+        let source_witness = config.source.commit(&mut prover_state, &[&f_full]);
 
-        // h = [f; mask_msg] or just f
+        let folding_randomness = sample_folding_randomness(config, &mut rng);
+        let folded_message =
+            fold_chunks(&f_full, config.source.message_length(), &folding_randomness);
+        let mask_msg = build_mask_msg(config, &source_witness, &folding_randomness, &mut rng);
+
+        // h is the post-fold polynomial whose inner product with covector
+        // should equal the verifier sum:
+        // - non-ZK: h = folded_message (length message_length)
+        // - ZK:     h = [folded_message; mask_msg] (length message_length + l_zk)
         let h: Vec<F> = if mask_msg.is_empty() {
-            message.clone()
+            folded_message.clone()
         } else {
-            message.iter().chain(mask_msg.iter()).copied().collect()
+            folded_message
+                .iter()
+                .chain(mask_msg.iter())
+                .copied()
+                .collect()
         };
         let initial_mu = dot(&h, &covector);
 
         let _witness = config.prove(
             &mut prover_state,
-            message,
+            folded_message,
             &source_witness,
             &mut covector,
+            &folding_randomness,
             &mask_input(&mask_msg),
         );
         let proof = prover_state.proof();
@@ -456,7 +581,12 @@ mod tests {
             .unwrap();
         let mut verifier_sum = initial_mu;
         let _ = config
-            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
+            .verify(
+                &mut verifier_state,
+                &mut verifier_sum,
+                &folding_randomness,
+                &source_commitment,
+            )
             .unwrap();
         verifier_state.check_eof().unwrap();
 
@@ -473,22 +603,30 @@ mod tests {
             .session(&format!("Test at {}:{}", file!(), line!()))
             .instance(&instance);
         let mut rng = StdRng::seed_from_u64(seed);
-        let message: Vec<F> = random_vector(&mut rng, config.source.message_length());
+        let f_full: Vec<F> = random_vector(&mut rng, config.source.vector_size);
 
         let mut covector: Vec<F> = random_vector(&mut rng, config.source.message_length());
         covector.resize(config.covector_length(), F::ZERO);
-        let initial_mu = dot(&message, &covector);
 
-        // Commit honest f, but prove with f' ≠ f
+        // Commit honest f_full, fold to get the honest post-fold message.
         let mut prover_state = ProverState::new_std(&ds);
-        let source_witness = config.source.commit(&mut prover_state, &[&message]);
-        let mut tampered = message.clone();
+        let source_witness = config.source.commit(&mut prover_state, &[&f_full]);
+        let folding_randomness = sample_folding_randomness(config, &mut rng);
+        let folded_message =
+            fold_chunks(&f_full, config.source.message_length(), &folding_randomness);
+
+        // For non-ZK and source.mask_length == 0, h = folded_message and identity holds.
+        let initial_mu = dot(&folded_message, &covector);
+
+        // Tamper the post-fold message before proving.
+        let mut tampered = folded_message.clone();
         tampered[0] += F::ONE;
         let _witness = config.prove(
             &mut prover_state,
             tampered,
             &source_witness,
             &mut covector,
+            &folding_randomness,
             &MaskInput::Disabled,
         );
         let proof = prover_state.proof();
@@ -500,12 +638,17 @@ mod tests {
             .unwrap();
         let mut verifier_sum = initial_mu;
         let _ = config
-            .verify(&mut verifier_state, &mut verifier_sum, &source_commitment)
+            .verify(
+                &mut verifier_state,
+                &mut verifier_sum,
+                &folding_randomness,
+                &source_commitment,
+            )
             .unwrap();
         verifier_state.check_eof().unwrap();
 
         // Sum diverges — downstream sumcheck would reject
-        assert_ne!(dot(&message, &covector), verifier_sum);
+        assert_ne!(dot(&folded_message, &covector), verifier_sum);
     }
 
     fn test<F: Field + Codec<[u8]> + 'static>()
