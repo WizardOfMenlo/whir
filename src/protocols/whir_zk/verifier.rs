@@ -121,16 +121,6 @@ where
         assert_eq!(evaluations.len(), num_forms * num_vectors);
 
         // =====================================================================
-        // Bind linear forms into Fiat-Shamir transcript
-        // =====================================================================
-        for weight in weights {
-            for &expected in weight.transcript_identity().iter() {
-                let read: F = self.verifier_state.prover_message()?;
-                verify!(read == expected);
-            }
-        }
-
-        // =====================================================================
         // Step 2: Blinding Polynomial Claim Generation
         //
         // V → P: β ←$ F_q
@@ -609,6 +599,27 @@ impl<F: FftField> Config<F> {
     /// `evaluations` is row-major: `evaluations[j * n + i]` = ⟨wⱼ, fᵢ⟩.
     ///
     /// Returns a [`FinalClaim`](whir::FinalClaim) for the blinded polynomial instance.
+    ///
+    /// # Soundness — caller must bind `weights` into the transcript
+    ///
+    /// **The caller is responsible for absorbing `weights` into the
+    /// Fiat-Shamir transcript before invoking this function**, mirroring
+    /// the binding performed on the prover side. This protocol does not
+    /// bind them internally.
+    ///
+    /// Without this binding, a malicious prover can present an honest proof
+    /// for `⟨w, f⟩ = e` under a different form `w'` whose multilinear
+    /// extension agrees with `w` at the final sumcheck point, causing the
+    /// verifier to accept the false claim `⟨w', f⟩ = e`. The only check on
+    /// the form is a single-point MLE equality, and that point is
+    /// form-independent without binding.
+    ///
+    /// The caller may bind the forms in any way that uniquely determines
+    /// them in the transcript — for example by absorbing each form's
+    /// defining data field-by-field, by hashing the forms and absorbing the
+    /// digest, or by encoding them into [`crate::transcript::DomainSeparator::instance`]
+    /// before constructing the transcript. The chosen binding must match
+    /// what the prover did before calling [`Self::prove`](Self::prove).
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn verify<H>(
         &self,

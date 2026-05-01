@@ -4,7 +4,7 @@ mod covector;
 mod multilinear_extension;
 mod univariate_evaluation;
 
-use std::{any::Any, borrow::Cow};
+use std::any::Any;
 
 use ark_ff::Field;
 use static_assertions::assert_obj_safe;
@@ -45,8 +45,6 @@ pub trait LinearForm<F: Field>: Any + Send + Sync {
     ///
     /// This function is only called by the prover.
     fn accumulate(&self, accumulator: &mut [F], scalar: F);
-
-    fn transcript_identity(&self) -> Cow<'_, [F]>;
 }
 
 /// A linear form that can be evaluated on a subfield vector.
