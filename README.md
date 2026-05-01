@@ -5,6 +5,30 @@ By [Gal Arnon](https://galarnon42.github.io/) [Alessandro Chiesa](https://ic-peo
 
 **WARNING:** This is an academic prototype and has not received careful code review. This implementation is NOT ready for production use.
 
+## Note on linear form binding
+
+The WHIR and zkWHIR `prove`/`verify` entry points treat public linear forms
+(weights) as caller-supplied inputs and do not absorb them into the
+Fiat-Shamir transcript internally. Callers are expected to bind the forms
+into the transcript themselves, matching whatever scheme they prefer.
+
+This is required for soundness: without form binding, the verifier's only
+check on each form is a single-point MLE equality at a form-independent
+random point, which an adversarial prover can exploit by substituting an
+alternate form that happens to agree at that point.
+
+Any deterministic encoding works, as long as the prover and verifier
+perform the *same* absorption in the *same* order. Common options:
+
+- Absorb each form's defining data field-by-field as prover messages.
+- Hash the forms and absorb the digest.
+- Encode the forms via `DomainSeparator::instance(...)` when constructing
+  the transcript.
+
+Mismatched or omitted bindings will either reject honest proofs or weaken
+soundness, so it is worth treating this step as part of the protocol setup
+rather than an optional optimization.
+
 <p align="center">
     <a href="https://github.com/WizardOfMenlo/whir/blob/main/LICENSE-APACHE"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
     <a href="https://github.com/WizardOfMenlo/whir/blob/main/LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
