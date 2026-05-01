@@ -205,7 +205,7 @@ impl<M: Embedding> Config<M> {
         // Step 4: in-domain queries — Construction 9.7 Step 4, p.55
         let source_evaluations = self.source.open(prover_state, &[witness]);
 
-        // Step 5: batching — Construction 9.7 Step 5, p.55
+        // Step 4.1: batching — Construction 9.7 Step 4, p.55
         let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.points.len();
         let batching_coeffs =
@@ -258,7 +258,7 @@ impl<M: Embedding> Config<M> {
         verifier_state: &mut VerifierState<H>,
         sum: &mut M::Target,
         folding_randomness: &[M::Target],
-        commitment: &Commitment<M::Target>,
+        commitment: &IrsCommitment<M::Target>,
     ) -> VerificationResult<Commitment<M::Target>>
     where
         H: DuplexSpongeInterface,
@@ -297,7 +297,7 @@ impl<M: Embedding> Config<M> {
             .map(|row| mixed_dot(self.source.embedding(), &collapse_weights, row))
             .collect();
 
-        // Step 5: batching + μ' — Construction 9.7 Decision phase, p.55
+        // Step 4.1: batching + μ' — Construction 9.7 Decision phase, p.55
         let num_ood = self.out_domain_samples;
         let num_in_domain = source_evaluations.points.len();
         let coeffs = geometric_challenge(verifier_state, 1 + num_ood + num_in_domain);
