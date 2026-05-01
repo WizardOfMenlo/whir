@@ -5,37 +5,29 @@ By [Gal Arnon](https://galarnon42.github.io/) [Alessandro Chiesa](https://ic-peo
 
 **WARNING:** This is an academic prototype and has not received careful code review. This implementation is NOT ready for production use.
 
-## ⚠️ Soundness — caller must bind public linear forms into the transcript
+## Note on linear form binding
 
-The WHIR and zkWHIR `prove`/`verify` entry points **do not** absorb the public
-linear forms (a.k.a. weights) into the Fiat-Shamir transcript. **Binding the
-forms is the caller's responsibility**, and forgetting to do so breaks
-soundness.
+The WHIR and zkWHIR `prove`/`verify` entry points treat public linear forms
+(weights) as caller-supplied inputs and do not absorb them into the
+Fiat-Shamir transcript internally. Callers are expected to bind the forms
+into the transcript themselves, matching whatever scheme they prefer.
 
-Without form binding, a malicious prover can take an honest proof for
-`⟨w, f⟩ = e` and present it to the verifier under an alternate form `w'`
-whose multilinear extension agrees with `w` at the final sumcheck point.
-The verifier accepts the false claim `⟨w', f⟩ = e` because the only check
-on the form is a single-point MLE equality — and that point is
-form-independent unless the form is bound in the transcript.
+This is required for soundness: without form binding, the verifier's only
+check on each form is a single-point MLE equality at a form-independent
+random point, which an adversarial prover can exploit by substituting an
+alternate form that happens to agree at that point.
 
-### What the caller must do
-
-Before calling `prove`, the caller must absorb the linear forms into the
-prover's transcript. Before calling `verify`, the caller must mirror the
-same absorption (reading and checking against the verifier's local copy)
-in the verifier's transcript. Any binding scheme is acceptable as long as
-it uniquely determines the forms in the transcript:
+Any deterministic encoding works, as long as the prover and verifier
+perform the *same* absorption in the *same* order. Common options:
 
 - Absorb each form's defining data field-by-field as prover messages.
 - Hash the forms and absorb the digest.
-- Encode the forms into `DomainSeparator::instance(...)` before
-  constructing the transcript.
-- Or any other deterministic encoding the prover and verifier agree on.
+- Encode the forms via `DomainSeparator::instance(...)` when constructing
+  the transcript.
 
-The prover and verifier **must** use the exact same binding sequence.
-Failure to bind, or mismatched bindings between the two sides, breaks
-soundness or rejects honest proofs.
+Mismatched or omitted bindings will either reject honest proofs or weaken
+soundness, so it is worth treating this step as part of the protocol setup
+rather than an optional optimization.
 
 <p align="center">
     <a href="https://github.com/WizardOfMenlo/whir/blob/main/LICENSE-APACHE"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
