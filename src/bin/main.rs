@@ -202,20 +202,15 @@ where
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
         let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-        let linear_form_refs: Vec<&dyn LinearForm<M::Target>> = linear_forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<M::Target>)
-            .collect();
         let final_claim = params
-            .verify(
-                &mut verifier_state,
-                &[&commitment],
-                &evaluations,
-                &linear_form_refs,
-            )
+            .verify(&mut verifier_state, &[&commitment], &evaluations)
             .unwrap();
         final_claim
-            .verify(linear_form_refs.iter().copied())
+            .verify(
+                linear_forms
+                    .iter()
+                    .map(|w| w.as_ref() as &dyn LinearForm<M::Target>),
+            )
             .unwrap();
     }
     println!(

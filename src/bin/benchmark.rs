@@ -185,7 +185,7 @@ where
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
             let final_claim = params
-                .verify(&mut verifier_state, &[&commitment], &evaluations, &[])
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
                 .unwrap();
             final_claim.verify([]).unwrap();
         }
@@ -267,19 +267,16 @@ where
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
 
             let commitment = params.receive_commitment(&mut verifier_state).unwrap();
-            let weight_refs: Vec<&dyn LinearForm<M::Target>> = weights
-                .iter()
-                .map(|w| w.as_ref() as &dyn LinearForm<M::Target>)
-                .collect();
             let final_claim = params
+                .verify(&mut verifier_state, &[&commitment], &evaluations)
+                .unwrap();
+            final_claim
                 .verify(
-                    &mut verifier_state,
-                    &[&commitment],
-                    &evaluations,
-                    &weight_refs,
+                    weights
+                        .iter()
+                        .map(|w| w.as_ref() as &dyn LinearForm<M::Target>),
                 )
                 .unwrap();
-            final_claim.verify(weight_refs.iter().copied()).unwrap();
         }
 
         let whir_verifier_time = whir_verifier_time.elapsed();
