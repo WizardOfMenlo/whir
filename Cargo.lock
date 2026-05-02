@@ -1642,8 +1642,9 @@ dependencies = [
 
 [[package]]
 name = "spongefish"
-version = "0.6.0"
-source = "git+https://github.com/z-tech/spongefish?rev=0b565ac#0b565acbc093560391781def5674a489c93666a7"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09a2b3b9771b4059c025d11039a51294f7ccd9430d594e79aada5fca1e7cb4e3"
 dependencies = [
  "ark-ff",
  "ark-serialize",
