@@ -76,7 +76,7 @@ impl<F: Field> Config<F> {
             };
         }
 
-        // Even more trivial non-zk protocol: send f an r directly.
+        // Even more trivial non-zk protocol: send f and r directly.
         if !self.masked {
             prover_state.prover_messages(&vector);
             prover_state.prover_messages(&witness.masks);

@@ -26,6 +26,7 @@ use crate::{
         Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult,
         VerifierMessage, VerifierState,
     },
+    verify,
 };
 
 /// Code-switching IOR config with optional ZK.
@@ -125,7 +126,7 @@ impl<M: Embedding> Config<M> {
 
     /// Length of the covector for this code-switch.
     pub fn covector_length(&self) -> usize {
-        self.source.message_length() + self.message_mask_length.max(self.source.mask_length)
+        self.source.message_length() + self.message_mask_length
     }
 
     /// Prove the code-switch.
@@ -291,13 +292,7 @@ impl<M: Embedding> Config<M> {
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert_eq!(
-            1 << folding_randomness.len(),
-            self.source.interleaving_depth,
-            "folding_randomness must have length log2(source.interleaving_depth) ({} != log2({}))",
-            folding_randomness.len(),
-            self.source.interleaving_depth,
-        );
+        verify!(1 << folding_randomness.len() == self.source.interleaving_depth);
 
         let collapse_weights = eq_weights(folding_randomness);
 

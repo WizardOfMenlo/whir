@@ -94,7 +94,7 @@ impl<F: Field> Config<F> {
 
         let mut mask_sum = F::ZERO;
         let mut mask_rlc = F::ONE;
-        if !masks.is_empty() {
+        if self.mask_length > 0 && self.num_rounds > 0 {
             let sum_multiple = F::from(1 << self.num_rounds.saturating_sub(1));
             mask_sum = masks.chunks_exact(self.mask_length).map(eval_01).sum::<F>() * sum_multiple;
             prover_state.prover_message(&mask_sum);
@@ -142,7 +142,7 @@ impl<F: Field> Config<F> {
             let r = prover_state.verifier_message::<F>();
             round_challenges.push(r);
             *sum = (c2 * r + c1) * r + c0;
-            if !masks.is_empty() {
+            if self.mask_length > 0 && self.num_rounds > 0 {
                 let masked_sum = univariate_evaluate(&univariate, r);
                 mask_sum = masked_sum - mask_rlc * *sum;
             }

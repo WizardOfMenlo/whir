@@ -71,8 +71,8 @@ pub struct Config<F: Field> {
 /// Prover output from the commit phase.
 #[must_use]
 pub struct Witness<F: Field> {
-    pub mask_witness: IrsWitness<F>,
-    pub fresh_msgs: Vec<Vec<F>>,
+    pub(crate) mask_witness: IrsWitness<F>,
+    pub(crate) fresh_msgs: Vec<Vec<F>>,
 }
 
 /// Verifier output from the commit phase.
@@ -180,7 +180,7 @@ impl<F: Field> Config<F> {
         // Step 2: compute and send combined polynomials + IRS randomness
         let irs_masks_per_vector =
             self.c_zk_commit.mask_length * self.c_zk_commit.interleaving_depth;
-        debug_assert_eq!(
+        assert_eq!(
             witness.mask_witness.masks.len(),
             2 * self.num_masks * irs_masks_per_vector
         );

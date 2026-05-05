@@ -13,7 +13,7 @@ impl DuplexSpongeInterface for MockSponge<'_> {
 
     fn absorb(&mut self, input: &[Self::U]) -> &mut Self {
         if let Some(absorb) = self.absorb.as_mut() {
-            assert!(&absorb[..input.len()] == input);
+            assert_eq!(&absorb[..input.len()], input);
             *absorb = &absorb[input.len()..];
         }
         self
@@ -27,10 +27,10 @@ impl DuplexSpongeInterface for MockSponge<'_> {
 
     fn ratchet(&mut self) -> &mut Self {
         if let Some(absorb) = self.absorb.as_mut() {
-            assert!(&absorb[..7] == b"RATCHET");
+            assert_eq!(&absorb[..7], b"RATCHET");
             *absorb = &absorb[7..];
         }
-        assert!(&self.squeeze[..7] == b"RATCHET");
+        assert_eq!(&self.squeeze[..7], b"RATCHET");
         self.squeeze = &self.squeeze[7..];
         self
     }
