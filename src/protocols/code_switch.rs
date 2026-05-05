@@ -261,6 +261,21 @@ impl<M: Embedding> Config<M> {
     /// additionally run `mask_proximity::verify` on the mask commitment
     /// to ensure the mask oracle `(r, s)` is close to a `C_zk` codeword.
     /// Without this check, soundness is not guaranteed.
+    ///
+    /// # Soundness composition note
+    ///
+    /// This verifier checks the OOD/in-domain consistency of the target
+    /// codeword `g` against transcript-supplied mask values `s(α_i)`. It
+    /// does **not** check that `s` is close to a `C_zk` codeword — that
+    /// is the job of mask-proximity (Construction 7.2). Without a
+    /// downstream mask-proximity invocation against the same `s`, a
+    /// prover can submit non-codeword mask values that satisfy the OOD
+    /// equation, breaking the soundness reduction in Theorem 9.10.
+    ///
+    /// In the orchestrated WHIR protocol, the orchestrator owns the
+    /// per-round mask tree containing `s` and is responsible for
+    /// running `mask_proximity::verify` on that same tree before
+    /// accepting the round.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn verify<H>(
         &self,
