@@ -488,10 +488,20 @@ mod tests {
         assert_rejected(|| config.verify(&mut verifier_state, &commitment));
     }
 
-    fn assert_rejected<F>(verify: impl FnOnce() -> VerificationResult<F>) {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(verify));
-        if let Ok(result) = outcome {
-            assert!(result.is_err(), "tampered proof should be rejected");
+    fn assert_rejected<T>(verify: impl FnOnce() -> VerificationResult<T>) {
+        #[cfg(feature = "verifier_panics")]
+        use std::panic::AssertUnwindSafe;
+        #[cfg(feature = "verifier_panics")]
+        {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(verify));
+            assert!(
+                !matches!(result, Ok(Ok(_))),
+                "verification unexpectedly succeeded"
+            );
+        }
+        #[cfg(not(feature = "verifier_panics"))]
+        {
+            assert!(verify().is_err(), "verification unexpectedly succeeded");
         }
     }
 

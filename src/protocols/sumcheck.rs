@@ -3,7 +3,7 @@
 use std::fmt;
 
 use ark_ff::Field;
-use ark_std::rand::{distributions::Standard, prelude::Distribution, CryptoRng, RngCore};
+use ark_std::rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -14,11 +14,10 @@ use crate::{
         sumcheck::{compute_sumcheck_polynomial, fold, fold_and_compute_polynomial},
         univariate_evaluate,
     },
-    hash::Hash,
     protocols::proof_of_work,
     transcript::{
-        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
-        VerificationResult, VerifierMessage, VerifierState,
+        codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverState, VerificationResult,
+        VerifierMessage, VerifierState,
     },
     type_info::Type,
     utils::chunks_exact_or_empty,
@@ -81,8 +80,6 @@ impl<F: Field> Config<F> {
         F: Codec<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        Standard: Distribution<F>,
-        Hash: ProverMessage<[H::U]>,
     {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
@@ -175,7 +172,6 @@ impl<F: Field> Config<F> {
         F: Codec<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
     {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
@@ -290,7 +286,6 @@ mod tests {
     where
         F: Field + Codec<[u8]> + 'static,
         Standard: Distribution<F>,
-        Hash: crate::transcript::ProverMessage<[u8]>,
     {
         // Pseudo-random Instance
         let instance = U64(seed);
@@ -359,7 +354,6 @@ mod tests {
     fn test<F: Field + Codec<[u8]> + 'static>()
     where
         Standard: Distribution<F>,
-        Hash: crate::transcript::ProverMessage<[u8]>,
     {
         crate::tests::init();
         proptest!(|(seed: u64, config in Config::arbitrary())| {

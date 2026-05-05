@@ -96,6 +96,15 @@ impl<M: Embedding> Config<M> {
                 "message_mask_length ({message_mask_length}) must be >= source randomness length ({})",
                 source_config.mask_length,
             );
+            assert!(
+                message_mask_length - source_config.mask_length >= out_domain_samples,
+                "the sampled randomness (s) length must be covering all the out of domain sample requests"
+            );
+            assert!(
+                target_config.mask_length
+                    >= target_config.in_domain_samples + target_config.out_domain_samples,
+                "target encoder violates: t' > r', number of queries should be covered by random mask"
+            );
         }
         assert!(
             source_config.mask_length == 0 || message_mask_length > 0,
@@ -330,9 +339,7 @@ mod tests {
     use ark_std::rand::{
         distributions::Standard, prelude::Distribution, rngs::StdRng, Rng, SeedableRng,
     };
-    use proptest::{
-        bool, prelude::Strategy, prop_assume, proptest, sample::select, strategy::Just,
-    };
+    use proptest::{bool, prelude::Strategy, prop_assume, proptest, sample::select};
 
     use super::*;
     use crate::{
@@ -351,57 +358,72 @@ mod tests {
                 .filter(|&n| n.is_power_of_two())
                 .collect::<Vec<_>>();
 
-            (
+            let scalars = (
                 select(valid_sizes),
-                0_usize..=3,                 // src_mask_len
-                bool::ANY,                   // zk
-                0_usize..=5,                 // out_domain_samples
-                0_usize..=3,                 // fresh_s_len
+                0_usize..=3, // src_mask_len (source IRS randomness, post-fold)
+                bool::ANY,   // zk
+                0_usize..=5, // ood (= code-switch t_ood)
+                0_usize..=5, // fresh_s_len (≥ ood for assumption (c))
                 select(vec![1_usize, 2, 4]), // ι_s (source interleaving)
+                0_usize..=10, // target.in_domain_samples (t'_in)
+                0_usize..=10, // target.out_domain_samples (t'_out)
+            );
+
+            scalars.prop_flat_map(
+                move |(size, src_mask_len, zk, ood, fresh_s_len, iota_s, t_in, t_out)| {
+                    // Bound 3 assumption (c): ℓ_zk - r ≥ t_ood ⇒ fresh_s_len ≥ ood.
+                    let fresh_s_len = if zk {
+                        fresh_s_len.max(ood)
+                    } else {
+                        fresh_s_len
+                    };
+                    // Bound 4 assumption (a): target.mask_length ≥ t' = t_in + t_out.
+                    let target_mask = if zk { t_in + t_out } else { 0 };
+                    // ZK with source.mask_length = 0 is valid: the assert
+                    // `source.mask_length == 0 || message_mask_length > 0`
+                    // is trivially satisfied. Allows testing the corner
+                    // where the mask oracle has only fresh randomness.
+                    let source_mask = if zk { src_mask_len } else { 0 };
+
+                    IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask, iota_s)
+                        .prop_flat_map(move |source| {
+                            // ι_t must divide msg_len and be a power of 2.
+                            let msg_len = source.message_length();
+                            let iota_t_choices: Vec<usize> = [1, 2, 4]
+                                .into_iter()
+                                .filter(|&i| msg_len.is_multiple_of(i))
+                                .collect();
+
+                            select(iota_t_choices).prop_flat_map(move |iota_t| {
+                                // target.vector_size = ℓ; C' = D^{ι_t} where D's
+                                // message length = ℓ / ι_t.
+                                let target = IrsConfig::<Identity<M::Target>>::arbitrary(
+                                    Identity::new(),
+                                    1,
+                                    msg_len,
+                                    target_mask,
+                                    iota_t,
+                                );
+                                let source = source.clone();
+                                target.prop_map(move |mut target| {
+                                    // IrsConfig::arbitrary samples query counts in
+                                    // [0,10] independently of mask_length; pin them
+                                    // to the values target_mask was sized for so
+                                    // assumption (a) holds.
+                                    if zk {
+                                        target.in_domain_samples = t_in;
+                                        target.out_domain_samples = t_out;
+                                    }
+                                    // r = post-fold randomness length (ι_s parallel
+                                    // masks fold to a single length-mask_length chunk).
+                                    let r = source.mask_length;
+                                    let message_mask_length = if zk { r + fresh_s_len } else { 0 };
+                                    Self::new(source.clone(), target, ood, message_mask_length)
+                                })
+                            })
+                        })
+                },
             )
-                .prop_flat_map(move |(size, src_mask_len, zk, ood, fresh_s_len, iota_s)| {
-                    let source_mask = if zk { src_mask_len.max(1) } else { 0 };
-                    let source =
-                        IrsConfig::arbitrary(embedding.clone(), 1, size, source_mask, iota_s);
-                    (source, Just(zk), Just(ood), Just(fresh_s_len))
-                })
-                .prop_flat_map(|(source, zk, ood, fresh_s_len)| {
-                    let msg_len = source.message_length();
-                    // ι_t must divide msg_len and be a power of 2.
-                    let iota_t_choices: Vec<usize> = [1usize, 2, 4]
-                        .into_iter()
-                        .filter(|&i| msg_len.is_multiple_of(i))
-                        .collect();
-                    (
-                        Just(source),
-                        Just(zk),
-                        Just(ood),
-                        Just(fresh_s_len),
-                        select(iota_t_choices),
-                    )
-                })
-                .prop_flat_map(|(source, zk, ood, fresh_s_len, iota_t)| {
-                    let msg_len = source.message_length();
-                    let target_mask = usize::from(zk);
-                    // target.vector_size = ℓ (= source.message_length()).
-                    // target.interleaving_depth = ι_t structures the encoding as
-                    // C' = D^{ι_t} where D's message length = ℓ / ι_t.
-                    let target = IrsConfig::<Identity<M::Target>>::arbitrary(
-                        Identity::new(),
-                        1,
-                        msg_len,
-                        target_mask,
-                        iota_t,
-                    );
-                    // r = post-fold randomness length = source.mask_length
-                    // (the ι_s parallel masks fold into one of length mask_length).
-                    let r = source.mask_length;
-                    let message_mask_length = if zk { r + fresh_s_len } else { 0 };
-                    (Just(source), target, Just(ood), Just(message_mask_length))
-                })
-                .prop_map(move |(source, target, ood, message_mask_length)| {
-                    Self::new(source, target, ood, message_mask_length)
-                })
         }
     }
 
@@ -711,13 +733,15 @@ mod tests {
     #[test]
     fn test_tampered_ood() {
         crate::tests::init();
-        let configs = Config::arbitrary(Identity::<fields::Field64>::new());
-        proptest!(|(seed: u64, config in configs)| {
-            prop_assume!(
+        let configs = Config::arbitrary(Identity::<fields::Field64>::new()).prop_filter(
+            "non-ZK with ood > 0",
+            |config| {
                 config.message_mask_length == 0
                     && config.source.mask_length == 0
                     && config.out_domain_samples > 0
-            );
+            },
+        );
+        proptest!(|(seed: u64, config in configs)| {
             test_tampered_ood_config(seed, &config);
         });
     }
