@@ -33,6 +33,29 @@ where
     /// N original commitment trees, while subsequent rounds verify the single batched vector.
     ///
     /// Returns the constraint evaluation point and values of deferred constraints.
+    ///
+    /// # Soundness — caller must bind public linear forms into the transcript
+    ///
+    /// **The caller is responsible for absorbing the public linear forms
+    /// into the Fiat-Shamir transcript before invoking this function**,
+    /// mirroring the binding performed on the prover side. This protocol
+    /// does not bind them internally.
+    ///
+    /// Without this binding, a malicious prover can present an honest proof
+    /// for `⟨w, f⟩ = e` under a different form `w'` whose multilinear
+    /// extension agrees with `w` at the final sumcheck point, causing the
+    /// verifier to accept the false claim `⟨w', f⟩ = e`. The only check on
+    /// the form is a single-point MLE equality (performed in
+    /// [`FinalClaim::verify`]), and that point is form-independent without
+    /// binding.
+    ///
+    /// The caller may bind the forms in any way that uniquely determines
+    /// them in the transcript — for example by absorbing each form's
+    /// defining data field-by-field, by hashing the forms and absorbing the
+    /// digest, or by encoding them into
+    /// [`crate::transcript::DomainSeparator::instance`] before constructing
+    /// the transcript. The chosen binding must match what the prover did
+    /// before calling [`Self::prove`](super::Config::prove).
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, name = "whir::verify"))]
     pub fn verify<H>(
