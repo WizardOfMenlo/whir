@@ -82,6 +82,11 @@ where
             (oods_evals, oods_matrix)
         };
 
+        for &expected in evaluations {
+            let read: M::Target = verifier_state.prover_message()?;
+            verify!(read == expected);
+        }
+
         // Random linear combination of the vectors.
         let vector_rlc_coeffs = geometric_challenge(verifier_state, num_vectors);
 

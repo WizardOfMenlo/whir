@@ -129,6 +129,10 @@ where
             (oods_evals, oods_matrix)
         };
 
+        for eval in evaluations.iter() {
+            prover_state.prover_message(eval);
+        }
+
         // Random linear combination of the vectors.
         let vector_rlc_coeffs: Vec<M::Target> = geometric_challenge(prover_state, num_vectors);
         assert_eq!(vector_rlc_coeffs[0], M::Target::ONE);
