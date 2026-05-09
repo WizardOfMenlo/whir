@@ -628,6 +628,27 @@ impl<F: FftField> Config<F> {
     }
 
     /// zkWHIR 2.0 prover — Alternative Randomness Sampling.
+    ///
+    /// # Soundness — caller must bind `linear_forms` into the transcript
+    ///
+    /// **The caller is responsible for absorbing `linear_forms` into the
+    /// Fiat-Shamir transcript before invoking this function.** This protocol
+    /// does not bind them internally.
+    ///
+    /// Without this binding, the resulting proof is vulnerable to the
+    /// linear-form replay attack: a malicious prover can generate an honest
+    /// proof for `⟨w, f⟩ = e` and present it to the verifier under a
+    /// different form `w'` whose multilinear extension agrees with `w` at the
+    /// final sumcheck point. The verifier accepts the false claim
+    /// `⟨w', f⟩ = e` because the only check on the form is a single-point
+    /// MLE equality, and that point is form-independent without binding.
+    ///
+    /// The caller may bind the forms in any way that uniquely determines
+    /// them in the transcript — for example by absorbing each form's
+    /// defining data field-by-field, by hashing the forms and absorbing the
+    /// digest, or by encoding them into [`crate::transcript::DomainSeparator::instance`]
+    /// before constructing the transcript. The verifier must mirror the
+    /// caller's chosen binding before calling [`Self::verify`](Self::verify).
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     #[allow(clippy::needless_pass_by_value)]
     pub fn prove<'a, H, R>(

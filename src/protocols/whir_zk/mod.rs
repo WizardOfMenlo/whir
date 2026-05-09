@@ -1208,4 +1208,133 @@ mod tests {
             "cross-form forgery must be rejected"
         );
     }
+
+    /// Linear form replay: w' with same MLE at the final point
+    /// but different inner product. Verifier must reject when the caller
+    /// binds weights into the transcript before calling prove/verify.
+    ///
+    /// This test demonstrates the recommended pattern: the caller absorbs
+    /// weights into the transcript at the call site (caller responsibility).
+    /// With this in place, a forged w' is caught at the binding read step.
+    #[test]
+    fn test_rejects_forged_linear_form_with_same_mle_at_eval_point() {
+        use crate::algebra::eval_eq;
+
+        let config = make_test_config();
+        let mut rng = ark_std::test_rng();
+
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let embedding = config.embedding();
+        let honest_eval = form.evaluate(embedding, &vector);
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
+
+        // Honest prover with caller-side weight binding before `prove`.
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let witness = config.commit(&mut ps, &[&vector]);
+
+        // Caller binds weight covectors into the transcript.
+        for f in &forms {
+            let mut cv = vec![F::ZERO; vector.len()];
+            f.accumulate(&mut cv, F::ONE);
+            for v in &cv {
+                ps.prover_message(v);
+            }
+        }
+
+        config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(vector.as_slice())],
+            witness,
+            to_prove_forms(&forms, vector.len()),
+            Cow::Borrowed(&[honest_eval]),
+        );
+        let proof = ps.proof();
+
+        // Honest verification with the matching caller-side binding — succeeds
+        // and yields the evaluation_point used by the attack.
+        let eval_point = {
+            let weights: Vec<&dyn LinearForm<F>> = forms
+                .iter()
+                .map(|f| f.as_ref() as &dyn LinearForm<F>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs).unwrap();
+
+            for f in &forms {
+                let mut cv = vec![F::ZERO; vector.len()];
+                f.accumulate(&mut cv, F::ONE);
+                for &expected in &cv {
+                    let read: F = vs.prover_message().unwrap();
+                    assert_eq!(read, expected);
+                }
+            }
+
+            config
+                .verify(&mut vs, &weights, &[honest_eval], &commitments)
+                .unwrap()
+                .evaluation_point
+        };
+
+        // Build forged form w' via two-index delta on the honest covector.
+        // w'[a] += eq(r, b), w'[b] -= eq(r, a) preserves the MLE at r.
+        let mut forged_weights = vec![F::ZERO; TEST_NUM_COEFFS];
+        forms[0].accumulate(&mut forged_weights, F::ONE);
+
+        let mut eq_r = vec![F::ZERO; TEST_NUM_COEFFS];
+        eval_eq(&mut eq_r, &eval_point, F::ONE);
+
+        let (a, b) = (0, 1);
+        forged_weights[a] += eq_r[b];
+        forged_weights[b] -= eq_r[a];
+        let forged_form = Covector::new(forged_weights);
+
+        // Sanity: MLE agrees at r, but inner product differs.
+        assert_eq!(
+            forged_form.mle_evaluate(&eval_point),
+            forms[0].as_ref().mle_evaluate(&eval_point),
+        );
+        assert_ne!(forged_form.evaluate(embedding, &vector), honest_eval);
+
+        // Attack: try to verify with forged form w' against the proof.
+        // The caller-side binding catches the forgery — when the verifier
+        // absorbs w'.accumulate() it doesn't match the bytes the prover
+        // wrote (which encoded w), so the read check fails.
+        let forged_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(forged_form)];
+        let attack_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let weights: Vec<&dyn LinearForm<F>> = forged_forms
+                .iter()
+                .map(|f| f.as_ref() as &dyn LinearForm<F>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs)?;
+
+            // Caller-side binding with the FORGED form catches the attack:
+            // the bytes in the proof encode w (what the honest prover bound),
+            // but the verifier here computes w'.accumulate() — they mismatch.
+            for f in &forged_forms {
+                let mut cv = vec![F::ZERO; vector.len()];
+                f.accumulate(&mut cv, F::ONE);
+                for &expected in &cv {
+                    let read: F = vs.prover_message()?;
+                    crate::verify!(read == expected);
+                }
+            }
+
+            config
+                .verify(&mut vs, &weights, &[honest_eval], &commitments)
+                .and_then(|fc| fc.verify(weights.iter().copied()))
+        }));
+
+        assert!(
+            !matches!(attack_result, Ok(Ok(()))),
+            "REGRESSION : caller-bound w must reject forged w' with matching MLE at r"
+        );
+    }
 }
