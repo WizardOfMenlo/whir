@@ -73,11 +73,11 @@ where
         Hash: ProverMessage<[H::U]>,
     {
         let num_vectors = commitments.len() * self.initial_committer.num_vectors;
-        verify!(evaluations.len().is_multiple_of(num_vectors));
-        let num_linear_forms = evaluations.len() / num_vectors;
         if num_vectors == 0 {
             return Ok(FinalClaim::default());
         }
+        verify!(evaluations.len().is_multiple_of(num_vectors));
+        let num_linear_forms = evaluations.len() / num_vectors;
 
         // Complete the constraint and evaluation matrix with OODs and their cross-terms.
         let (oods_evals, oods_matrix) = {
@@ -233,6 +233,7 @@ where
         // Compute the claimed rlc of the linear form mles from the sumcheck invariant.
         let poly_eval = MultilinearExtension::new(final_sumcheck_randomness.0)
             .evaluate(&Identity::new(), &final_vector);
+        verify!(poly_eval != M::Target::ZERO);
         let mut linear_form_rlc = the_sum / poly_eval;
 
         // Subtract all internal linear forms.
