@@ -147,13 +147,7 @@ where
         let rate = message_length as f64 / codeword_length as f64;
 
         // Pick in- and out-of-domain samples.
-        // η = slack to Johnson bound. We pick η = √ρ / 20.
-        // TODO: Optimize picking η.
-        let johnson_slack = if unique_decoding {
-            0.0
-        } else {
-            rate.sqrt() / 20.
-        };
+        let johnson_slack = johnson_slack(unique_decoding, rate);
         #[allow(clippy::cast_sign_loss)]
         let out_domain_samples = if unique_decoding {
             0
@@ -392,33 +386,8 @@ where
             );
         }
 
-        // Get in-domain openings
         let (indices, points) = self.in_domain_challenges(prover_state);
-
-        // For each commitment, send the selected rows to the verifier
-        // and collect them in the evaluation matrix.
-        let stride = witnesses.len() * self.num_cols();
-        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
-        let mut submatrix = Vec::with_capacity(indices.len() * self.num_cols());
-        let mut matrix_col_offset = 0;
-        for witness in witnesses {
-            submatrix.clear();
-            for (point_index, &code_index) in indices.iter().enumerate() {
-                let row = &witness.matrix
-                    [code_index * self.num_cols()..(code_index + 1) * self.num_cols()];
-                submatrix.extend_from_slice(row);
-
-                let matrix_row = &mut matrix[point_index * stride..(point_index + 1) * stride];
-                matrix_row[matrix_col_offset..matrix_col_offset + self.num_cols()]
-                    .copy_from_slice(row);
-            }
-            prover_state.prover_hint_ark(&submatrix);
-            self.matrix_commit
-                .open(prover_state, &witness.matrix_witness, &indices);
-            matrix_col_offset += self.num_cols();
-        }
-
-        Evaluations { points, matrix }
+        self.open_inner(prover_state, witnesses, &indices, points)
     }
 
     /// Verifies one or more openings and returns the in-domain evaluations.
@@ -442,11 +411,110 @@ where
             );
         }
 
-        // Get in-domain openings
         let (indices, points) = self.in_domain_challenges(verifier_state);
+        self.verify_inner(verifier_state, commitments, &indices, points)
+    }
 
-        // Receive (as a hint) a matrix of all the columns of all the commitments
-        // corresponding to the in-domain opening rows.
+    /// Opens the commitment at caller-provided codeword indices.
+    ///
+    /// Like [`open`] but does not sample indices from the transcript.
+    /// Used for the Γ consistency check in zkWHIR 2.0.
+    pub fn open_at_indices<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        witnesses: &[&Witness<M::Source, M::Target>],
+        indices: &[usize],
+    ) -> Evaluations<M::Source>
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        Hash: ProverMessage<[H::U]>,
+    {
+        assert!(
+            indices.iter().all(|&i| i < self.codeword_length),
+            "index out of bounds: all indices must be < codeword_length ({})",
+            self.codeword_length
+        );
+        let generator = self.generator();
+        let points: Vec<M::Source> = indices.iter().map(|&i| generator.pow([i as u64])).collect();
+        self.open_inner(prover_state, witnesses, indices, points)
+    }
+
+    /// Verifies an opening at caller-provided codeword indices.
+    ///
+    /// Like [`verify`] but does not sample indices from the transcript.
+    /// Used for the Γ consistency check in zkWHIR 2.0.
+    pub fn verify_at_indices<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+        commitments: &[&Commitment<M::Target>],
+        indices: &[usize],
+    ) -> VerificationResult<Evaluations<M::Source>>
+    where
+        H: DuplexSpongeInterface,
+        u8: Decoding<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        assert!(
+            indices.iter().all(|&i| i < self.codeword_length),
+            "index out of bounds: all indices must be < codeword_length ({})",
+            self.codeword_length
+        );
+        let generator = self.generator();
+        let points: Vec<M::Source> = indices.iter().map(|&i| generator.pow([i as u64])).collect();
+        self.verify_inner(verifier_state, commitments, indices, points)
+    }
+
+    /// Shared open logic for [`open`] and [`open_at_indices`].
+    fn open_inner<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        witnesses: &[&Witness<M::Source, M::Target>],
+        indices: &[usize],
+        points: Vec<M::Source>,
+    ) -> Evaluations<M::Source>
+    where
+        H: DuplexSpongeInterface,
+        R: RngCore + CryptoRng,
+        Hash: ProverMessage<[H::U]>,
+    {
+        let stride = witnesses.len() * self.num_cols();
+        let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
+        let mut submatrix = Vec::with_capacity(indices.len() * self.num_cols());
+        let mut matrix_col_offset = 0;
+        for witness in witnesses {
+            submatrix.clear();
+            for (point_index, &code_index) in indices.iter().enumerate() {
+                let row = &witness.matrix
+                    [code_index * self.num_cols()..(code_index + 1) * self.num_cols()];
+                submatrix.extend_from_slice(row);
+
+                let matrix_row = &mut matrix[point_index * stride..(point_index + 1) * stride];
+                matrix_row[matrix_col_offset..matrix_col_offset + self.num_cols()]
+                    .copy_from_slice(row);
+            }
+            prover_state.prover_hint_ark(&submatrix);
+            self.matrix_commit
+                .open(prover_state, &witness.matrix_witness, indices);
+            matrix_col_offset += self.num_cols();
+        }
+
+        Evaluations { points, matrix }
+    }
+
+    /// Shared verify logic for [`verify`] and [`verify_at_indices`].
+    fn verify_inner<H>(
+        &self,
+        verifier_state: &mut VerifierState<H>,
+        commitments: &[&Commitment<M::Target>],
+        indices: &[usize],
+        points: Vec<M::Source>,
+    ) -> VerificationResult<Evaluations<M::Source>>
+    where
+        H: DuplexSpongeInterface,
+        u8: Decoding<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
         let stride = commitments.len() * self.num_cols();
         let mut matrix = vec![M::Source::ZERO; indices.len() * stride];
         let mut matrix_col_offset = 0;
@@ -455,10 +523,9 @@ where
             self.matrix_commit.verify(
                 verifier_state,
                 &commitment.matrix_commitment,
-                &indices,
+                indices,
                 &submatrix,
             )?;
-            // Horizontally concatenate matrices.
             if stride != 0 && self.num_cols() != 0 {
                 for (dst, src) in zip_strict(
                     matrix.chunks_exact_mut(stride),
@@ -576,6 +643,17 @@ where
     }
 }
 
+/// Compute the Johnson bound slack η = √ρ / 20.
+///
+/// Returns 0 for unique decoding.
+pub(crate) fn johnson_slack(unique_decoding: bool, rate: f64) -> f64 {
+    if unique_decoding {
+        0.0
+    } else {
+        rate.sqrt() / 20.
+    }
+}
+
 /// Return the number of in-domain queries.
 ///
 /// This is used by [`whir_zk`].
@@ -586,21 +664,14 @@ pub(crate) fn num_in_domain_queries(
     security_target: f64,
     rate: f64,
 ) -> usize {
-    // Pick in- and out-of-domain samples.
-    // η = slack to Johnson bound. We pick η = √ρ / 20.
-    // TODO: Optimize picking η.
-    let johnson_slack = if unique_decoding {
-        0.0
-    } else {
-        rate.sqrt() / 20.
-    };
+    let slack = johnson_slack(unique_decoding, rate);
     // Query error is (1 - δ)^q, so we compute 1 - δ
     let per_sample = if unique_decoding {
         // Unique decoding bound: δ = (1 - ρ) / 2
         f64::midpoint(1., rate)
     } else {
         // Johnson bound: δ = 1 - √ρ - η
-        rate.sqrt() + johnson_slack
+        rate.sqrt() + slack
     };
     (security_target / (-per_sample.log2())).ceil() as usize
 }

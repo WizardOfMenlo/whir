@@ -1,25 +1,32 @@
 use std::borrow::Cow;
 
 use ark_ff::FftField;
+use ark_std::rand::{CryptoRng, RngCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use super::{Config, Witness};
+use super::{
+    utils::{
+        build_beq_tables, build_fold_args, build_weight_covectors, compute_eq_weights,
+        compute_rs_fold_blinding_coeffs, gamma_to_f_hat_indices, ProtocolDims, RsFoldCoeffs,
+    },
+    Config,
+};
+#[cfg(feature = "parallel")]
+use crate::utils::workload_size;
 use crate::{
     algebra::{
+        dot,
         embedding::Identity,
-        linear_form::{Covector, Evaluate, LinearForm},
-        mixed_dot, scalar_mul_add,
+        geometric_sequence,
+        linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
+        multilinear_extend, univariate_evaluate, MultilinearPoint,
     },
     hash::Hash,
     protocols::{
-        whir::FinalClaim,
-        whir_zk::utils::{
-            build_combined_and_subproof_claims, fill_eq_weights_at_gamma_half,
-            fold_weight_to_mask_size, BlindingPolynomials,
-        },
+        geometric_challenge::geometric_challenge, irs_commit, whir, whir_zk::committer::Witness,
     },
     transcript::{
         codecs::U64, Codec, Decoding, DuplexSpongeInterface, ProverMessage, ProverState,
@@ -27,184 +34,623 @@ use crate::{
     },
 };
 
-/// Evaluate blinding polynomials at all gamma query points and accumulate beq weights.
+/// Send m̃ and ĝ_i evaluations at a single point z.
 ///
-/// For each gamma in `h_gammas`, computes `(m_eval, g_hat_evals, h_val)` per polynomial
-/// and accumulates `Sum_i tau2^i * beq_half(gamma_i, .)` into the batched beq covector.
+/// Used at OOD, STIR, and Γ points in Steps 5-6.
+fn send_blinding_evals<F, H, R>(
+    prover_state: &mut ProverState<H, R>,
+    z: F,
+    masking_coeffs_all: &[Vec<F>],
+    g_i_coeffs: &[Vec<F>],
+) where
+    F: FftField + Codec<[H::U]>,
+    H: DuplexSpongeInterface,
+    R: RngCore + CryptoRng,
+{
+    for m_coeffs in masking_coeffs_all {
+        let m_eval = univariate_evaluate(m_coeffs, z);
+        prover_state.prover_message(&m_eval);
+    }
+    for g_coeffs in g_i_coeffs {
+        let g_eval = univariate_evaluate(g_coeffs, z);
+        prover_state.prover_message(&g_eval);
+    }
+}
+
+/// Intermediate result from proving the blinded polynomial (Steps 2-6).
 ///
-/// Returns `(eval_results, beq_weight_accum)`:
-/// - `eval_results`: flat buffer with per-gamma stride `num_polynomials * (num_witness_variables + 2)`,
-///   laid out as `[m_eval, g_hat_0, ..., g_hat_{mu-1}, h_val]` per polynomial.
-/// - `beq_weight_accum`: full-size `(ell+1)`-variable beq covector for the blinding subproof.
-#[allow(clippy::too_many_lines)]
-#[cfg_attr(
-    feature = "tracing",
-    instrument(skip_all, name = "evaluate_gamma_block")
-)]
-fn evaluate_gamma_block<F: FftField>(
-    blinding_polynomials: &[BlindingPolynomials<F>],
-    h_gammas: &[F],
-    masking_challenge: F,
-    blinding_challenge: F,
-    tau2: F,
-    num_blinding_variables: usize,
-    num_witness_variables: usize,
-) -> (Vec<F>, Vec<F>) {
-    let num_polynomials = blinding_polynomials.len();
-    let half_size = 1usize << num_blinding_variables;
-    let weight_size = 1usize << (num_blinding_variables + 1);
-    let one_plus_rho = F::ONE + masking_challenge;
-    let neg_rho = -masking_challenge;
+/// Carries the values needed by Step 7 (blinding polynomial proof).
+#[must_use]
+#[derive(Debug)]
+struct BlindedProveResult<F> {
+    lambda_z_points: Vec<F>,
+    eq_weights: Vec<F>,
+    rho: F,
+    alpha_coeffs: Vec<F>,
+    dims: ProtocolDims,
+}
 
-    // Pre-fold m_poly over the -rho variable to halve all gamma-block dot products.
-    // Uses the identity: beq_full[2j] = beq_half[j] * (1+rho),
-    //                     beq_full[2j+1] = beq_half[j] * (-rho).
-    let folded_m_polys: Vec<Vec<F>> = blinding_polynomials
-        .iter()
-        .map(|bp| {
-            (0..half_size)
-                .map(|j| one_plus_rho * bp.m_poly[2 * j] + neg_rho * bp.m_poly[2 * j + 1])
-                .collect()
-        })
-        .collect();
+/// Result of Steps 2-4 (blinding claims, batching, f_zk formation, initial sumcheck).
+#[must_use]
+#[derive(Debug)]
+struct PrepareResult<F> {
+    f_zk: Vec<F>,
+    covector: Vec<F>,
+    the_sum: F,
+    rho: F,
+    alpha_coeffs: Vec<F>,
+    folding_randomness: MultilinearPoint<F>,
+}
 
-    // Pre-compute tau2 powers for the parallel gamma loop.
-    let num_gammas = h_gammas.len();
-    let tau2_powers = {
-        let mut powers = Vec::with_capacity(num_gammas);
-        let mut p = F::ONE;
-        for _ in 0..num_gammas {
-            powers.push(p);
-            p *= tau2;
-        }
-        powers
-    };
+/// Result of Step 5 (OOD/STIR queries and remaining WHIR rounds).
+#[must_use]
+#[derive(Debug)]
+struct OodStirResult<F> {
+    lambda_z_points: Vec<F>,
+    eq_weights: Vec<F>,
+    masking_coeffs_all: Vec<Vec<F>>,
+    g_i_coeffs: Vec<Vec<F>>,
+    gamma_points: Vec<F>,
+}
 
-    // Flat layout per gamma: [m_eval, g_hat_0, ..., g_hat_{mu-1}, h_val] × num_polynomials.
-    let stride_per_poly = num_witness_variables + 2;
-    let stride_per_gamma = num_polynomials * stride_per_poly;
-    let mut eval_results = vec![F::ZERO; num_gammas * stride_per_gamma];
+/// Shared context for proving the blinded polynomial (Steps 2-6).
+///
+/// Bundles config, transcript state, and protocol dimensions so that each
+/// step method only needs its step-specific arguments.
+struct BlindedProveCtx<'a, F: FftField, H: DuplexSpongeInterface, R: RngCore + CryptoRng> {
+    config: &'a Config<F>,
+    prover_state: &'a mut ProverState<H, R>,
+    dims: ProtocolDims,
+}
 
-    #[cfg(feature = "parallel")]
-    let beq_half_accum = {
-        let batch = {
-            let cores = rayon::current_num_threads();
-            num_gammas.div_ceil(cores).max(1)
+impl<F, H, R> BlindedProveCtx<'_, F, H, R>
+where
+    F: FftField + Codec<[H::U]>,
+    H: DuplexSpongeInterface<U = u8>,
+    R: RngCore + CryptoRng,
+    [u8; 32]: Decoding<[H::U]>,
+    U64: Codec<[H::U]>,
+    u8: Decoding<[H::U]>,
+    Hash: ProverMessage<[H::U]>,
+{
+    /// Steps 2-4: Blinding claims, multi-polynomial batching, form f_zk, initial sumcheck.
+    #[allow(clippy::too_many_lines)]
+    fn prepare_and_sumcheck(
+        &mut self,
+        vectors: Vec<Cow<'_, [F]>>,
+        g_polys: &[Vec<F>],
+        linear_forms: &[Box<dyn LinearForm<F>>],
+        evaluations: &[F],
+    ) -> PrepareResult<F> {
+        let num_vectors = self.dims.num_vectors;
+        let num_forms = linear_forms.len();
+        let size = self.dims.size;
+
+        // =====================================================================
+        // Step 2: Blinding Polynomial Claim Generation
+        //
+        // V → P: β ←$ F_q
+        // P constructs g(x̄) = Σᵢ₌₀^ν βⁱ · ĝᵢ(Φᵢ(x̄))
+        // P → V: G_j = ⟨w_j, g⟩ for each linear form w_j
+        // =====================================================================
+        let beta: F = self.prover_state.verifier_message();
+        let beta_powers = geometric_sequence(beta, self.dims.num_g_polys());
+
+        let compute_g = |hypercube_idx: usize| -> F {
+            let mut sum = F::ZERO;
+            for (i, &beta_pow) in beta_powers.iter().enumerate() {
+                let idx = self.dims.phi_i_bits(hypercube_idx, i);
+                sum += beta_pow * g_polys[i][idx];
+            }
+            sum
         };
-        let batch_stride = batch * stride_per_gamma;
-        eval_results
-            .par_chunks_mut(batch_stride)
-            .enumerate()
-            .fold(
-                || (vec![F::ZERO; half_size], vec![F::ZERO; half_size]),
-                |(mut accum, mut eq_buf), (chunk_idx, chunk)| {
-                    let base_gi = chunk_idx * batch;
-                    let chunk_gammas = chunk.len() / stride_per_gamma;
-                    let embedding = Identity::<F>::new();
-                    for local in 0..chunk_gammas {
-                        let gi = base_gi + local;
-                        let gamma = h_gammas[gi];
-                        let tau2_pow = tau2_powers[gi];
-                        let slot =
-                            &mut chunk[local * stride_per_gamma..(local + 1) * stride_per_gamma];
-                        fill_eq_weights_at_gamma_half(&mut eq_buf, gamma, num_blinding_variables);
-                        scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
-                        for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
-                            let off = poly_idx * stride_per_poly;
-                            slot[off] = eq_buf
-                                .iter()
-                                .zip(folded_m_polys[poly_idx].iter())
-                                .map(|(&e, &f)| e * f)
-                                .sum();
-                            for (j, g_hat) in bp.g_hats.iter().enumerate() {
-                                slot[off + 1 + j] =
-                                    one_plus_rho * mixed_dot(&embedding, &eq_buf, g_hat);
-                            }
-                            let mut h = slot[off];
-                            let mut bp_pow = blinding_challenge;
-                            let mut gp = gamma;
-                            for j in 0..bp.g_hats.len() {
-                                h += bp_pow * gp * slot[off + 1 + j];
-                                bp_pow *= blinding_challenge;
-                                gp = gp.square();
-                            }
-                            slot[off + 1 + num_witness_variables] = h;
-                        }
-                    }
-                    (accum, eq_buf)
-                },
-            )
-            .map(|(accum, _)| accum)
-            .reduce(
-                || vec![F::ZERO; half_size],
-                |mut a, b| {
-                    for (x, &y) in a.iter_mut().zip(b.iter()) {
-                        *x += y;
-                    }
-                    a
-                },
-            )
-    };
 
-    #[cfg(not(feature = "parallel"))]
-    let beq_half_accum = {
-        let embedding = Identity::<F>::new();
-        let mut eq_buf = vec![F::ZERO; half_size];
-        let mut accum = vec![F::ZERO; half_size];
-        for (gi, &gamma) in h_gammas.iter().enumerate() {
-            fill_eq_weights_at_gamma_half(&mut eq_buf, gamma, num_blinding_variables);
-            let tau2_pow = tau2_powers[gi];
-            scalar_mul_add(&mut accum, tau2_pow, &eq_buf);
-            for (poly_idx, bp) in blinding_polynomials.iter().enumerate() {
-                let off = gi * stride_per_gamma + poly_idx * stride_per_poly;
-                eval_results[off] = eq_buf
-                    .iter()
-                    .zip(folded_m_polys[poly_idx].iter())
-                    .map(|(&e, &f)| e * f)
-                    .sum();
-                for (j, g_hat) in bp.g_hats.iter().enumerate() {
-                    eval_results[off + 1 + j] =
-                        one_plus_rho * mixed_dot(&embedding, &eq_buf, g_hat);
+        #[cfg(feature = "parallel")]
+        let g_poly: Vec<F> = if size > workload_size::<F>() {
+            (0..size).into_par_iter().map(compute_g).collect()
+        } else {
+            (0..size).map(compute_g).collect()
+        };
+
+        #[cfg(not(feature = "parallel"))]
+        let g_poly: Vec<F> = (0..size).map(compute_g).collect();
+
+        // G_j = ⟨w_j, g⟩ for each linear form (g is shared across all witnesses)
+        let g_claims: Vec<F> = {
+            let mut buf = vec![F::ZERO; size];
+            let mut claims = Vec::with_capacity(linear_forms.len());
+            for w in linear_forms {
+                buf.fill(F::ZERO);
+                w.accumulate(&mut buf, F::ONE);
+                claims.push(dot(&buf, &g_poly));
+            }
+            claims
+        };
+
+        for g_claim in &g_claims {
+            self.prover_state.prover_message(g_claim);
+        }
+
+        for eval in evaluations {
+            self.prover_state.prover_message(eval);
+        }
+
+        // =====================================================================
+        // Step 2.5: Multi-polynomial batching
+        //
+        // V → P: α ←$ F_q (for n > 1; when n = 1, α = [1] with no transcript cost)
+        // Used to form f_combined = Σ αⁱ fᵢ before applying ρ.
+        // =====================================================================
+        let alpha_coeffs: Vec<F> = geometric_challenge(self.prover_state, num_vectors);
+
+        // =====================================================================
+        // Step 3: Preparation for WHIR Sumcheck Rounds
+        //
+        // V → P: ρ ←$ F_q \ {0}
+        // P forms f_zk(x̄) = ρ · f(x̄) + g(x̄)
+        // and proves: ρ·F + G = Σ_{b̄} w(f_zk(b̄), b̄)
+        // =====================================================================
+        let rho: F = self.prover_state.verifier_message();
+        assert!(
+            rho != F::ZERO,
+            "rho must not be zero (negligible probability)"
+        );
+
+        // f_combined = Σ αⁱ fᵢ, then f_zk = ρ·f_combined + g
+        let mut f_zk = {
+            let mut iter = vectors.into_iter();
+            let mut combined = iter.next().expect("vectors must be non-empty").into_owned();
+            // alpha_coeffs[0] = ONE, so combined starts as vectors[0]
+            for (vec_i, &alpha) in iter.zip(alpha_coeffs[1..].iter()) {
+                for (f, v) in combined.iter_mut().zip(vec_i.iter()) {
+                    *f += alpha * *v;
                 }
-                let mut h = eval_results[off];
-                let mut bp_pow = blinding_challenge;
-                let mut gp = gamma;
-                for j in 0..bp.g_hats.len() {
-                    h += bp_pow * gp * eval_results[off + 1 + j];
-                    bp_pow *= blinding_challenge;
-                    gp = gp.square();
-                }
-                eval_results[off + 1 + num_witness_variables] = h;
+            }
+            combined
+        };
+
+        #[cfg(feature = "parallel")]
+        if f_zk.len() > workload_size::<F>() {
+            f_zk.par_iter_mut()
+                .zip(g_poly.par_iter())
+                .for_each(|(f, &g)| *f = rho * *f + g);
+        } else {
+            for (f, &g) in f_zk.iter_mut().zip(g_poly.iter()) {
+                *f = rho * *f + g;
             }
         }
-        accum
-    };
 
-    // Reconstruct full-size beq_weight_accum from half-size accumulator.
-    let beq_weight_accum = {
-        let mut full = vec![F::ZERO; weight_size];
-        for j in 0..half_size {
-            full[2 * j] = one_plus_rho * beq_half_accum[j];
-            full[2 * j + 1] = neg_rho * beq_half_accum[j];
+        #[cfg(not(feature = "parallel"))]
+        for (f, &g) in f_zk.iter_mut().zip(g_poly.iter()) {
+            *f = rho * *f + g;
         }
-        full
-    };
+        drop(g_poly);
 
-    (eval_results, beq_weight_accum)
+        // combined_eval_j = dot(α, evaluations[j*n..(j+1)*n])
+        let combined_claims: Vec<F> = (0..num_forms)
+            .map(|j| {
+                let row = &evaluations[j * num_vectors..(j + 1) * num_vectors];
+                let combined_eval: F = alpha_coeffs.iter().zip(row).map(|(&a, &e)| a * e).sum();
+                rho * combined_eval + g_claims[j]
+            })
+            .collect();
+
+        // =====================================================================
+        // Step 4: WHIR Initial Round
+        //
+        // P ↔ V: s-round sumcheck on f_zk with weight w, yielding r̄ = {r₀..r_{s-1}}
+        // P then sends [[H]] = fold_k(ρ·f + g, r̄)
+        // =====================================================================
+        let constraint_rlc_coeffs: Vec<F> =
+            geometric_challenge(self.prover_state, linear_forms.len());
+        let mut covector = vec![F::ZERO; size];
+        for (coeff, lf) in constraint_rlc_coeffs.iter().zip(linear_forms.iter()) {
+            lf.accumulate(&mut covector, *coeff);
+        }
+
+        let mut the_sum: F = constraint_rlc_coeffs
+            .iter()
+            .zip(combined_claims.iter())
+            .map(|(&c, &eval)| c * eval)
+            .sum();
+
+        let folding_randomness = self.config.blinded_polynomial.initial_sumcheck.prove(
+            self.prover_state,
+            &mut f_zk,
+            &mut covector,
+            &mut the_sum,
+        );
+
+        PrepareResult {
+            f_zk,
+            covector,
+            the_sum,
+            rho,
+            alpha_coeffs,
+            folding_randomness,
+        }
+    }
+
+    /// Accumulate STIR constraints from OOD and in-domain evaluations into the
+    /// sumcheck state and transcript.
+    fn accumulate_stir_constraints(
+        prover_state: &mut ProverState<H, R>,
+        state: &mut whir::rounds::SumcheckState<'_, F>,
+        commitment: &irs_commit::Witness<F, F>,
+        in_domain: &irs_commit::Evaluations<F>,
+        initial_size: usize,
+    ) {
+        let stir_challenges: Vec<UnivariateEvaluation<F>> = commitment
+            .out_of_domain()
+            .evaluators(initial_size)
+            .chain(in_domain.evaluators(initial_size))
+            .collect();
+
+        let one_weight = [F::ONE];
+        let ood_evals = commitment.out_of_domain().values(&one_weight);
+        let num_ood = commitment.out_of_domain().points.len();
+        let embedding = Identity::new();
+
+        let stir_evaluations: Vec<F> = ood_evals
+            .chain(
+                stir_challenges[num_ood..]
+                    .iter()
+                    .map(|challenge| challenge.evaluate(&embedding, state.vector)),
+            )
+            .collect();
+
+        let stir_rlc_coeffs: Vec<F> = geometric_challenge(prover_state, stir_challenges.len());
+        UnivariateEvaluation::accumulate_many(&stir_challenges, state.covector, &stir_rlc_coeffs);
+        *state.the_sum += dot(&stir_rlc_coeffs, &stir_evaluations);
+
+        debug_assert_eq!(
+            dot(state.vector, state.covector),
+            *state.the_sum,
+            "invariant broken after STIR accumulation"
+        );
+    }
+
+    /// Step 5: OOD/STIR queries, STIR constraint accumulation, and remaining WHIR rounds.
+    ///
+    /// Takes ownership of `f_hat_polys` so it can be freed after OOD evaluations,
+    /// before the memory-intensive WHIR rounds begin.
+    #[allow(clippy::too_many_arguments)]
+    fn ood_stir_and_rounds(
+        &mut self,
+        state: &mut whir::rounds::SumcheckState<'_, F>,
+        alpha_coeffs: &[F],
+        rho: F,
+        folding_randomness: MultilinearPoint<F>,
+        f_hat_witness: &irs_commit::Witness<F, F>,
+        f_hat_polys: Vec<Vec<F>>,
+        masking_polys: &[Vec<F>],
+        g_polys: &[Vec<F>],
+    ) -> OodStirResult<F> {
+        let mu = self.dims.mu;
+        let size = self.dims.size;
+
+        let round_config = &self.config.blinded_polynomial.round_configs[0];
+        let folded_f_zk_commitment = round_config
+            .irs_committer
+            .commit(self.prover_state, &[state.vector.as_slice()]);
+        round_config.pow.prove(self.prover_state);
+        let in_domain = self
+            .config
+            .blinded_polynomial
+            .initial_committer
+            .open(self.prover_state, &[f_hat_witness]);
+
+        let r_bar = folding_randomness.0;
+        let eq_weights = compute_eq_weights(&r_bar);
+        let RsFoldCoeffs {
+            masking_coeffs_all,
+            g_i_coeffs,
+        } = compute_rs_fold_blinding_coeffs(
+            &eq_weights,
+            g_polys,
+            masking_polys,
+            alpha_coeffs,
+            rho,
+            self.dims,
+        );
+
+        let mut lambda_z_points: Vec<F> = Vec::new();
+
+        // Precompute combined f̂ for OOD MLE evaluations.
+        // When n=1, borrow directly to avoid a full 2^μ allocation.
+        let f_hat_combined: Cow<'_, [F]> = if f_hat_polys.len() == 1 {
+            Cow::Borrowed(&f_hat_polys[0])
+        } else {
+            Cow::Owned(
+                (0..size)
+                    .map(|k| {
+                        alpha_coeffs
+                            .iter()
+                            .zip(f_hat_polys.iter())
+                            .map(|(&a, p)| a * p[k])
+                            .sum()
+                    })
+                    .collect(),
+            )
+        };
+
+        // --- OOD responses ---
+        for &z in &folded_f_zk_commitment.out_of_domain().points {
+            let fold_point = build_fold_args(&r_bar, z, mu);
+            let ood_f_hat = multilinear_extend(&f_hat_combined, &fold_point);
+            self.prover_state.prover_message(&ood_f_hat);
+            send_blinding_evals(self.prover_state, z, &masking_coeffs_all, &g_i_coeffs);
+            lambda_z_points.push(z);
+        }
+
+        // Release f̂ data before WHIR rounds.
+        drop(f_hat_combined);
+        drop(f_hat_polys);
+
+        // --- STIR responses ---
+        for &z in &in_domain.points {
+            send_blinding_evals(self.prover_state, z, &masking_coeffs_all, &g_i_coeffs);
+            lambda_z_points.push(z);
+        }
+
+        Self::accumulate_stir_constraints(
+            self.prover_state,
+            state,
+            &folded_f_zk_commitment,
+            &in_domain,
+            round_config.initial_size(),
+        );
+
+        // Round 0 sumcheck
+        let folding_randomness = round_config.sumcheck.prove(
+            self.prover_state,
+            state.vector,
+            state.covector,
+            state.the_sum,
+        );
+
+        // Remaining standard WHIR rounds
+        let remaining = whir::rounds::prove_remaining_rounds(
+            &self.config.blinded_polynomial.round_configs,
+            &whir::rounds::FinalRoundConfig {
+                sumcheck: &self.config.blinded_polynomial.final_sumcheck,
+                pow: &self.config.blinded_polynomial.final_pow,
+            },
+            self.prover_state,
+            state,
+            folded_f_zk_commitment,
+            &folding_randomness,
+        );
+
+        OodStirResult {
+            lambda_z_points,
+            eq_weights,
+            masking_coeffs_all,
+            g_i_coeffs,
+            gamma_points: remaining.first_in_domain_points,
+        }
+    }
+
+    /// Step 6: Γ consistency check.
+    ///
+    /// Opens [[f̂]] at Γ indices and sends blinding evaluations for each γ ∈ Γ.
+    fn gamma_check(
+        &mut self,
+        f_hat_witness: &irs_commit::Witness<F, F>,
+        masking_coeffs_all: &[Vec<F>],
+        g_i_coeffs: &[Vec<F>],
+        gamma_points: &[F],
+        lambda_z_points: &mut Vec<F>,
+    ) {
+        let gamma_f_hat_indices = gamma_to_f_hat_indices(gamma_points, self.config);
+
+        // Writes [[f̂]] openings at Γ indices to the transcript.
+        // The verifier uses these to reconstruct fold(r̄, [[f̂]])(γ).
+        // Return value (Evaluations) is unused: the prover already knows the values.
+        let _f_hat_openings = self
+            .config
+            .blinded_polynomial
+            .initial_committer
+            .open_at_indices(self.prover_state, &[f_hat_witness], &gamma_f_hat_indices);
+
+        for &gamma in gamma_points {
+            send_blinding_evals(self.prover_state, gamma, masking_coeffs_all, g_i_coeffs);
+            lambda_z_points.push(gamma);
+        }
+    }
 }
 
 impl<F: FftField> Config<F> {
-    /// Run the zkWHIR prover: prove evaluation claims on blinded polynomials.
+    /// Steps 2-6: Prove the blinded polynomial instance.
     ///
-    /// * `vectors` — original (unmasked) coefficient vectors.
-    /// * `witness` — commitment witness produced by [`Config::commit`].
-    /// * `linear_forms` — linear forms (one per evaluation query).
-    /// * `evaluations` — row-major `linear_forms × vectors` evaluation matrix.
+    /// `f_hat_polys` is taken by value and freed during OOD evaluations (Step 5),
+    /// before the memory-intensive WHIR rounds begin.
+    /// Other witness fields are borrowed; the caller frees them before Step 7.
+    #[allow(clippy::too_many_arguments)]
+    fn prove_blinded_polynomial<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        vectors: Vec<Cow<'_, [F]>>,
+        f_hat_witness: &irs_commit::Witness<F, F>,
+        f_hat_polys: Vec<Vec<F>>,
+        masking_polys: &[Vec<F>],
+        g_polys: &[Vec<F>],
+        linear_forms: &[Box<dyn LinearForm<F>>],
+        evaluations: &[F],
+    ) -> BlindedProveResult<F>
+    where
+        H: DuplexSpongeInterface<U = u8>,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        let num_vectors = vectors.len();
+        let num_forms = linear_forms.len();
+        assert_eq!(evaluations.len(), num_forms * num_vectors);
+
+        assert!(
+            vectors[0].len().is_power_of_two(),
+            "vector length must be a power of 2"
+        );
+        let expected_size = vectors[0].len();
+        for (i, v) in vectors.iter().enumerate() {
+            assert_eq!(
+                v.len(),
+                expected_size,
+                "vectors[{i}] has length {}, expected {expected_size}",
+                v.len()
+            );
+        }
+
+        let dims = ProtocolDims::new(self, num_vectors);
+        let mut ctx = BlindedProveCtx {
+            config: self,
+            prover_state,
+            dims,
+        };
+
+        let prep = ctx.prepare_and_sumcheck(vectors, g_polys, linear_forms, evaluations);
+        let PrepareResult {
+            mut f_zk,
+            mut covector,
+            mut the_sum,
+            rho,
+            alpha_coeffs,
+            folding_randomness,
+        } = prep;
+
+        let OodStirResult {
+            mut lambda_z_points,
+            eq_weights,
+            masking_coeffs_all,
+            g_i_coeffs,
+            gamma_points,
+        } = ctx.ood_stir_and_rounds(
+            &mut whir::rounds::SumcheckState {
+                vector: &mut f_zk,
+                covector: &mut covector,
+                the_sum: &mut the_sum,
+            },
+            &alpha_coeffs,
+            rho,
+            folding_randomness,
+            f_hat_witness,
+            f_hat_polys,
+            masking_polys,
+            g_polys,
+        );
+
+        drop(f_zk);
+        drop(covector);
+
+        ctx.gamma_check(
+            f_hat_witness,
+            &masking_coeffs_all,
+            &g_i_coeffs,
+            &gamma_points,
+            &mut lambda_z_points,
+        );
+
+        BlindedProveResult {
+            lambda_z_points,
+            eq_weights,
+            rho,
+            alpha_coeffs,
+            dims: ctx.dims,
+        }
+    }
+
+    /// Step 7: Batched Proof on Blinding Polynomials.
     ///
-    /// Returns the final evaluation point and per-vector evaluations from the
-    /// inner witness-side WHIR prover.
-    #[allow(clippy::too_many_lines)]
+    /// V → P: τ ←$ F_q (batching randomness)
+    /// Both sides build beq tables (batched eq polynomial) and weight
+    /// covectors wᵢ for each of the n + ν committed blinding vectors.
+    /// P sends evaluation matrix E[i][j] = ⟨wᵢ, vⱼ⟩.
+    /// V checks diagonal: E[i][i] = Σ_p τ^{p+1} · claim_i_p (from Λ).
+    /// Then run second WHIR instance to prove batch opening claims.
+    fn prove_blinding_polynomial<H, R>(
+        &self,
+        prover_state: &mut ProverState<H, R>,
+        blinding_vectors: &[Vec<F>],
+        blinding_poly_witness: &irs_commit::Witness<F, F>,
+        blinded: &BlindedProveResult<F>,
+    ) where
+        H: DuplexSpongeInterface<U = u8>,
+        R: RngCore + CryptoRng,
+        F: Codec<[H::U]>,
+        [u8; 32]: Decoding<[H::U]>,
+        U64: Codec<[H::U]>,
+        u8: Decoding<[H::U]>,
+        Hash: ProverMessage<[H::U]>,
+    {
+        let dims = blinded.dims;
+        let tau: F = prover_state.verifier_message();
+
+        // beq_tables has num_g_polys = ν+1 entries (one per Φ projection)
+        let beq_tables = build_beq_tables(&blinded.lambda_z_points, &blinded.eq_weights, tau, dims);
+
+        let weight_covectors =
+            build_weight_covectors(&beq_tables, blinded.rho, &blinded.alpha_coeffs, dims);
+
+        // Compute eval matrix E[i][j] = ⟨w_i, v_j⟩ (row-major, num_blinding_vecs²)
+        let mut eval_matrix: Vec<F> =
+            Vec::with_capacity(dims.num_blinding_vecs * dims.num_blinding_vecs);
+        for w in &weight_covectors {
+            for v in blinding_vectors {
+                eval_matrix.push(dot(w, v));
+            }
+        }
+
+        for eval in &eval_matrix {
+            prover_state.prover_message(eval);
+        }
+
+        let blinding_forms: Vec<Box<dyn LinearForm<F>>> = weight_covectors
+            .into_iter()
+            .map(|cv| Box::new(Covector::new(cv)) as Box<dyn LinearForm<F>>)
+            .collect();
+
+        let blinding_vector_cows: Vec<Cow<'_, [F]>> = blinding_vectors
+            .iter()
+            .map(|v| Cow::Borrowed(v.as_slice()))
+            .collect();
+        // Final claim is internal to the blinding sub-protocol; not needed by caller.
+        let _blinding_final_claim = self.blinding_polynomial.prove(
+            prover_state,
+            blinding_vector_cows,
+            vec![Cow::Borrowed(blinding_poly_witness)],
+            blinding_forms,
+            Cow::Owned(eval_matrix),
+        );
+    }
+
+    /// zkWHIR 2.0 prover — Alternative Randomness Sampling.
+    ///
+    /// # Soundness — caller must bind `linear_forms` into the transcript
+    ///
+    /// **The caller is responsible for absorbing `linear_forms` into the
+    /// Fiat-Shamir transcript before invoking this function.** This protocol
+    /// does not bind them internally.
+    ///
+    /// Without this binding, the resulting proof is vulnerable to the
+    /// linear-form replay attack: a malicious prover can generate an honest
+    /// proof for `⟨w, f⟩ = e` and present it to the verifier under a
+    /// different form `w'` whose multilinear extension agrees with `w` at the
+    /// final sumcheck point. The verifier accepts the false claim
+    /// `⟨w', f⟩ = e` because the only check on the form is a single-point
+    /// MLE equality, and that point is form-independent without binding.
+    ///
+    /// The caller may bind the forms in any way that uniquely determines
+    /// them in the transcript — for example by absorbing each form's
+    /// defining data field-by-field, by hashing the forms and absorbing the
+    /// digest, or by encoding them into [`crate::transcript::DomainSeparator::instance`]
+    /// before constructing the transcript. The verifier must mirror the
+    /// caller's chosen binding before calling [`Self::verify`](Self::verify).
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn prove<'a, H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -212,224 +658,44 @@ impl<F: FftField> Config<F> {
         witness: Witness<F>,
         linear_forms: Vec<Box<dyn LinearForm<F>>>,
         evaluations: Cow<'a, [F]>,
-    ) -> FinalClaim<F>
-    where
+    ) where
         H: DuplexSpongeInterface<U = u8>,
-        R: ark_std::rand::RngCore + ark_std::rand::CryptoRng,
+        R: RngCore + CryptoRng,
         F: Codec<[H::U]>,
         [u8; 32]: Decoding<[H::U]>,
         U64: Codec<[H::U]>,
         u8: Decoding<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert_eq!(
-            self.blinded_commitment.initial_committer.num_vectors, 1,
-            "zkWHIR currently expects one vector per commitment"
-        );
-        assert_eq!(
-            vectors.len(),
-            witness.f_hat_vectors.len(),
-            "masked vector/polynomial length mismatch"
-        );
-        assert_eq!(
-            vectors.len(),
-            witness.f_hat_witnesses.len(),
-            "witness/polynomial length mismatch"
-        );
-        assert_eq!(
-            witness.blinding_vectors.len(),
-            self.blinding_commitment.initial_committer.num_vectors,
-            "blinding vectors/witness mismatch"
-        );
-        assert_eq!(
-            evaluations.len(),
-            linear_forms.len() * vectors.len(),
-            "evaluation matrix must be row-major linear_forms x vectors"
-        );
-
-        // Destructure early; blinding_polynomials is dropped after the gamma block.
         let Witness {
-            f_hat_vectors,
-            f_hat_witnesses,
-            blinding_polynomials,
-            blinding_vectors,
-            blinding_witness,
+            f_hat_witness,
+            blinding_poly_witness,
+            f_hat_polys,
+            secrets,
         } = witness;
 
-        let blinding_challenge: F = prover_state.verifier_message();
-
-        let embedding = self.blinding_commitment.embedding();
-        let num_polynomials = vectors.len();
-        let num_witness_variables = self.num_witness_variables();
-        let num_blinding_variables = self.num_blinding_variables();
-        let num_witness_variables_plus_1 = num_witness_variables + 1;
-        drop(vectors); // TODO: These are never touched?
-
-        // Compute w_folded evaluations of all blinding vectors before rho for binding.
-        let (w_folded_weights, m_evals, w_folded_blinding_evals) = {
-            #[cfg(feature = "tracing")]
-            let _span = tracing::info_span!("zk_w_folded_compute").entered();
-            let mut w_folded_weights: Vec<Covector<F>> = Vec::with_capacity(linear_forms.len());
-            let mut m_evals: Vec<F> = Vec::with_capacity(evaluations.len());
-            let mut w_folded_blinding_evals: Vec<F> = Vec::with_capacity(
-                linear_forms.len() * num_polynomials * num_witness_variables_plus_1,
-            );
-
-            for weight in &linear_forms {
-                let w_folded = fold_weight_to_mask_size(
-                    weight.as_ref(),
-                    num_witness_variables,
-                    num_blinding_variables,
-                );
-                for poly_idx in 0..num_polynomials {
-                    let base = poly_idx * num_witness_variables_plus_1;
-                    for v in 0..num_witness_variables_plus_1 {
-                        let eval: F = w_folded.evaluate(embedding, &blinding_vectors[base + v]);
-                        w_folded_blinding_evals.push(eval);
-                        if v == 0 {
-                            m_evals.push(eval);
-                        }
-                    }
-                }
-                w_folded_weights.push(w_folded);
-            }
-            (w_folded_weights, m_evals, w_folded_blinding_evals)
-        };
-        for eval in &w_folded_blinding_evals {
-            prover_state.prover_message(eval);
-        }
-
-        // Sample non-zero rho after masking evaluations are committed.
-        let masking_challenge: F = prover_state.verifier_message();
-        assert_ne!(
-            masking_challenge,
-            F::ZERO,
-            "zkWHIR requires non-zero masking challenge rho"
+        // Steps 2-6: blinded polynomial proof.
+        let blinded = self.prove_blinded_polynomial(
+            prover_state,
+            vectors,
+            &f_hat_witness,
+            f_hat_polys,
+            &secrets.masking_polys,
+            &secrets.g_polys,
+            &linear_forms,
+            &evaluations,
         );
 
-        // modified_eval = F_eval + M_eval
-        let modified_evaluations: Vec<F> = evaluations
-            .iter()
-            .zip(m_evals.iter())
-            .map(|(&eval, &m)| eval + m)
-            .collect();
-        drop(evaluations);
+        // Free fields only needed during Steps 2-6, before Step 7.
+        drop(f_hat_witness);
+        drop(linear_forms);
 
-        let initial_in_domain = {
-            #[cfg(feature = "tracing")]
-            let _span = tracing::info_span!("open_f_hat").entered();
-            let witness_refs: Vec<_> = f_hat_witnesses.iter().collect();
-            self.blinded_commitment
-                .initial_committer
-                .open(prover_state, &witness_refs)
-        };
-
-        // Expand base queries into coset points for the first folding round.
-        let h_gammas = self.all_gammas(&initial_in_domain.points);
-
-        // tau1 batches the g_hat claims into the combined claim per polynomial.
-        // tau2 batches across gamma query points.
-        let tau1: F = prover_state.verifier_message();
-        let tau2: F = prover_state.verifier_message();
-
-        let (eval_results, beq_weight_accum) = evaluate_gamma_block(
-            &blinding_polynomials,
-            &h_gammas,
-            masking_challenge,
-            blinding_challenge,
-            tau2,
-            num_blinding_variables,
-            num_witness_variables,
+        // Step 7: batched blinding polynomial proof.
+        self.prove_blinding_polynomial(
+            prover_state,
+            &secrets.blinding_vectors,
+            &blinding_poly_witness,
+            &blinded,
         );
-
-        let num_gammas = h_gammas.len();
-        let stride_per_poly = num_witness_variables + 2;
-        let stride_per_gamma = num_polynomials * stride_per_poly;
-
-        // Transcript writes and claim accumulation (must be sequential).
-        let mut m_claims = vec![F::ZERO; num_polynomials];
-        // Flat layout: g_hat_claims[poly_idx * num_witness_variables + j]
-        let mut g_hat_claims = vec![F::ZERO; num_polynomials * num_witness_variables];
-        let mut batched_h_claims = vec![F::ZERO; num_polynomials];
-        {
-            let mut tau2_pow = F::ONE;
-            for gi in 0..num_gammas {
-                let base = gi * stride_per_gamma;
-                for poly_idx in 0..num_polynomials {
-                    let off = base + poly_idx * stride_per_poly;
-                    let m_eval = eval_results[off];
-                    let g_hat_evals = &eval_results[off + 1..off + 1 + num_witness_variables];
-                    let h_val = eval_results[off + 1 + num_witness_variables];
-
-                    prover_state.prover_message(&m_eval);
-                    for g_hat_eval in g_hat_evals {
-                        prover_state.prover_message(g_hat_eval);
-                    }
-
-                    m_claims[poly_idx] += tau2_pow * m_eval;
-                    for (j, &g) in g_hat_evals.iter().enumerate() {
-                        g_hat_claims[poly_idx * num_witness_variables + j] += tau2_pow * g;
-                    }
-                    batched_h_claims[poly_idx] += tau2_pow * h_val;
-                }
-                tau2_pow *= tau2;
-            }
-        }
-        drop(eval_results);
-        drop(blinding_polynomials);
-
-        let g_hat_slices: Vec<&[F]> = (0..num_polynomials)
-            .map(|i| &g_hat_claims[i * num_witness_variables..(i + 1) * num_witness_variables])
-            .collect();
-        let (combined_claims, batched_blinding_subproof_claims) =
-            build_combined_and_subproof_claims(&m_claims, &g_hat_slices, tau1);
-        let beq_weights = Covector::new(beq_weight_accum);
-        for claim in &combined_claims {
-            prover_state.prover_message(claim);
-        }
-        for claim in &batched_h_claims {
-            prover_state.prover_message(claim);
-        }
-
-        let result = {
-            #[cfg(feature = "tracing")]
-            let _span = tracing::info_span!("inner_blinded_prove").entered();
-            self.blinded_commitment.prove(
-                prover_state,
-                f_hat_vectors.into_iter().map(Cow::Owned).collect(),
-                f_hat_witnesses.into_iter().map(Cow::Owned).collect(),
-                linear_forms,
-                Cow::Owned(modified_evaluations),
-            )
-        };
-
-        {
-            #[cfg(feature = "tracing")]
-            let _span = tracing::info_span!("inner_blinding_prove").entered();
-            let blinding_forms: Vec<Box<dyn LinearForm<F>>> =
-                std::iter::once(Box::new(beq_weights) as Box<dyn LinearForm<F>>)
-                    .chain(
-                        w_folded_weights
-                            .into_iter()
-                            .map(|wf| Box::new(wf) as Box<dyn LinearForm<F>>),
-                    )
-                    .collect();
-            let all_blinding_claims = [
-                &batched_blinding_subproof_claims[..],
-                &w_folded_blinding_evals[..],
-            ]
-            .concat();
-            // Blinding sub-proof result is discarded: the blinding WHIR's
-            // evaluation point is not needed by the outer protocol.
-            let _ = self.blinding_commitment.prove(
-                prover_state,
-                blinding_vectors.into_iter().map(Cow::Owned).collect(),
-                vec![Cow::Owned(blinding_witness)],
-                blinding_forms,
-                Cow::Owned(all_blinding_claims),
-            );
-        }
-
-        result
     }
 }

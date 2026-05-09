@@ -51,6 +51,7 @@ ciborium = "0.2"
 digest = { version = "0.10.7", features = ["oid"] }
 sha2 = { version = "0.10.9", features = ["oid", "asm"] }
 zerocopy = "0.8.33"
+zeroize = { version = "1", features = ["zeroize_derive"] }
 hex-literal = "0.4.1"
 const-oid = "0.9.6"
 arrayvec = "0.7.6"

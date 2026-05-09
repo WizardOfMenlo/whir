@@ -1,44 +1,59 @@
 use ark_ff::FftField;
-#[cfg(feature = "tracing")]
-use tracing::instrument;
+use spongefish::{Codec, DuplexSpongeInterface};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use super::{utils::BlindingPolynomials, Config};
+use super::{utils::ProtocolDims, Config};
 use crate::{
     hash::Hash,
-    protocols::{irs_commit, whir},
-    transcript::{
-        Codec, DuplexSpongeInterface, ProverMessage, ProverState, VerificationResult, VerifierState,
-    },
+    protocols::irs_commit,
+    transcript::{ProverMessage, ProverState},
 };
 
-/// zkWHIR commitment: one Merkle root per masked polynomial plus one for blinding.
-#[derive(Debug)]
-pub struct Commitment<F: FftField> {
-    pub f_hat: Vec<whir::Commitment<F>>,
-    pub blinding: whir::Commitment<F>,
+/// Secret blinding randomness that must be scrubbed from memory on drop.
+///
+/// Wrapping these fields in a separate struct lets `Witness` remain
+/// destructurable (no custom `Drop`) while guaranteeing zeroization
+/// of the secret data regardless of how the witness is consumed.
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub(super) struct BlindingSecrets<F: FftField> {
+    /// Per-witness masking polynomials mskᵢ (ℓ-variate, 2^ℓ coefficients).
+    pub(super) masking_polys: Vec<Vec<F>>,
+    /// Blinding polynomials ĝ₀..ĝ_ν (ℓ-variate, 2^ℓ coefficients each).
+    pub(super) g_polys: Vec<Vec<F>>,
+    /// Interleaved blinding vectors [M₀, ..., M_{n-1}, ĝ₁, ..., ĝ_ν] as committed.
+    pub(super) blinding_vectors: Vec<Vec<F>>,
 }
 
-/// zkWHIR witness produced by [`Config::commit`].
+/// Prover-side witness produced by Step 1 (Commitment).
 ///
-/// Contains the masked polynomial witnesses, their coefficient vectors,
-/// the blinding polynomial family, and the single blinding commitment witness.
-#[derive(Clone, Debug)]
+/// Contains the IRS-commit witnesses for both WHIR instances, plus the raw
+/// polynomial data needed by Steps 2-7.
+///
+/// Secret blinding randomness is held in `BlindingSecrets` which implements
+/// `ZeroizeOnDrop`, ensuring it is scrubbed from memory even if the witness
+/// is destructured for early field-level drops.
+#[must_use]
+#[allow(clippy::struct_field_names)]
 pub struct Witness<F: FftField> {
-    pub f_hat_vectors: Vec<Vec<F>>,
-    pub f_hat_witnesses: Vec<irs_commit::Witness<F, F>>,
-    pub blinding_polynomials: Vec<BlindingPolynomials<F>>,
-    pub blinding_vectors: Vec<Vec<F>>,
-    pub blinding_witness: irs_commit::Witness<F, F>,
+    /// IRS-commit witness for [[f̂]] (first WHIR instance).
+    pub(super) f_hat_witness: irs_commit::Witness<F, F>,
+    /// IRS-commit witness for [[M]], [[ĝ₁]]..[[ĝ_ν]] (second WHIR instance).
+    pub(super) blinding_poly_witness: irs_commit::Witness<F, F>,
+    /// f̂ᵢ = fᵢ + mskᵢ(Φ₀) for each of the n witness polynomials.
+    pub(super) f_hat_polys: Vec<Vec<F>>,
+    /// Secret blinding randomness (zeroized on drop).
+    pub(super) secrets: BlindingSecrets<F>,
 }
 
 impl<F: FftField> Config<F> {
-    /// Commit to one or more polynomials with zero-knowledge blinding.
+    /// **Step 1 — Commitment**.
     ///
-    /// For each polynomial, samples fresh blinding coefficients from the
-    /// prover's private transcript-bound RNG, constructs the
-    /// masked polynomial `f_hat = f + m_poly`, and commits both the masked
-    /// polynomials and the blinding vectors to the transcript.
-    #[cfg_attr(feature = "tracing", instrument(skip_all))]
+    /// For n witness polynomials f₁..fₙ:
+    ///   1a. Sample n random ℓ-variate masking polynomials mskᵢ
+    ///   1b. Compute f̂ᵢ = fᵢ + mskᵢ(Φ₀) and commit [[f̂]]
+    ///   1c. Sample ν + 1 random ℓ-variate blinding polynomials ĝ₀..ĝ_ν
+    ///   1d. Build committed vectors: n M-polynomials Mᵢ(ȳ,t) = ĝ₀(ȳ) + t·mskᵢ(ȳ)
+    ///       and ν embedded ĝ-polynomials, then commit [[M]], [[ĝ₁]]..[[ĝ_ν]]
     pub fn commit<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
@@ -50,99 +65,92 @@ impl<F: FftField> Config<F> {
         F: Codec<[H::U]>,
         Hash: ProverMessage<[H::U]>,
     {
-        assert_eq!(
-            self.blinded_commitment.initial_committer.num_vectors, 1,
-            "zkWHIR currently expects one vector per commitment"
+        let num_polys = polynomials.len();
+        assert!(!polynomials.is_empty(), "must have at least one polynomial");
+        let expected_len = polynomials[0].len();
+        assert!(
+            expected_len.is_power_of_two(),
+            "polynomial length must be a power of 2"
         );
-
-        let mut f_hat_vectors = Vec::with_capacity(polynomials.len());
-        let mut f_hat_witnesses = Vec::with_capacity(polynomials.len());
-        let mut blinding_polynomials = Vec::with_capacity(polynomials.len());
-        let num_blinding_variables = self.num_blinding_variables();
-        let num_witness_variables = self.num_witness_variables();
-        for &poly in polynomials {
-            let blinding = BlindingPolynomials::sample(
-                prover_state.rng(),
-                num_blinding_variables,
-                num_witness_variables,
-            );
-            let mask = &blinding.m_poly;
-            let witness_size = self.blinded_commitment.initial_size();
-            assert!(!mask.is_empty(), "blinding mask vector must be non-empty");
-            assert!(
-                witness_size >= mask.len(),
-                "witness vector smaller than blinding mask vector"
-            );
+        for (i, poly) in polynomials.iter().enumerate() {
             assert_eq!(
-                witness_size % mask.len(),
-                0,
-                "witness size must be multiple of blinding mask size"
+                poly.len(),
+                expected_len,
+                "polynomials[{i}] has length {}, expected {expected_len}",
+                poly.len()
             );
-            // Safe to .cycle() because witness_size % mask.len() == 0 (asserted above).
-            let f_hat_vec = poly
+        }
+        let dims = ProtocolDims::new(self, num_polys);
+        let ell_variate_size = 1usize << dims.ell;
+        let shift = dims.mu - dims.ell; // Φ₀ extracts the top ℓ bits: Φ₀(b) = b >> shift
+
+        // Step 1a-1b: Sample n masking polynomials, compute f̂ᵢ = fᵢ + mskᵢ(Φ₀(x̄))
+        // msk is fresh per witness to preserve ZK for each fᵢ.
+        let mut masking_polys = Vec::with_capacity(num_polys);
+        let mut f_hat_polys = Vec::with_capacity(num_polys);
+        for poly in polynomials {
+            let masking_poly: Vec<F> = (0..ell_variate_size)
+                .map(|_| F::rand(prover_state.rng()))
+                .collect();
+            let f_hat_poly: Vec<F> = poly
                 .iter()
-                .zip(mask.iter().cycle())
-                .map(|(&coeff, &m)| coeff + m)
-                .collect::<Vec<_>>();
-            let witness = self
-                .blinded_commitment
-                .commit(prover_state, &[f_hat_vec.as_slice()]);
-            f_hat_vectors.push(f_hat_vec);
-            f_hat_witnesses.push(witness);
-            blinding_polynomials.push(blinding);
+                .enumerate()
+                .map(|(idx, &coeff)| coeff + masking_poly[idx >> shift])
+                .collect();
+            masking_polys.push(masking_poly);
+            f_hat_polys.push(f_hat_poly);
         }
 
-        let blinding_num_vectors = self.blinding_commitment.initial_committer.num_vectors;
-        assert_eq!(
-            blinding_num_vectors,
-            polynomials.len() * (num_witness_variables + 1),
-            "blinding commitment layout mismatch: expected n*(mu+1) vectors"
-        );
-        let mut blinding_vectors = Vec::with_capacity(blinding_num_vectors);
-        for poly in &blinding_polynomials {
-            let layout = poly.layout_vectors();
-            debug_assert_eq!(
-                layout.len(),
-                num_witness_variables + 1,
-                "layout_vectors must produce mu+1 vectors"
+        // Step 1b: Commit [[f̂]] via first WHIR instance.
+        let f_hat_refs: Vec<&[F]> = f_hat_polys.iter().map(|p| p.as_slice()).collect();
+        let f_hat_witness = self.blinded_polynomial.commit(prover_state, &f_hat_refs);
+
+        // Step 1c: Sample ν + 1 random ℓ-variate blinding polynomials ĝ₀..ĝ_ν.
+        let num_blinding_polys = dims.num_g_polys();
+        let mut g_polys = Vec::with_capacity(num_blinding_polys);
+        for _ in 0..num_blinding_polys {
+            g_polys.push(
+                (0..ell_variate_size)
+                    .map(|_| F::rand(prover_state.rng()))
+                    .collect::<Vec<_>>(),
             );
-            blinding_vectors.extend(layout);
         }
-        let blinding_vector_refs = blinding_vectors
+
+        // Step 1d: Build committed vectors for second WHIR instance.
+        // Mᵢ(ȳ, t) = ĝ₀(ȳ) + t·mskᵢ(ȳ), stored as interleaved [g₀[k], mskᵢ[k]].
+        let interleaved_blinding_vectors: Vec<Vec<F>> = masking_polys
             .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>();
-        let blinding_witness = self
-            .blinding_commitment
-            .commit(prover_state, &blinding_vector_refs);
+            .map(|msk| {
+                g_polys[0]
+                    .iter()
+                    .zip(msk.iter())
+                    .flat_map(|(&g, &m)| [g, m])
+                    .collect()
+            })
+            .collect();
+
+        // Assemble blinding vectors: [M₀, ..., M_{n-1}, ĝ₁, ..., ĝ_ν].
+        // ĝⱼ are ℓ-variate but committed as (ℓ+1)-variate with t-coefficient = 0,
+        // stored as interleaved [gⱼ[k], 0] (coefficient for t is zero).
+        let mut blinding_vectors: Vec<Vec<F>> = interleaved_blinding_vectors;
+        for g in &g_polys[1..] {
+            blinding_vectors.push(g.iter().flat_map(|&c| [c, F::ZERO]).collect());
+        }
+        let blinding_refs: Vec<&[F]> = blinding_vectors.iter().map(|v| v.as_slice()).collect();
+
+        let blinding_poly_witness = self
+            .blinding_polynomial
+            .commit(prover_state, &blinding_refs);
 
         Witness {
-            f_hat_vectors,
-            f_hat_witnesses,
-            blinding_polynomials,
-            blinding_vectors,
-            blinding_witness,
+            f_hat_witness,
+            blinding_poly_witness,
+            f_hat_polys,
+            secrets: BlindingSecrets {
+                masking_polys,
+                g_polys,
+                blinding_vectors,
+            },
         }
-    }
-
-    /// Receive `num_polynomials` masked-polynomial commitments and one blinding
-    /// commitment from the verifier transcript.
-    pub fn receive_commitments<H>(
-        &self,
-        verifier_state: &mut VerifierState<'_, H>,
-        num_polynomials: usize,
-    ) -> VerificationResult<Commitment<F>>
-    where
-        H: DuplexSpongeInterface,
-        F: Codec<[H::U]>,
-        Hash: ProverMessage<[H::U]>,
-    {
-        let f_hat = (0..num_polynomials)
-            .map(|_| self.blinded_commitment.receive_commitment(verifier_state))
-            .collect::<Result<Vec<_>, _>>()?;
-        let blinding = self
-            .blinding_commitment
-            .receive_commitment(verifier_state)?;
-        Ok(Commitment { f_hat, blinding })
     }
 }

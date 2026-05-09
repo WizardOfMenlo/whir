@@ -1,240 +1,279 @@
+/// zkWHIR 2.0 — Zero-Knowledge WHIR with poly-logarithmic overhead.
+///
+/// Uses the "Alternative Randomness Sampling" approach which samples only
+/// ν + 1 = ⌊μ/ℓ⌋ + 1 blinding polynomials (instead of μ + 1), reducing proof
+/// size to (ν + 1) · q(δ) field elements.
+///
+/// Two WHIR instances run as sub-protocols:
+///   1. `blinded_polynomial`: over the μ-variate masked witness f̂ = f + msk(Φ₀)
+///   2. `blinding_polynomial`: over (ℓ+1)-variate committed vectors M and ĝ₁..ĝ_ν
+///
+/// Protocol phases:
+///   Step 1: Commitment — sample msk, ĝ₀..ĝ_ν; commit [[f̂]], [[M]], [[ĝᵢ]]
+///   Step 2: Blinding claims — V samples β; P builds g(x̄) = Σ βⁱ·ĝᵢ(Φᵢ(x̄)), sends G
+///   Step 3: Combination — V samples ρ ≠ 0; P forms f_zk = ρ·f + g
+///   Step 4: Initial sumcheck on f_zk; P sends [[H]] = fold_k(f_zk, r̄)
+///   Step 5: Virtual OOD/STIR queries + remaining WHIR rounds
+///   Step 6: Γ consistency check — verify [[f̂]] openings match [[H]]
+///   Step 7: Batched blinding proof via second WHIR instance
+use std::fmt;
+
+use ark_ff::FftField;
+use serde::{Deserialize, Serialize};
+
+use crate::algebra::embedding::Embedding;
+
 mod committer;
 mod prover;
 mod utils;
 mod verifier;
 
-use std::fmt::Display;
-
-use ark_ff::FftField;
-use serde::{Deserialize, Serialize};
-
-pub use self::committer::{Commitment, Witness};
+pub use self::{committer::Witness, verifier::Commitments};
 use crate::{
-    algebra::embedding::{Embedding, Identity},
+    algebra::embedding::Identity,
+    bits::Bits,
     parameters::ProtocolParameters,
     protocols::{irs_commit, whir},
 };
 
-/// Policy inputs for `ell` computation.
-///
-/// Leakage upper bound used by the current sizing rule:
-/// `q_ub = k1*q_delta_1 + k2*q_delta_2 + (d+1)*mu + t1 + t2`.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct BlindingSizePolicy {
-    /// Query count for witness-side WHIR first-round leakage term.
-    pub q_delta_1: usize,
-    /// Query count for blinding-side WHIR first-round leakage term.
-    pub q_delta_2: usize,
-    /// Last-round clear leakage budget for witness-side WHIR.
-    pub t1: usize,
-    /// Last-round clear leakage budget for blinding-side WHIR.
-    pub t2: usize,
-    /// Degree `d` of each sumcheck round polynomial in the leakage term `(d+1)*mu`.
-    pub sumcheck_round_degree: usize,
-}
-
-impl BlindingSizePolicy {
-    pub fn from_whir_params<F: FftField>(main_whir_params: &ProtocolParameters) -> Self {
-        // TODO: Compute these in a cleaner way?
-
-        let protocol_security_level_main = main_whir_params
-            .security_level
-            .saturating_sub(main_whir_params.pow_bits);
-        #[allow(clippy::cast_possible_wrap)]
-        let q_delta_1 = irs_commit::num_in_domain_queries(
-            main_whir_params.unique_decoding,
-            protocol_security_level_main as f64,
-            0.5_f64.powi(main_whir_params.starting_log_inv_rate as i32),
-        );
-        #[allow(clippy::cast_possible_wrap)]
-        let q_delta_2 = irs_commit::num_in_domain_queries(
-            main_whir_params.unique_decoding,
-            main_whir_params.security_level as f64,
-            0.5_f64.powi(main_whir_params.starting_log_inv_rate as i32),
-        );
-
-        // Default send-in-clear thresholds match query complexities.
-        Self {
-            q_delta_1,
-            q_delta_2,
-            t1: q_delta_1,
-            t2: q_delta_2,
-            // For PCS, round polynomials are cubic (d=3), giving 4*mu.
-            sumcheck_round_degree: 3,
-        }
-    }
-}
-
-/// ZK WHIR configuration: witness-side WHIR + blinding-side WHIR.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(bound = "")]
 pub struct Config<F: FftField> {
-    pub blinded_commitment: whir::Config<Identity<F>>,
-    pub blinding_commitment: whir::Config<Identity<F>>,
+    /// First WHIR instance: proves claims about f_zk = ρ·f + g over 2^μ evaluations.
+    pub blinded_polynomial: whir::Config<Identity<F>>,
+    /// Second WHIR instance: batched proof of blinding polynomial evaluations
+    /// over 2^(ℓ+1) evaluations with n + ν committed vectors.
+    pub blinding_polynomial: whir::Config<Identity<F>>,
+}
+
+impl<F: FftField> fmt::Display for Config<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "zkWHIR 2.0 — Alternative Randomness Sampling")?;
+        writeln!(f, "Blinded polynomial instance:")?;
+        write!(f, "{}", self.blinded_polynomial)?;
+        writeln!(f, "Blinding polynomial instance:")?;
+        write!(f, "{}", self.blinding_polynomial)
+    }
 }
 
 impl<F: FftField> Config<F> {
-    /// Build a zkWHIR config from the given WHIR parameters.
-    pub fn new(size: usize, main_whir_params: &ProtocolParameters, num_polynomials: usize) -> Self {
-        let size_policy = BlindingSizePolicy::from_whir_params::<F>(main_whir_params);
-        Self::new_with_blinding_size_policy(size, main_whir_params, num_polynomials, size_policy)
+    /// Check whether the configured PoW bits exceed the specified maximum.
+    pub fn check_max_pow_bits(&self, bits: Bits) -> bool {
+        self.blinded_polynomial.check_max_pow_bits(bits)
     }
 
-    /// Build a zkWHIR config with an explicit blinding size policy.
+    /// Disable proof-of-work on both WHIR sub-instances (for testing).
+    #[cfg(test)]
+    pub(crate) fn disable_pow(&mut self) {
+        self.blinded_polynomial.disable_pow();
+        self.blinding_polynomial.disable_pow();
+    }
+
+    /// Return a reference to the embedding used by the blinded polynomial instance.
+    pub fn embedding(&self) -> &Identity<F> {
+        self.blinded_polynomial.embedding()
+    }
+
+    /// Number of variables in the witness polynomial (μ = log₂ of the evaluation domain size).
+    pub fn num_witness_variables(&self) -> usize {
+        self.blinded_polynomial.initial_num_variables()
+    }
+
+    /// Security levels (in bits) for the two WHIR sub-instances.
     ///
-    /// * `blinding_folding_factor` — folding factor for the blinding-side WHIR.
-    /// * `num_polynomials` — number of polynomials that will be committed.
-    /// * `size_policy` — controls the blinding polynomial size `ell`.
-    pub fn new_with_blinding_size_policy(
-        size: usize,
-        main_whir_params: &ProtocolParameters,
-        num_polynomials: usize,
-        size_policy: BlindingSizePolicy,
-    ) -> Self {
-        let blinded_commitment = whir::Config::new(size, main_whir_params);
-        let num_witness_variables = blinded_commitment.initial_num_variables();
-        let blinding_first_round_interleaving_depth =
-            1usize << main_whir_params.initial_folding_factor;
-        let num_blinding_variables = Self::compute_num_blinding_variables(
-            &blinded_commitment,
-            blinding_first_round_interleaving_depth,
-            size_policy,
+    /// Returns `(blinded_security, blinding_security)` where:
+    /// - `blinded_security` is for the witness instance (f̂ with `num_vectors` committed polynomials
+    ///   and `num_linear_forms` constraints)
+    /// - `blinding_security` is for the blinding instance (M and ĝ vectors)
+    pub fn security_levels(&self, num_vectors: usize, num_linear_forms: usize) -> (f64, f64) {
+        let num_blinding_vecs = self.blinding_polynomial.initial_committer.num_vectors;
+        let blinded_sec = self
+            .blinded_polynomial
+            .security_level(num_vectors, num_linear_forms);
+        let blinding_sec = self
+            .blinding_polynomial
+            .security_level(num_blinding_vecs, num_blinding_vecs);
+        (blinded_sec, blinding_sec)
+    }
+
+    pub fn new(num_variables_main: usize, params: &ProtocolParameters) -> Self {
+        assert!(
+            !params.unique_decoding,
+            "zkWHIR 2.0 requires list decoding (unique_decoding must be false). \
+             The protocol relies on OOD queries in Step 5 for blinding claim \
+             generation; unique decoding sets out_domain_samples = 0, making \
+             Commitment::num_vectors() undefined."
+        );
+        let blinded_config: whir::Config<Identity<F>> =
+            whir::Config::new(1 << num_variables_main, params);
+        assert!(
+            !blinded_config.round_configs.is_empty(),
+            "zkWHIR 2.0 requires at least one WHIR round \
+             (num_variables_main too small for folding_factor)"
+        );
+        let witness_sec = params.security_level.saturating_sub(params.pow_bits) as f64;
+        let blinding_sec = params.security_level as f64;
+
+        // T(δ) for the witness instance: the polynomial size sent in the final WHIR round.
+        let witness_t_delta = blinded_config.final_sumcheck.initial_size;
+
+        let mut witness_leak = InstanceLeak::new(
+            params,
+            witness_sec,
+            &blinded_config.initial_committer,
+            num_variables_main,
+        );
+        witness_leak.t_delta = witness_t_delta;
+
+        // Blinding leak: use μ for num_variables (conservative, per paper §"Query Complexity
+        // Computation": q_ub ≤ leak(δ₁,k₁,μ,d) + leak(δ₂,k₂,μ,3)). Using the witness IRS
+        // config for ood_delta is also conservative since the blinding instance is smaller.
+        let blinding_leak = InstanceLeak::new(
+            params,
+            blinding_sec,
+            &blinded_config.initial_committer,
+            num_variables_main,
+        );
+        let ell = ell_from_q_ub(query_upper_bound(&witness_leak, &blinding_leak));
+        assert!(
+            ell + 1 < num_variables_main,
+            "blinding variables ell+1={} must be < mu={num_variables_main}",
+            ell + 1
+        );
+        // Configuration validation: if ell < initial_folding_factor, build_beq_tables
+        // will underflow when computing m_cap. Catch misconfiguration here with a
+        // clear message instead of a confusing panic deep in the proving path.
+        assert!(
+            ell >= params.initial_folding_factor,
+            "ell={ell} must be >= initial_folding_factor={} \
+             (parameters too aggressive for ZK sizing)",
+            params.initial_folding_factor
         );
 
-        let blinding_size = 1 << num_blinding_variables;
-        let blinding_whir_params = ProtocolParameters {
-            batch_size: num_polynomials * (num_witness_variables + 1),
-            ..*main_whir_params
+        // nu = ⌊mu/ell⌋ — highest blinding polynomial index (nu+1 total g-polynomials).
+        // batch_size = n + ν: the blinding instance commits n M-polynomials (one per
+        // witness, each embedding g₀ + mskᵢ) plus ν embedded ĝ-polynomials (ĝ₁..ĝ_ν).
+        let nu = num_variables_main / ell;
+        let blinding_params = ProtocolParameters {
+            batch_size: params.batch_size + nu,
+            ..*params
         };
-        let blinding_commitment = whir::Config::new(blinding_size, &blinding_whir_params);
 
         Self {
-            blinded_commitment,
-            blinding_commitment,
+            blinded_polynomial: blinded_config,
+            blinding_polynomial: whir::Config::new(1 << (ell + 1), &blinding_params),
         }
-    }
-
-    fn compute_num_blinding_variables(
-        blinded: &whir::Config<Identity<F>>,
-        blinding_first_round_interleaving_depth: usize,
-        size_policy: BlindingSizePolicy,
-    ) -> usize {
-        // Doc formula:
-        // q_ub = k1*q(delta1) + k2*q(delta2) + (d+1)*mu + T1 + T2,
-        // choose smallest ell with 2^ell > q_ub.
-        let num_witness_variables = blinded.initial_num_variables();
-        assert!(
-            size_policy.t1 >= size_policy.q_delta_1,
-            "invalid blinding size policy: T1 must satisfy T1 >= q(delta1)"
-        );
-        assert!(
-            size_policy.t2 >= size_policy.q_delta_2,
-            "invalid blinding size policy: T2 must satisfy T2 >= q(delta2)"
-        );
-        let k1 = 1usize << blinded.initial_sumcheck.num_rounds;
-        let k2 = blinding_first_round_interleaving_depth;
-        let sumcheck_coeff_leakage = size_policy
-            .sumcheck_round_degree
-            .saturating_add(1)
-            .saturating_mul(num_witness_variables);
-        let query_upper_bound = k1
-            .saturating_mul(size_policy.q_delta_1)
-            .saturating_add(k2.saturating_mul(size_policy.q_delta_2))
-            .saturating_add(size_policy.t1)
-            .saturating_add(size_policy.t2)
-            .saturating_add(sumcheck_coeff_leakage);
-
-        let num_blinding_variables = (usize::BITS - query_upper_bound.leading_zeros()) as usize;
-        assert!(
-            num_blinding_variables < num_witness_variables,
-            "blinding variables ({num_blinding_variables}) must be fewer than \
-             witness variables ({num_witness_variables})"
-        );
-        debug_assert!(
-            (1usize << num_blinding_variables) > query_upper_bound,
-            "2^ell ({}) must exceed query upper bound ({query_upper_bound})",
-            1usize << num_blinding_variables
-        );
-        num_blinding_variables
-    }
-
-    /// Number of variables in the witness polynomial (`μ`).
-    pub fn num_witness_variables(&self) -> usize {
-        self.blinded_commitment.initial_num_variables()
-    }
-
-    /// Number of blinding variables (`ℓ`).
-    pub fn num_blinding_variables(&self) -> usize {
-        self.blinding_commitment.initial_num_variables() - 1
-    }
-
-    /// Interleaving depth of the initial IRS commitment (= 2^folding_factor).
-    pub(crate) const fn interleaving_depth(&self) -> usize {
-        self.blinded_commitment.initial_committer.interleaving_depth
-    }
-
-    /// Generator ω of the full NTT domain (size = num_rows × interleaving_depth).
-    pub(crate) fn omega_full(&self) -> F {
-        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
-        let full_domain_size = codeword_length * self.interleaving_depth();
-        crate::algebra::ntt::generator(full_domain_size)
-            .expect("full IRS domain should have primitive root")
-    }
-
-    /// Sub-domain generator (ω_sub = ω^interleaving_depth).
-    fn omega_sub(&self) -> F {
-        self.blinded_commitment.initial_committer.generator()
-    }
-
-    /// ζ = ω^num_rows — the interleaving_depth-th root of unity.
-    pub(crate) fn zeta(&self) -> F {
-        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
-        self.omega_full().pow([codeword_length as u64])
-    }
-
-    /// Precomputed sub-domain powers [1, ω_sub, ω_sub², ..., ω_sub^(num_rows-1)].
-    pub(crate) fn omega_powers(&self) -> Vec<F> {
-        let codeword_length = self.blinded_commitment.initial_committer.codeword_length;
-        crate::algebra::geometric_sequence(self.omega_sub(), codeword_length)
-    }
-
-    /// Find the index of `alpha_base` in the sub-domain powers.
-    pub(crate) fn query_index(alpha_base: F, omega_powers: &[F]) -> usize {
-        omega_powers
-            .iter()
-            .position(|&p| p == alpha_base)
-            .expect("query point must be in IRS domain")
-    }
-
-    /// Compute all gamma points for a set of query points (flat list).
-    pub(crate) fn all_gammas(&self, query_points: &[F]) -> Vec<F> {
-        let omega_powers = self.omega_powers();
-        let interleaving_depth = self.interleaving_depth();
-        let omega_full = self.omega_full();
-        let zeta_powers = crate::algebra::geometric_sequence(self.zeta(), interleaving_depth);
-        let embedding = self.blinded_commitment.embedding();
-
-        let mut gammas = Vec::with_capacity(query_points.len() * interleaving_depth);
-        for &alpha in query_points {
-            let idx = Self::query_index(alpha, &omega_powers);
-            let coset_offset = omega_full.pow([idx as u64]);
-            for &zp in &zeta_powers {
-                gammas.push(embedding.map(coset_offset * zp));
-            }
-        }
-        gammas
     }
 }
 
-impl<F: FftField> Display for Config<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "zkWHIR config: witness and blinding commitments")?;
-        writeln!(f, "Witness-side:")?;
-        write!(f, "{}", self.blinded_commitment)?;
-        writeln!(f, "------------------------------------")?;
-        writeln!(f, "Blinding-side:")?;
-        write!(f, "{}", self.blinding_commitment)
+/// Maximum degree of the sumcheck round polynomial.
+///
+/// In each sumcheck round the prover evaluates `eq(r, x) · f(x)` where `eq` is degree 2
+/// and `f` contributes degree 1 from folding, giving a combined degree of 3.
+/// This bounds the (d+1)·μ term in the leakage formula.
+const MAX_SUMCHECK_DEGREE: usize = 3;
+
+/// Per-instance leakage parameters for a single WHIR execution.
+///
+/// `leak(δ, k, μ, d) := k · [q(δ) + stir(δ)] + T(δ) + ood(δ) + (d+1) · μ`
+struct InstanceLeak {
+    /// Folding factor `k = 2^s` for the first round.
+    k: usize,
+    /// Number of sumcheck rounds (= number of witness variables).
+    mu: usize,
+    /// Max degree of sumcheck round polynomial.
+    d: usize,
+    /// `q(δ)`: query complexity.
+    q_delta: usize,
+    /// `stir(δ)`: STIR queries during the first folding round.
+    stir_delta: usize,
+    /// `ood(δ)`: out-of-domain queries.
+    ood_delta: usize,
+    /// `T(δ)`: number of raw coefficients sent during the last sumcheck round.
+    /// Invariant: `T(δ) ≥ q(δ)`.
+    t_delta: usize,
+}
+
+impl InstanceLeak {
+    /// Construct leak parameters for one WHIR instance.
+    ///
+    /// `security_target` is `λ - pow_bits` for the witness side
+    /// or full `λ` for the blinding side.
+    fn new<M>(
+        params: &ProtocolParameters,
+        security_target: f64,
+        irs_config: &irs_commit::Config<M>,
+        num_variables: usize,
+    ) -> Self
+    where
+        M: Embedding,
+        M::Source: FftField,
+        M::Target: FftField,
+    {
+        #[allow(clippy::cast_possible_wrap)]
+        let rate = 0.5_f64.powi(params.starting_log_inv_rate as i32);
+        let (q, stir) = Self::query_counts(
+            params.unique_decoding,
+            security_target,
+            rate,
+            params.initial_folding_factor,
+        );
+
+        Self {
+            k: 1 << params.initial_folding_factor,
+            mu: num_variables,
+            d: MAX_SUMCHECK_DEGREE,
+            q_delta: q,
+            stir_delta: stir,
+            ood_delta: irs_config.out_domain_samples,
+            t_delta: q, // conservative default; overridden for witness instance in Config::new
+        }
     }
+
+    /// `leak(δ, k, μ, d) := k · [q(δ) + stir(δ)] + T(δ) + ood(δ) + (d+1) · μ`
+    const fn leak(&self) -> usize {
+        self.k
+            .saturating_mul(self.q_delta.saturating_add(self.stir_delta))
+            .saturating_add(self.t_delta)
+            .saturating_add(self.ood_delta)
+            .saturating_add(self.d.saturating_add(1).saturating_mul(self.mu))
+    }
+
+    /// Compute `q(δ)` and `stir(δ)` for a given security target and rate.
+    ///
+    /// - `q(δ) = ⌈λ / log₂(1/(1-δ))⌉`
+    /// - `stir(δ) ≈ ⌈λ / (s + log₂(1/(1-δ)))⌉`
+    #[allow(clippy::cast_sign_loss)]
+    fn query_counts(
+        unique_decoding: bool,
+        security_target: f64,
+        rate: f64,
+        folding_factor: usize,
+    ) -> (usize, usize) {
+        let q = irs_commit::num_in_domain_queries(unique_decoding, security_target, rate);
+        let s = folding_factor as f64;
+        let slack = irs_commit::johnson_slack(unique_decoding, rate);
+        let per_sample = if unique_decoding {
+            f64::midpoint(1., rate)
+        } else {
+            rate.sqrt() + slack
+        };
+        let stir = (security_target / (s + (-per_sample.log2()))).ceil() as usize;
+        (q, stir)
+    }
+}
+
+/// Compute `q_ub` — the total leakage upper bound across both WHIR instances.
+///
+/// `q_ub ≤ leak(δ₁, k₁, μ, d) + leak(δ₂, k₂, μ, 3)`
+const fn query_upper_bound(witness: &InstanceLeak, blinding: &InstanceLeak) -> usize {
+    witness.leak().saturating_add(blinding.leak())
+}
+
+/// Smallest `ell` such that `2^ell > q_ub`.
+const fn ell_from_q_ub(q_ub: usize) -> usize {
+    assert!(q_ub > 0, "query upper bound must be positive");
+    (usize::BITS - q_ub.leading_zeros()) as usize
 }
 
 #[cfg(test)]
@@ -243,34 +282,159 @@ mod tests {
 
     use ark_ff::{AdditiveGroup, Field};
 
-    use super::*;
+    use super::{
+        committer::Witness,
+        utils::{
+            build_beq_tables, build_fold_args, build_weight_covectors, compute_eq_weights,
+            compute_rs_fold_blinding_coeffs, gamma_to_f_hat_indices, ProtocolDims, RsFoldCoeffs,
+        },
+        Config,
+    };
     use crate::{
         algebra::{
+            dot,
+            embedding::Identity,
             fields::Field64,
-            linear_form::{Covector, Evaluate, LinearForm, MultilinearExtension},
-            MultilinearPoint,
+            geometric_sequence,
+            linear_form::{
+                Covector, Evaluate, LinearForm, MultilinearExtension, UnivariateEvaluation,
+            },
+            multilinear_extend, univariate_evaluate, MultilinearPoint,
         },
         hash,
         parameters::ProtocolParameters,
-        transcript::{codecs::Empty, DomainSeparator, ProverState, VerifierState},
+        protocols::{geometric_challenge::geometric_challenge, whir},
+        transcript::{
+            codecs::Empty, DomainSeparator, Proof, ProverState, VerifierMessage, VerifierState,
+        },
     };
 
     type F = Field64;
 
-    fn make_test_blinding_size_policy() -> BlindingSizePolicy {
-        BlindingSizePolicy {
-            q_delta_1: 4,
-            q_delta_2: 4,
-            t1: 4,
-            t2: 4,
-            sumcheck_round_degree: 3,
-        }
-    }
-
-    const TEST_NUM_VARIABLES: usize = 8;
+    const TEST_NUM_VARIABLES: usize = 12;
     const TEST_NUM_COEFFS: usize = 1 << TEST_NUM_VARIABLES;
 
-    fn make_test_config(num_polynomials: usize) -> Config<F> {
+    fn make_test_config() -> Config<F> {
+        make_test_config_batch(1)
+    }
+
+    /// Materialize linear forms into Covectors for the prover.
+    fn to_prove_forms(
+        forms: &[Box<dyn LinearForm<F>>],
+        size: usize,
+    ) -> Vec<Box<dyn LinearForm<F>>> {
+        forms
+            .iter()
+            .map(|f| {
+                let mut cv = vec![F::ZERO; size];
+                f.accumulate(&mut cv, F::ONE);
+                Box::new(Covector::new(cv)) as Box<dyn LinearForm<F>>
+            })
+            .collect()
+    }
+
+    /// Run a full prove → verify cycle for zkWHIR 2.0.
+    /// Convenience wrapper around `honest_proof_and_verify` that discards
+    /// the returned `(ds, proof)` — used by functional tests that don't
+    /// need to attempt forgery afterwards.
+    #[allow(clippy::needless_pass_by_value)]
+    fn prove_and_verify(
+        config: &Config<F>,
+        vectors: Vec<Vec<F>>,
+        forms: Vec<Box<dyn LinearForm<F>>>,
+        evaluations: &[F],
+    ) {
+        let vec_refs: Vec<&[F]> = vectors.iter().map(|v| v.as_slice()).collect();
+        let _ = honest_proof_and_verify(config, &vec_refs, &forms, evaluations);
+    }
+
+    #[test]
+    fn test_zk_prove_verify_single_point() {
+        let mut rng = ark_std::test_rng();
+        let config = make_test_config();
+
+        let vector = vec![F::ONE; TEST_NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let evaluation = form.evaluate(config.embedding(), &vector);
+
+        prove_and_verify(&config, vec![vector], vec![Box::new(form)], &[evaluation]);
+    }
+
+    #[test]
+    fn test_zk_prove_verify_multiple_points() {
+        let mut rng = ark_std::test_rng();
+        let config = make_test_config();
+
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+
+        let embedding = config.embedding();
+        let eval0 = f0.evaluate(embedding, &vector);
+        let eval1 = f1.evaluate(embedding, &vector);
+
+        prove_and_verify(
+            &config,
+            vec![vector],
+            vec![Box::new(f0), Box::new(f1)],
+            &[eval0, eval1],
+        );
+    }
+
+    #[test]
+    fn test_zk_prove_verify_with_covector() {
+        let mut rng = ark_std::test_rng();
+        let config = make_test_config();
+
+        let vector = vec![F::ONE; TEST_NUM_COEFFS];
+
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let mle_form = MultilinearExtension { point: point.0 };
+        let embedding = config.embedding();
+        let mle_eval = mle_form.evaluate(embedding, &vector);
+
+        let cov = Covector::new((0..TEST_NUM_COEFFS).map(|i| F::from(i as u64)).collect());
+        let cov_eval = cov.evaluate(embedding, &vector);
+
+        prove_and_verify(
+            &config,
+            vec![vector],
+            vec![Box::new(mle_form), Box::new(cov)],
+            &[mle_eval, cov_eval],
+        );
+    }
+
+    fn make_test_config_batch(batch_size: usize) -> Config<F> {
+        let whir_params = ProtocolParameters {
+            unique_decoding: false,
+            security_level: 16,
+            pow_bits: 0,
+            initial_folding_factor: 2,
+            folding_factor: 2,
+            starting_log_inv_rate: 1,
+            batch_size,
+            hash_id: hash::SHA2,
+        };
+        let mut config = Config::new(TEST_NUM_VARIABLES, &whir_params);
+        config.disable_pow();
+        config
+    }
+
+    /// Round-trip test with `num_variables` chosen so that `mu % ell != 0`,
+    /// exercising the uneven-tiling code path where Φ₀ and Φ₁ extract
+    /// different bit windows.
+    #[test]
+    fn test_zk_prove_verify_nonzero_rem() {
+        const NUM_VARS: usize = 14;
+        const NUM_COEFFS: usize = 1 << NUM_VARS;
+
+        let mut rng = ark_std::test_rng();
         let whir_params = ProtocolParameters {
             unique_decoding: false,
             security_level: 16,
@@ -281,181 +445,146 @@ mod tests {
             batch_size: 1,
             hash_id: hash::SHA2,
         };
-        Config::<F>::new_with_blinding_size_policy(
-            1 << TEST_NUM_VARIABLES,
-            &whir_params,
-            num_polynomials,
-            make_test_blinding_size_policy(),
-        )
-    }
+        let mut config = Config::new(NUM_VARS, &whir_params);
+        config.disable_pow();
 
-    fn linear_form_refs(forms: &[Box<dyn LinearForm<F>>]) -> Vec<&dyn LinearForm<F>> {
-        forms
-            .iter()
-            .map(|w| w.as_ref() as &dyn LinearForm<F>)
-            .collect()
-    }
+        // Verify rem != 0 for this parameter set.
+        let ell = config.blinding_polynomial.initial_num_variables() - 1;
+        assert_ne!(NUM_VARS % ell, 0, "test requires non-zero rem");
 
-    fn to_prove_forms(
-        forms: &[Box<dyn LinearForm<F>>],
-        size: usize,
-    ) -> Vec<Box<dyn LinearForm<F>>> {
-        forms
-            .iter()
-            .map(|f| {
-                let mut cv = vec![F::ZERO; size];
-                f.accumulate(&mut cv, F::ONE);
-                Box::new(Covector { vector: cv }) as Box<dyn LinearForm<F>>
-            })
-            .collect()
-    }
-
-    fn make_two_poly_vectors(mul: u64, add: u64) -> (Vec<F>, Vec<F>) {
-        let v0 = vec![F::ONE; TEST_NUM_COEFFS];
-        let v1 = (0..TEST_NUM_COEFFS)
-            .map(|i| F::from((i as u64).wrapping_mul(mul).wrapping_add(add)))
-            .collect();
-        (v0, v1)
-    }
-
-    fn compute_evaluations(
-        params: &Config<F>,
-        forms: &[&MultilinearExtension<F>],
-        vectors: &[&[F]],
-    ) -> Vec<F> {
-        let embedding = params.blinded_commitment.embedding();
-        let mut evals = Vec::with_capacity(forms.len() * vectors.len());
-        for &form in forms {
-            for &vector in vectors {
-                evals.push(form.evaluate(embedding, vector));
-            }
-        }
-        evals
-    }
-
-    fn prove_and_verify(
-        params: &Config<F>,
-        vectors: &[&[F]],
-        forms: &[Box<dyn LinearForm<F>>],
-        evaluations: &[F],
-        session_tag: &str,
-    ) {
-        let verify_refs = linear_form_refs(forms);
-        let prove_forms = to_prove_forms(forms, params.blinded_commitment.initial_size());
-        let tag = session_tag.to_owned();
-        let ds = DomainSeparator::protocol(params)
-            .session(&tag)
-            .instance(&Empty);
-        let mut prover_state = ProverState::new_std(&ds);
-        let witness = params.commit(&mut prover_state, vectors);
-        let _ = params.prove(
-            &mut prover_state,
-            vectors
-                .iter()
-                .map(|&v| Cow::Borrowed(v))
-                .collect::<Vec<_>>(),
-            witness,
-            prove_forms,
-            Cow::Borrowed(evaluations),
-        );
-        let proof = prover_state.proof();
-        let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let commitment = params
-            .receive_commitments(&mut verifier_state, vectors.len())
-            .expect("receive commitments");
-        params
-            .verify(&mut verifier_state, &verify_refs, evaluations, &commitment)
-            .expect("verify zk wrapper");
-    }
-
-    #[test]
-    fn test_whir_zk_stage1_single_poly() {
-        let mut rng = ark_std::test_rng();
-        let params = make_test_config(1);
-
-        let vector = vec![F::ONE; TEST_NUM_COEFFS];
-        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let vector = vec![F::ONE; NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, NUM_VARS);
         let form = MultilinearExtension { point: point.0 };
-        let evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
-        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
+        let evaluation = form.evaluate(config.embedding(), &vector);
+
+        prove_and_verify(&config, vec![vector], vec![Box::new(form)], &[evaluation]);
+    }
+
+    #[test]
+    fn test_zk_prove_verify_multi_vector() {
+        let mut rng = ark_std::test_rng();
+        let config = make_test_config_batch(2);
+
+        let v0: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let v1: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 * 3 + 7))
+            .collect();
+
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+
+        let embedding = config.embedding();
+        // evaluations[j * n + i] = ⟨wⱼ, fᵢ⟩
+        // 1 form, 2 vectors: evaluations = [⟨w₀, f₀⟩, ⟨w₀, f₁⟩]
+        let eval_0_0 = f0.evaluate(embedding, &v0);
+        let eval_0_1 = f0.evaluate(embedding, &v1);
+
         prove_and_verify(
-            &params,
-            &[&vector],
-            &forms,
-            &[evaluation],
-            &format!("zk-stage1 {}:{}", file!(), line!()),
+            &config,
+            vec![v0, v1],
+            vec![Box::new(f0)],
+            &[eval_0_0, eval_0_1],
         );
     }
 
     #[test]
-    fn test_whir_zk_stage1_multi_poly_multi_query() {
+    fn test_zk_prove_verify_multi_vector_multi_form() {
         let mut rng = ark_std::test_rng();
-        let params = make_test_config(2);
+        let config = make_test_config_batch(2);
 
-        let (v0, v1) = make_two_poly_vectors(17, 3);
-        let vectors = [&v0[..], &v1[..]];
+        let v0: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let v1: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 * 3 + 7))
+            .collect();
 
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let f0 = MultilinearExtension { point: p0.0 };
         let f1 = MultilinearExtension { point: p1.0 };
-        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
 
-        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
+        let embedding = config.embedding();
+        // Row-major: evaluations[j * n + i] = ⟨wⱼ, fᵢ⟩
+        // 2 forms × 2 vectors = 4 evaluations
+        let eval_0_0 = f0.evaluate(embedding, &v0);
+        let eval_0_1 = f0.evaluate(embedding, &v1);
+        let eval_1_0 = f1.evaluate(embedding, &v0);
+        let eval_1_1 = f1.evaluate(embedding, &v1);
+
         prove_and_verify(
-            &params,
-            &vectors,
-            &forms,
-            &evaluations,
-            &format!("zk-stage1-multi {}:{}", file!(), line!()),
+            &config,
+            vec![v0, v1],
+            vec![Box::new(f0), Box::new(f1)],
+            &[eval_0_0, eval_0_1, eval_1_0, eval_1_1],
         );
     }
 
-    #[test]
+    // =====================================================================
+    // Soundness / negative tests
+    // =====================================================================
+
     /// Verification must reject when the public evaluations are tampered with.
     /// Both `Err` and a panic (from debug transcript checks) count as rejection.
-    fn test_whir_zk_stage1_rejects_wrong_evaluations() {
+    #[test]
+    fn test_zk_rejects_wrong_evaluations() {
         let mut rng = ark_std::test_rng();
-        let params = make_test_config(2);
+        let config = make_test_config();
 
-        let (v0, v1) = make_two_poly_vectors(29, 7);
-        let vectors = [&v0[..], &v1[..]];
-
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let f0 = MultilinearExtension { point: p0.0 };
         let f1 = MultilinearExtension { point: p1.0 };
-        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
+
+        let embedding = config.embedding();
+        let evaluations = vec![
+            f0.evaluate(embedding, &vector),
+            f1.evaluate(embedding, &vector),
+        ];
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
-        let refs = linear_form_refs(&forms);
-        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
-        let ds = DomainSeparator::protocol(&params)
-            .session(&format!("zk-stage1-negative {}:{}", file!(), line!()))
+        let prove_forms = to_prove_forms(&forms, vector.len());
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("zk2-wrong-eval {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
-        let witness = params.commit(&mut prover_state, &vectors);
-        let _ = params.prove(
+        let witness = config.commit(&mut prover_state, &[&vector]);
+        config.prove(
             &mut prover_state,
-            vectors
-                .iter()
-                .map(|&v| Cow::Borrowed(v))
-                .collect::<Vec<_>>(),
+            vec![Cow::Owned(vector)],
             witness,
             prove_forms,
             Cow::Borrowed(&evaluations),
         );
-
         let proof = prover_state.proof();
-        let mut wrong_evaluations = evaluations.clone();
+
+        let mut wrong_evaluations = evaluations;
         wrong_evaluations[0] += F::ONE;
+
+        let weight_refs: Vec<&dyn LinearForm<F>> = forms
+            .iter()
+            .map(|f| f.as_ref() as &dyn LinearForm<F>)
+            .collect();
 
         let verify_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let commitment = params
-                .receive_commitments(&mut verifier_state, 2)
-                .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &wrong_evaluations, &commitment)
+            let commitments = config
+                .receive_commitments(&mut verifier_state)
+                .expect("receive_commitments");
+            config
+                .verify(
+                    &mut verifier_state,
+                    &weight_refs,
+                    &wrong_evaluations,
+                    &commitments,
+                )?
+                .verify(weight_refs.iter().copied())
         }));
         if let Ok(result) = verify_outcome {
             assert!(
@@ -465,110 +594,747 @@ mod tests {
         }
     }
 
+    /// Verification must reject when the proof transcript is corrupted.
     #[test]
-    fn test_whir_zk_stage1_rejects_tampered_proof() {
+    fn test_zk_rejects_tampered_proof() {
         let mut rng = ark_std::test_rng();
-        let params = make_test_config(2);
+        let config = make_test_config();
 
-        let (v0, v1) = make_two_poly_vectors(13, 11);
-        let vectors = [&v0[..], &v1[..]];
-
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
         let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let f0 = MultilinearExtension { point: p0.0 };
         let f1 = MultilinearExtension { point: p1.0 };
-        let evaluations = compute_evaluations(&params, &[&f0, &f1], &vectors);
+
+        let embedding = config.embedding();
+        let evaluations = vec![
+            f0.evaluate(embedding, &vector),
+            f1.evaluate(embedding, &vector),
+        ];
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
-        let refs = linear_form_refs(&forms);
-        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
-        let ds = DomainSeparator::protocol(&params)
-            .session(&format!("zk-stage1-tamper {}:{}", file!(), line!()))
+        let prove_forms = to_prove_forms(&forms, vector.len());
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("zk2-tamper {}:{}", file!(), line!()))
             .instance(&Empty);
         let mut prover_state = ProverState::new_std(&ds);
-        let witness = params.commit(&mut prover_state, &vectors);
-        let _ = params.prove(
+        let witness = config.commit(&mut prover_state, &[&vector]);
+        config.prove(
             &mut prover_state,
-            vectors
-                .iter()
-                .map(|&v| Cow::Borrowed(v))
-                .collect::<Vec<_>>(),
+            vec![Cow::Owned(vector)],
             witness,
             prove_forms,
             Cow::Borrowed(&evaluations),
         );
 
-        let mut proof = prover_state.proof();
-        if let Some(last) = proof.narg_string.last_mut() {
+        let mut tampered_proof = prover_state.proof();
+        if let Some(last) = tampered_proof.narg_string.last_mut() {
             *last ^= 1;
         } else {
             panic!("expected non-empty proof transcript");
         }
 
+        let weight_refs: Vec<&dyn LinearForm<F>> = forms
+            .iter()
+            .map(|f| f.as_ref() as &dyn LinearForm<F>)
+            .collect();
+
         let verify_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let commitment = params
-                .receive_commitments(&mut verifier_state, 2)
-                .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &evaluations, &commitment)
+            let mut verifier_state = VerifierState::new_std(&ds, &tampered_proof);
+            let commitments = config
+                .receive_commitments(&mut verifier_state)
+                .expect("receive_commitments");
+            config
+                .verify(
+                    &mut verifier_state,
+                    &weight_refs,
+                    &evaluations,
+                    &commitments,
+                )?
+                .verify(weight_refs.iter().copied())
         }));
         if let Ok(result) = verify_outcome {
             assert!(
                 result.is_err(),
                 "verification should reject tampered proof bytes"
             );
-        } else {
-            // In debug transcript mode, tampering may trigger an interaction-pattern panic
-            // before returning `Err`, which is still a valid rejection.
         }
+        // A panic is also a valid rejection (debug transcript checks).
     }
 
-    /// Soundness exploit: malicious prover generates proof for WRONG evaluation.
-    /// A sound PCS must reject; if verify() returns Ok, g_eval freedom lets
-    /// the prover forge arbitrary evaluation claims.
+    /// Verify that `unique_decoding: true` is rejected at config construction.
+    ///
+    /// zkWHIR 2.0's "Alternative Randomness Sampling" requires OOD queries
+    /// (Step 5d: the prover sends ood_f̂, m_evals, g_evals at each OOD point).
+    /// With unique decoding, `out_domain_samples = 0`, which breaks the
+    /// protocol in two ways:
+    ///
+    /// 1. `Commitment::num_vectors()` derives the vector count from the OOD
+    ///    evaluation matrix as `matrix.len() / points.len()`. With 0 OOD
+    ///    points this division is undefined, silently returning 0.
+    ///
+    /// 2. The verifier uses `num_vectors()` to build `ProtocolDims`, so all
+    ///    subsequent transcript reads are misaligned — the verifier expects
+    ///    0 m_evals per point while the prover sent 1.
+    ///
+    /// This is by design: the paper's ZK construction relies on OOD openings
+    /// to bind the blinding polynomial claims into the Fiat-Shamir transcript.
+    /// Without them the simulator cannot produce indistinguishable transcripts.
     #[test]
-    fn test_whir_zk_malicious_prover_wrong_evaluation() {
+    #[should_panic(expected = "zkWHIR 2.0 requires list decoding")]
+    fn test_zk_unique_decoding_unsupported() {
+        let whir_params = ProtocolParameters {
+            unique_decoding: true,
+            security_level: 32,
+            pow_bits: 0,
+            initial_folding_factor: 2,
+            folding_factor: 2,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+        Config::<F>::new(TEST_NUM_VARIABLES, &whir_params);
+    }
+
+    /// Round-trip test where `mu % ell == 0` (rem = 0).
+    ///
+    /// When rem = 0, Φ₀ and Φ₁ extract the same bit window. This exercises
+    /// the overlapping-window path through `build_beq_tables`,
+    /// `build_weight_covectors`, and the Step 7 diagonal check.
+    ///
+    /// Parameters: num_vars=20, security_level=16 → ell=10, rem = 20 % 10 = 0.
+    #[test]
+    fn test_zk_prove_verify_zero_rem() {
+        const NUM_VARS: usize = 20;
+        const NUM_COEFFS: usize = 1 << NUM_VARS;
+
         let mut rng = ark_std::test_rng();
-        let params = make_test_config(1);
+        let whir_params = ProtocolParameters {
+            unique_decoding: false,
+            security_level: 16,
+            pow_bits: 0,
+            initial_folding_factor: 2,
+            folding_factor: 2,
+            starting_log_inv_rate: 1,
+            batch_size: 1,
+            hash_id: hash::SHA2,
+        };
+        let mut config = Config::new(NUM_VARS, &whir_params);
+        config.disable_pow();
+
+        let ell = config.blinding_polynomial.initial_num_variables() - 1;
+        assert_eq!(NUM_VARS % ell, 0, "test requires rem == 0");
+
+        let vector = vec![F::ONE; NUM_COEFFS];
+        let point = MultilinearPoint::rand(&mut rng, NUM_VARS);
+        let form = MultilinearExtension { point: point.0 };
+        let evaluation = form.evaluate(config.embedding(), &vector);
+
+        prove_and_verify(&config, vec![vector], vec![Box::new(form)], &[evaluation]);
+    }
+
+    /// Generate an honest zkWHIR proof and sanity-check that it verifies.
+    /// Returns the domain separator and proof for use in forgery tests.
+    fn honest_proof_and_verify(
+        config: &Config<F>,
+        vectors: &[&[F]],
+        forms: &[Box<dyn LinearForm<F>>],
+        evals: &[F],
+    ) -> (DomainSeparator<'static, Empty>, Proof) {
+        let ds = DomainSeparator::protocol(config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let witness = config.commit(&mut ps, vectors);
+        config.prove(
+            &mut ps,
+            vectors.iter().map(|&v| Cow::Borrowed(v)).collect(),
+            witness,
+            to_prove_forms(forms, vectors[0].len()),
+            Cow::Borrowed(evals),
+        );
+        let proof = ps.proof();
+
+        let weights: Vec<&dyn LinearForm<F>> = forms
+            .iter()
+            .map(|f| f.as_ref() as &dyn LinearForm<F>)
+            .collect();
+        let mut vs = VerifierState::new_std(&ds, &proof);
+        let commitments = config.receive_commitments(&mut vs).unwrap();
+        config
+            .verify(&mut vs, &weights, evals, &commitments)
+            .unwrap()
+            .verify(weights.iter().copied())
+            .unwrap();
+
+        (ds, proof)
+    }
+
+    /// Run the zkWHIR verifier with the given evaluations.
+    /// Returns `true` if accepted (soundness bug), `false` if rejected.
+    ///
+    /// Uses `catch_unwind` because the `verify!` macro can either return
+    /// `Err` or panic depending on build configuration — both count as
+    /// correct rejection.
+    fn verifier_accepts(
+        config: &Config<F>,
+        ds: &DomainSeparator<'_, Empty>,
+        proof: &Proof,
+        forms: &[Box<dyn LinearForm<F>>],
+        claimed_evals: &[F],
+    ) -> bool {
+        let weights: Vec<&dyn LinearForm<F>> = forms
+            .iter()
+            .map(|f| f.as_ref() as &dyn LinearForm<F>)
+            .collect();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut vs = VerifierState::new_std(ds, proof);
+            let commitments = config.receive_commitments(&mut vs).unwrap();
+            config
+                .verify(&mut vs, &weights, claimed_evals, &commitments)
+                .and_then(|fc| fc.verify(weights.iter().copied()))
+        }));
+        matches!(result, Ok(Ok(())))
+    }
+
+    /// α-cancelling forgery across batched vectors (n=2, f=1) is rejected.
+    /// Extracts α from transcript, constructs `[+Δ, −Δ/α]` preserving the
+    /// batched sum — verifier rejects because evals are individually bound.
+    #[test]
+    fn test_rejects_alpha_cancelling_forgery() {
+        let config = make_test_config_batch(2);
+        let mut rng = ark_std::test_rng();
+
+        let v0: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let v1: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 * 3 + 7))
+            .collect();
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let embedding = config.embedding();
+        let evals = vec![form.evaluate(embedding, &v0), form.evaluate(embedding, &v1)];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
+
+        let (ds, proof) = honest_proof_and_verify(&config, &[&v0, &v1], &forms, &evals);
+
+        // Replay the verifier transcript to extract the batching coefficient α.
+        //
+        // zkWHIR transcript after receive_commitments (n=2, f=1):
+        //   1. V → P: β                          (verifier challenge)
+        //   2. P → V: G = ⟨w, g⟩                 (1 g_claim for 1 form)
+        //   3. P → V: eval₀, eval₁               (2 evals — the fix)
+        //   4. V → P: α via geometric_challenge(2) → [1, α]
+        let alpha = {
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let _ = config.receive_commitments(&mut vs).unwrap();
+            let _beta: F = vs.verifier_message(); // step 1
+            let _g_claim: F = vs.prover_message().unwrap(); // step 2
+            let _eval_0: F = vs.prover_message().unwrap(); // step 3
+            let _eval_1: F = vs.prover_message().unwrap(); // step 3
+            geometric_challenge::<_, F>(&mut vs, 2)[1] // step 4
+        };
+
+        let delta = F::from(42u64);
+        let mut forged = evals.clone();
+        forged[0] += delta;
+        forged[1] -= delta / alpha;
+        assert_eq!(evals[0] + alpha * evals[1], forged[0] + alpha * forged[1]);
+
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged),
+            "REGRESSION issue #1: α-cancelling forgery must be rejected"
+        );
+    }
+
+    /// G-claim forgery compensated via ρ (n=1, f=1) is rejected.
+    ///
+    /// Full manual transcript replay with a malicious prover that:
+    /// 1. Commits honestly.
+    /// 2. Sends forged G' = G + Δ.
+    /// 3. Absorbs honest eval (must commit before ρ is sampled).
+    /// 4. After ρ is sampled, constructs e' = e − Δ/ρ to preserve ρ·e + G.
+    /// 5. Completes the rest of the proof honestly.
+    ///
+    /// Verifier reads the honest eval from the transcript and rejects e'.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_rejects_g_claim_forgery_via_rho() {
+        let mut rng = ark_std::test_rng();
+        let config = make_test_config();
 
         let vector = vec![F::ONE; TEST_NUM_COEFFS];
         let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
         let form = MultilinearExtension { point: point.0 };
-        let correct_evaluation = form.evaluate(params.blinded_commitment.embedding(), &vector);
-        let wrong_evaluation = correct_evaluation + F::from(42u64);
+        let honest_eval = form.evaluate(config.embedding(), &vector);
 
         let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
-        let refs = linear_form_refs(&forms);
-        let prove_forms = to_prove_forms(&forms, params.blinded_commitment.initial_size());
-        let ds = DomainSeparator::protocol(&params)
-            .session(&format!("zk-malicious {}:{}", file!(), line!()))
+        let weight_refs: Vec<&dyn LinearForm<F>> = forms
+            .iter()
+            .map(|f| f.as_ref() as &dyn LinearForm<F>)
+            .collect();
+
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
             .instance(&Empty);
+        let mut prover_state = ProverState::new_std(&ds);
+        let witness = config.commit(&mut prover_state, &[&vector]);
 
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut prover_state = ProverState::new_std(&ds);
-            let witness = params.commit(&mut prover_state, &[&vector]);
-            let _ = params.prove(
-                &mut prover_state,
-                vec![Cow::Borrowed(&vector)],
-                witness,
-                prove_forms,
-                Cow::Owned(vec![wrong_evaluation]),
-            );
+        let Witness {
+            f_hat_witness,
+            blinding_poly_witness,
+            f_hat_polys,
+            secrets,
+        } = witness;
 
-            let proof = prover_state.proof();
-            let mut verifier_state = VerifierState::new_std(&ds, &proof);
-            let commitment = params
-                .receive_commitments(&mut verifier_state, 1)
-                .expect("receive commitments");
-            params.verify(&mut verifier_state, &refs, &[wrong_evaluation], &commitment)
+        let dims = ProtocolDims::new(&config, 1);
+        let size = dims.size;
+
+        // ── MALICIOUS Step 2: send g_claim + Δ ──
+
+        let beta: F = prover_state.verifier_message();
+        let beta_powers = geometric_sequence(beta, dims.num_g_polys());
+        let g_poly: Vec<F> = (0..size)
+            .map(|idx| {
+                beta_powers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &bp)| bp * secrets.g_polys[i][dims.phi_i_bits(idx, i)])
+                    .sum()
+            })
+            .collect();
+        let honest_g_claim: F = {
+            let mut buf = vec![F::ZERO; size];
+            forms[0].accumulate(&mut buf, F::ONE);
+            dot(&buf, &g_poly)
+        };
+
+        let delta = F::from(77u64);
+        prover_state.prover_message(&(honest_g_claim + delta)); // forged G'
+        prover_state.prover_message(&honest_eval); // must absorb before ρ
+
+        let alpha_coeffs: Vec<F> = geometric_challenge(&mut prover_state, 1);
+        let rho: F = prover_state.verifier_message();
+        assert_ne!(rho, F::ZERO);
+
+        // f_zk = ρ·f + g (honest)
+        let mut f_zk: Vec<F> = vector.iter().map(|&v| rho * v).collect();
+        for (f, &g) in f_zk.iter_mut().zip(g_poly.iter()) {
+            *f += g;
+        }
+        drop(g_poly);
+
+        let combined_claim = rho * honest_eval + honest_g_claim;
+
+        // Step 4: sumcheck
+        let constraint_rlc: Vec<F> = geometric_challenge(&mut prover_state, 1);
+        let mut covector = vec![F::ZERO; size];
+        for (coeff, lf) in constraint_rlc.iter().zip(forms.iter()) {
+            lf.accumulate(&mut covector, *coeff);
+        }
+        let mut the_sum: F = constraint_rlc[0] * combined_claim;
+        let folding_randomness = config.blinded_polynomial.initial_sumcheck.prove(
+            &mut prover_state,
+            &mut f_zk,
+            &mut covector,
+            &mut the_sum,
+        );
+
+        // Steps 5-6: honest
+        let r_bar = &folding_randomness.0;
+        let eq_weights_vec = compute_eq_weights(r_bar);
+        let RsFoldCoeffs {
+            masking_coeffs_all,
+            g_i_coeffs,
+        } = compute_rs_fold_blinding_coeffs(
+            &eq_weights_vec,
+            &secrets.g_polys,
+            &secrets.masking_polys,
+            &alpha_coeffs,
+            rho,
+            dims,
+        );
+
+        let round_config = &config.blinded_polynomial.round_configs[0];
+        let folded_commit = round_config
+            .irs_committer
+            .commit(&mut prover_state, &[&f_zk]);
+        round_config.pow.prove(&mut prover_state);
+        let in_domain = config
+            .blinded_polynomial
+            .initial_committer
+            .open(&mut prover_state, &[&f_hat_witness]);
+
+        let mut lambda_z_points: Vec<F> = Vec::new();
+        let send_blinding = |ps: &mut ProverState<_, _>, z: F| {
+            for m in &masking_coeffs_all {
+                ps.prover_message(&univariate_evaluate(m, z));
+            }
+            for g in &g_i_coeffs {
+                ps.prover_message(&univariate_evaluate(g, z));
+            }
+        };
+
+        let f_hat_combined = &f_hat_polys[0];
+        let mu = dims.mu;
+        for &z in &folded_commit.out_of_domain().points {
+            prover_state.prover_message(&multilinear_extend(
+                f_hat_combined,
+                &build_fold_args(r_bar, z, mu),
+            ));
+            send_blinding(&mut prover_state, z);
+            lambda_z_points.push(z);
+        }
+        drop(f_hat_polys);
+        for &z in &in_domain.points {
+            send_blinding(&mut prover_state, z);
+            lambda_z_points.push(z);
+        }
+        {
+            let stir_challenges: Vec<UnivariateEvaluation<F>> = folded_commit
+                .out_of_domain()
+                .evaluators(round_config.initial_size())
+                .chain(in_domain.evaluators(round_config.initial_size()))
+                .collect();
+            let ood_evals = folded_commit.out_of_domain().values(&[F::ONE]);
+            let num_ood = folded_commit.out_of_domain().points.len();
+            let embedding = Identity::new();
+            let stir_evals: Vec<F> = ood_evals
+                .chain(
+                    stir_challenges[num_ood..]
+                        .iter()
+                        .map(|ch| ch.evaluate(&embedding, &f_zk)),
+                )
+                .collect();
+            let stir_rlc: Vec<F> = geometric_challenge(&mut prover_state, stir_challenges.len());
+            UnivariateEvaluation::accumulate_many(&stir_challenges, &mut covector, &stir_rlc);
+            the_sum += dot(&stir_rlc, &stir_evals);
+        }
+        let round0_folding =
+            round_config
+                .sumcheck
+                .prove(&mut prover_state, &mut f_zk, &mut covector, &mut the_sum);
+        let remaining = whir::rounds::prove_remaining_rounds(
+            &config.blinded_polynomial.round_configs,
+            &whir::rounds::FinalRoundConfig {
+                sumcheck: &config.blinded_polynomial.final_sumcheck,
+                pow: &config.blinded_polynomial.final_pow,
+            },
+            &mut prover_state,
+            &mut whir::rounds::SumcheckState {
+                vector: &mut f_zk,
+                covector: &mut covector,
+                the_sum: &mut the_sum,
+            },
+            folded_commit,
+            &round0_folding,
+        );
+        let gamma_points = remaining.first_in_domain_points;
+        let _ = config.blinded_polynomial.initial_committer.open_at_indices(
+            &mut prover_state,
+            &[&f_hat_witness],
+            &gamma_to_f_hat_indices(&gamma_points, &config),
+        );
+        for &gamma in &gamma_points {
+            send_blinding(&mut prover_state, gamma);
+            lambda_z_points.push(gamma);
+        }
+        drop(f_zk);
+        drop(covector);
+
+        // Step 7: blinding proof (honest)
+        let tau: F = prover_state.verifier_message();
+        let beq_tables = build_beq_tables(&lambda_z_points, &eq_weights_vec, tau, dims);
+        let weight_covectors = build_weight_covectors(&beq_tables, rho, &alpha_coeffs, dims);
+        let mut eval_matrix = Vec::with_capacity(dims.num_blinding_vecs * dims.num_blinding_vecs);
+        for w in &weight_covectors {
+            for v in &secrets.blinding_vectors {
+                eval_matrix.push(dot(w, v));
+            }
+        }
+        for e in &eval_matrix {
+            prover_state.prover_message(e);
+        }
+        let blinding_forms: Vec<Box<dyn LinearForm<F>>> = weight_covectors
+            .into_iter()
+            .map(|cv| Box::new(Covector::new(cv)) as _)
+            .collect();
+        let blinding_cows: Vec<Cow<'_, [F]>> = secrets
+            .blinding_vectors
+            .iter()
+            .map(|v| Cow::Borrowed(v.as_slice()))
+            .collect();
+        let _ = config.blinding_polynomial.prove(
+            &mut prover_state,
+            blinding_cows,
+            vec![Cow::Borrowed(&blinding_poly_witness)],
+            blinding_forms,
+            Cow::Owned(eval_matrix),
+        );
+
+        // Verify with forged e' = e − Δ/ρ.
+        let proof = prover_state.proof();
+        let forged_eval = honest_eval - delta / rho;
+        assert_ne!(forged_eval, honest_eval);
+
+        let attack = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs).unwrap();
+            config
+                .verify(&mut vs, &weight_refs, &[forged_eval], &commitments)
+                .and_then(|fc| fc.verify(weight_refs.iter().copied()))
+        }));
+        assert!(
+            !matches!(attack, Ok(Ok(()))),
+            "REGRESSION issue #2: g_claim forgery (G'=G+Δ, e'=e−Δ/ρ) must be rejected"
+        );
+    }
+
+    /// Constraint-RLC-cancelling forgery across forms (n=1, f=2) is rejected.
+    /// Extracts c₁ from transcript, constructs `[+Δ, −Δ/c₁]` preserving the
+    /// weighted sum — verifier rejects because evals are individually bound.
+    #[test]
+    fn test_rejects_constraint_rlc_cancelling_forgery() {
+        let config = make_test_config();
+        let mut rng = ark_std::test_rng();
+
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+        let embedding = config.embedding();
+        let evals = vec![
+            f0.evaluate(embedding, &vector),
+            f1.evaluate(embedding, &vector),
+        ];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
+
+        let (ds, proof) = honest_proof_and_verify(&config, &[&vector], &forms, &evals);
+
+        // Replay the verifier transcript to extract constraint RLC coefficient c₁.
+        //
+        // zkWHIR transcript after receive_commitments (n=1, f=2):
+        //   1. V → P: β                                    (verifier challenge)
+        //   2. P → V: G₀, G₁                               (2 g_claims for 2 forms)
+        //   3. P → V: eval₀, eval₁                         (2 evals — the fix)
+        //   4. V → P: α via geometric_challenge(1) → [1]   (no transcript squeeze for n=1)
+        //   5. V → P: ρ                                    (verifier challenge)
+        //   6. V → P: c via geometric_challenge(2) → [1, c₁]
+        let c1 = {
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let _ = config.receive_commitments(&mut vs).unwrap();
+            let _beta: F = vs.verifier_message(); // step 1
+            for _ in 0..2 {
+                let _: F = vs.prover_message().unwrap();
+            } // step 2: g_claims
+            for _ in 0..2 {
+                let _: F = vs.prover_message().unwrap();
+            } // step 3: evals
+              // step 4: geometric_challenge(1) returns [ONE] without squeezing,
+              // but must be called to keep the transcript replay in sync.
+            let _alpha: Vec<F> = geometric_challenge(&mut vs, 1);
+            let _rho: F = vs.verifier_message(); // step 5
+            geometric_challenge::<_, F>(&mut vs, 2)[1] // step 6: c₁
+        };
+
+        let delta = F::from(99u64);
+        let mut forged = evals.clone();
+        forged[0] += delta;
+        forged[1] -= delta / c1;
+        assert_eq!(evals[0] + c1 * evals[1], forged[0] + c1 * forged[1]);
+
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &forged),
+            "REGRESSION issue #3: constraint-RLC-cancelling forgery must be rejected"
+        );
+    }
+
+    /// All forgery surfaces combined (n=2, f=2, 4 evaluations).
+    /// Tests single-entry, cross-vector, and cross-form forgeries
+    /// in one proof to exercise α, ρ, and constraint_rlc binding together.
+    #[test]
+    fn test_rejects_all_forgery_patterns_n2_f2() {
+        let config = make_test_config_batch(2);
+        let mut rng = ark_std::test_rng();
+
+        let v0: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let v1: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 * 3 + 7))
+            .collect();
+        let p0 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let p1 = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let f0 = MultilinearExtension { point: p0.0 };
+        let f1 = MultilinearExtension { point: p1.0 };
+        let embedding = config.embedding();
+        let evals = vec![
+            f0.evaluate(embedding, &v0),
+            f0.evaluate(embedding, &v1),
+            f1.evaluate(embedding, &v0),
+            f1.evaluate(embedding, &v1),
+        ];
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(f0), Box::new(f1)];
+
+        let (ds, proof) = honest_proof_and_verify(&config, &[&v0, &v1], &forms, &evals);
+
+        let mut fa = evals.clone();
+        fa[0] += F::from(1u64);
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &fa),
+            "single-entry forgery must be rejected"
+        );
+
+        let mut fb = evals.clone();
+        fb[0] += F::from(99u64);
+        fb[1] -= F::from(99u64);
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &fb),
+            "cross-vector forgery must be rejected"
+        );
+
+        let mut fc = evals.clone();
+        fc[0] += F::from(55u64);
+        fc[2] -= F::from(55u64);
+        assert!(
+            !verifier_accepts(&config, &ds, &proof, &forms, &fc),
+            "cross-form forgery must be rejected"
+        );
+    }
+
+    /// Linear form replay: w' with same MLE at the final point
+    /// but different inner product. Verifier must reject when the caller
+    /// binds weights into the transcript before calling prove/verify.
+    ///
+    /// This test demonstrates the recommended pattern: the caller absorbs
+    /// weights into the transcript at the call site (caller responsibility).
+    /// With this in place, a forged w' is caught at the binding read step.
+    #[test]
+    fn test_rejects_forged_linear_form_with_same_mle_at_eval_point() {
+        use crate::algebra::eval_eq;
+
+        let config = make_test_config();
+        let mut rng = ark_std::test_rng();
+
+        let vector: Vec<F> = (0..TEST_NUM_COEFFS)
+            .map(|i| F::from(i as u64 + 1))
+            .collect();
+        let point = MultilinearPoint::rand(&mut rng, TEST_NUM_VARIABLES);
+        let form = MultilinearExtension { point: point.0 };
+        let embedding = config.embedding();
+        let honest_eval = form.evaluate(embedding, &vector);
+        let forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(form)];
+
+        // Honest prover with caller-side weight binding before `prove`.
+        let ds = DomainSeparator::protocol(&config)
+            .session(&format!("audit {}:{}", file!(), line!()))
+            .instance(&Empty);
+        let mut ps = ProverState::new_std(&ds);
+        let witness = config.commit(&mut ps, &[&vector]);
+
+        // Caller binds weight covectors into the transcript.
+        for f in &forms {
+            let mut cv = vec![F::ZERO; vector.len()];
+            f.accumulate(&mut cv, F::ONE);
+            for v in &cv {
+                ps.prover_message(v);
+            }
+        }
+
+        config.prove(
+            &mut ps,
+            vec![Cow::Borrowed(vector.as_slice())],
+            witness,
+            to_prove_forms(&forms, vector.len()),
+            Cow::Borrowed(&[honest_eval]),
+        );
+        let proof = ps.proof();
+
+        // Honest verification with the matching caller-side binding — succeeds
+        // and yields the evaluation_point used by the attack.
+        let eval_point = {
+            let weights: Vec<&dyn LinearForm<F>> = forms
+                .iter()
+                .map(|f| f.as_ref() as &dyn LinearForm<F>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs).unwrap();
+
+            for f in &forms {
+                let mut cv = vec![F::ZERO; vector.len()];
+                f.accumulate(&mut cv, F::ONE);
+                for &expected in &cv {
+                    let read: F = vs.prover_message().unwrap();
+                    assert_eq!(read, expected);
+                }
+            }
+
+            config
+                .verify(&mut vs, &weights, &[honest_eval], &commitments)
+                .unwrap()
+                .evaluation_point
+        };
+
+        // Build forged form w' via two-index delta on the honest covector.
+        // w'[a] += eq(r, b), w'[b] -= eq(r, a) preserves the MLE at r.
+        let mut forged_weights = vec![F::ZERO; TEST_NUM_COEFFS];
+        forms[0].accumulate(&mut forged_weights, F::ONE);
+
+        let mut eq_r = vec![F::ZERO; TEST_NUM_COEFFS];
+        eval_eq(&mut eq_r, &eval_point, F::ONE);
+
+        let (a, b) = (0, 1);
+        forged_weights[a] += eq_r[b];
+        forged_weights[b] -= eq_r[a];
+        let forged_form = Covector::new(forged_weights);
+
+        // Sanity: MLE agrees at r, but inner product differs.
+        assert_eq!(
+            forged_form.mle_evaluate(&eval_point),
+            forms[0].as_ref().mle_evaluate(&eval_point),
+        );
+        assert_ne!(forged_form.evaluate(embedding, &vector), honest_eval);
+
+        // Attack: try to verify with forged form w' against the proof.
+        // The caller-side binding catches the forgery — when the verifier
+        // absorbs w'.accumulate() it doesn't match the bytes the prover
+        // wrote (which encoded w), so the read check fails.
+        let forged_forms: Vec<Box<dyn LinearForm<F>>> = vec![Box::new(forged_form)];
+        let attack_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let weights: Vec<&dyn LinearForm<F>> = forged_forms
+                .iter()
+                .map(|f| f.as_ref() as &dyn LinearForm<F>)
+                .collect();
+            let mut vs = VerifierState::new_std(&ds, &proof);
+            let commitments = config.receive_commitments(&mut vs)?;
+
+            // Caller-side binding with the FORGED form catches the attack:
+            // the bytes in the proof encode w (what the honest prover bound),
+            // but the verifier here computes w'.accumulate() — they mismatch.
+            for f in &forged_forms {
+                let mut cv = vec![F::ZERO; vector.len()];
+                f.accumulate(&mut cv, F::ONE);
+                for &expected in &cv {
+                    let read: F = vs.prover_message()?;
+                    crate::verify!(read == expected);
+                }
+            }
+
+            config
+                .verify(&mut vs, &weights, &[honest_eval], &commitments)
+                .and_then(|fc| fc.verify(weights.iter().copied()))
         }));
 
-        if let Ok(result) = outcome {
-            assert!(
-                result.is_err(),
-                "SOUNDNESS BUG: verifier accepted wrong evaluation from malicious prover \
-             (correct={correct_evaluation:?}, claimed={wrong_evaluation:?})"
-            );
-        }
+        assert!(
+            !matches!(attack_result, Ok(Ok(()))),
+            "REGRESSION : caller-bound w must reject forged w' with matching MLE at r"
+        );
     }
 }
