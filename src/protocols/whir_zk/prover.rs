@@ -119,7 +119,7 @@ where
         &mut self,
         vectors: Vec<Cow<'_, [F]>>,
         g_polys: &[Vec<F>],
-        linear_forms: &[Box<dyn LinearForm<F>>],
+        linear_forms: Vec<Box<dyn LinearForm<F>>>,
         evaluations: &[F],
     ) -> PrepareResult<F> {
         let num_vectors = self.dims.num_vectors;
@@ -159,7 +159,7 @@ where
         let g_claims: Vec<F> = {
             let mut buf = vec![F::ZERO; size];
             let mut claims = Vec::with_capacity(linear_forms.len());
-            for w in linear_forms {
+            for w in &linear_forms {
                 buf.fill(F::ZERO);
                 w.accumulate(&mut buf, F::ONE);
                 claims.push(dot(&buf, &g_poly));
@@ -247,6 +247,8 @@ where
         for (coeff, lf) in constraint_rlc_coeffs.iter().zip(linear_forms.iter()) {
             lf.accumulate(&mut covector, *coeff);
         }
+        // Only the combined `covector` is needed past this point.
+        drop(linear_forms);
 
         let mut the_sum: F = constraint_rlc_coeffs
             .iter()
@@ -475,7 +477,7 @@ impl<F: FftField> Config<F> {
         f_hat_polys: Vec<Vec<F>>,
         masking_polys: &[Vec<F>],
         g_polys: &[Vec<F>],
-        linear_forms: &[Box<dyn LinearForm<F>>],
+        linear_forms: Vec<Box<dyn LinearForm<F>>>,
         evaluations: &[F],
     ) -> BlindedProveResult<F>
     where
@@ -682,13 +684,12 @@ impl<F: FftField> Config<F> {
             f_hat_polys,
             &secrets.masking_polys,
             &secrets.g_polys,
-            &linear_forms,
+            linear_forms,
             &evaluations,
         );
 
         // Free fields only needed during Steps 2-6, before Step 7.
         drop(f_hat_witness);
-        drop(linear_forms);
 
         // Step 7: batched blinding polynomial proof.
         self.prove_blinding_polynomial(
