@@ -22,7 +22,9 @@ use crate::{
         embedding::Identity,
         geometric_sequence,
         linear_form::{Covector, Evaluate, LinearForm, UnivariateEvaluation},
-        multilinear_extend, univariate_evaluate, MultilinearPoint,
+        multilinear_extend,
+        ntt::interleaved_rs_encode,
+        univariate_evaluate, MultilinearPoint,
     },
     hash::Hash,
     protocols::{
@@ -314,8 +316,11 @@ where
 
     /// Step 5: OOD/STIR queries, STIR constraint accumulation, and remaining WHIR rounds.
     ///
-    /// Takes ownership of `f_hat_polys` so it can be freed after OOD evaluations,
-    /// before the memory-intensive WHIR rounds begin.
+    /// Borrows `f_hat_polys` so it remains available for re-encoding the
+    /// f_hat codeword in Step 6 (`gamma_check`). The codeword in
+    /// `f_hat_witness.matrix` is re-encoded just before its open and cleared
+    /// immediately after, to keep it out of the resident set during the
+    /// memory-intensive sumcheck rounds.
     #[allow(clippy::too_many_arguments)]
     fn ood_stir_and_rounds(
         &mut self,
@@ -323,8 +328,8 @@ where
         alpha_coeffs: &[F],
         rho: F,
         folding_randomness: MultilinearPoint<F>,
-        f_hat_witness: &irs_commit::Witness<F, F>,
-        f_hat_polys: Vec<Vec<F>>,
+        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_polys: &[Vec<F>],
         masking_polys: &[Vec<F>],
         g_polys: &[Vec<F>],
     ) -> OodStirResult<F> {
@@ -336,11 +341,27 @@ where
             .irs_committer
             .commit(self.prover_state, &[state.vector.as_slice()]);
         round_config.pow.prove(self.prover_state);
+
+        // Re-encode f_hat codeword for the upcoming open, then drop it again.
+        let f_hat_refs: Vec<&[F]> = f_hat_polys.iter().map(|p| p.as_slice()).collect();
+        f_hat_witness.matrix = interleaved_rs_encode(
+            &f_hat_refs,
+            self.config
+                .blinded_polynomial
+                .initial_committer
+                .codeword_length,
+            self.config
+                .blinded_polynomial
+                .initial_committer
+                .interleaving_depth,
+        );
+        drop(f_hat_refs);
         let in_domain = self
             .config
             .blinded_polynomial
             .initial_committer
-            .open(self.prover_state, &[f_hat_witness]);
+            .open(self.prover_state, &[&*f_hat_witness]);
+        f_hat_witness.matrix = Vec::new();
 
         let r_bar = folding_randomness.0;
         let eq_weights = compute_eq_weights(&r_bar);
@@ -385,9 +406,9 @@ where
             lambda_z_points.push(z);
         }
 
-        // Release f̂ data before WHIR rounds.
+        // Release f̂_combined before WHIR rounds. f_hat_polys is borrowed
+        // from the caller (still needed for re-encoding in gamma_check).
         drop(f_hat_combined);
-        drop(f_hat_polys);
 
         // --- STIR responses ---
         for &z in &in_domain.points {
@@ -436,15 +457,33 @@ where
     /// Step 6: Γ consistency check.
     ///
     /// Opens [[f̂]] at Γ indices and sends blinding evaluations for each γ ∈ Γ.
+    /// Re-encodes the f_hat codeword into `f_hat_witness.matrix` before the
+    /// open and clears it after, mirroring the pattern in `ood_stir_and_rounds`.
     fn gamma_check(
         &mut self,
-        f_hat_witness: &irs_commit::Witness<F, F>,
+        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_polys: &[Vec<F>],
         masking_coeffs_all: &[Vec<F>],
         g_i_coeffs: &[Vec<F>],
         gamma_points: &[F],
         lambda_z_points: &mut Vec<F>,
     ) {
         let gamma_f_hat_indices = gamma_to_f_hat_indices(gamma_points, self.config);
+
+        // Re-encode f_hat codeword for the open at Γ indices.
+        let f_hat_refs: Vec<&[F]> = f_hat_polys.iter().map(|p| p.as_slice()).collect();
+        f_hat_witness.matrix = interleaved_rs_encode(
+            &f_hat_refs,
+            self.config
+                .blinded_polynomial
+                .initial_committer
+                .codeword_length,
+            self.config
+                .blinded_polynomial
+                .initial_committer
+                .interleaving_depth,
+        );
+        drop(f_hat_refs);
 
         // Writes [[f̂]] openings at Γ indices to the transcript.
         // The verifier uses these to reconstruct fold(r̄, [[f̂]])(γ).
@@ -453,7 +492,10 @@ where
             .config
             .blinded_polynomial
             .initial_committer
-            .open_at_indices(self.prover_state, &[f_hat_witness], &gamma_f_hat_indices);
+            .open_at_indices(self.prover_state, &[&*f_hat_witness], &gamma_f_hat_indices);
+
+        // Drop the codeword again; nothing else in this protocol needs it.
+        f_hat_witness.matrix = Vec::new();
 
         for &gamma in gamma_points {
             send_blinding_evals(self.prover_state, gamma, masking_coeffs_all, g_i_coeffs);
@@ -465,16 +507,18 @@ where
 impl<F: FftField> Config<F> {
     /// Steps 2-6: Prove the blinded polynomial instance.
     ///
-    /// `f_hat_polys` is taken by value and freed during OOD evaluations (Step 5),
-    /// before the memory-intensive WHIR rounds begin.
-    /// Other witness fields are borrowed; the caller frees them before Step 7.
+    /// `f_hat_witness.matrix` is empty on entry (cleared at commit time); it
+    /// is re-encoded transiently around each open and cleared afterwards to
+    /// keep the codeword out of the resident set during sumcheck rounds.
+    /// `f_hat_polys` is borrowed (needed for re-encoding in both Step 5
+    /// `ood_stir_and_rounds` and Step 6 `gamma_check`).
     #[allow(clippy::too_many_arguments)]
     fn prove_blinded_polynomial<H, R>(
         &self,
         prover_state: &mut ProverState<H, R>,
         vectors: Vec<Cow<'_, [F]>>,
-        f_hat_witness: &irs_commit::Witness<F, F>,
-        f_hat_polys: Vec<Vec<F>>,
+        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_polys: &[Vec<F>],
         masking_polys: &[Vec<F>],
         g_polys: &[Vec<F>],
         linear_forms: Vec<Box<dyn LinearForm<F>>>,
@@ -550,6 +594,7 @@ impl<F: FftField> Config<F> {
 
         ctx.gamma_check(
             f_hat_witness,
+            f_hat_polys,
             &masking_coeffs_all,
             &g_i_coeffs,
             &gamma_points,
@@ -670,18 +715,25 @@ impl<F: FftField> Config<F> {
         Hash: ProverMessage<[H::U]>,
     {
         let Witness {
-            f_hat_witness,
-            blinding_poly_witness,
+            mut f_hat_witness,
+            mut blinding_poly_witness,
             f_hat_polys,
             secrets,
         } = witness;
 
         // Steps 2-6: blinded polynomial proof.
+        // Both `f_hat_witness.matrix` and `blinding_poly_witness.matrix` are
+        // empty here (cleared at commit time). The blinded prover re-encodes
+        // f_hat transiently around each of its two opens; blinding_poly is
+        // re-encoded just before Step 7 below. This keeps both codewords
+        // (~codeword_length × interleaving_depth field elements each) out of
+        // the resident set during the prepare_and_sumcheck rounds where global
+        // peak hits.
         let blinded = self.prove_blinded_polynomial(
             prover_state,
             vectors,
-            &f_hat_witness,
-            f_hat_polys,
+            &mut f_hat_witness,
+            &f_hat_polys,
             &secrets.masking_polys,
             &secrets.g_polys,
             linear_forms,
@@ -690,6 +742,23 @@ impl<F: FftField> Config<F> {
 
         // Free fields only needed during Steps 2-6, before Step 7.
         drop(f_hat_witness);
+        drop(f_hat_polys);
+
+        // Re-encode the [[M, ĝ]] codeword, which was dropped at commit time
+        // to keep the resident set small through Step 6.
+        let blinding_refs: Vec<&[F]> = secrets
+            .blinding_vectors
+            .iter()
+            .map(|v| v.as_slice())
+            .collect();
+        blinding_poly_witness.matrix = interleaved_rs_encode(
+            &blinding_refs,
+            self.blinding_polynomial.initial_committer.codeword_length,
+            self.blinding_polynomial
+                .initial_committer
+                .interleaving_depth,
+        );
+        drop(blinding_refs);
 
         // Step 7: batched blinding polynomial proof.
         self.prove_blinding_polynomial(
