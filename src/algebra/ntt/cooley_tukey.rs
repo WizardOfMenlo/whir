@@ -370,6 +370,7 @@ impl<F: Field> NttEngine<F> {
     /// `O(size * log(size))` for a full NTT.
     ///
     /// `size` must be a power of two.
+    #[allow(dead_code)] // public single-shot entry; batched callers use the plan-based path
     pub fn ntt_partial(&self, values: &[F], size: usize, indices: &[usize]) -> Vec<F> {
         let plan = PartialNttPlan::new(size, indices);
         let mut out = vec![F::ZERO; indices.len()];
@@ -383,6 +384,7 @@ impl<F: Field> NttEngine<F> {
     ///
     /// Sharing a single plan across many NTTs with the same `(size, indices)`
     /// avoids re-running the O(size · log size) mask construction per call.
+    #[allow(clippy::significant_drop_tightening)] // roots guard intentionally held across DIT stages
     pub fn ntt_partial_with_plan_into(
         &self,
         values: &[F],
@@ -397,7 +399,7 @@ impl<F: Field> NttEngine<F> {
             return;
         }
         assert!(
-            out.len() >= (indices.len() - 1) * stride + 1,
+            out.len() > (indices.len() - 1) * stride,
             "output buffer too small for stride"
         );
         if size == 1 {
@@ -507,7 +509,7 @@ impl PartialNttPlan {
         }
     }
 
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         self.size
     }
 

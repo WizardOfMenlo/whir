@@ -327,7 +327,7 @@ where
         alpha_coeffs: &[F],
         rho: F,
         folding_randomness: MultilinearPoint<F>,
-        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_witness: &irs_commit::Witness<F, F>,
         f_hat_polys: &[Vec<F>],
         masking_polys: &[Vec<F>],
         g_polys: &[Vec<F>],
@@ -353,7 +353,7 @@ where
             .open_from_coeffs(
                 self.prover_state,
                 &[&f_hat_refs],
-                &[&*f_hat_witness],
+                &[f_hat_witness],
             );
 
         let r_bar = folding_randomness.0;
@@ -454,7 +454,7 @@ where
     /// codeword matrix is never materialised.
     fn gamma_check(
         &mut self,
-        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_witness: &irs_commit::Witness<F, F>,
         f_hat_polys: &[Vec<F>],
         masking_coeffs_all: &[Vec<F>],
         g_i_coeffs: &[Vec<F>],
@@ -474,7 +474,7 @@ where
             .open_at_indices_from_coeffs(
                 self.prover_state,
                 &[&f_hat_refs],
-                &[&*f_hat_witness],
+                &[f_hat_witness],
                 &gamma_f_hat_indices,
             );
 
@@ -498,7 +498,7 @@ impl<F: FftField> Config<F> {
         &self,
         prover_state: &mut ProverState<H, R>,
         vectors: Vec<Cow<'_, [F]>>,
-        f_hat_witness: &mut irs_commit::Witness<F, F>,
+        f_hat_witness: &irs_commit::Witness<F, F>,
         f_hat_polys: &[Vec<F>],
         masking_polys: &[Vec<F>],
         g_polys: &[Vec<F>],
@@ -696,7 +696,7 @@ impl<F: FftField> Config<F> {
         Hash: ProverMessage<[H::U]>,
     {
         let Witness {
-            mut f_hat_witness,
+            f_hat_witness,
             mut blinding_poly_witness,
             f_hat_polys,
             secrets,
@@ -713,7 +713,7 @@ impl<F: FftField> Config<F> {
         let blinded = self.prove_blinded_polynomial(
             prover_state,
             vectors,
-            &mut f_hat_witness,
+            &f_hat_witness,
             &f_hat_polys,
             &secrets.masking_polys,
             &secrets.g_polys,
