@@ -17,6 +17,8 @@ use std::{
 };
 
 use ark_ff::{FftField, Field};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use static_assertions::assert_obj_safe;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -130,15 +132,37 @@ pub fn partial_interleaved_rs_encode<F: FftField>(
     let engine = NttEngine::<F>::new_from_cache();
     let plan = PartialNttPlan::new(codeword_length, indices);
 
-    let mut out = vec![F::ZERO; k * num_cols];
-    for (poly_idx, poly) in coeffs.iter().enumerate() {
-        for slot_idx in 0..interleaving_depth {
-            let col = poly_idx * interleaving_depth + slot_idx;
-            let block = &poly[slot_idx * message_length..(slot_idx + 1) * message_length];
-            engine.ntt_partial_with_plan_into(block, &plan, &mut out[col..], num_cols);
-        }
+    // Build the submatrix in batch-major layout (`(num_cols, k)`): each
+    // contiguous k-chunk is one NTT's outputs. Batches are independent, so
+    // populate in parallel across (poly_idx, slot_idx). Final transpose
+    // converts to the row-major `(k, num_cols)` layout that
+    // `irs_commit::open_inner_from_coeffs` expects.
+    let mut batch_major = vec![F::ZERO; num_cols * k];
+
+    #[cfg(feature = "parallel")]
+    {
+        batch_major
+            .par_chunks_exact_mut(k)
+            .enumerate()
+            .for_each(|(col, dst)| {
+                let poly_idx = col / interleaving_depth;
+                let slot_idx = col % interleaving_depth;
+                let block = &coeffs[poly_idx]
+                    [slot_idx * message_length..(slot_idx + 1) * message_length];
+                engine.ntt_partial_with_plan_into(block, &plan, dst, 1);
+            });
     }
-    out
+    #[cfg(not(feature = "parallel"))]
+    for (col, dst) in batch_major.chunks_exact_mut(k).enumerate() {
+        let poly_idx = col / interleaving_depth;
+        let slot_idx = col % interleaving_depth;
+        let block =
+            &coeffs[poly_idx][slot_idx * message_length..(slot_idx + 1) * message_length];
+        engine.ntt_partial_with_plan_into(block, &plan, dst, 1);
+    }
+
+    transpose(&mut batch_major, num_cols, k);
+    batch_major
 }
 
 ///
