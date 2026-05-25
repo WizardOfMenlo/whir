@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6a96626efcf88c8458e112fceda942463479dfd2637ca89ecaa4c89e49bf8f8e # shrinks to seed = 0, config = Config { c_zk: Config { embedding: Identity { field: FieldInfo { characteristic: [255, 255, 255, 255, 0, 0, 0, 1], extension_degree: 1 } }, num_vectors: 2, vector_size: 2, mask_length: 3, codeword_length: 4, interleaving_depth: 1, matrix_commit: Config { element_type: FieldInfo { characteristic: [255, 255, 255, 255, 0, 0, 0, 1], extension_degree: 1 }, num_cols: 2, leaf_hash_id: 03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c, merkle_tree: Config { num_leaves: 4, layers: [LayerConfig { hash_id: 03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c }, LayerConfig { hash_id: 03e01749ebcc0477924254eb482066b864a8dd4d77252464ca6f5b6f5cc05b4c }] } }, johnson_slack: 0.05590169943749475, in_domain_samples: 0, out_domain_samples: 1, deduplicate_in_domain: false }, num_masks: 1 }

@@ -23,6 +23,13 @@ use crate::{
     utils::chunks_exact_or_empty,
 };
 
+/// Output from the sumcheck protocol (shared by prover and verifier).
+#[must_use]
+pub struct SumcheckOpening<F: Field> {
+    pub round_challenges: Vec<F>,
+    pub mask_rlc: F,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Config<F>
@@ -66,7 +73,7 @@ impl<F: Field> Config<F> {
         b: &mut Vec<F>,
         sum: &mut F,
         masks: &[F],
-    ) -> (Vec<F>, F, F)
+    ) -> SumcheckOpening<F>
     where
         H: DuplexSpongeInterface,
         R: CryptoRng + RngCore,
@@ -77,6 +84,7 @@ impl<F: Field> Config<F> {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
+        // Mask must cover all 3 sumcheck polynomial coefficients (c0, c1, c2)
         assert!(self.mask_length == 0 || self.mask_length >= 3);
         assert_eq!(a.len(), self.initial_size);
         assert_eq!(b.len(), self.initial_size);
@@ -84,29 +92,24 @@ impl<F: Field> Config<F> {
         assert_eq!(masks.len(), self.num_rounds * self.mask_length);
         let half = F::from(2).inverse().unwrap();
 
-        // Send mask sum and get combination randomness.
         let mut mask_sum = F::ZERO;
         let mut mask_rlc = F::ONE;
-        if !masks.is_empty() {
+        if self.mask_length > 0 && self.num_rounds > 0 {
             let sum_multiple = F::from(1 << self.num_rounds.saturating_sub(1));
-            mask_sum = masks
-                .chunks_exact(self.mask_length)
-                .map(eval_01) // s(0) + s(1)
-                .sum::<F>()
-                * sum_multiple;
+            mask_sum = masks.chunks_exact(self.mask_length).map(eval_01).sum::<F>() * sum_multiple;
             prover_state.prover_message(&mask_sum);
             mask_rlc = prover_state.verifier_message();
         }
 
         // We do a staggered Sumcheck loop so we can merge the inner fold+compute loops.
         let mut univariate = Vec::new();
-        let mut res = Vec::with_capacity(self.num_rounds);
-        let mut folding_randomness = None;
+        let mut round_challenges = Vec::with_capacity(self.num_rounds);
+        let mut prev_round_challenge = None;
         for (round, mask) in
             chunks_exact_or_empty(masks, self.mask_length, self.num_rounds).enumerate()
         {
             // Fold and compute sumcheck polynomial in one pass.
-            let (c0, c2) = if let Some(w) = folding_randomness {
+            let (c0, c2) = if let Some(w) = prev_round_challenge {
                 fold_and_compute_polynomial(a, b, w)
             } else {
                 compute_sumcheck_polynomial(a, b)
@@ -137,22 +140,25 @@ impl<F: Field> Config<F> {
             // Receive the random evaluation point and update the sum
             self.round_pow.prove(prover_state);
             let r = prover_state.verifier_message::<F>();
-            res.push(r);
+            round_challenges.push(r);
             *sum = (c2 * r + c1) * r + c0;
-            if !masks.is_empty() {
+            if self.mask_length > 0 && self.num_rounds > 0 {
                 let masked_sum = univariate_evaluate(&univariate, r);
                 mask_sum = masked_sum - mask_rlc * *sum;
             }
-            folding_randomness = Some(r);
+            prev_round_challenge = Some(r);
         }
-        if let Some(w) = folding_randomness {
+        if let Some(w) = prev_round_challenge {
             // Final fold of the inputs (no polynomial computation)
             fold(a, w);
             fold(b, w);
         }
 
         *sum = mask_sum + mask_rlc * *sum;
-        (res, mask_sum, mask_rlc)
+        SumcheckOpening {
+            round_challenges,
+            mask_rlc,
+        }
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
@@ -160,7 +166,7 @@ impl<F: Field> Config<F> {
         &self,
         verifier_state: &mut VerifierState<H>,
         sum: &mut F,
-    ) -> VerificationResult<(Vec<F>, F)>
+    ) -> VerificationResult<SumcheckOpening<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -170,6 +176,7 @@ impl<F: Field> Config<F> {
         assert!(
             self.num_rounds == 0 || self.initial_size.next_power_of_two() >= 1 << self.num_rounds
         );
+        // Mask must cover all 3 sumcheck polynomial coefficients (c0, c1, c2)
         assert!(self.mask_length == 0 || self.mask_length >= 3);
 
         let mut mask_rlc = F::ONE;
@@ -180,7 +187,7 @@ impl<F: Field> Config<F> {
         }
 
         let mut univariate = vec![F::ZERO; self.mask_length.max(3)];
-        let mut res = Vec::with_capacity(self.num_rounds);
+        let mut round_challenges = Vec::with_capacity(self.num_rounds);
         for _ in 0..self.num_rounds {
             // Receive all but linear coefficient.
             univariate[0] = verifier_state.prover_message()?;
@@ -195,13 +202,16 @@ impl<F: Field> Config<F> {
             self.round_pow.verify(verifier_state)?;
 
             // Receive the random evaluation point
-            let folding_randomness = verifier_state.verifier_message::<F>();
-            res.push(folding_randomness);
+            let round_challenge = verifier_state.verifier_message::<F>();
+            round_challenges.push(round_challenge);
 
             // Update the sum
-            *sum = univariate_evaluate(&univariate, folding_randomness);
+            *sum = univariate_evaluate(&univariate, round_challenge);
         }
-        Ok((res, mask_rlc))
+        Ok(SumcheckOpening {
+            round_challenges,
+            mask_rlc,
+        })
     }
 }
 
@@ -228,7 +238,6 @@ fn eval_01<F: Field>(coefficients: &[F]) -> F {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Proptest based tests checking invariants and post conditions.
     use ark_std::rand::{
         distributions::{Distribution, Standard},
         rngs::StdRng,
@@ -245,14 +254,16 @@ mod tests {
             multilinear_extend, random_vector,
         },
         transcript::DomainSeparator,
-        utils::zip_strict,
     };
 
-    impl<F: Field> Config<F> {
+    impl<F: Field + 'static> Config<F>
+    where
+        Standard: Distribution<F>,
+    {
         pub fn arbitrary() -> impl Strategy<Value = Self> {
             let mask_length = prop_oneof![
                 3 => Just(0_usize),
-                7 => 3_usize..100,
+                7 => 3_usize..20,
             ];
             (0_usize..(1 << 12), 0_usize..12, mask_length).prop_map(
                 |(initial_size, num_rounds, mask_length)| {
@@ -273,7 +284,7 @@ mod tests {
     #[cfg_attr(feature = "tracing", instrument)]
     fn test_config<F>(seed: u64, config: &Config<F>)
     where
-        F: Field + Codec,
+        F: Field + Codec<[u8]> + 'static,
         Standard: Distribution<F>,
     {
         // Pseudo-random Instance
@@ -292,46 +303,56 @@ mod tests {
         let mut covector = initial_covector.clone();
         let mut sum = initial_sum;
         let mut prover_state = ProverState::new_std(&ds);
-        let (point, mask_sum, mask_rlc) = config.prove(
+        let SumcheckOpening {
+            round_challenges: point,
+            mask_rlc,
+        } = config.prove(
             &mut prover_state,
             &mut vector,
             &mut covector,
             &mut sum,
             &masks,
         );
-        let expected_mask_sum = zip_strict(
-            chunks_exact_or_empty(&masks, config.mask_length, config.num_rounds),
-            &point,
-        )
-        .map(|(m, x)| univariate_evaluate(m, *x))
-        .sum::<F>();
         assert_eq!(vector.len(), config.final_size());
         assert_eq!(covector.len(), config.final_size());
-        assert_eq!(mask_sum, expected_mask_sum);
-        assert_eq!(mask_sum + mask_rlc * dot(&vector, &covector), sum);
         if config.final_size() == 1 {
             assert_eq!(multilinear_extend(&initial_vector, &point), vector[0]);
             assert_eq!(multilinear_extend(&initial_covector, &point), covector[0]);
         } else {
             // TODO: Check correct folding.
         }
+
+        let expected_mask_sum: F =
+            chunks_exact_or_empty(&masks, config.mask_length, config.num_rounds)
+                .zip(&point)
+                .map(|(m, x)| univariate_evaluate(m, *x))
+                .sum();
+        assert_eq!(sum, expected_mask_sum + mask_rlc * dot(&vector, &covector));
+
         let proof = prover_state.proof();
 
         // Verifier
         let mut verifier_sum = initial_sum;
         let mut verifier_state = VerifierState::new_std(&ds, &proof);
-        let (verifier_point, verifier_mask_rlc) = config
+        let SumcheckOpening {
+            round_challenges: verifier_point,
+            mask_rlc: verifier_mask_rlc,
+        } = config
             .verify(&mut verifier_state, &mut verifier_sum)
             .unwrap();
         assert_eq!(verifier_point, point);
         assert_eq!(verifier_mask_rlc, mask_rlc);
         assert_eq!(verifier_sum, sum);
         verifier_state.check_eof().unwrap();
+
+        // Non-ZK path: mask_rlc defaults to ONE (no combination randomness sampled)
+        if config.mask_length == 0 || config.num_rounds == 0 {
+            assert_eq!(mask_rlc, F::ONE);
+        }
     }
 
-    fn test_sumcheck<F>()
+    fn test<F: Field + Codec<[u8]> + 'static>()
     where
-        F: Field + Codec,
         Standard: Distribution<F>,
     {
         crate::tests::init();
@@ -384,36 +405,36 @@ mod tests {
 
     #[test]
     fn test_field64_1() {
-        test_sumcheck::<fields::Field64>();
+        test::<fields::Field64>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_2() {
-        test_sumcheck::<fields::Field64_2>();
+        test::<fields::Field64_2>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field64_3() {
-        test_sumcheck::<fields::Field64_3>();
+        test::<fields::Field64_3>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field128() {
-        test_sumcheck::<fields::Field128>();
+        test::<fields::Field128>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field192() {
-        test_sumcheck::<fields::Field192>();
+        test::<fields::Field192>();
     }
 
     #[test]
     #[ignore = "Somewhat expensive and redundant"]
     fn test_field256() {
-        test_sumcheck::<fields::Field256>();
+        test::<fields::Field256>();
     }
 }

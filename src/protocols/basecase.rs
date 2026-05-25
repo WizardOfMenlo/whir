@@ -24,13 +24,20 @@ use crate::{
     verify,
 };
 
+/// Output from the base case protocol (shared by prover and verifier).
+#[must_use]
+pub struct Opening<F: Field> {
+    pub evaluation_points: Vec<F>,
+    pub linear_form_evaluation: F,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Config<F: Field> {
     pub commit: irs_commit::Config<Identity<F>>,
     pub sumcheck: sumcheck::Config<F>,
 
-    /// Whether to mask the vectors, whichs adds HVZK.
+    /// Whether to mask the vectors, which adds HVZK.
     pub masked: bool,
 }
 
@@ -46,7 +53,7 @@ impl<F: Field> Config<F> {
         witness: &irs_commit::Witness<F>,
         mut covector: Vec<F>,
         mut sum: F,
-    ) -> (Vec<F>, F)
+    ) -> Opening<F>
     where
         H: DuplexSpongeInterface,
         R: RngCore + CryptoRng,
@@ -63,10 +70,13 @@ impl<F: Field> Config<F> {
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         debug_assert_eq!(dot(&vector, &covector), sum);
         if self.size() == 0 {
-            return (Vec::new(), F::ZERO);
+            return Opening {
+                evaluation_points: Vec::new(),
+                linear_form_evaluation: F::ZERO,
+            };
         }
 
-        // Even more trivial non-zk protocol: send f an r directly.
+        // Even more trivial non-zk protocol: send f and r directly.
         if !self.masked {
             prover_state.prover_messages(&vector);
             prover_state.prover_messages(&witness.masks);
@@ -74,9 +84,12 @@ impl<F: Field> Config<F> {
             let point = self
                 .sumcheck
                 .prove(prover_state, &mut vector, &mut covector, &mut sum, &[])
-                .0;
+                .round_challenges;
             assert!(!vector[0].is_zero(), "Proof failed");
-            return (point, covector[0]);
+            return Opening {
+                evaluation_points: point,
+                linear_form_evaluation: covector[0],
+            };
         }
 
         // Create masking vector.
@@ -113,7 +126,7 @@ impl<F: Field> Config<F> {
                 &mut masked_sum,
                 &[],
             )
-            .0;
+            .round_challenges;
 
         // If the MLE of `masked_vector` evaluates to zero, the verifier can not proceed.
         // Basically the sumcheck equation has degenerated to 0 * l(r) = 0, which provides
@@ -121,8 +134,10 @@ impl<F: Field> Config<F> {
         // This event is cryptographically unlikely as `F` is challenge sized.
         assert!(!masked_vector[0].is_zero(), "Proof failed");
 
-        // Return evaluation point and value of the covector.
-        (point, covector[0])
+        Opening {
+            evaluation_points: point,
+            linear_form_evaluation: covector[0],
+        }
     }
 
     pub fn verify<H>(
@@ -130,7 +145,7 @@ impl<F: Field> Config<F> {
         verifier_state: &mut VerifierState<H>,
         commitment: &irs_commit::Commitment<F>,
         mut sum: F,
-    ) -> VerificationResult<(Vec<F>, F)>
+    ) -> VerificationResult<Opening<F>>
     where
         H: DuplexSpongeInterface,
         F: Codec<[H::U]>,
@@ -144,7 +159,10 @@ impl<F: Field> Config<F> {
         assert_eq!(self.commit.vector_size, self.sumcheck.initial_size);
         assert_eq!(self.sumcheck.final_size(), 1.min(self.commit.vector_size));
         if self.size() == 0 {
-            return Ok((Vec::new(), F::ZERO));
+            return Ok(Opening {
+                evaluation_points: Vec::new(),
+                linear_form_evaluation: F::ZERO,
+            });
         }
 
         // Unmasked protocol
@@ -153,7 +171,10 @@ impl<F: Field> Config<F> {
             let masks = verifier_state
                 .prover_messages_vec(self.commit.mask_length * self.commit.num_messages())?;
             let evals = self.commit.verify(verifier_state, &[commitment])?;
-            let point = self.sumcheck.verify(verifier_state, &mut sum)?.0;
+            let point = self
+                .sumcheck
+                .verify(verifier_state, &mut sum)?
+                .round_challenges;
 
             for (&point, value) in zip_strict(&evals.points, evals.values(&[F::ONE])) {
                 // We expected `f(x) + x^l · g(x)` where l = deg(f) + 1, f is the message and g the mask.
@@ -165,7 +186,10 @@ impl<F: Field> Config<F> {
             let mle = multilinear_extend(&vector, &point);
             verify!(!mle.is_zero());
             let linear_mle = sum / mle;
-            return Ok((point, linear_mle));
+            return Ok(Opening {
+                evaluation_points: point,
+                linear_form_evaluation: linear_mle,
+            });
         }
 
         let mask_commitment = self.commit.receive_commitment(verifier_state)?;
@@ -191,7 +215,10 @@ impl<F: Field> Config<F> {
 
         // Sumcheck on masked inner product
         let mut masked_sum = mask_sum + mask_rlc * sum;
-        let point = self.sumcheck.verify(verifier_state, &mut masked_sum)?.0;
+        let point = self
+            .sumcheck
+            .verify(verifier_state, &mut masked_sum)?
+            .round_challenges;
 
         // Compute implied MLE of the linear form
         // f*(r) · l(r) = sum  =>  l(r) = sum / f*(r)
@@ -199,7 +226,10 @@ impl<F: Field> Config<F> {
         verify!(!masked_mle.is_zero());
         let linear_mle = masked_sum / masked_mle;
 
-        Ok((point, linear_mle))
+        Ok(Opening {
+            evaluation_points: point,
+            linear_form_evaluation: linear_mle,
+        })
     }
 }
 
@@ -255,14 +285,17 @@ mod tests {
         // Prover
         let mut prover_state = ProverState::new_std(&ds);
         let witness = config.commit.commit(&mut prover_state, &[&vector]);
-        let (point, value) = config.prove(
+        let prover_result = config.prove(
             &mut prover_state,
             vector.clone(),
             &witness,
             covector.clone(),
             sum,
         );
-        assert_eq!(multilinear_extend(&covector, &point), value);
+        assert_eq!(
+            multilinear_extend(&covector, &prover_result.evaluation_points),
+            prover_result.linear_form_evaluation
+        );
         let proof = prover_state.proof();
 
         // Verifier
@@ -271,11 +304,17 @@ mod tests {
             .commit
             .receive_commitment(&mut verifier_state)
             .unwrap();
-        let (verifier_point, verifier_value) = config
+        let verifier_result = config
             .verify(&mut verifier_state, &commitment, sum)
             .unwrap();
-        assert_eq!(verifier_point, point);
-        assert_eq!(verifier_value, value);
+        assert_eq!(
+            verifier_result.evaluation_points,
+            prover_result.evaluation_points
+        );
+        assert_eq!(
+            verifier_result.linear_form_evaluation,
+            prover_result.linear_form_evaluation
+        );
         verifier_state.check_eof().unwrap();
     }
 

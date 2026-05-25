@@ -13,6 +13,7 @@ pub mod challenge_indices;
 pub mod code_switch;
 pub mod geometric_challenge;
 pub mod irs_commit;
+pub mod mask_proximity;
 pub mod matrix_commit;
 pub mod merkle_tree;
 pub mod proof_of_work;

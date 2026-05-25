@@ -13,7 +13,7 @@ pub fn compute_sumcheck_polynomial<F: Field>(a: &[F], b: &[F]) -> (F, F) {
     fn recurse<F: Field>(a0: &[F], a1: &[F], b0: &[F], b1: &[F]) -> (F, F) {
         debug_assert_eq!(a0.len(), b0.len());
         debug_assert_eq!(a1.len(), b1.len());
-        debug_assert!(a0.len() == a1.len());
+        debug_assert_eq!(a0.len(), a1.len());
 
         #[cfg(feature = "parallel")]
         if a0.len() * 4 > workload_size::<F>() {
